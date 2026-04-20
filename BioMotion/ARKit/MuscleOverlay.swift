@@ -19,8 +19,16 @@ final class MuscleOverlay {
         enum Side { case left, right, center }
     }
 
-    private var muscleEntities: [String: ModelEntity] = [:]
+    private struct MuscleState {
+        let entity: ModelEntity
+        var lastBucket: Int
+    }
+
+    private var muscleEntities: [String: MuscleState] = [:]
     private var anchor: AnchorEntity?
+
+    // Quantize activation into this many buckets; material only rebuilt on bucket change.
+    private static let activationBuckets = 32
 
     // Pre-defined muscle visual positions (approximate anatomical placement)
     static let muscleDefs: [MuscleDef] = {
@@ -156,60 +164,66 @@ final class MuscleOverlay {
         for def in Self.muscleDefs {
             guard let startPos = jointPositions[def.startJoint],
                   let endPos = jointPositions[def.endJoint] else {
-                muscleEntities[def.name]?.isEnabled = false
+                muscleEntities[def.name]?.entity.isEnabled = false
                 continue
             }
 
             let worldStart = startPos + def.offsetStart
             let worldEnd = endPos + def.offsetEnd
             let midpoint = (worldStart + worldEnd) / 2.0
-            let length = simd_length(worldEnd - worldStart)
+            let delta = worldEnd - worldStart
+            let length = simd_length(delta)
 
             guard length > 0.01 else {
-                muscleEntities[def.name]?.isEnabled = false
+                muscleEntities[def.name]?.entity.isEnabled = false
                 continue
             }
 
             let activation = activations[def.name] ?? 0.01
-            let color = activationColor(activation)
+            let bucket = min(Self.activationBuckets - 1,
+                             max(0, Int(Float(activation) * Float(Self.activationBuckets))))
 
             let entity: ModelEntity
             if let existing = muscleEntities[def.name] {
-                entity = existing
-                // Update mesh for new length
-                entity.model?.mesh = MeshResource.generateBox(
-                    size: SIMD3(def.radius * 2, def.radius * 2, length),
-                    cornerRadius: def.radius
-                )
-                // Update material color
-                entity.model?.materials = [SimpleMaterial(color: color, isMetallic: false)]
+                entity = existing.entity
+                if existing.lastBucket != bucket {
+                    entity.model?.materials = [SimpleMaterial(color: activationColor(activation), isMetallic: false)]
+                    muscleEntities[def.name]?.lastBucket = bucket
+                }
                 entity.isEnabled = true
             } else {
+                // Unit-length box; per-frame length applied via scale.z to avoid mesh regen.
                 let mesh = MeshResource.generateBox(
-                    size: SIMD3(def.radius * 2, def.radius * 2, length),
+                    size: SIMD3(def.radius * 2, def.radius * 2, 1.0),
                     cornerRadius: def.radius
                 )
-                let material = SimpleMaterial(color: color, isMetallic: false)
+                let material = SimpleMaterial(color: activationColor(activation), isMetallic: false)
                 entity = ModelEntity(mesh: mesh, materials: [material])
                 anchor.addChild(entity)
-                muscleEntities[def.name] = entity
+                muscleEntities[def.name] = MuscleState(entity: entity, lastBucket: bucket)
             }
 
             entity.position = midpoint
-            entity.look(at: worldEnd, from: midpoint, relativeTo: nil)
+            entity.scale = SIMD3(1, 1, length)
+
+            // Pick an up vector non-parallel to the bone: near-vertical muscles (|y| > 0.9)
+            // would flip with the default (0,1,0) up — use world X instead.
+            let dir = delta / length
+            let up: SIMD3<Float> = abs(dir.y) > 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
+            entity.look(at: worldEnd, from: midpoint, upVector: up, relativeTo: nil)
         }
     }
 
     func setVisible(_ visible: Bool) {
-        for (_, entity) in muscleEntities {
-            entity.isEnabled = visible
+        for (_, state) in muscleEntities {
+            state.entity.isEnabled = visible
         }
     }
 
     /// Remove all muscle entities.
     func clear() {
-        for (_, entity) in muscleEntities {
-            entity.removeFromParent()
+        for (_, state) in muscleEntities {
+            state.entity.removeFromParent()
         }
         muscleEntities.removeAll()
     }

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import QuartzCore
+import os
 
 /// Manages the Nimble physics engine lifecycle and provides real-time IK/ID results.
 /// Runs Nimble on a background queue to avoid blocking the main thread.
@@ -100,6 +101,30 @@ final class NimbleEngine: ObservableObject {
     private(set) var idHistory: [(timestamp: TimeInterval, jointTorques: [String: Double])] = []
     private var isRecordingResults = false
 
+    // Generation token bumped on reset. Frames captured before the bump are
+    // still in flight on solverQueue; their late publishes are discarded by
+    // comparing against the current generation on main.
+    private var currentGeneration: UInt64 = 0
+    private var genLock = os_unfair_lock_s()
+
+    private func readGeneration() -> UInt64 {
+        os_unfair_lock_lock(&genLock)
+        defer { os_unfair_lock_unlock(&genLock) }
+        return currentGeneration
+    }
+
+    private func bumpGeneration() -> UInt64 {
+        os_unfair_lock_lock(&genLock)
+        defer { os_unfair_lock_unlock(&genLock) }
+        currentGeneration &+= 1
+        return currentGeneration
+    }
+
+    // Backpressure: at most one frame in flight on solverQueue at a time.
+    // Accessed only from main.
+    private var isFrameInFlight = false
+    private(set) var droppedFrameCount: Int = 0
+
     /// Load the bundled .osim model.
     func loadBundledModel() {
         // Production full-body model: cyclistFullBodyMuscle.osim shipped
@@ -172,6 +197,14 @@ final class NimbleEngine: ObservableObject {
     func processFrame(_ frame: BodyFrame) {
         guard isModelLoaded else { return }
 
+        // Backpressure: drop this frame if the solver is still busy with the
+        // previous one. Keeps visualization on the newest pose rather than
+        // draining a stale FIFO when OSQP transiently stalls.
+        if isFrameInFlight {
+            droppedFrameCount &+= 1
+            return
+        }
+
         // Build marker arrays from the frame
         var positions: [NSNumber] = []
         var names: [String] = []
@@ -188,8 +221,16 @@ final class NimbleEngine: ObservableObject {
 
         guard !names.isEmpty else { return }
 
+        isFrameInFlight = true
+        let frameGeneration = readGeneration()
+
         solverQueue.async { [weak self] in
             guard let self else { return }
+            defer {
+                DispatchQueue.main.async { [weak self] in
+                    self?.isFrameInFlight = false
+                }
+            }
 
             // --- IK (runs on every frame, on 1€-filtered markers) ---
             let ikStart = CACurrentMediaTime()
@@ -246,7 +287,8 @@ final class NimbleEngine: ObservableObject {
                 self.publishResults(ik: liveIkOutput, id: nil, muscle: nil,
                                     ikTime: ikTime, idTime: 0, muscleTime: 0,
                                     ikResidual: ikResult.error, maxTorqueNm: 0,
-                                    groundY: self.bridge.groundHeightY)
+                                    groundY: self.bridge.groundHeightY,
+                                    generation: frameGeneration)
                 return
             }
 
@@ -388,14 +430,16 @@ final class NimbleEngine: ObservableObject {
             self.publishResults(ik: smoothedIkOutput, id: idOutput, muscle: muscleOutput,
                                 ikTime: ikTime, idTime: idTime, muscleTime: muscleTime,
                                 ikResidual: ikResult.error, maxTorqueNm: maxTorqueNm,
-                                groundY: self.bridge.groundHeightY)
+                                groundY: self.bridge.groundHeightY,
+                                generation: frameGeneration)
         }
     }
 
     private func publishResults(ik: IKOutput, id: IDOutput?, muscle: MuscleOutput?,
                                 ikTime: Double, idTime: Double, muscleTime: Double,
                                 ikResidual: Double, maxTorqueNm: Double,
-                                groundY: Double) {
+                                groundY: Double,
+                                generation: UInt64) {
         let mass = max(totalMassKg, 1e-6)
         let torquePerKg = maxTorqueNm / mass
         // Vertical load on each foot as a fraction of body weight. Useful for
@@ -407,6 +451,9 @@ final class NimbleEngine: ObservableObject {
         let displayMuscle = muscle.map(normalizeForDisplay)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // Drop late publishes from a pre-reset generation so they don't
+            // overwrite the cleared @Published state.
+            guard self.readGeneration() == generation else { return }
             self.lastIKResult = ik
             self.lastIDResult = id
             self.lastMuscleResult = muscle
@@ -431,6 +478,9 @@ final class NimbleEngine: ObservableObject {
     }
 
     func resetRealtimeState() {
+        // Bump first so any in-flight frame's publish will be discarded.
+        _ = bumpGeneration()
+
         solverQueue.async { [weak self] in
             guard let self else { return }
             self.dofFilters.removeAll(keepingCapacity: false)
@@ -454,17 +504,18 @@ final class NimbleEngine: ObservableObject {
 
     private func normalizeForDisplay(_ muscle: MuscleOutput) -> MuscleOutput {
         MuscleOutput(
-            activations: normalizeMuscleMap(muscle.activations),
-            forces: normalizeMuscleMap(muscle.forces),
+            // Activations are 0–1 effort ratios — merging heads takes max.
+            activations: normalizeActivations(muscle.activations),
+            // Forces in N from separate physical heads are additive.
+            forces: normalizeForces(muscle.forces),
             converged: muscle.converged,
             timestamp: muscle.timestamp
         )
     }
 
-    private func normalizeMuscleMap(_ source: [String: Double]) -> [String: Double] {
+    private func normalizeActivations(_ source: [String: Double]) -> [String: Double] {
         var normalized: [String: Double] = [:]
         normalized.reserveCapacity(source.count)
-
         for (name, value) in source {
             let displayName = Self.displayMuscleAliases[name] ?? name
             if let existing = normalized[displayName] {
@@ -473,7 +524,16 @@ final class NimbleEngine: ObservableObject {
                 normalized[displayName] = value
             }
         }
+        return normalized
+    }
 
+    private func normalizeForces(_ source: [String: Double]) -> [String: Double] {
+        var normalized: [String: Double] = [:]
+        normalized.reserveCapacity(source.count)
+        for (name, value) in source {
+            let displayName = Self.displayMuscleAliases[name] ?? name
+            normalized[displayName, default: 0] += value
+        }
         return normalized
     }
 

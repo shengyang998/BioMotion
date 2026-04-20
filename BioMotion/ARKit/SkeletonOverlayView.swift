@@ -31,10 +31,9 @@ struct SkeletonARView: UIViewRepresentable {
             return
         }
         context.coordinator.updateSkeleton(frame: frame)
+        context.coordinator.muscleOverlay.setVisible(showMuscles)
         if showMuscles, let activations = muscleActivations {
             context.coordinator.muscleOverlay.update(joints: frame.joints, activations: activations)
-        } else {
-            context.coordinator.muscleOverlay.setVisible(false)
         }
     }
 
