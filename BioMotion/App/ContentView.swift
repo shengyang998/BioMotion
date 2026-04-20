@@ -60,7 +60,7 @@ struct ContentView: View {
                 session: bodyTracking.arSession,
                 currentFrame: $bodyTracking.currentFrame,
                 isTracking: bodyTracking.isTracking,
-                muscleActivations: nimble.displayMuscleResult?.activations,
+                muscleOutput: nimble.displayMuscleResult,
                 showMuscles: showMuscleOverlay
             )
             .ignoresSafeArea()

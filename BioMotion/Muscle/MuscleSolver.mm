@@ -719,16 +719,24 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
     // Gradient contribution:  g = − λ Aᵀ τ
     // Note OSQP requires P to be upper triangular.
 
-    const double epsA = 1.0;            // activation cost — prefers small activations
-    const double lambda = softPenalty;  // torque-matching cost
+    // Weight split: the soft-equality QP solves
+    //   min ½ aᵀ (εI + λ AᵀA) a − λ τᵀ A a
+    // We want τ matching to DOMINATE the activation L2 regularizer — otherwise
+    // ~520 muscles of redundancy cause the solver to flatten every a toward
+    // aMin, making visualization permanently blue. εA=0.01 keeps a² as a
+    // tie-breaker among redundant muscle sets; λ is tuned at the call site
+    // (NimbleEngine passes 100) so τ-match is the primary objective.
+    const double epsA = 0.01;
+    const double lambda = softPenalty;
 
     Eigen::MatrixXd P = epsA * Eigen::MatrixXd::Identity(nMuscles, nMuscles)
                       + lambda * Aeff.transpose() * Aeff;
     Eigen::VectorXd g = -lambda * Aeff.transpose() * tauEff;
 
-    // Bounds: 0.01 ≤ a ≤ 1. OSQP requires constraints Ax ∈ [l, u], so we
-    // use A = I, l = 0.01·1, u = 1·1.
-    const double aMin = 0.01;
+    // Bounds: 0.02 ≤ a ≤ 1. aMin=0.02 reflects physiological postural tone
+    // (stance muscles maintain ~2-5% activation at rest); this also gives
+    // the colormap a visible floor instead of bottoming out at black-blue.
+    const double aMin = 0.02;
     const double aMax = 1.0;
 
     // --- 3. OSQP setup or in-place update (workspace reuse) ---
@@ -850,7 +858,7 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
 
     // Warm start from previous frame's activations.
     if (_prevActivations.size() != (size_t)nMuscles) {
-        _prevActivations.assign(nMuscles, 0.05);
+        _prevActivations.assign(nMuscles, 0.05);  // > aMin; OSQP prefers feasible warm start
     }
     osqp_warm_start(_realSolver, _prevActivations.data(), OSQP_NULL);
 

@@ -22,13 +22,55 @@ final class MuscleOverlay {
     private struct MuscleState {
         let entity: ModelEntity
         var lastBucket: Int
+        /// Marks which pass last refreshed this entity: hardcoded-def or
+        /// path-based. Allows garbage-collecting stale path entities when
+        /// a muscle drops below the activation threshold.
+        var kind: Kind
+        enum Kind { case def, path }
     }
 
     private var muscleEntities: [String: MuscleState] = [:]
     private var anchor: AnchorEntity?
 
+    /// Path-based rendering: muscles with raw activation above this
+    /// threshold AND not covered by the hardcoded set get a capsule drawn
+    /// directly between their .osim path endpoints. 0.08 is empirically
+    /// above the postural-tone floor (≈0.02–0.05 after the rebalance).
+    private static let pathRenderActivationThreshold: Float = 0.08
+
+    /// Names (after alias merging) already handled by the hardcoded defs.
+    /// Computed once so per-frame lookup is O(1).
+    private static let hardcodedDisplayNames: Set<String> = {
+        Set(muscleDefs.map(\.name))
+    }()
+
+    /// Aliases from solver-native names to display names — a subset copy
+    /// of NimbleEngine.displayMuscleAliases. Kept local to avoid a
+    /// cross-module reach; the entries are load-bearing only when the
+    /// overlay decides whether a path-named muscle is already drawn by a
+    /// hardcoded def.
+    private static let solverToDisplayAlias: [String: String] = [
+        "bflh140_r": "bflh_r",
+        "bflh140_l": "bflh_l",
+        "gaslat140_r": "gaslat_r",
+        "gaslat140_l": "gaslat_l",
+        "vaslat140_r": "vaslat_r",
+        "vaslat140_l": "vaslat_l",
+        "multifidus_T9_T7": "ercspn_r",
+        "multifidus_T9_T7_L": "ercspn_l",
+    ]
+
     // Quantize activation into this many buckets; material only rebuilt on bucket change.
-    private static let activationBuckets = 32
+    // 64 (vs the original 32) because the display mapping now spreads 0.02-0.30
+    // across the full color band — we need finer resolution in the visible range.
+    private static let activationBuckets = 64
+
+    // Visual calibration: activation values are remapped via sqrt onto
+    // [displayFloor, displaySaturation] so the normal physiological range
+    // (postural tone ~0.02 → active effort ~0.30) spans the full colormap.
+    // Higher values saturate at red.
+    private static let displayFloor: Float = 0.02
+    private static let displaySaturation: Float = 0.30
 
     // Pre-defined muscle visual positions (approximate anatomical placement)
     static let muscleDefs: [MuscleDef] = {
@@ -151,16 +193,25 @@ final class MuscleOverlay {
         self.anchor = anchor
     }
 
-    /// Update muscle visualization with current joint positions and activations.
-    func update(joints: [TrackedJoint], activations: [String: Double]) {
+    /// Update muscle visualization with current joint positions and the
+    /// latest muscle-solver output. `muscle` carries both alias-merged
+    /// display activations (used by the hardcoded defs) and raw
+    /// solver-native paths + activations (used for path-based rendering
+    /// of muscles the hardcoded set doesn't cover).
+    func update(joints: [TrackedJoint], muscle: NimbleEngine.MuscleOutput) {
         guard let anchor else { return }
 
-        // Build joint position lookup
         var jointPositions: [String: SIMD3<Float>] = [:]
         for joint in joints where joint.isTracked {
             jointPositions[joint.id] = joint.worldPosition
         }
 
+        // Trunk-stable body frame: (right, up, forward) in meters.
+        // Muscle offsets are interpreted in this frame rather than world
+        // axes, so capsules stay anchored anatomically as the body rotates.
+        let body = Self.computeBodyFrame(jointPositions)
+
+        // --- Pass 1: hardcoded anatomical defs (visible even at rest) ---
         for def in Self.muscleDefs {
             guard let startPos = jointPositions[def.startJoint],
                   let endPos = jointPositions[def.endJoint] else {
@@ -168,50 +219,94 @@ final class MuscleOverlay {
                 continue
             }
 
-            let worldStart = startPos + def.offsetStart
-            let worldEnd = endPos + def.offsetEnd
-            let midpoint = (worldStart + worldEnd) / 2.0
-            let delta = worldEnd - worldStart
-            let length = simd_length(delta)
-
-            guard length > 0.01 else {
-                muscleEntities[def.name]?.entity.isEnabled = false
-                continue
-            }
-
-            let activation = activations[def.name] ?? 0.01
-            let bucket = min(Self.activationBuckets - 1,
-                             max(0, Int(Float(activation) * Float(Self.activationBuckets))))
-
-            let entity: ModelEntity
-            if let existing = muscleEntities[def.name] {
-                entity = existing.entity
-                if existing.lastBucket != bucket {
-                    entity.model?.materials = [SimpleMaterial(color: activationColor(activation), isMetallic: false)]
-                    muscleEntities[def.name]?.lastBucket = bucket
-                }
-                entity.isEnabled = true
-            } else {
-                // Unit-length box; per-frame length applied via scale.z to avoid mesh regen.
-                let mesh = MeshResource.generateBox(
-                    size: SIMD3(def.radius * 2, def.radius * 2, 1.0),
-                    cornerRadius: def.radius
-                )
-                let material = SimpleMaterial(color: activationColor(activation), isMetallic: false)
-                entity = ModelEntity(mesh: mesh, materials: [material])
-                anchor.addChild(entity)
-                muscleEntities[def.name] = MuscleState(entity: entity, lastBucket: bucket)
-            }
-
-            entity.position = midpoint
-            entity.scale = SIMD3(1, 1, length)
-
-            // Pick an up vector non-parallel to the bone: near-vertical muscles (|y| > 0.9)
-            // would flip with the default (0,1,0) up — use world X instead.
-            let dir = delta / length
-            let up: SIMD3<Float> = abs(dir.y) > 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
-            entity.look(at: worldEnd, from: midpoint, upVector: up, relativeTo: nil)
+            let worldStart = startPos + body.transform(def.offsetStart)
+            let worldEnd = endPos + body.transform(def.offsetEnd)
+            let activation = muscle.activations[def.name] ?? Double(Self.displayFloor)
+            updateCapsule(key: def.name,
+                          start: worldStart,
+                          end: worldEnd,
+                          radius: def.radius,
+                          activation: activation,
+                          kind: .def,
+                          anchor: anchor)
         }
+
+        // --- Pass 2: path-based rendering for active uncovered muscles ---
+        // Only draw what the solver says is firing AND that isn't already
+        // represented by a hardcoded def (avoids double-rendering).
+        var activePathKeys: Set<String> = []
+        for (rawName, rawActivation) in muscle.rawActivations
+            where Float(rawActivation) >= Self.pathRenderActivationThreshold {
+            let displayName = Self.solverToDisplayAlias[rawName] ?? rawName
+            if Self.hardcodedDisplayNames.contains(displayName) { continue }
+            guard let path = muscle.paths[rawName] else { continue }
+            let length = simd_length(path.end - path.start)
+            guard length > 0.02 else { continue }  // skip degenerate/tiny muscles
+
+            // Radius scales with √F_max so big muscles (quad, glute) read
+            // thicker than small ones (intrinsic hand muscles). Clamped.
+            let fmax = Float(muscle.maxForces[rawName] ?? 500)
+            let radius = max(0.008, min(0.022, 0.0005 * sqrt(fmax)))
+
+            let key = "path_\(rawName)"
+            activePathKeys.insert(key)
+            updateCapsule(key: key,
+                          start: path.start,
+                          end: path.end,
+                          radius: radius,
+                          activation: rawActivation,
+                          kind: .path,
+                          anchor: anchor)
+        }
+
+        // Hide path entities that are no longer active.
+        for (key, state) in muscleEntities where state.kind == .path
+            && !activePathKeys.contains(key) {
+            state.entity.isEnabled = false
+        }
+    }
+
+    private func updateCapsule(key: String,
+                               start: SIMD3<Float>,
+                               end: SIMD3<Float>,
+                               radius: Float,
+                               activation: Double,
+                               kind: MuscleState.Kind,
+                               anchor: AnchorEntity) {
+        let delta = end - start
+        let length = simd_length(delta)
+        guard length > 0.01 else {
+            muscleEntities[key]?.entity.isEnabled = false
+            return
+        }
+
+        let bucket = min(Self.activationBuckets - 1,
+                         max(0, Int(Float(activation) * Float(Self.activationBuckets))))
+
+        let entity: ModelEntity
+        if let existing = muscleEntities[key] {
+            entity = existing.entity
+            if existing.lastBucket != bucket {
+                entity.model?.materials = [Self.makeMaterial(activation)]
+                muscleEntities[key]?.lastBucket = bucket
+            }
+            entity.isEnabled = true
+        } else {
+            let mesh = MeshResource.generateBox(
+                size: SIMD3(radius * 2, radius * 2, 1.0),
+                cornerRadius: radius
+            )
+            entity = ModelEntity(mesh: mesh, materials: [Self.makeMaterial(activation)])
+            anchor.addChild(entity)
+            muscleEntities[key] = MuscleState(entity: entity, lastBucket: bucket, kind: kind)
+        }
+
+        let midpoint = (start + end) / 2
+        entity.position = midpoint
+        entity.scale = SIMD3(1, 1, length)
+        let dir = delta / length
+        let up: SIMD3<Float> = abs(dir.y) > 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
+        entity.look(at: end, from: midpoint, upVector: up, relativeTo: nil)
     }
 
     func setVisible(_ visible: Bool) {
@@ -228,34 +323,104 @@ final class MuscleOverlay {
         muscleEntities.removeAll()
     }
 
-    // MARK: - Color Mapping
+    // MARK: - Body frame
 
-    private func activationColor(_ activation: Double) -> UIColor {
-        let a = Float(max(0, min(1, activation)))
+    /// Orthonormal basis centered on the pelvis.
+    /// `right` = body-lateral (user's right side), `up` = spine axis,
+    /// `forward` = anterior. Falls back to world axes when joints are missing.
+    private struct BodyFrame {
+        let right: SIMD3<Float>
+        let up: SIMD3<Float>
+        let forward: SIMD3<Float>
 
-        // Blue (rest) → Cyan → Green → Yellow → Red (max)
-        let r: Float
-        let g: Float
-        let b: Float
-
-        if a < 0.25 {
-            // Blue → Cyan
-            let t = a / 0.25
-            r = 0; g = t; b = 1.0
-        } else if a < 0.5 {
-            // Cyan → Green
-            let t = (a - 0.25) / 0.25
-            r = 0; g = 1.0; b = 1.0 - t
-        } else if a < 0.75 {
-            // Green → Yellow
-            let t = (a - 0.5) / 0.25
-            r = t; g = 1.0; b = 0
-        } else {
-            // Yellow → Red
-            let t = (a - 0.75) / 0.25
-            r = 1.0; g = 1.0 - t; b = 0
+        func transform(_ offset: SIMD3<Float>) -> SIMD3<Float> {
+            offset.x * right + offset.y * up + offset.z * forward
         }
 
-        return UIColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: 0.6)
+        static let identity = BodyFrame(
+            right:   SIMD3(1, 0, 0),
+            up:      SIMD3(0, 1, 0),
+            forward: SIMD3(0, 0, 1)
+        )
+    }
+
+    private static func computeBodyFrame(_ joints: [String: SIMD3<Float>]) -> BodyFrame {
+        let hips  = joints["hips_joint"]
+        let spine = joints["spine_4_joint"] ?? joints["spine_7_joint"] ?? joints["spine_1_joint"]
+        let leftHip  = joints["left_upLeg_joint"]
+        let rightHip = joints["right_upLeg_joint"]
+
+        // Up: spine direction from pelvis upward. Fallback to world up.
+        let up: SIMD3<Float>
+        if let hips, let spine {
+            let delta = spine - hips
+            let n = simd_length(delta)
+            up = n > 1e-4 ? delta / n : SIMD3(0, 1, 0)
+        } else {
+            up = SIMD3(0, 1, 0)
+        }
+
+        // Pelvis-right: from left hip to right hip. Fallback to world +X.
+        let pelvisRight: SIMD3<Float>
+        if let leftHip, let rightHip {
+            let delta = rightHip - leftHip
+            let n = simd_length(delta)
+            pelvisRight = n > 1e-4 ? delta / n : SIMD3(1, 0, 0)
+        } else {
+            pelvisRight = SIMD3(1, 0, 0)
+        }
+
+        // forward = up × right, then re-orthogonalize right = forward × up
+        // so the basis is truly orthonormal even if pelvis and spine aren't
+        // perpendicular in the captured pose.
+        var forward = simd_cross(pelvisRight, up)
+        let fwdNorm = simd_length(forward)
+        if fwdNorm < 1e-3 {
+            // Body axis and pelvis axis collinear — degenerate. Use world Z.
+            return .identity
+        }
+        forward /= fwdNorm
+        let right = simd_normalize(simd_cross(up, forward))
+
+        return BodyFrame(right: right, up: up, forward: forward)
+    }
+
+    // MARK: - Color Mapping
+
+    /// Remap raw activation via sqrt onto [0, 1] over the observable
+    /// physiological band [displayFloor, displaySaturation]. sqrt expands
+    /// the low end where normal postural tone lives.
+    private static func displayValue(_ activation: Double) -> Float {
+        let a = max(Float(activation), 0)
+        let lo = sqrt(displayFloor)
+        let hi = sqrt(displaySaturation)
+        let t = (sqrt(a) - lo) / max(hi - lo, 1e-6)
+        return min(max(t, 0), 1)
+    }
+
+    /// Blue → cyan → green → yellow → red over the already-normalized display value.
+    private static func activationColor(_ activation: Double) -> UIColor {
+        let t = displayValue(activation)
+        let r: Float, g: Float, b: Float
+        if t < 0.25 {
+            let u = t / 0.25;              r = 0;           g = u;          b = 1.0
+        } else if t < 0.5 {
+            let u = (t - 0.25) / 0.25;     r = 0;           g = 1.0;        b = 1.0 - u
+        } else if t < 0.75 {
+            let u = (t - 0.5) / 0.25;      r = u;           g = 1.0;        b = 0
+        } else {
+            let u = (t - 0.75) / 0.25;     r = 1.0;         g = 1.0 - u;    b = 0
+        }
+        // Alpha floor 0.45 keeps rest tone visible; scales to 0.95 at max
+        // effort so the colored capsule reads clearly against any camera feed.
+        let alpha = 0.45 + 0.50 * t
+        return UIColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: CGFloat(alpha))
+    }
+
+    /// UnlitMaterial bypasses scene lighting so muscle color reads correctly
+    /// in any environment; its `color: UIColor` initializer honors the
+    /// UIColor alpha for transparent blending.
+    private static func makeMaterial(_ activation: Double) -> Material {
+        UnlitMaterial(color: activationColor(activation))
     }
 }

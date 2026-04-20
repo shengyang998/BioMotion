@@ -60,10 +60,25 @@ final class NimbleEngine: ObservableObject {
 
     /// Processed muscle optimization output.
     struct MuscleOutput {
-        let activations: [String: Double]  // muscle name → activation 0-1
-        let forces: [String: Double]       // muscle name → force in N
+        let activations: [String: Double]  // display name (alias-merged) → activation 0-1
+        let forces: [String: Double]       // display name → force in N
         let converged: Bool
         let timestamp: TimeInterval
+        /// Activations keyed by RAW solver names (pre alias-merge). Path
+        /// rendering needs these because `paths` is keyed by raw names.
+        var rawActivations: [String: Double] = [:]
+        /// Anatomy-exact world-space endpoints for every muscle, captured
+        /// from the skeleton FK at the same pose the solver consumed. Used
+        /// by the overlay to draw path-based capsules for muscles not in
+        /// the hardcoded-def set (i.e. upper body, trunk, etc.).
+        var paths: [String: MusclePath] = [:]
+        /// Peak isometric force (N) per muscle (raw names), for radius scaling.
+        var maxForces: [String: Double] = [:]
+    }
+
+    struct MusclePath {
+        let start: SIMD3<Float>
+        let end: SIMD3<Float>
     }
 
     // Normalize model-specific muscle ids to the stable ids used by the
@@ -95,6 +110,14 @@ final class NimbleEngine: ObservableObject {
     private var lastMuscleSolveTimestamp: TimeInterval?
     private var lastDisplayMuscleTimestamp: TimeInterval?
     private let displayMuscleHoldDuration: TimeInterval = 0.35
+
+    // Per-display-muscle 1€ filter. The rebalanced solver (ε_a=0.01,
+    // λ=100) now tracks τ tightly, which also tracks ID torque noise —
+    // without smoothing, activations jitter visibly frame-to-frame.
+    // Aggressive minCutoff=2.0 Hz (vs 1.0 Hz for kinematics) because
+    // activation transitions during actual movement are ~100-300 ms and
+    // we don't want to soften real force onset.
+    private var activationFilters: [String: OneEuroFilter] = [:]
 
     // IK history for recording
     private(set) var ikHistory: [(timestamp: TimeInterval, angles: [String: Double], error: Double)] = []
@@ -398,22 +421,63 @@ final class NimbleEngine: ObservableObject {
                         jointVelocities: smoothedDQNS,
                         dofNames: torqueKeys,
                         dt: dt,
-                        softPenalty: 1.0
+                        // 100× the activation L2 regularizer (ε=0.01 inside
+                        // solver). τ-match dominates; ‖a‖² only breaks ties
+                        // among the redundant ~520-muscle set.
+                        softPenalty: 100.0
                     ) {
                         muscleTime = result.solveTimeMs
 
+                        // Harvest path endpoints from the skeleton FK at the
+                        // SAME pose the solver consumed (computeMomentArms
+                        // left the skeleton at smoothedQ before restoring).
+                        // Doing this in the same solverQueue block avoids
+                        // races against next-frame setPositions.
+                        let endpoints = self.momentArmComputer.muscleEndpointsWorld
+                        let pathCount = muscleNamesNS.count
+                        var paths: [String: MusclePath] = [:]
+                        paths.reserveCapacity(pathCount)
+                        if endpoints.count == pathCount * 6 {
+                            for i in 0..<pathCount {
+                                let base = i * 6
+                                let s = SIMD3<Float>(
+                                    Float(truncating: endpoints[base]),
+                                    Float(truncating: endpoints[base + 1]),
+                                    Float(truncating: endpoints[base + 2])
+                                )
+                                let e = SIMD3<Float>(
+                                    Float(truncating: endpoints[base + 3]),
+                                    Float(truncating: endpoints[base + 4]),
+                                    Float(truncating: endpoints[base + 5])
+                                )
+                                paths[muscleNamesNS[i]] = MusclePath(start: s, end: e)
+                            }
+                        }
+
                         var activations: [String: Double] = [:]
                         var forces: [String: Double] = [:]
+                        var maxForceMap: [String: Double] = [:]
+                        activations.reserveCapacity(result.muscleNames.count)
+                        forces.reserveCapacity(result.muscleNames.count)
+                        maxForceMap.reserveCapacity(result.muscleNames.count)
                         for i in 0..<result.muscleNames.count {
-                            activations[result.muscleNames[i]] = result.activations[i].doubleValue
-                            forces[result.muscleNames[i]] = result.forces[i].doubleValue
+                            let name = result.muscleNames[i]
+                            activations[name] = result.activations[i].doubleValue
+                            forces[name] = result.forces[i].doubleValue
+                            if i < maxForcesNS.count {
+                                maxForceMap[name] = maxForcesNS[i].doubleValue
+                            }
                         }
-                        muscleOutput = MuscleOutput(
+                        var out = MuscleOutput(
                             activations: activations,
                             forces: forces,
                             converged: result.converged,
                             timestamp: centerTimestamp
                         )
+                        out.rawActivations = activations
+                        out.paths = paths
+                        out.maxForces = maxForceMap
+                        muscleOutput = out
                     }
                 }
             }
@@ -487,6 +551,7 @@ final class NimbleEngine: ObservableObject {
             self.lastMuscleSolveTimestamp = nil
         }
 
+        activationFilters.removeAll(keepingCapacity: false)
         lastDisplayMuscleTimestamp = nil
         lastIKResult = nil
         lastIDResult = nil
@@ -503,14 +568,43 @@ final class NimbleEngine: ObservableObject {
     }
 
     private func normalizeForDisplay(_ muscle: MuscleOutput) -> MuscleOutput {
-        MuscleOutput(
-            // Activations are 0–1 effort ratios — merging heads takes max.
-            activations: normalizeActivations(muscle.activations),
+        let mergedActivations = normalizeActivations(muscle.activations)
+        let smoothed = smoothActivations(mergedActivations, timestamp: muscle.timestamp)
+        var out = MuscleOutput(
+            // Activations are 0–1 effort ratios — merging heads takes max,
+            // then 1€-filter removes per-frame QP jitter.
+            activations: smoothed,
             // Forces in N from separate physical heads are additive.
             forces: normalizeForces(muscle.forces),
             converged: muscle.converged,
             timestamp: muscle.timestamp
         )
+        // Pass raw paths/maxForces/rawActivations through (keyed by the
+        // SOLVER's muscle names, not the display aliases) — the overlay
+        // uses these to render muscles that the hardcoded def set
+        // doesn't cover. `rawActivations` is intentionally NOT smoothed
+        // because we don't keep a per-raw-name filter — path rendering
+        // uses activation only for a visibility threshold and color tier,
+        // which is not sensitive to one-frame jitter.
+        out.paths = muscle.paths
+        out.maxForces = muscle.maxForces
+        out.rawActivations = muscle.rawActivations
+        return out
+    }
+
+    private func smoothActivations(_ source: [String: Double],
+                                   timestamp: TimeInterval) -> [String: Double] {
+        var out: [String: Double] = [:]
+        out.reserveCapacity(source.count)
+        for (name, a) in source {
+            let filter = activationFilters[name] ?? {
+                let f = OneEuroFilter(minCutoff: 2.0, beta: 0.01, dCutoff: 1.0)
+                activationFilters[name] = f
+                return f
+            }()
+            out[name] = filter.filter(a, timestamp: timestamp)
+        }
+        return out
     }
 
     private func normalizeActivations(_ source: [String: Double]) -> [String: Double] {

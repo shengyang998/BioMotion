@@ -7,7 +7,7 @@ struct SkeletonARView: UIViewRepresentable {
     let session: ARSession
     @Binding var currentFrame: BodyFrame?
     var isTracking: Bool = true
-    var muscleActivations: [String: Double]?
+    var muscleOutput: NimbleEngine.MuscleOutput?
     var showMuscles: Bool = true
 
     func makeUIView(context: Context) -> ARView {
@@ -32,8 +32,8 @@ struct SkeletonARView: UIViewRepresentable {
         }
         context.coordinator.updateSkeleton(frame: frame)
         context.coordinator.muscleOverlay.setVisible(showMuscles)
-        if showMuscles, let activations = muscleActivations {
-            context.coordinator.muscleOverlay.update(joints: frame.joints, activations: activations)
+        if showMuscles, let output = muscleOutput {
+            context.coordinator.muscleOverlay.update(joints: frame.joints, muscle: output)
         }
     }
 

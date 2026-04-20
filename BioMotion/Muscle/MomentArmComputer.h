@@ -78,6 +78,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// All muscle names.
 @property (nonatomic, readonly) NSArray<NSString *> *muscleNames;
 
+/// World-space start/end positions of each muscle path at the current skeleton
+/// pose. Returned as a flat `[x0, y0, z0, x1, y1, z1, ...]` array of 6 floats
+/// per muscle, ordered to match `muscleNames`. This skips through-path
+/// wrapping and treats the first and last PathPoints as the visual endpoints —
+/// good enough for an overlay capsule; moment-arm computation still uses the
+/// full path.
+@property (nonatomic, readonly) NSArray<NSNumber *> *muscleEndpointsWorld;
+
 @end
 
 NS_ASSUME_NONNULL_END

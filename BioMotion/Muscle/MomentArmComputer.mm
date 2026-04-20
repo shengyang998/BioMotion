@@ -429,4 +429,21 @@ struct InternalMusclePath {
     return angs;
 }
 
+- (NSArray<NSNumber *> *)muscleEndpointsWorld {
+    NSMutableArray<NSNumber *> *out =
+        [NSMutableArray arrayWithCapacity:_musclePaths.size() * 6];
+    if (!_loaded || !_skeleton) return out;
+    for (const auto& mp : _musclePaths) {
+        if (mp.points.size() < 2) {
+            for (int i = 0; i < 6; i++) [out addObject:@(0.0)];
+            continue;
+        }
+        Eigen::Vector3s a = [self worldPositionForPathPoint:mp.points.front()];
+        Eigen::Vector3s b = [self worldPositionForPathPoint:mp.points.back()];
+        [out addObject:@(a.x())]; [out addObject:@(a.y())]; [out addObject:@(a.z())];
+        [out addObject:@(b.x())]; [out addObject:@(b.y())]; [out addObject:@(b.z())];
+    }
+    return out;
+}
+
 @end
