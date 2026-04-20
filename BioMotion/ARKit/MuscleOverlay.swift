@@ -200,6 +200,12 @@ final class MuscleOverlay {
         }
     }
 
+    func setVisible(_ visible: Bool) {
+        for (_, entity) in muscleEntities {
+            entity.isEnabled = visible
+        }
+    }
+
     /// Remove all muscle entities.
     func clear() {
         for (_, entity) in muscleEntities {

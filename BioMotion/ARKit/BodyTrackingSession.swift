@@ -13,6 +13,8 @@ final class BodyTrackingSession: NSObject, ObservableObject {
 
     private var frameCount = 0
     private let skeletonFilter = SkeletonFilter(minCutoff: 1.0, beta: 0.007)
+    private var lastBodyAnchorUpdateTime: CFTimeInterval?
+    private let trackingLossTimeout: CFTimeInterval = 0.35
 
     override init() {
         super.init()
@@ -32,6 +34,8 @@ final class BodyTrackingSession: NSObject, ObservableObject {
         let config = ARBodyTrackingConfiguration()
         config.automaticSkeletonScaleEstimationEnabled = true
         config.frameSemantics.insert(.bodyDetection)
+        lastBodyAnchorUpdateTime = nil
+        skeletonFilter.reset()
         arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
         trackingMessage = "Looking for body..."
     }
@@ -45,6 +49,7 @@ final class BodyTrackingSession: NSObject, ObservableObject {
 extension BodyTrackingSession: ARSessionDelegate {
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         guard let bodyAnchor = anchors.compactMap({ $0 as? ARBodyAnchor }).first else { return }
+        lastBodyAnchorUpdateTime = CACurrentMediaTime()
 
         let skeleton = bodyAnchor.skeleton
         let bodyWorldTransform = bodyAnchor.transform
@@ -98,6 +103,21 @@ extension BodyTrackingSession: ARSessionDelegate {
             self.currentFrame = frame
             self.isTracking = true
             self.trackingMessage = "Tracking"
+        }
+    }
+
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard let lastBodyAnchorUpdateTime else { return }
+        guard (CACurrentMediaTime() - lastBodyAnchorUpdateTime) > trackingLossTimeout else { return }
+        guard isTracking || currentFrame != nil else { return }
+
+        skeletonFilter.reset()
+        self.lastBodyAnchorUpdateTime = nil
+
+        DispatchQueue.main.async {
+            self.currentFrame = nil
+            self.isTracking = false
+            self.trackingMessage = "Looking for body..."
         }
     }
 

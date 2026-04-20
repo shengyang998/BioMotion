@@ -26,7 +26,8 @@ struct CalibrationView: View {
             // Live camera feed with skeleton — always visible
             SkeletonARView(
                 session: bodyTracking.arSession,
-                currentFrame: $bodyTracking.currentFrame
+                currentFrame: $bodyTracking.currentFrame,
+                isTracking: bodyTracking.isTracking
             )
             .ignoresSafeArea()
 

@@ -9,6 +9,7 @@ final class NimbleEngine: ObservableObject {
     @Published var lastIKResult: IKOutput?
     @Published var lastIDResult: IDOutput?
     @Published var lastMuscleResult: MuscleOutput?
+    @Published var displayMuscleResult: MuscleOutput?
     @Published var ikSolveTimeMs: Double = 0
     @Published var idSolveTimeMs: Double = 0
     @Published var muscleSolveTimeMs: Double = 0
@@ -64,6 +65,19 @@ final class NimbleEngine: ObservableObject {
         let timestamp: TimeInterval
     }
 
+    // Normalize model-specific muscle ids to the stable ids used by the
+    // overlay and diagnostic bar.
+    private static let displayMuscleAliases: [String: String] = [
+        "bflh140_r": "bflh_r",
+        "bflh140_l": "bflh_l",
+        "gaslat140_r": "gaslat_r",
+        "gaslat140_l": "gaslat_l",
+        "vaslat140_r": "vaslat_r",
+        "vaslat140_l": "vaslat_l",
+        "multifidus_T9_T7": "ercspn_r",
+        "multifidus_T9_T7_L": "ercspn_l",
+    ]
+
     private let bridge = NimbleBridge()
     private let muscleSolver = MuscleSolver()
     private let momentArmComputer = MomentArmComputer()
@@ -78,6 +92,8 @@ final class NimbleEngine: ObservableObject {
     // Timestamp of the last successful muscle solve, used to derive dt for
     // musculotendon length finite differencing inside the muscle Hill model.
     private var lastMuscleSolveTimestamp: TimeInterval?
+    private var lastDisplayMuscleTimestamp: TimeInterval?
+    private let displayMuscleHoldDuration: TimeInterval = 0.35
 
     // IK history for recording
     private(set) var ikHistory: [(timestamp: TimeInterval, angles: [String: Double], error: Double)] = []
@@ -388,11 +404,20 @@ final class NimbleEngine: ObservableObject {
         let leftLoad  = (id?.leftFootForce.y  ?? 0) / weightN
         let rightLoad = (id?.rightFootForce.y ?? 0) / weightN
         let rootResPerKg = (id?.rootResidualNorm ?? 0) / mass
+        let displayMuscle = muscle.map(normalizeForDisplay)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.lastIKResult = ik
             self.lastIDResult = id
             self.lastMuscleResult = muscle
+            if let displayMuscle {
+                self.displayMuscleResult = displayMuscle
+                self.lastDisplayMuscleTimestamp = displayMuscle.timestamp
+            } else if let lastTimestamp = self.lastDisplayMuscleTimestamp,
+                      (ik.timestamp - lastTimestamp) > self.displayMuscleHoldDuration {
+                self.displayMuscleResult = nil
+                self.lastDisplayMuscleTimestamp = nil
+            }
             self.ikSolveTimeMs = ikTime
             self.idSolveTimeMs = idTime
             self.muscleSolveTimeMs = muscleTime
@@ -403,6 +428,53 @@ final class NimbleEngine: ObservableObject {
             self.rootResidualPerKg = rootResPerKg
             self.groundHeightY = groundY
         }
+    }
+
+    func resetRealtimeState() {
+        solverQueue.async { [weak self] in
+            guard let self else { return }
+            self.dofFilters.removeAll(keepingCapacity: false)
+            self.lastMuscleSolveTimestamp = nil
+        }
+
+        lastDisplayMuscleTimestamp = nil
+        lastIKResult = nil
+        lastIDResult = nil
+        lastMuscleResult = nil
+        displayMuscleResult = nil
+        ikSolveTimeMs = 0
+        idSolveTimeMs = 0
+        muscleSolveTimeMs = 0
+        ikMarkerResidualMeters = 0
+        maxTorquePerKg = 0
+        leftFootLoadFraction = 0
+        rightFootLoadFraction = 0
+        rootResidualPerKg = 0
+    }
+
+    private func normalizeForDisplay(_ muscle: MuscleOutput) -> MuscleOutput {
+        MuscleOutput(
+            activations: normalizeMuscleMap(muscle.activations),
+            forces: normalizeMuscleMap(muscle.forces),
+            converged: muscle.converged,
+            timestamp: muscle.timestamp
+        )
+    }
+
+    private func normalizeMuscleMap(_ source: [String: Double]) -> [String: Double] {
+        var normalized: [String: Double] = [:]
+        normalized.reserveCapacity(source.count)
+
+        for (name, value) in source {
+            let displayName = Self.displayMuscleAliases[name] ?? name
+            if let existing = normalized[displayName] {
+                normalized[displayName] = max(existing, value)
+            } else {
+                normalized[displayName] = value
+            }
+        }
+
+        return normalized
     }
 
     // MARK: - Recording

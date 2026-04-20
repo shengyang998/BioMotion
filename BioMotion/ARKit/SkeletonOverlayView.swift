@@ -6,6 +6,7 @@ import RealityKit
 struct SkeletonARView: UIViewRepresentable {
     let session: ARSession
     @Binding var currentFrame: BodyFrame?
+    var isTracking: Bool = true
     var muscleActivations: [String: Double]?
     var showMuscles: Bool = true
 
@@ -25,10 +26,15 @@ struct SkeletonARView: UIViewRepresentable {
     }
 
     func updateUIView(_ arView: ARView, context: Context) {
-        guard let frame = currentFrame else { return }
+        guard isTracking, let frame = currentFrame else {
+            context.coordinator.hideAll()
+            return
+        }
         context.coordinator.updateSkeleton(frame: frame)
         if showMuscles, let activations = muscleActivations {
             context.coordinator.muscleOverlay.update(joints: frame.joints, activations: activations)
+        } else {
+            context.coordinator.muscleOverlay.setVisible(false)
         }
     }
 
@@ -115,6 +121,16 @@ struct SkeletonARView: UIViewRepresentable {
                 entity.position = midpoint
                 entity.look(at: end, from: midpoint, relativeTo: nil)
             }
+        }
+
+        func hideAll() {
+            for (_, entity) in jointEntities {
+                entity.isEnabled = false
+            }
+            for (_, entity) in boneEntities {
+                entity.isEnabled = false
+            }
+            muscleOverlay.setVisible(false)
         }
 
         private func jointColor(for jointId: String) -> UIColor {

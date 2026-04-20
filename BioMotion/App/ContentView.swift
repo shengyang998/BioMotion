@@ -42,6 +42,11 @@ struct ContentView: View {
             recorder.recordFrame(frame)
             nimble.processFrame(frame)
         }
+        .onChange(of: bodyTracking.isTracking) { _, isTracking in
+            if !isTracking {
+                nimble.resetRealtimeState()
+            }
+        }
         // Charts shown via export button, not auto-transition
         .sheet(isPresented: $showExportSheet) {
             ShareSheet(items: exportURLs)
@@ -54,7 +59,8 @@ struct ContentView: View {
             SkeletonARView(
                 session: bodyTracking.arSession,
                 currentFrame: $bodyTracking.currentFrame,
-                muscleActivations: nimble.lastMuscleResult?.activations,
+                isTracking: bodyTracking.isTracking,
+                muscleActivations: nimble.displayMuscleResult?.activations,
                 showMuscles: showMuscleOverlay
             )
             .ignoresSafeArea()
@@ -131,7 +137,7 @@ struct ContentView: View {
                 // === BOTTOM SECTION ===
 
                 // Data panels (only when tracking)
-                if let muscle = nimble.lastMuscleResult {
+                if let muscle = nimble.displayMuscleResult {
                     MuscleActivationBar(muscle: muscle).padding(.horizontal, 12)
                 }
                 if showIKPanel, let ik = nimble.lastIKResult {
