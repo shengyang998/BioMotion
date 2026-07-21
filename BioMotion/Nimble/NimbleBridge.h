@@ -2,6 +2,24 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// Provenance of the ground-plane height currently used for contact detection.
+/// Callers that care about GRF validity should gate on `groundHeightTrusted`
+/// rather than on this enum directly; the enum exists for diagnostics.
+typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
+    /// No foot-height sample has been observed and no calibration has been
+    /// applied. `groundHeightY` is a placeholder (0) and means nothing.
+    NimbleGroundHeightSourceUncalibrated = 0,
+    /// Rolling estimate computed over fewer samples than the estimator needs
+    /// to reject outliers. Usable, but a handful of bad frames can still move
+    /// it, so contact detection may be wrong.
+    NimbleGroundHeightSourceProvisional,
+    /// Rolling low-percentile estimate over a full-enough sample window.
+    NimbleGroundHeightSourceEstimated,
+    /// Pinned by `setGroundHeightY:`. Observed foot heights never move an
+    /// explicitly-calibrated ground plane; only `resetSessionState` releases it.
+    NimbleGroundHeightSourceExplicit,
+};
+
 /// Result from inverse kinematics solve.
 @interface NimbleIKResult : NSObject
 @property (nonatomic, readonly) NSArray<NSNumber *> *jointAngles;  // DOF values in radians
@@ -91,15 +109,61 @@ NS_ASSUME_NONNULL_BEGIN
                                     jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations;
 
 /// Sets the ground plane y-coordinate in the ARKit world frame. Call once
-/// after calibration (or let it auto-calibrate from the first valid frame).
+/// after calibration (or let it auto-calibrate from observed foot heights).
 /// Ground is assumed flat; M4+ may support tilted floors.
+///
+/// An explicitly-set ground plane is pinned: the auto-estimator keeps
+/// collecting samples but will not overwrite the calibrated value until
+/// `resetSessionState` is called.
 - (void)setGroundHeightY:(double)y;
+
+/// Feeds one observation of the lowest foot height (ARKit world-frame y, in
+/// meters) into the rolling ground-height estimator.
+///
+/// `solveIDGRFWithJointAngles:...` calls this itself with min(calcn_l.y,
+/// calcn_r.y) every frame, so normal callers never need to. It is public so
+/// that a caller with a better contact cue (e.g. a depth-derived floor plane)
+/// can drive the same estimator, and so the estimator is testable without a
+/// full IK/ID frame.
+///
+/// The estimate is a low percentile of a bounded window of recent samples, so
+/// it tolerates transient dips (one bad frame, a landing spike, a momentary
+/// tracking glitch) without permanently ratcheting the floor downwards, and it
+/// can rise again when ARKit's world origin drifts upwards. Non-finite samples
+/// are ignored.
+- (void)observeLowestFootHeightY:(double)y;
 
 /// Current ground height used for contact detection.
 @property (nonatomic, readonly) double groundHeightY;
 
 /// Whether a ground height has been explicitly set or auto-calibrated.
+/// YES as soon as any estimate exists, including an untrustworthy one.
 @property (nonatomic, readonly) BOOL groundHeightCalibrated;
+
+/// Where `groundHeightY` came from.
+@property (nonatomic, readonly) NimbleGroundHeightSource groundHeightSource;
+
+/// Whether `groundHeightY` is good enough to gate physics on. YES only for an
+/// explicitly-calibrated plane or a rolling estimate backed by enough samples
+/// to survive outliers. When NO, foot-contact decisions (and therefore the GRF
+/// decomposition) should be treated as unverified.
+@property (nonatomic, readonly) BOOL groundHeightTrusted;
+
+/// Whether the next IK solve will be warm-started from the previously solved
+/// pose instead of doing a cold search with random restarts. NO before the
+/// first successful solve of a session and immediately after
+/// `resetSessionState`.
+@property (nonatomic, readonly) BOOL ikWarmStartAvailable;
+
+/// Drops all per-session state that is only valid while one continuous body
+/// track is in view: the ground-height sample window (including any explicit
+/// calibration) and the IK warm-start pose.
+///
+/// Must be called whenever body tracking is lost or the AR session's world
+/// origin is re-established, otherwise the ground estimate describes a floor
+/// that no longer exists in the current world frame and the IK warm start is a
+/// pose belonging to a different subject/placement.
+- (void)resetSessionState;
 
 /// Whether a model is currently loaded.
 @property (nonatomic, readonly) BOOL isModelLoaded;

@@ -3,13 +3,20 @@
 Real-time musculoskeletal analysis iOS app. ARKit body tracking → Nimble IK/ID → OSQP muscle optimization → 3D visualization.
 
 > **Setup, dependency cloning, patching, and full build/TestFlight commands live in [`README.md`](./README.md).** This file is LLM-facing context for architecture and gotchas only.
+>
+> **Single source of truth for progress, diagnosis, and next steps: [`STATUS.md`](./STATUS.md) — read it before touching anything.** It records the root-cause analysis of the accuracy problem, what has been fixed, the verified model/licence facts, and the ordered next steps.
 
 ## Architecture
 
 ```
-ARKit 91 joints → 1-euro filter → Nimble IK (~1ms) → Nimble ID (~0.1ms)
-  → Computed moment arms (numerical diff) → OSQP muscle opt (~0.5ms)
+ARKit 91 joints → 1-euro filter → Nimble IK → Nimble ID
+  → Computed moment arms (numerical diff) → OSQP muscle opt
   → 3D muscle visualization (RealityKit)
+
+# NOTE: the old "~1ms IK / ~0.5ms OSQP" figures were measured on Rajagopal2016
+# (81 muscles / 39 DOF). The shipped model is FullBody.osim (520 muscles /
+# 171 coordinates) and costs ~200ms/frame — hence the frame-dropping
+# backpressure added in build 15. See STATUS.md.
 ```
 
 ### Swift ↔ C++ Bridge

@@ -1,6 +1,7 @@
 import SwiftUI
 import ARKit
 import RealityKit
+import simd
 
 /// T-pose calibration flow with live camera preview.
 /// User sees themselves, positions into T-pose, then taps Capture.
@@ -14,11 +15,22 @@ struct CalibrationView: View {
     @State private var calibrationFrames: [BodyFrame] = []
     @State private var isCapturing = false
     @State private var timer: Timer?
+    @State private var qualityScore: CalibrationQualityScore?
+    @State private var manualHeightText: String = ""
 
     enum CalibrationPhase {
-        case livePreview   // Live camera + skeleton, user positions themselves
-        case capturing     // Brief capture (~2s)
-        case done          // Show results
+        case livePreview          // Live camera + skeleton, user positions themselves
+        case capturing            // Brief capture (~2s)
+        case heightEntryNeeded    // Height couldn't be estimated (or was implausible) — retry or enter manually
+        case insufficientQuality  // Per-joint quality gate failed — must redo, no silent degraded scaling
+        case done                 // Show results
+    }
+
+    /// Whether the text currently in `manualHeightText` is a plausible height, i.e. safe
+    /// to use in place of the failed automatic estimate.
+    private var isManualHeightValid: Bool {
+        guard let value = Double(manualHeightText) else { return false }
+        return CalibrationCalculator.isPlausibleHeight(value)
     }
 
     var body: some View {
@@ -123,6 +135,82 @@ struct CalibrationView: View {
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.6))
 
+                    case .heightEntryNeeded:
+                        VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 36))
+                                .foregroundStyle(.orange)
+
+                            Text("Couldn't measure height reliably")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+
+                            Text("Head or ankle tracking was lost during the hold. Redo the T-pose, or enter your height manually.")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+
+                            HStack(spacing: 8) {
+                                TextField("Height in meters, e.g. 1.75", text: $manualHeightText)
+                                    .keyboardType(.decimalPad)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 190)
+
+                                Button("Use") {
+                                    submitManualHeight()
+                                }
+                                .disabled(!isManualHeightValid)
+                            }
+
+                            Button("Redo Calibration") {
+                                phase = .livePreview
+                                calibrationFrames.removeAll()
+                                manualHeightText = ""
+                            }
+                            .foregroundStyle(.white.opacity(0.7))
+                            .font(.callout)
+                        }
+
+                    case .insufficientQuality:
+                        VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 36))
+                                .foregroundStyle(.orange)
+
+                            Text("Calibration quality too low")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+
+                            if let score = qualityScore {
+                                if !score.rejectedJoints.isEmpty {
+                                    Text("\(score.rejectedJointCount) joint(s) lost tracking during the hold: \(score.rejectedJointNames.joined(separator: ", ")).")
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.7))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 24)
+                                } else {
+                                    Text("Tracking was unstable — position drifted during the hold. Hold very still in T-pose.")
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.7))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 24)
+                                }
+                            }
+
+                            Button {
+                                phase = .livePreview
+                                calibrationFrames.removeAll()
+                            } label: {
+                                Text("Redo Calibration")
+                                    .font(.callout)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 10)
+                                    .background(.gray.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+                            }
+                        }
+
                     case .done:
                         VStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill")
@@ -133,6 +221,13 @@ struct CalibrationView: View {
                                 Text(String(format: "Height: %.2f m", height))
                                     .font(.headline)
                                     .foregroundStyle(.white)
+                            }
+
+                            if let score = qualityScore {
+                                Text(String(format: "Tracking coverage: %.0f%% avg · all %d joints passed quality gate",
+                                             score.averageTrackedFraction * 100, score.acceptedJoints.count))
+                                    .font(.caption2)
+                                    .foregroundStyle(.white.opacity(0.6))
                             }
 
                             Text("Model scaled to your body")
@@ -180,7 +275,7 @@ struct CalibrationView: View {
         }
     }
 
-    // MARK: - Calibration Logic
+    // MARK: - Calibration Logic (thin view-side glue over CalibrationCalculator)
 
     private func startCapturing() {
         phase = .capturing
@@ -204,6 +299,9 @@ struct CalibrationView: View {
             return
         }
 
+        // The per-joint quality gate (below) operates on this hips-tracked subset, not the
+        // raw capture window — a frame with no root position isn't usable as a pose sample
+        // regardless of what any individual limb joint reports.
         let trackedFrames = calibrationFrames.filter { frame in
             frame.joints.contains(where: { $0.id == "hips_joint" && $0.isTracked })
         }
@@ -213,39 +311,185 @@ struct CalibrationView: View {
             return
         }
 
-        let height = estimateHeight(from: trackedFrames)
+        qualityScore = CalibrationCalculator.evaluateCalibration(frames: trackedFrames)
+
+        guard let height = CalibrationCalculator.estimateFloorToCrownHeight(from: trackedFrames),
+              CalibrationCalculator.isPlausibleHeight(height) else {
+            // No silent 1.75m fallback: an unmeasurable or implausible height would bias
+            // every downstream segment scale factor. Ask the user to retry or enter it.
+            phase = .heightEntryNeeded
+            return
+        }
+
+        finishCalibration(height: height)
+    }
+
+    private func submitManualHeight() {
+        guard let height = Double(manualHeightText),
+              CalibrationCalculator.isPlausibleHeight(height) else {
+            return
+        }
+        finishCalibration(height: height)
+    }
+
+    /// Applies a validated height (auto-estimated or manually entered) against the
+    /// already-computed quality score. Joints that failed the per-joint gate never reach
+    /// `nimble.scaleModel` — see `CalibrationQualityScore.acceptedJoints`.
+    private func finishCalibration(height: Double) {
+        guard let score = qualityScore else { return }
         capturedHeight = height
 
-        var avgPositions: [Float] = []
-        var markerNames: [String] = []
+        guard score.isAcceptable else {
+            // Insufficient coverage or unstable tracking must not silently degrade every
+            // downstream scale factor — surface it and require a redo.
+            phase = .insufficientQuality
+            return
+        }
 
-        for mapping in JointMapping.primary {
-            var sumX: Float = 0, sumY: Float = 0, sumZ: Float = 0
-            var count = 0
+        let markerNames = score.acceptedJoints.map(\.mapping.opensimName)
+        var markerPositions: [Float] = []
+        markerPositions.reserveCapacity(score.acceptedJoints.count * 3)
+        for sample in score.acceptedJoints {
+            markerPositions.append(sample.averagePosition.x)
+            markerPositions.append(sample.averagePosition.y)
+            markerPositions.append(sample.averagePosition.z)
+        }
 
-            for frame in trackedFrames {
-                if let joint = frame.joints.first(where: { $0.id == mapping.arkitName }),
-                   joint.isTracked {
-                    sumX += joint.worldPosition.x
-                    sumY += joint.worldPosition.y
-                    sumZ += joint.worldPosition.z
-                    count += 1
-                }
-            }
+        nimble.scaleModel(height: height, markerPositions: markerPositions, markerNames: markerNames)
+        phase = .done
+    }
+}
 
-            if count > 0 {
-                markerNames.append(mapping.opensimName)
-                avgPositions.append(sumX / Float(count))
-                avgPositions.append(sumY / Float(count))
-                avgPositions.append(sumZ / Float(count))
+// MARK: - Pure calibration math (extracted for unit testing; no SwiftUI/ARKit dependency
+// beyond the plain `BodyFrame`/`TrackedJoint` value types).
+
+/// Tunable thresholds for calibration quality gating, kept as named constants so the
+/// reasoning behind each number is documented in one place.
+enum CalibrationQualityConstants {
+    /// A joint must be tracked in at least this fraction of the capture window to be
+    /// trusted as an anthropometric scale reference. 70% tolerates brief occlusion (e.g.
+    /// a wrist swinging behind the torso mid-hold) while still rejecting joints that were
+    /// mostly invisible — their few surviving samples are disproportionately likely to be
+    /// tracking-noise outliers rather than genuine T-pose positions.
+    static let minTrackedFraction: Double = 0.70
+
+    /// Absolute floor on top of the fraction gate. Protects against a short capture window
+    /// (e.g. the app was backgrounded mid-hold and only a handful of frames were recorded)
+    /// where a tiny total frame count could let a handful of noisy samples clear the 70%
+    /// bar despite being far too few to average reliably.
+    static let minTrackedSampleCount: Int = 20
+
+    /// Per-joint position variance (m²) above which the T-pose hold is considered unstable
+    /// even though the joint cleared the tracked-fraction gate — i.e. the subject moved, or
+    /// tracking was jittery. ~2cm std-dev (variance ≈ 4e-4) is generous slack above ARKit's
+    /// typical sub-millimeter jitter for a genuinely still subject.
+    static let maxAcceptablePositionVariance: Float = 4e-4
+
+    /// Plausible human floor-to-crown height range, in meters. Used as a VALIDATOR only —
+    /// anything outside this range is rejected outright, never silently replaced.
+    static let minPlausibleHeight: Double = 1.0
+    static let maxPlausibleHeight: Double = 2.5
+}
+
+/// Result of averaging one mapped joint's tracked positions across the capture window.
+struct JointCalibrationSample {
+    let mapping: JointMapping.Mapping
+    let averagePosition: SIMD3<Float>
+    let trackedCount: Int
+    let totalFrames: Int
+    /// Mean squared distance of each tracked sample from `averagePosition` — a variance
+    /// proxy. High variance during what should be a static T-pose hold means the subject
+    /// moved or tracking was unstable, independent of how many frames were tracked.
+    let positionVariance: Float
+
+    var trackedFraction: Double {
+        totalFrames > 0 ? Double(trackedCount) / Double(totalFrames) : 0
+    }
+
+    /// Whether this joint has enough tracked, temporally-spread samples to serve as a
+    /// scale reference at all. Deliberately does NOT gate on `positionVariance` — that is
+    /// reported separately in `CalibrationQualityScore` so the caller can distinguish
+    /// "not enough data" from "data present but unstable".
+    var passesTrackingGate: Bool {
+        trackedFraction >= CalibrationQualityConstants.minTrackedFraction &&
+        trackedCount >= CalibrationQualityConstants.minTrackedSampleCount
+    }
+}
+
+/// Aggregate, user-facing summary of one calibration attempt.
+struct CalibrationQualityScore {
+    let acceptedJoints: [JointCalibrationSample]
+    let rejectedJoints: [JointCalibrationSample]
+    let averageTrackedFraction: Double
+    let maxPositionVariance: Float
+
+    var rejectedJointCount: Int { rejectedJoints.count }
+    var rejectedJointNames: [String] { rejectedJoints.map(\.mapping.displayName) }
+
+    /// A calibration is acceptable only if every mapped joint cleared the per-joint gate
+    /// AND the least-stable accepted joint stayed within the variance budget. Either
+    /// failure means at least one downstream segment scale factor would be biased.
+    var isAcceptable: Bool {
+        rejectedJoints.isEmpty &&
+        maxPositionVariance <= CalibrationQualityConstants.maxAcceptablePositionVariance
+    }
+}
+
+enum CalibrationCalculator {
+    /// Averages one mapped joint's tracked positions across `frames` and computes its
+    /// tracked fraction + position variance. Returns a sample even when `trackedCount == 0`
+    /// so callers can report *why* a joint was rejected; `passesTrackingGate` is what
+    /// actually decides acceptance (see (A): joints failing the gate must not silently
+    /// contribute to `markerPositions`/`markerNames`).
+    static func averageJointPosition(mapping: JointMapping.Mapping, frames: [BodyFrame]) -> JointCalibrationSample {
+        var positions: [SIMD3<Float>] = []
+        for frame in frames {
+            if let joint = frame.joints.first(where: { $0.id == mapping.arkitName }), joint.isTracked {
+                positions.append(joint.worldPosition)
             }
         }
 
-        nimble.scaleModel(height: height, markerPositions: avgPositions, markerNames: markerNames)
-        phase = .done
+        guard !positions.isEmpty else {
+            return JointCalibrationSample(mapping: mapping, averagePosition: .zero,
+                                           trackedCount: 0, totalFrames: frames.count, positionVariance: 0)
+        }
+
+        let sum = positions.reduce(SIMD3<Float>.zero, +)
+        let average = sum / Float(positions.count)
+        let variance = positions.reduce(Float(0)) { acc, p in
+            let d = p - average
+            return acc + (d.x * d.x + d.y * d.y + d.z * d.z)
+        } / Float(positions.count)
+
+        return JointCalibrationSample(mapping: mapping, averagePosition: average,
+                                       trackedCount: positions.count, totalFrames: frames.count,
+                                       positionVariance: variance)
     }
 
-    private func estimateHeight(from frames: [BodyFrame]) -> Double {
+    /// Runs the per-joint gate across every primary mapping and produces the aggregate
+    /// quality score. `frames` should already be filtered to a coherent pose window (e.g.
+    /// frames where the root/hips joint was tracked).
+    static func evaluateCalibration(frames: [BodyFrame]) -> CalibrationQualityScore {
+        let samples = JointMapping.primary.map { averageJointPosition(mapping: $0, frames: frames) }
+        let accepted = samples.filter(\.passesTrackingGate)
+        let rejected = samples.filter { !$0.passesTrackingGate }
+
+        let averageFraction = samples.isEmpty ? 0 :
+            samples.reduce(0.0) { $0 + $1.trackedFraction } / Double(samples.count)
+        let maxVariance = accepted.map(\.positionVariance).max() ?? 0
+
+        return CalibrationQualityScore(acceptedJoints: accepted, rejectedJoints: rejected,
+                                        averageTrackedFraction: averageFraction, maxPositionVariance: maxVariance)
+    }
+
+    /// Estimates floor-to-crown height from head and ankle joints. This is a floor-to-crown
+    /// estimate, NOT a stature measurement: it ignores shoe sole thickness and any ARKit
+    /// camera pitch bias, both of which can shift the result by a few centimeters. Per-frame
+    /// samples outside the plausible range are treated as tracking glitches and excluded
+    /// from the average (data cleaning, not substitution). Returns nil if no frame yields a
+    /// plausible sample — callers must treat nil as an explicit failure (retry or manual
+    /// entry), never substitute a default.
+    static func estimateFloorToCrownHeight(from frames: [BodyFrame]) -> Double? {
         var heights: [Float] = []
 
         for frame in frames {
@@ -267,12 +511,20 @@ struct CalibrationView: View {
             }
 
             let height = h.worldPosition.y - ankleY + 0.08
-            if height > 1.0 && height < 2.5 {
+            if isPlausibleHeight(Double(height)) {
                 heights.append(height)
             }
         }
 
-        guard !heights.isEmpty else { return 1.75 }
+        guard !heights.isEmpty else { return nil }
         return Double(heights.reduce(0, +) / Float(heights.count))
+    }
+
+    /// Sanity check ONLY — a VALIDATOR, never a value substitute. A height outside this
+    /// range signals something wrong upstream (bad tracking, subject not fully framed);
+    /// the caller must prompt for retry or manual entry rather than silently using it.
+    static func isPlausibleHeight(_ height: Double) -> Bool {
+        height >= CalibrationQualityConstants.minPlausibleHeight &&
+        height <= CalibrationQualityConstants.maxPlausibleHeight
     }
 }

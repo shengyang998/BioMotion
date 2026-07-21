@@ -23,10 +23,6 @@ struct MuscleParams {
     double tendonSlackLength;      // lTs, meters
     double pennationAngleAtOptimal; // alpha0, radians
     double maxContractionVelocity; // vmax, l0/s (default 10)
-
-    // Which DOFs this muscle spans (for moment arm computation)
-    // Simplified: map from DOF name to approximate moment arm (meters)
-    std::map<std::string, double> momentArms;
 };
 
 // Millard2012 active force-length curve (normalized)
@@ -62,39 +58,32 @@ static double activeForceLengthCurve(double normFiberLength) {
 // Millard2012 force-velocity curve (normalized)
 static double forceVelocityCurve(double normFiberVelocity) {
     // normFiberVelocity: -1 (max shortening) to +1 (max lengthening)
-    // Returns force multiplier (0 at max shortening, 1 at isometric, ~1.4 at max lengthening)
+    // Returns force multiplier: 0 at max shortening, 1 at isometric,
+    // ~1.17 at max lengthening.
+    //
+    // The multiplier MUST stay ≥ 0: it feeds forceScale = F_max·f_AL·f_FV·cosα
+    // and hence A_eff = R·forceScale, so a negative value would tell the QP
+    // that activating a muscle produces torque in the direction OPPOSITE to
+    // its moment arm — the solver then recruits fast-shortening muscles
+    // backwards to cancel torque.
     double v = std::clamp(normFiberVelocity, -1.0, 1.0);
 
     if (v <= 0) {
-        // Concentric (shortening): Hill-type hyperbola
-        // Simplified: linear ramp from 0 at v=-1 to 1 at v=0
-        return 1.0 + v * (1.0 - 0.25 * v); // curved, not linear
+        // Concentric (shortening): Hill's hyperbola in normalized form,
+        //   f_FV(ṽ) = (1 + ṽ) / (1 − ṽ/A_f),  A_f = 0.25,
+        // which is Hill's (F + a)(v + b) = const rewritten with ṽ = v/v_max
+        // and a/F₀ = A_f. It is 0 at ṽ = −1, 1 at ṽ = 0, non-negative and
+        // strictly increasing throughout (df/dṽ = (1 + 1/A_f)/(1 − ṽ/A_f)² > 0).
+        const double Af = 0.25;  // Hill shape factor, Millard2012 default
+        return (1.0 + v) / (1.0 - v / Af);
     } else {
-        // Eccentric (lengthening): approaches 1.4
+        // Eccentric (lengthening): rises above isometric and stays bounded
+        // in [1, ~1.17] over ṽ ∈ (0, 1]; never negative.
         return 1.0 + v * 0.4 * (1.0 - 0.6 * v);
     }
 }
 
-// Compute muscle force given activation and normalized state
-static double muscleForce(double activation, double normLength, double normVelocity,
-                          const MuscleParams& params) {
-    double fAL = activeForceLengthCurve(normLength);
-    double fFV = forceVelocityCurve(normVelocity);
-    double cosAlpha = std::cos(params.pennationAngleAtOptimal);
-
-    return activation * params.maxIsometricForce * fAL * fFV * cosAlpha;
-}
-
-// Maximum force a muscle can produce at current state (when a=1)
-static double maxMuscleForceAtState(double normLength, double normVelocity,
-                                    const MuscleParams& params) {
-    return muscleForce(1.0, normLength, normVelocity, params);
-}
-
 } // namespace muscle
-
-// Forward declaration
-static void assignMomentArmsFromName(muscle::MuscleParams& m);
 
 // MARK: - .osim Muscle Parser
 
@@ -153,12 +142,6 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
             auto* vel = muscleEl->FirstChildElement("max_contraction_velocity");
             if (vel && vel->GetText()) params.maxContractionVelocity = std::stod(vel->GetText());
 
-            // Legacy path uses a hardcoded name-based moment arm table.
-            // Production solver replaces this with real FK moment arms via
-            // MomentArmComputer, so this only affects the legacy path that's
-            // no longer called from NimbleEngine.
-            assignMomentArmsFromName(params);
-
             if (params.maxIsometricForce > 0 && params.optimalFiberLength > 0) {
                 muscles.push_back(params);
             }
@@ -166,97 +149,6 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
     }
 
     return muscles;
-}
-
-// Heuristic moment arm assignment based on muscle name
-// These are approximate values from the biomechanics literature
-static void assignMomentArmsFromName(muscle::MuscleParams& m) {
-    const std::string& n = m.name;
-
-    // Hip flexors/extensors
-    if (n.find("psoas") != std::string::npos || n.find("iliacus") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_flexion" + side] = 0.03;
-    }
-    if (n.find("glmax") != std::string::npos || n.find("glmed") != std::string::npos || n.find("glmin") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_flexion" + side] = -0.05;
-        m.momentArms["hip_adduction" + side] = -0.03;
-    }
-    // Rectus femoris (hip flexor + knee extensor)
-    if (n.find("recfem") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_flexion" + side] = 0.04;
-        m.momentArms["knee_angle" + side] = 0.04;
-    }
-    // Hamstrings (hip extensor + knee flexor)
-    if (n.find("semimem") != std::string::npos || n.find("semiten") != std::string::npos ||
-        n.find("bflh") != std::string::npos || n.find("bfsh") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_flexion" + side] = -0.05;
-        if (n.find("bfsh") == std::string::npos) // bfsh is short head, only crosses knee
-            m.momentArms["hip_flexion" + side] = -0.05;
-        m.momentArms["knee_angle" + side] = -0.03;
-    }
-    // Quadriceps (knee extensors)
-    if (n.find("vasint") != std::string::npos || n.find("vaslat") != std::string::npos || n.find("vasmed") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["knee_angle" + side] = 0.04;
-    }
-    // Gastrocnemius (knee flexor + ankle plantarflexor)
-    if (n.find("gaslat") != std::string::npos || n.find("gasmed") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["knee_angle" + side] = -0.02;
-        m.momentArms["ankle_angle" + side] = -0.05;
-    }
-    // Soleus (ankle plantarflexor)
-    if (n.find("soleus") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["ankle_angle" + side] = -0.05;
-    }
-    // Tibialis anterior (ankle dorsiflexor)
-    if (n.find("tibant") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["ankle_angle" + side] = 0.04;
-    }
-    // Hip adductors
-    if (n.find("addlong") != std::string::npos || n.find("addbrev") != std::string::npos || n.find("addmag") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_adduction" + side] = 0.04;
-        m.momentArms["hip_flexion" + side] = 0.02;
-    }
-    // Tensor fasciae latae
-    if (n.find("tfl") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_flexion" + side] = 0.03;
-        m.momentArms["hip_adduction" + side] = -0.03;
-    }
-    // Piriformis and external rotators
-    if (n.find("piri") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_rotation" + side] = -0.03;
-    }
-    // Lumbar extensors
-    if (n.find("ercspn") != std::string::npos || n.find("intobl") != std::string::npos || n.find("extobl") != std::string::npos) {
-        m.momentArms["lumbar_extension"] = -0.05;
-    }
-    // Peroneus muscles (ankle evertors)
-    if (n.find("perlong") != std::string::npos || n.find("perbrev") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["ankle_angle" + side] = -0.02;
-    }
-    // Gracilis
-    if (n.find("grac") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_adduction" + side] = 0.03;
-        m.momentArms["knee_angle" + side] = -0.02;
-    }
-    // Sartorius
-    if (n.find("sart") != std::string::npos) {
-        std::string side = (n.back() == 'r') ? "_r" : "_l";
-        m.momentArms["hip_flexion" + side] = 0.03;
-        m.momentArms["knee_angle" + side] = -0.02;
-    }
 }
 
 // MARK: - MuscleActivationResult
@@ -267,13 +159,17 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
     NSArray<NSNumber *> *_forces;
     double _solveTimeMs;
     BOOL _converged;
+    double _torqueResidualNm;
+    double _relativeTorqueResidual;
 }
 
 - (instancetype)initWithNames:(NSArray<NSString *> *)names
                    activations:(NSArray<NSNumber *> *)activations
                         forces:(NSArray<NSNumber *> *)forces
                    solveTimeMs:(double)solveTimeMs
-                     converged:(BOOL)converged {
+                     converged:(BOOL)converged
+              torqueResidualNm:(double)torqueResidualNm
+        relativeTorqueResidual:(double)relativeTorqueResidual {
     self = [super init];
     if (self) {
         _muscleNames = [names copy];
@@ -281,6 +177,8 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
         _forces = [forces copy];
         _solveTimeMs = solveTimeMs;
         _converged = converged;
+        _torqueResidualNm = torqueResidualNm;
+        _relativeTorqueResidual = relativeTorqueResidual;
     }
     return self;
 }
@@ -290,24 +188,37 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
 - (NSArray<NSNumber *> *)forces { return _forces; }
 - (double)solveTimeMs { return _solveTimeMs; }
 - (BOOL)converged { return _converged; }
+- (double)torqueResidualNm { return _torqueResidualNm; }
+- (double)relativeTorqueResidual { return _relativeTorqueResidual; }
 
 @end
 
 // MARK: - MuscleSolver
 
+// Lower bound on every activation. Skeletal muscle is never electrically
+// silent under postural load — stance muscles hold roughly 2-5% activation
+// at rest — so a floor of 0.02 keeps the optimizer inside the physiological
+// range instead of driving redundant muscles to exactly zero.
+// This is an optimizer bound, not a display choice; see `minActivation`.
+static const double kMuscleMinActivation = 0.02;
+
 @implementation MuscleSolver {
     std::vector<muscle::MuscleParams> _muscles;
-    OSQPSolver* _solver;
-    BOOL _solverInitialized;
 
     // Previous activations for warm starting
     std::vector<double> _prevActivations;
 
-    // Previous-frame musculotendon lengths, used for finite-differencing
-    // dL_MT/dt to drive the force-velocity curve in the production solver.
+    // Previous-frame musculotendon lengths. Only the wall-clock fallback
+    // path (caller supplied no joint velocities) finite-differences these;
+    // they are kept up to date on every frame so the fallback stays usable
+    // if velocities disappear mid-stream.
     // Keyed by muscle name (insertion order from the caller) so the caller's
     // muscle ordering can change between frames without corrupting history.
     std::map<std::string, double> _prevMuscleLengths;
+
+    // Set once the first time the wall-clock fallback is taken, so the
+    // warning is not emitted every frame.
+    BOOL _loggedVelocityFallback;
 
     // Persistent OSQP workspace for the production solver. Kept alive
     // across frames so `osqp_update_data_vec` / `osqp_update_data_mat` can
@@ -331,18 +242,14 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _solver = nullptr;
-        _solverInitialized = NO;
         _realSolver = nullptr;
         _realSolverNMuscles = 0;
+        _loggedVelocityFallback = NO;
     }
     return self;
 }
 
 - (void)dealloc {
-    if (_solver) {
-        osqp_cleanup(_solver);
-    }
     if (_realSolver) {
         osqp_cleanup(_realSolver);
     }
@@ -367,196 +274,8 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
     return names;
 }
 
-- (nullable MuscleActivationResult *)solveWithJointTorques:(NSArray<NSNumber *> *)jointTorques
-                                               jointAngles:(NSArray<NSNumber *> *)jointAngles
-                                           jointVelocities:(NSArray<NSNumber *> *)jointVelocities
-                                                  dofNames:(NSArray<NSString *> *)dofNames {
-    if (_muscles.empty()) return nil;
-
-    double startTime = CACurrentMediaTime();
-
-    NSInteger nMuscles = (NSInteger)_muscles.size();
-    NSInteger nDOFs = dofNames.count;
-
-    // Build DOF name to index map
-    std::map<std::string, int> dofIndex;
-    for (NSInteger i = 0; i < nDOFs; i++) {
-        dofIndex[std::string([dofNames[i] UTF8String])] = (int)i;
-    }
-
-    // Compute max force at current state for each muscle (F_max * f_AL * f_FV * cos(alpha))
-    // For now, use nominal values (normalized length = 1, velocity = 0)
-    std::vector<double> maxForceAtState(nMuscles);
-    for (NSInteger i = 0; i < nMuscles; i++) {
-        // Simplified: assume normalized fiber length ~1.0 and velocity ~0
-        // In a full implementation, we'd compute actual fiber length from skeleton pose
-        double fAL = muscle::activeForceLengthCurve(1.0);
-        double fFV = muscle::forceVelocityCurve(0.0);
-        double cosAlpha = std::cos(_muscles[i].pennationAngleAtOptimal);
-        maxForceAtState[i] = _muscles[i].maxIsometricForce * fAL * fFV * cosAlpha;
-    }
-
-    // Build the constraint matrix A and bounds
-    // Constraint: R * diag(Fmax) * a = tau  (for each DOF)
-    // Bounds: 0.01 <= a <= 1.0
-
-    // Find which DOFs have muscles crossing them
-    std::vector<int> activeDOFs;
-    for (NSInteger d = 0; d < nDOFs; d++) {
-        std::string dofName = std::string([dofNames[d] UTF8String]);
-        bool hasMuscle = false;
-        for (const auto& m : _muscles) {
-            if (m.momentArms.count(dofName)) { hasMuscle = true; break; }
-        }
-        if (hasMuscle) activeDOFs.push_back((int)d);
-    }
-
-    if (activeDOFs.empty()) return nil;
-
-    NSInteger nConstraints = (NSInteger)activeDOFs.size();
-    NSInteger nTotal = nConstraints + 2 * nMuscles; // equality + upper + lower bounds
-
-    // Build sparse A matrix in CSC format
-    // A = [R*diag(Fmax); I; -I] where R is moment arm matrix
-    // But OSQP uses: l <= Ax <= u format, so we stack:
-    // Row 0..nConstraints-1: moment arm constraints (equality: l=u=tau)
-    // Row nConstraints..nConstraints+nMuscles-1: upper bound (a <= 1)
-
-    // For simplicity, use dense-to-sparse conversion
-    // Matrix A has nTotal rows, nMuscles columns
-    std::vector<double> A_dense(nTotal * nMuscles, 0.0);
-
-    // Moment arm rows
-    for (NSInteger c = 0; c < nConstraints; c++) {
-        int dofIdx = activeDOFs[c];
-        std::string dofName = std::string([dofNames[dofIdx] UTF8String]);
-
-        for (NSInteger m = 0; m < nMuscles; m++) {
-            auto it = _muscles[m].momentArms.find(dofName);
-            if (it != _muscles[m].momentArms.end()) {
-                // A[c, m] = moment_arm * max_force_at_state
-                A_dense[c + m * nTotal] = it->second * maxForceAtState[m];
-            }
-        }
-    }
-
-    // Identity rows for upper bounds (a <= 1)
-    for (NSInteger m = 0; m < nMuscles; m++) {
-        A_dense[(nConstraints + m) + m * nTotal] = 1.0;
-    }
-
-    // Convert to CSC
-    std::vector<OSQPInt> A_col_ptr(nMuscles + 1, 0);
-    std::vector<OSQPInt> A_row_idx;
-    std::vector<OSQPFloat> A_val;
-
-    for (NSInteger col = 0; col < nMuscles; col++) {
-        A_col_ptr[col] = (OSQPInt)A_row_idx.size();
-        for (NSInteger row = 0; row < nTotal; row++) {
-            double v = A_dense[row + col * nTotal];
-            if (std::abs(v) > 1e-12) {
-                A_row_idx.push_back((OSQPInt)row);
-                A_val.push_back(v);
-            }
-        }
-    }
-    A_col_ptr[nMuscles] = (OSQPInt)A_row_idx.size();
-
-    // P matrix: identity (min sum(a^2))
-    std::vector<OSQPInt> P_col_ptr(nMuscles + 1);
-    std::vector<OSQPInt> P_row_idx(nMuscles);
-    std::vector<OSQPFloat> P_val(nMuscles, 1.0);
-    for (NSInteger i = 0; i < nMuscles; i++) {
-        P_col_ptr[i] = (OSQPInt)i;
-        P_row_idx[i] = (OSQPInt)i;
-    }
-    P_col_ptr[nMuscles] = (OSQPInt)nMuscles;
-
-    // q vector: zeros (no linear cost)
-    std::vector<OSQPFloat> q(nMuscles, 0.0);
-
-    // Bounds
-    std::vector<OSQPFloat> l(nTotal), u(nTotal);
-    // Equality constraints (moment arm = tau)
-    for (NSInteger c = 0; c < nConstraints; c++) {
-        int dofIdx = activeDOFs[c];
-        double tau = [jointTorques[dofIdx] doubleValue];
-        l[c] = tau;
-        u[c] = tau;
-    }
-    // Activation bounds: 0.01 <= a <= 1.0
-    for (NSInteger m = 0; m < nMuscles; m++) {
-        l[nConstraints + m] = 0.01;
-        u[nConstraints + m] = 1.0;
-    }
-
-    // Setup OSQP
-    OSQPCscMatrix P_csc, A_csc;
-    OSQPCscMatrix_set_data(&P_csc, (OSQPInt)nMuscles, (OSQPInt)nMuscles,
-                 (OSQPInt)P_val.size(), P_val.data(), P_row_idx.data(), P_col_ptr.data());
-    OSQPCscMatrix_set_data(&A_csc, (OSQPInt)nTotal, (OSQPInt)nMuscles,
-                 (OSQPInt)A_val.size(), A_val.data(), A_row_idx.data(), A_col_ptr.data());
-
-    // Cleanup previous solver if problem size changed
-    if (_solver) {
-        osqp_cleanup(_solver);
-        _solver = nullptr;
-    }
-
-    OSQPSettings settings;
-    osqp_set_default_settings(&settings);
-    settings.max_iter = 200;
-    settings.eps_abs = 1e-3;
-    settings.eps_rel = 1e-3;
-    settings.verbose = false;
-    settings.warm_starting = true;
-    settings.polishing = false;
-
-    OSQPInt exitflag = osqp_setup(&_solver, &P_csc, q.data(), &A_csc,
-                                   l.data(), u.data(), (OSQPInt)nTotal, (OSQPInt)nMuscles,
-                                   &settings);
-    if (exitflag != 0 || !_solver) {
-        NSLog(@"MuscleSolver: OSQP setup failed with code %d", (int)exitflag);
-        return nil;
-    }
-
-    // Warm start with previous activations
-    if (_prevActivations.size() == (size_t)nMuscles) {
-        osqp_warm_start(_solver, _prevActivations.data(), nullptr);
-    }
-
-    // Solve
-    osqp_solve(_solver);
-
-    BOOL converged = (_solver->info->status_val == OSQP_SOLVED ||
-                      _solver->info->status_val == OSQP_SOLVED_INACCURATE);
-
-    // Extract results
-    NSMutableArray<NSString *> *names = [NSMutableArray arrayWithCapacity:nMuscles];
-    NSMutableArray<NSNumber *> *activations = [NSMutableArray arrayWithCapacity:nMuscles];
-    NSMutableArray<NSNumber *> *forces = [NSMutableArray arrayWithCapacity:nMuscles];
-
-    for (NSInteger i = 0; i < nMuscles; i++) {
-        double a = converged ? std::clamp(_solver->solution->x[i], 0.01, 1.0) : 0.01;
-        double f = a * maxForceAtState[i];
-
-        [names addObject:[NSString stringWithUTF8String:_muscles[i].name.c_str()]];
-        [activations addObject:@(a)];
-        [forces addObject:@(f)];
-
-        _prevActivations[i] = a;
-    }
-
-    double solveTime = (CACurrentMediaTime() - startTime) * 1000.0;
-
-    osqp_cleanup(_solver);
-    _solver = nullptr;
-
-    return [[MuscleActivationResult alloc] initWithNames:names
-                                             activations:activations
-                                                  forces:forces
-                                             solveTimeMs:solveTime
-                                               converged:converged];
+- (double)minActivation {
+    return kMuscleMinActivation;
 }
 
 // MARK: - Production solver (real moment arms, soft equality, real Hill)
@@ -589,18 +308,30 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
         optimalFiberLengths.count != (NSUInteger)nMuscles ||
         tendonSlackLengths.count != (NSUInteger)nMuscles ||
         pennationAngles.count != (NSUInteger)nMuscles ||
-        jointTorques.count != (NSUInteger)nDOFs ||
-        jointVelocities.count != (NSUInteger)nDOFs) {
+        jointTorques.count != (NSUInteger)nDOFs) {
         NSLog(@"MuscleSolver: input array size mismatch");
+        return nil;
+    }
+    // An EMPTY jointVelocities array is legal and selects the wall-clock
+    // fallback below; any other wrong length is a caller bug.
+    if (jointVelocities.count != 0 && jointVelocities.count != (NSUInteger)nDOFs) {
+        NSLog(@"MuscleSolver: jointVelocities has wrong size (%lu vs %ld)",
+              (unsigned long)jointVelocities.count, (long)nDOFs);
         return nil;
     }
 
     double startTime = CACurrentMediaTime();
 
+    // R (nMuscles × nDOFs, row-major): R[m, j] at flat index (m * nDOFs + j).
+    // Needed both for the fiber-velocity identity below and for the QP.
+    auto R = [&](NSInteger m, NSInteger j) -> double {
+        return [momentArms[m * nDOFs + j] doubleValue];
+    };
+
     // --- 1. Per-muscle Hill state (force-length + force-velocity) ---
     // L_fiber = (L_MT - L_Ts) / cos(α₀)        (rigid-tendon approximation)
     // L̃      = L_fiber / l_opt                (normalized)
-    // dL_MT/dt via finite difference from previous frame
+    // dL_MT/dt = −Rᵀ·dq                        (analytic, see below)
     // V_max   = 10 · l_opt                     (default from Millard2012)
     // Ṽ       = (dL_MT/dt) / V_max              (approximation: ignores tendon velocity)
     //
@@ -611,6 +342,35 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
     // full equilibrium-tendon model requires solving an implicit equation
     // per muscle per frame, which is too slow for realtime — rigid-tendon
     // is the standard approximation for online muscle optimization.
+    //
+    // SIGN CONVENTION for the velocity identity. R here is the OpenSim
+    // moment arm, R[m, j] = −∂L_MT_m/∂q_j (that minus sign is applied by
+    // MomentArmComputer, and it is what makes the torque relation used in
+    // step 2, τ_j = Σ_m R[m, j]·F_m, correct by virtual work). Differentiating
+    // L_MT along the trajectory therefore gives
+    //     dL_MT_m/dt = Σ_j (∂L_MT_m/∂q_j)·dq_j = −Σ_j R[m, j]·dq_j,
+    // i.e. dL_MT/dt = −Rᵀ·dq. Positive R with positive dq means the joint is
+    // rotating the way the muscle pulls it, so the muscle SHORTENS.
+    //
+    // This replaces finite-differencing L_MT against the previous solved
+    // frame: that estimate divided by a wall-clock dt that jitters whenever
+    // a frame is dropped, and disagreed with the Savitzky-Golay filter that
+    // produced dq in the first place. Both derivative pipelines now describe
+    // the same kinematic event.
+
+    const BOOL haveJointVelocities = (jointVelocities.count == (NSUInteger)nDOFs);
+    std::vector<double> dq;
+    if (haveJointVelocities) {
+        dq.resize(nDOFs);
+        for (NSInteger j = 0; j < nDOFs; j++) {
+            dq[j] = [jointVelocities[j] doubleValue];
+        }
+    } else if (!_loggedVelocityFallback) {
+        _loggedVelocityFallback = YES;
+        NSLog(@"MuscleSolver: no joint velocities supplied — falling back to "
+              @"wall-clock finite differencing of L_MT for fiber velocity "
+              @"(sensitive to dropped frames). Logged once.");
+    }
 
     std::vector<double> forceScale(nMuscles);  // F_max * f_AL * f_FV * cos(α)
     std::vector<double> normFiberLength(nMuscles);
@@ -641,16 +401,27 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
         // (early ARKit frames can produce nonsense poses).
         Ltilde = std::max(0.3, std::min(1.8, Ltilde));
 
-        // Finite-difference L_MT for velocity. First frame → assume 0.
-        double Vtilde = 0.0;
+        // dL_MT/dt, m/s along the muscle path.
+        double dLdt = 0.0;
         std::string name = std::string([muscleNames[m] UTF8String]);
-        auto it = _prevMuscleLengths.find(name);
-        if (it != _prevMuscleLengths.end() && dt > 1e-5) {
-            double dLdt = (LMT - it->second) / dt;  // m/s along muscle path
-            double Vmax = 10.0 * lopt;              // Millard default
-            Vtilde = dLdt / std::max(Vmax, 1e-6);
+        if (haveJointVelocities) {
+            double RtDq = 0.0;
+            for (NSInteger j = 0; j < nDOFs; j++) {
+                RtDq += R(m, j) * dq[j];
+            }
+            dLdt = -RtDq;
+        } else {
+            // Fallback: finite-difference against the previous solved frame.
+            // First frame → assume 0.
+            auto it = _prevMuscleLengths.find(name);
+            if (it != _prevMuscleLengths.end() && dt > 1e-5) {
+                dLdt = (LMT - it->second) / dt;
+            }
         }
         _prevMuscleLengths[name] = LMT;
+
+        double Vmax = 10.0 * lopt;              // Millard default
+        double Vtilde = dLdt / std::max(Vmax, 1e-6);
         // Clamp to avoid edge singularities in Hill curves.
         Vtilde = std::max(-1.0, std::min(1.0, Vtilde));
 
@@ -672,13 +443,6 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
     // DOFs with no muscles (e.g. upper body in Rajagopal2016) are ignored.
     // Unmuscled DOFs are not the muscle solver's responsibility; ID
     // already published the torques there.
-
-    // Load R (nMuscles × nDOFs, row-major) into dense storage as a
-    // per-column access pattern for the QP construction.
-    // R[m, j] at flat index (m * nDOFs + j).
-    auto R = [&](NSInteger m, NSInteger j) -> double {
-        return [momentArms[m * nDOFs + j] doubleValue];
-    };
 
     // Compute effective R*forceScale as a nDOFs × nMuscles matrix in
     // column-major for OSQP ingestion.
@@ -733,10 +497,10 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
                       + lambda * Aeff.transpose() * Aeff;
     Eigen::VectorXd g = -lambda * Aeff.transpose() * tauEff;
 
-    // Bounds: 0.02 ≤ a ≤ 1. aMin=0.02 reflects physiological postural tone
-    // (stance muscles maintain ~2-5% activation at rest); this also gives
-    // the colormap a visible floor instead of bottoming out at black-blue.
-    const double aMin = 0.02;
+    // Bounds: aMin ≤ a ≤ 1. aMin reflects physiological postural tone —
+    // stance muscles maintain ~2-5% activation at rest, so zero activation
+    // is not a state a loaded muscle occupies.
+    const double aMin = kMuscleMinActivation;
     const double aMax = 1.0;
 
     // --- 3. OSQP setup or in-place update (workspace reuse) ---
@@ -874,6 +638,7 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
     NSMutableArray<NSNumber *> *outForces =
         [NSMutableArray arrayWithCapacity:nMuscles];
 
+    Eigen::VectorXd aOut(nMuscles);
     for (NSInteger m = 0; m < nMuscles; m++) {
         double a = converged
             ? std::clamp((double)_realSolver->solution->x[m], aMin, aMax)
@@ -883,7 +648,22 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
         [outActivations addObject:@(a)];
         [outForces addObject:@(f)];
         _prevActivations[m] = a;
+        aOut(m) = a;
     }
+
+    // --- 4. Torque residual of the solution we are actually returning ---
+    // The τ match is a penalty term, not a constraint, so `converged` alone
+    // cannot distinguish "muscles reproduce the ID torques" from "the ‖a‖²
+    // regularizer won and the torques were abandoned". Evaluate the residual
+    // on the post-clamp activations, over the active (muscled) DOFs only —
+    // those are the rows the objective actually contains.
+    const Eigen::VectorXd residual = Aeff * aOut - tauEff;
+    const double residualNm = residual.norm();
+    // The 1e-6 Nm floor only prevents a division by zero; it does not make
+    // the ratio meaningful when ‖τ‖ is itself near zero (the aMin floor
+    // guarantees some residual torque there). On such frames read
+    // torqueResidualNm instead.
+    const double relativeResidual = residualNm / std::max(tauEff.norm(), 1e-6);
 
     double solveTime = (CACurrentMediaTime() - startTime) * 1000.0;
 
@@ -892,7 +672,9 @@ static void assignMomentArmsFromName(muscle::MuscleParams& m) {
                                              activations:outActivations
                                                   forces:outForces
                                              solveTimeMs:solveTime
-                                               converged:converged];
+                                               converged:converged
+                                        torqueResidualNm:residualNm
+                                  relativeTorqueResidual:relativeResidual];
 }
 
 @end
