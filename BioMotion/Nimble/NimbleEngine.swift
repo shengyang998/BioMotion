@@ -281,6 +281,16 @@ final class NimbleEngine: ObservableObject {
             var centerTimestamp = frame.timestamp
             var sgWarmedUp = true
 
+            // EVERY filter must be pushed on EVERY frame. Bailing out of this
+            // loop on the first not-yet-warm filter starves all the later ones:
+            // filter[k] would only start receiving samples once filters 0..<k
+            // were already full, so warm-up would need 9 + 8*(numDOFs-1) frames
+            // — about 1350 for this model — instead of 9.
+            //
+            // The live ARKit path hid that: at 60 fps it grinds through in ~22 s
+            // of tracking. The offline path pushes exactly 9 frames per clip and
+            // so never warmed up at all, which is why an imported photo reported
+            // "Pose only (warming up)" and 0 frames with muscle data forever.
             for i in 0..<numDOFs {
                 let q = ikResult.jointAngles[i].doubleValue
                 if let out = self.dofFilters[i].push(q, timestamp: frame.timestamp) {
@@ -290,9 +300,12 @@ final class NimbleEngine: ObservableObject {
                     centerTimestamp = out.center
                 } else {
                     sgWarmedUp = false
-                    break
                 }
             }
+            // A partially-filled window would leave the smoothed arrays shorter
+            // than numDOFs; every consumer below is behind the `sgWarmedUp`
+            // guard, so they only ever see complete ones.
+            if smoothedQ.count != numDOFs { sgWarmedUp = false }
 
             // Build the "raw" IK output (used for live UI skeleton overlay).
             var liveAngles: [String: Double] = [:]
