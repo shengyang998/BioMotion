@@ -24,24 +24,18 @@ struct OfflinePlaybackView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                OfflineSceneView(frame: resultStore.selectedFrame, showMuscles: showMuscles)
-                    .ignoresSafeArea(edges: .top)
-
+                // Two views of the same solve, because they answer different
+                // questions. The photo overlay answers "is this pose right",
+                // which the 3-D scene cannot — a skeleton in an empty scene has
+                // nothing to be wrong against. The 3-D scene answers "what does
+                // this posture look like from another angle", which a single
+                // photo cannot.
                 if showSourceImage, let frame = resultStore.selectedFrame {
-                    VStack {
-                        HStack {
-                            Image(uiImage: frame.sourceImage)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 120)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.5)))
-                                .padding(8)
-                                .shadow(radius: 4)
-                            Spacer()
-                        }
-                        Spacer()
-                    }
+                    PhotoOverlayView(frame: frame)
+                        .ignoresSafeArea(edges: .top)
+                } else {
+                    OfflineSceneView(frame: resultStore.selectedFrame, showMuscles: showMuscles)
+                        .ignoresSafeArea(edges: .top)
                 }
 
                 VStack {
@@ -112,13 +106,19 @@ struct OfflinePlaybackView: View {
             HStack {
                 Text(frameLabel).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button { showMuscles.toggle() } label: {
-                    Image(systemName: "figure.run")
-                        .foregroundStyle(showMuscles ? Color.green : Color.gray)
+                // Muscles only exist in the 3-D scene, so the toggle is
+                // meaningless while the photo overlay is showing.
+                if !showSourceImage {
+                    Button { showMuscles.toggle() } label: {
+                        Image(systemName: "figure.run")
+                            .foregroundStyle(showMuscles ? Color.green : Color.gray)
+                    }
                 }
                 Button { showSourceImage.toggle() } label: {
-                    Image(systemName: "photo")
-                        .foregroundStyle(showSourceImage ? Color.blue : Color.gray)
+                    Label(showSourceImage ? "Photo" : "3D",
+                          systemImage: showSourceImage ? "photo" : "rotate.3d")
+                        .font(.caption)
+                        .foregroundStyle(Color.blue)
                 }
             }
             .padding(.horizontal)

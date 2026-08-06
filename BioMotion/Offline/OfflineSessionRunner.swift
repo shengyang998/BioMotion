@@ -204,6 +204,7 @@ final class OfflineSessionRunner: ObservableObject {
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed(error.localizedDescription), usedFallbackBBox: false,
+                camT: nil,
                 bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false))
             return false
         }
@@ -216,6 +217,7 @@ final class OfflineSessionRunner: ObservableObject {
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed("retarget produced no usable joints"), usedFallbackBBox: estimate.usedFallbackBBox,
+                camT: estimate.camT,
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false))
             return false
         }
@@ -248,6 +250,7 @@ final class OfflineSessionRunner: ObservableObject {
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .nimbleTimeout, usedFallbackBBox: estimate.usedFallbackBBox,
+                camT: estimate.camT,
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false))
             return false
         }
@@ -258,7 +261,8 @@ final class OfflineSessionRunner: ObservableObject {
         resultStore.append(OfflineResultStore.FrameResult(
             id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
             status: .success, usedFallbackBBox: estimate.usedFallbackBBox,
-            bodyFrame: bodyFrame, ikResult: nil, idResult: nil,
+            camT: estimate.camT,
+                bodyFrame: bodyFrame, ikResult: nil, idResult: nil,
             muscleResult: nil, isStaticHoldEstimate: false))
         routeBiomechanicsToOwningFrame()
         return true

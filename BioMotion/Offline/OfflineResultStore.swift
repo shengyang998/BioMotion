@@ -38,6 +38,10 @@ final class OfflineResultStore: ObservableObject {
         // Savitzky-Golay filter in NimbleEngine needs 9 pushes before ANY
         // muscle/ID output exists (see OfflineSessionRunner), so early frames in
         // a clip legitimately show pose-only results.
+        /// Camera translation the model predicted for this frame. Needed to
+        /// project the 3-D joints back onto `sourceImage` through the model's
+        /// own camera — see `MHRRetarget.projectToImage`.
+        let camT: SIMD3<Float>?
         let bodyFrame: BodyFrame?
         let ikResult: NimbleEngine.IKOutput?
         let idResult: NimbleEngine.IDOutput?
@@ -84,6 +88,7 @@ final class OfflineResultStore: ObservableObject {
             timestamp: existing.timestamp,
             status: muscleResult != nil ? .success : existing.status,
             usedFallbackBBox: existing.usedFallbackBBox,
+            camT: existing.camT,
             bodyFrame: existing.bodyFrame,
             ikResult: ikResult ?? existing.ikResult,
             idResult: idResult ?? existing.idResult,

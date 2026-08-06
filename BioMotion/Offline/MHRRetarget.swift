@@ -391,6 +391,36 @@ enum MHRRetarget {
         return leg + trunk + neck + skull + ankleToSole
     }
 
+    // MARK: - Projection back onto the source image
+
+    /// Projects an MHR-native (Y-up) position into ORIGINAL source-image pixels,
+    /// through the same pinhole camera the model itself assumed.
+    ///
+    /// This is what makes a skeleton overlay comparable to the photo: it is not
+    /// a fitted alignment, it is the model's own projection, so any visible gap
+    /// between a drawn joint and the corresponding body part in the photo IS the
+    /// model's error rather than a display artefact.
+    ///
+    /// The camera is the default `prepare_batch.py` fallback that
+    /// `SAM3DPoseEstimator` also feeds the network: focal length
+    /// `sqrt(w^2 + h^2)` with the principal point at the image centre. MHR-native
+    /// is Y-up / Z-toward-camera, so Y and Z flip to reach the OpenCV-style
+    /// camera frame before `cam_t` is added.
+    ///
+    /// Returns nil for points at or behind the camera plane, which would
+    /// otherwise project to a mirrored point in front of it.
+    static func projectToImage(_ p: SIMD3<Float>,
+                               camT: SIMD3<Float>,
+                               imageSize: CGSize) -> CGPoint? {
+        let w = Float(imageSize.width), h = Float(imageSize.height)
+        guard w > 0, h > 0 else { return nil }
+        let focal = (w * w + h * h).squareRoot()
+        let cam = SIMD3<Float>(p.x, -p.y, -p.z) + camT
+        guard cam.z > 1e-4 else { return nil }
+        return CGPoint(x: CGFloat(focal * cam.x / cam.z + w / 2),
+                       y: CGFloat(focal * cam.y / cam.z + h / 2))
+    }
+
     // MARK: - Self-check
 
     /// Returns the rows whose ARKit id / OpenSim marker name disagree with

@@ -15,6 +15,7 @@
 		230B1F67B40CFD95799F8811 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 137569E8BB6168170913C1FE /* ContentView.swift */; };
 		235F9CF6080D2CE0E058DA15 /* MotionRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C37A4A07CA2D87A4DFFF4348 /* MotionRecorder.swift */; };
 		29D930260612AA4E66B15B3B /* SAM3DPoseEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7AB824FE7872485E9CEBFC3 /* SAM3DPoseEstimator.swift */; };
+		2C7506D9DF3193772049F56A /* PhotoOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B44E86911B6D34B6D8EEBA /* PhotoOverlayView.swift */; };
 		32F526B0CAC7BDF4677DC5BF /* BodyJointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C64A42A229077EC3CF47FD /* BodyJointTests.swift */; };
 		39A5BD9ECC7553A6C9F6E556 /* OneEuroFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5E8807D42FF44784FCF22F /* OneEuroFilter.swift */; };
 		3C1C3640AC8393979931F78F /* SAM3DBodyPose.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = E6093CC252166ACAAC0332BB /* SAM3DBodyPose.mlpackage */; };
@@ -85,6 +86,7 @@
 		640BA97ED28345730C5FFFB8 /* BioMotionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BioMotionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		675A6A481192DE8527711A02 /* BodyTrackingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyTrackingSession.swift; sourceTree = "<group>"; };
 		6BCF8A0B85EADE0EACE2E91D /* NimbleEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NimbleEngine.swift; sourceTree = "<group>"; };
+		76B44E86911B6D34B6D8EEBA /* PhotoOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoOverlayView.swift; sourceTree = "<group>"; };
 		7CC0C79CED5BDA3ECDCC98F2 /* MomentArmComputer.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = MomentArmComputer.mm; sourceTree = "<group>"; };
 		809295CEBE3A3EE0C68051A9 /* OfflineImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineImportView.swift; sourceTree = "<group>"; };
 		85CB2DC650F7D9EA6AA72EF6 /* MotionRecorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionRecorderTests.swift; sourceTree = "<group>"; };
@@ -201,6 +203,7 @@
 				371D7852068443A4209F4461 /* OfflinePlaybackView.swift */,
 				A01F5A8E43E144EF7C64ED03 /* OfflineResultStore.swift */,
 				1B380AE0D8895B17AF002FC4 /* OfflineSessionRunner.swift */,
+				76B44E86911B6D34B6D8EEBA /* PhotoOverlayView.swift */,
 				548ECA121A57E096D1964D0B /* README.md */,
 				C7AB824FE7872485E9CEBFC3 /* SAM3DPoseEstimator.swift */,
 			);
@@ -393,6 +396,7 @@
 				FD1FE9596B21A15A5811F83C /* OfflineResultStore.swift in Sources */,
 				F6208E01FDB4179EEF721B39 /* OfflineSessionRunner.swift in Sources */,
 				39A5BD9ECC7553A6C9F6E556 /* OneEuroFilter.swift in Sources */,
+				2C7506D9DF3193772049F56A /* PhotoOverlayView.swift in Sources */,
 				3C1C3640AC8393979931F78F /* SAM3DBodyPose.mlpackage in Sources */,
 				29D930260612AA4E66B15B3B /* SAM3DPoseEstimator.swift in Sources */,
 				EFDB7E94C87B175ECC83B78E /* SavitzkyGolayFilter.swift in Sources */,
@@ -483,7 +487,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
@@ -693,7 +697,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
