@@ -103,6 +103,33 @@ final class OfflineMuscleChainTests: XCTestCase {
         // asked to match, and muscles slam into their bounds.
         print("CHAIN-METRIC groundHeightY=\(bridge.groundHeightY)")
 
+        // Where the torque actually lands, and whether the pose is even in
+        // static equilibrium. The edge padding replays one pose, so dq/ddq are
+        // ~0 and tau reduces to gravity minus GRF. A large root residual means
+        // no set of joint torques can hold this pose against gravity with the
+        // GRF we inferred — i.e. the pose is not statically balanced, and every
+        // magnitude downstream of it is meaningless regardless of the solver.
+        let ranked = zip(ik.dofNames, torqueMags).sorted { $0.1 > $1.1 }.prefix(6)
+        for (name, t) in ranked { print("CHAIN-METRIC torque \(name)=\(Int(t)) Nm") }
+        print("CHAIN-METRIC rootResidualNorm=\(id.rootResidualNorm) totalMassKg=\(bridge.totalMass)")
+        let dqMax = smoothedDQ.map { abs($0) }.max() ?? 0
+        let ddqMax = smoothedDDQ.map { abs($0) }.max() ?? 0
+        print("CHAIN-METRIC max_dq=\(dqMax) max_ddq=\(ddqMax)")
+
+        // Distal torques that grow down the support leg point at the GRF being
+        // applied through too long a lever. Compare the centre of pressure with
+        // the ankle it is supposed to act near: bodyweight times the horizontal
+        // offset between them is the ankle moment the GRF alone imposes.
+        let f = id.rightFootForce.map { $0.doubleValue }
+        let cop = id.rightFootCoP.map { $0.doubleValue }
+        let ankle = OfflineMuscleChainFixture.markers.first { $0.0 == "right_foot_joint" }!.2
+        let lever = ((cop[0] - Double(ankle.x)) * (cop[0] - Double(ankle.x))
+                   + (cop[2] - Double(ankle.z)) * (cop[2] - Double(ankle.z))).squareRoot()
+        let fMag = (f[0]*f[0] + f[1]*f[1] + f[2]*f[2]).squareRoot()
+        print("CHAIN-METRIC grf_N=\(Int(fMag)) bodyweight_N=\(Int(bridge.totalMass * 9.81))")
+        print("CHAIN-METRIC cop=(\(cop[0]),\(cop[1]),\(cop[2])) ankle=(\(ankle.x),\(ankle.y),\(ankle.z))")
+        print("CHAIN-METRIC cop_to_ankle_horizontal_m=\(lever) implied_ankle_moment_Nm=\(fMag * lever)")
+
         // --- Stage 4: moment arms ----------------------------------------
         let dofNames = ik.dofNames
         let momentArms = computer.computeMomentArms(
