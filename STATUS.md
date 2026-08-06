@@ -526,6 +526,42 @@ frame gap for this reason. Held-pose padding (not reflection or extrapolation) i
 choice: it drives `dq`/`ddq` toward zero at the edges, which is the only reading this input supports
 given the pelvis pinning described below.
 
+### The Savitzky-Golay filters were starving each other (fixed 2026-08-06, build 20)
+
+The per-DOF push loop in `NimbleEngine` broke out on the first filter whose window
+was not yet full:
+
+```swift
+if let out = self.dofFilters[i].push(...) { ... } else { sgWarmedUp = false; break }
+```
+
+`break` meant every later filter got **no sample that frame**. `dofFilters[k]` only started
+receiving samples once `0..<k` were already warm, so a full warm-up needed
+`9 + 8 × (numDOFs − 1)` ≈ **1350 frames**, not 9.
+
+The live ARKit path hid this completely: at 60 fps it grinds through in ~22 s of continuous
+tracking, so muscle output did eventually appear and the delay read as ordinary warm-up
+latency. The offline path pushes exactly 9 frames per clip, so it **never warmed up at all** —
+an imported photo reported "Pose only (warming up)" and 0 frames with muscle data, permanently.
+
+Fix: push every filter unconditionally, derive `sgWarmedUp` from whether all of them emitted,
+and also gate on `smoothedQ.count == numDOFs` since a partial window leaves the arrays short.
+
+**Two regression tests pin it**, and the diagnostic split between them is the point:
+
+- `OfflineMuscleChainTests` walks IK → SG → ID → moment arms → QP stage by stage on real
+  Core ML marker output, so a failure names the stage. It **passed** while the app was broken,
+  which is what proved the solver chain was innocent and moved the search to orchestration.
+- `OfflineOrchestrationTests` drives `NimbleEngine` the way `OfflineSessionRunner` does and
+  asserts muscle output after 9 submissions. It **fails against the old loop, passes against
+  the new one**.
+
+⚠️ **Method note worth keeping.** Three rounds of this bug were spent reading code and
+shipping plausible fixes; none of them was the cause. What found it was writing a test that
+reproduced the failure. A visible skeleton says nothing about the solver — the skeleton is
+drawn straight from `BodyFrame.joints`, while muscle output requires the whole IK → SG → ID →
+moment-arm → QP chain. Those two share no stage.
+
 ### The limitation that shapes the product claim
 
 **`joint_coords` pins the pelvis at a model constant `(0, 0.924, 0)` in every frame.** `global_trans`
