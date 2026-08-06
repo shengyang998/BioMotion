@@ -94,7 +94,14 @@ final class OfflineMuscleChainTests: XCTestCase {
                               jointVelocities: smoothedDQ.map { NSNumber(value: $0) },
                               jointAccelerations: smoothedDDQ.map { NSNumber(value: $0) }),
             "STAGE 3 FAILED: solveIDGRF returned nil (DOF count mismatch is the only non-fallback nil path)")
-        print("CHAIN-METRIC id_torques=\(id.jointTorques.count)")
+        let torqueMags = id.jointTorques.map { abs($0.doubleValue) }
+        let maxTorque = torqueMags.max() ?? 0
+        print("CHAIN-METRIC id_torques=\(id.jointTorques.count) max_torque_Nm=\(maxTorque) leftContact=\(id.leftFootInContact) rightContact=\(id.rightFootInContact)")
+        // With no foot in contact, solveIDGRF falls back to plain inverse
+        // dynamics with ZERO external force, so bodyweight has to be carried
+        // entirely by joint torques. That inflates the torques the muscle QP is
+        // asked to match, and muscles slam into their bounds.
+        print("CHAIN-METRIC groundHeightY=\(bridge.groundHeightY)")
 
         // --- Stage 4: moment arms ----------------------------------------
         let dofNames = ik.dofNames

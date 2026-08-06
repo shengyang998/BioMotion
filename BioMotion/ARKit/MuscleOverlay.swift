@@ -37,6 +37,14 @@ final class MuscleOverlay {
     /// directly between their .osim path endpoints. 0.08 is empirically
     /// above the postural-tone floor (≈0.02–0.05 after the rebalance).
     private static let pathRenderActivationThreshold: Float = 0.08
+    /// How far above the solver's activation floor a muscle must sit before it
+    /// counts as firing. The floor itself is a solver bound, not an observation.
+    private static let floorMargin: Float = 0.05
+    /// Hard cap on simultaneously drawn path capsules. The static-optimisation
+    /// QP has ~520 unknowns against ~110 torque equations, so most of what it
+    /// returns is the cost function choosing among a ~410-dimensional null
+    /// space. Rendering all of it would imply far more measurement than exists.
+    private static let maxRenderedPathMuscles = 24
 
     /// Names (after alias merging) already handled by the hardcoded defs.
     /// Computed once so per-frame lookup is O(1).
@@ -234,9 +242,31 @@ final class MuscleOverlay {
         // --- Pass 2: path-based rendering for active uncovered muscles ---
         // Only draw what the solver says is firing AND that isn't already
         // represented by a hardcoded def (avoids double-rendering).
+        // A fixed activation threshold does not work on a 520-muscle model.
+        // Measured on a real solve (OfflineOrchestrationTests): 139 of 520
+        // muscles cleared 0.08, so the figure disappeared under a thicket of
+        // capsules. The distribution is not a spread — the median sits at
+        // 0.0200027 against an `aMin` floor of 0.02, with a handful saturated at
+        // 1.0. Almost every muscle is either pinned at the floor or railed at
+        // the ceiling.
+        //
+        // The floor is not a measurement. STATUS.md records that `aMin`/`epsA`
+        // were tuned so the visualisation would not go "permanently blue" — a
+        // rendering parameter. Drawing floor-valued muscles presents that
+        // artefact as though it were measured effort.
+        //
+        // So: drop anything not meaningfully above the floor, then keep only the
+        // strongest few. Ranking rather than thresholding also makes the display
+        // stable — with 139 near-identical floor values, which ones cleared a
+        // fixed cut flickered frame to frame, which is what read as twitching.
+        let floor = Float(muscle.rawActivations.values.min() ?? 0)
+        let ranked = muscle.rawActivations
+            .filter { Float($0.value) >= max(Self.pathRenderActivationThreshold, floor + Self.floorMargin) }
+            .sorted { $0.value > $1.value }
+            .prefix(Self.maxRenderedPathMuscles)
+
         var activePathKeys: Set<String> = []
-        for (rawName, rawActivation) in muscle.rawActivations
-            where Float(rawActivation) >= Self.pathRenderActivationThreshold {
+        for (rawName, rawActivation) in ranked {
             let displayName = Self.solverToDisplayAlias[rawName] ?? rawName
             if Self.hardcodedDisplayNames.contains(displayName) { continue }
             guard let path = muscle.paths[rawName] else { continue }

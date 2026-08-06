@@ -1,4 +1,5 @@
 import Combine
+import simd
 import XCTest
 @testable import BioMotion
 
@@ -90,6 +91,32 @@ final class OfflineOrchestrationTests: XCTestCase {
                                    "no muscle output after \(SavitzkyGolayFilter.windowSize) submissions")
         print("ORCH-METRIC activations=\(muscle.activations.count) muscle_ts=\(muscle.timestamp)")
 
+        // --- Rendering diagnostics ------------------------------------
+        // MuscleOverlay's path pass draws a capsule for EVERY muscle whose
+        // activation clears 0.08. If most of the 520 clear it, the result is a
+        // thicket of capsules rather than a readable figure.
+        let threshold: Float = 0.08
+        let acts = muscle.activations.values.map { Float($0) }
+        let over = acts.filter { $0 >= threshold }.count
+        let sorted = acts.sorted()
+        print("RENDER-METRIC muscles=\(acts.count) over_threshold=\(over) "
+            + "min=\(sorted.first ?? 0) median=\(sorted[sorted.count/2]) max=\(sorted.last ?? 0)")
+
+        // Muscle capsules are drawn from world-space endpoints produced by the
+        // OpenSim skeleton's FK, while the joint/bone context is drawn from the
+        // MHR marker positions. If those two occupy different regions of space
+        // the muscles appear detached from the body.
+        var pathPts: [SIMD3<Float>] = []
+        for (_, p) in muscle.paths { pathPts.append(p.start); pathPts.append(p.end) }
+        let jointPts = OfflineMuscleChainFixture.markers.map { $0.2 }
+        func bounds(_ ps: [SIMD3<Float>]) -> String {
+            guard var lo = ps.first, var hi = ps.first else { return "empty" }
+            for p in ps { lo = simd_min(lo, p); hi = simd_max(hi, p) }
+            return "min(\(lo.x.rounded3),\(lo.y.rounded3),\(lo.z.rounded3)) max(\(hi.x.rounded3),\(hi.y.rounded3),\(hi.z.rounded3))"
+        }
+        print("RENDER-METRIC path_count=\(muscle.paths.count) path_bounds=\(bounds(pathPts))")
+        print("RENDER-METRIC joint_bounds=\(bounds(jointPts))")
+
         // The offline runner files results by timestamp; the centred window
         // means this must equal the MIDDLE push, not the last one.
         XCTAssertEqual(muscle.timestamp, 0.0, accuracy: 1e-6,
@@ -122,4 +149,8 @@ enum OfflineMuscleChainFixture {
         ("left_hand_joint", "LWJC", SIMD3<Float>(-0.577720, 1.737568, 0.012645)),
         ("right_hand_joint", "RWJC", SIMD3<Float>(-0.457117, 0.739004, 0.198106)),
     ]
+}
+
+private extension Float {
+    var rounded3: Float { (self * 1000).rounded() / 1000 }
 }
