@@ -567,6 +567,19 @@ final class NimbleEngine: ObservableObject {
         rootResidualPerKg = 0
     }
 
+    /// Full session reset for a clip boundary. In addition to everything
+    /// `resetRealtimeState()` clears, this drops NimbleBridge's session-only
+    /// state: the IK warm-start pose and the rolling ground-height window
+    /// (`NimbleBridge.h` `resetSessionState`). Without it a new clip warm-starts
+    /// from the previous clip's unrelated pose and GRF contact detection reads a
+    /// stale floor.
+    func resetSessionState() {
+        resetRealtimeState()
+        solverQueue.async { [weak self] in
+            self?.bridge.resetSessionState()
+        }
+    }
+
     private func normalizeForDisplay(_ muscle: MuscleOutput) -> MuscleOutput {
         let mergedActivations = normalizeActivations(muscle.activations)
         let smoothed = smoothActivations(mergedActivations, timestamp: muscle.timestamp)

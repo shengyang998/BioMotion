@@ -13,3 +13,6 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Core ML model (1.3 GB) — regenerate via labs/sam-3d-body/export/coreml/convert.py
+BioMotion/CoreML/*.mlpackage

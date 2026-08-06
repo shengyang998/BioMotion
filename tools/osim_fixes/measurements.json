@@ -1,0 +1,1120 @@
+{
+  "files": {
+    "before": {
+      "path": "/Users/soleilyu/claude_playground/labs/BioMotion/tools/osim_fixes/FullBody.osim.orig",
+      "sha256": "a55c64341680551fb5a41be254bdfdb3b2be0ac789336ea44902b22fc9a83913"
+    },
+    "after": {
+      "path": "/Users/soleilyu/claude_playground/labs/BioMotion/BioMotion/Resources/FullBody.osim",
+      "sha256": "0003473937af6883034df358194bd8f52853818e79e36fd23eb5ca2c8d741c09"
+    }
+  },
+  "method": {
+    "engine": "tools/osim_fixes/osim_kinematics.py \u2014 Python re-implementation of nimblephysics OpenSimParser.cpp readOsim40() joint construction + BioMotion MomentArmComputer.mm length/moment-arm code",
+    "moment_arm": "r = -(L(q+eps) - L(q-eps)) / (2*eps), eps = 1e-4 rad, ConditionalPathPoints latched at the unperturbed pose (identical to MomentArmComputer.mm)",
+    "units": "moment arms in cm, lengths in m, angles in deg unless stated",
+    "not_run": "the iOS app was never built or executed; these are computed, not observed on device"
+  },
+  "structure": {
+    "dofs_before": 163,
+    "dofs_after": 169,
+    "bodies_built_before": 78,
+    "bodies_built_after": 80,
+    "muscles_parsed_before": 520,
+    "muscles_parsed_after": 520,
+    "unresolved_muscle_path_bodies_before": {
+      "patella_r": 9,
+      "patella_l": 9
+    },
+    "unresolved_muscle_path_bodies_after": {},
+    "shoulder_R_dofs_before": 0,
+    "shoulder_R_dofs_after": 3,
+    "shoulder_L_dofs_before": 0,
+    "shoulder_L_dofs_after": 3,
+    "shoulder_joint_class_before": [
+      "Weld(crash-guard)",
+      "Weld(crash-guard)"
+    ],
+    "shoulder_joint_class_after": [
+      "Euler",
+      "Euler"
+    ],
+    "patellofemoral_before": "skipped entirely (body + joint), OpenSimParser.cpp:6562 and :6737-6739",
+    "patellofemoral_after": [
+      "Weld",
+      "Weld"
+    ],
+    "max_body_world_transform_delta_at_q0_m": 0.0
+  },
+  "defect_1_patella": {
+    "muscles_affected": [
+      "recfem_r",
+      "vasint_r",
+      "vaslat140_r",
+      "vasmed_r",
+      "recfem_l",
+      "vasint_l",
+      "vaslat140_l",
+      "vasmed_l"
+    ],
+    "path_points_that_were_unresolved": {
+      "patella_r": 9,
+      "patella_l": 9
+    },
+    "knee_angles_deg": [
+      0,
+      15,
+      30,
+      45,
+      60,
+      75,
+      90,
+      105,
+      120
+    ],
+    "moment_arm_cm_before": {
+      "recfem_r": [
+        3.6324,
+        1.8771,
+        -0.1077,
+        -2.1215,
+        -3.9748,
+        -5.495,
+        -6.543,
+        -7.027,
+        -6.9163
+      ],
+      "vasint_r": [
+        3.6355,
+        1.8904,
+        -0.0933,
+        -2.1124,
+        -3.9738,
+        -5.5014,
+        -6.5548,
+        -7.0423,
+        -6.9345
+      ],
+      "vaslat140_r": [
+        3.6491,
+        1.961,
+        -0.0145,
+        -2.0618,
+        -3.968,
+        -5.5397,
+        -6.6275,
+        -7.1402,
+        -7.0556
+      ],
+      "vasmed_r": [
+        3.5159,
+        1.6657,
+        -0.3368,
+        -2.3078,
+        -4.0854,
+        -5.523,
+        -6.4975,
+        -6.9198,
+        -6.7525
+      ]
+    },
+    "moment_arm_cm_after": {
+      "recfem_r": [
+        -5.0205,
+        -4.9328,
+        -4.6426,
+        -4.23,
+        -3.7184,
+        -3.1144,
+        -2.415,
+        -1.6288,
+        -0.7667
+      ],
+      "vasint_r": [
+        -4.9813,
+        -4.9157,
+        -4.6385,
+        -4.2331,
+        -3.7246,
+        -3.1212,
+        -2.4212,
+        -1.6339,
+        -0.7707
+      ],
+      "vaslat140_r": [
+        -5.0387,
+        -4.9667,
+        -4.6907,
+        -4.2842,
+        -3.7717,
+        -3.164,
+        -2.4632,
+        -1.6822,
+        -0.8356
+      ],
+      "vasmed_r": [
+        -4.9767,
+        -4.8682,
+        -4.5587,
+        -4.1359,
+        -3.6217,
+        -3.0186,
+        -2.3181,
+        -1.5237,
+        -0.6424
+      ]
+    },
+    "moment_arm_cm_reference_coupled": {
+      "recfem_r": [
+        -4.4184,
+        -4.6025,
+        -4.6061,
+        -4.3213,
+        -4.0348,
+        -3.2748,
+        -2.3855,
+        -1.5741,
+        -1.7385
+      ],
+      "vasint_r": [
+        -4.2776,
+        -4.2535,
+        -4.1368,
+        -3.8545,
+        -3.6144,
+        -2.9441,
+        -2.1839,
+        -1.5216,
+        -1.8193
+      ],
+      "vaslat140_r": [
+        -3.7277,
+        -4.3998,
+        -4.3157,
+        -3.8606,
+        -3.4629,
+        -2.6557,
+        -1.799,
+        -1.0762,
+        -1.3255
+      ],
+      "vasmed_r": [
+        -4.0844,
+        -4.1927,
+        -4.0003,
+        -3.6393,
+        -3.3578,
+        -2.6661,
+        -1.9068,
+        -1.2615,
+        -1.5516
+      ]
+    },
+    "moment_arm_cm_before_left": {
+      "recfem_l": [
+        3.6324,
+        1.8771,
+        -0.1077,
+        -2.1215,
+        -3.9748,
+        -5.495,
+        -6.543,
+        -7.027,
+        -6.9163
+      ],
+      "vasint_l": [
+        3.6355,
+        1.8904,
+        -0.0933,
+        -2.1124,
+        -3.9738,
+        -5.5014,
+        -6.5548,
+        -7.0423,
+        -6.9345
+      ],
+      "vaslat140_l": [
+        3.6491,
+        1.961,
+        -0.0145,
+        -2.0618,
+        -3.968,
+        -5.5397,
+        -6.6275,
+        -7.1402,
+        -7.0556
+      ],
+      "vasmed_l": [
+        3.5159,
+        1.6657,
+        -0.3368,
+        -2.3078,
+        -4.0854,
+        -5.523,
+        -6.4975,
+        -6.9198,
+        -6.7525
+      ]
+    },
+    "moment_arm_cm_after_left": {
+      "recfem_l": [
+        -5.0205,
+        -4.9328,
+        -4.6426,
+        -4.23,
+        -3.7184,
+        -3.1144,
+        -2.415,
+        -1.6288,
+        -0.7667
+      ],
+      "vasint_l": [
+        -4.9813,
+        -4.9157,
+        -4.6385,
+        -4.2331,
+        -3.7246,
+        -3.1212,
+        -2.4212,
+        -1.6339,
+        -0.7707
+      ],
+      "vaslat140_l": [
+        -5.0387,
+        -4.9667,
+        -4.6907,
+        -4.2842,
+        -3.7717,
+        -3.164,
+        -2.4632,
+        -1.6822,
+        -0.8356
+      ],
+      "vasmed_l": [
+        -4.9767,
+        -4.8682,
+        -4.5587,
+        -4.1359,
+        -3.6217,
+        -3.0186,
+        -2.3181,
+        -1.5237,
+        -0.6424
+      ]
+    },
+    "error_vs_reference_cm": {
+      "before_rmse": 4.793,
+      "before_max_abs": 8.0508,
+      "after_rmse": 0.551,
+      "after_max_abs": 1.311
+    },
+    "sign_errors_before": {
+      "definition": "knee_angle is flexion, so an extensor must have r < 0",
+      "wrong_sign_at_knee_deg": [
+        0,
+        15
+      ]
+    },
+    "muscle_tendon_length_m_at_knee60": {
+      "before": {
+        "recfem_r": 1.2854,
+        "vasint_r": 1.0573,
+        "vaslat140_r": 1.0676,
+        "vasmed_r": 1.0465
+      },
+      "after": {
+        "recfem_r": 0.5603,
+        "vasint_r": 0.3303,
+        "vaslat140_r": 0.3444,
+        "vasmed_r": 0.3177
+      },
+      "reference_coupled": {
+        "recfem_r": 0.5594,
+        "vasint_r": 0.3253,
+        "vaslat140_r": 0.3391,
+        "vasmed_r": 0.3118
+      }
+    },
+    "muscle_tendon_length_note": "optimal_fiber_length + tendon_slack_length is 0.32-0.53 m for these four. The BEFORE lengths of 1.05-1.29 m put every quadriceps 2-3.4x past the far end of its force-length curve, where active force is ~0 \u2014 which is the mechanism behind 'quadriceps not loaded', not a zero moment arm.",
+    "weld_pose_selection": {
+      "chosen_beta_star_deg": 0.0,
+      "sweep": {
+        "0": {
+          "rmse_0_120_cm": 0.551,
+          "max_abs_0_120_cm": 1.311,
+          "rmse_squat_60_110_cm": 0.3388
+        },
+        "15": {
+          "rmse_0_120_cm": 0.6905,
+          "max_abs_0_120_cm": 1.261,
+          "rmse_squat_60_110_cm": 0.8201
+        },
+        "30": {
+          "rmse_0_120_cm": 0.9617,
+          "max_abs_0_120_cm": 1.8663,
+          "rmse_squat_60_110_cm": 1.2791
+        },
+        "45": {
+          "rmse_0_120_cm": 1.7192,
+          "max_abs_0_120_cm": 3.8528,
+          "rmse_squat_60_110_cm": 1.609
+        },
+        "60": {
+          "rmse_0_120_cm": 2.8674,
+          "max_abs_0_120_cm": 6.5558,
+          "rmse_squat_60_110_cm": 1.7579
+        },
+        "75": {
+          "rmse_0_120_cm": 3.8358,
+          "max_abs_0_120_cm": 7.6504,
+          "rmse_squat_60_110_cm": 1.7006
+        },
+        "90": {
+          "rmse_0_120_cm": 4.5373,
+          "max_abs_0_120_cm": 7.865,
+          "rmse_squat_60_110_cm": 1.7625
+        }
+      },
+      "rationale": "beta* = 0 minimises RMSE against the coupled reference both over the whole 0-120 deg knee range and over the squat band, and is also the model's own default pose."
+    },
+    "free_beta_dof_counterfactual": {
+      "what": "patella renamed but patellofemoral left as a CustomJoint",
+      "dofs": 165,
+      "beta_xml_range_rad": [
+        -99999.9,
+        99999.9
+      ],
+      "beta_clamped": false,
+      "markers_on_patella": 0,
+      "quad_knee_moment_arm_cm_at_knee60_vs_beta_deg": {
+        "-30": {
+          "recfem_r": -2.936,
+          "vasint_r": -2.942,
+          "vaslat140_r": -2.994,
+          "vasmed_r": -2.828
+        },
+        "-15": {
+          "recfem_r": -3.316,
+          "vasint_r": -3.321,
+          "vaslat140_r": -3.373,
+          "vasmed_r": -3.21
+        },
+        "0": {
+          "recfem_r": -3.718,
+          "vasint_r": -3.725,
+          "vaslat140_r": -3.772,
+          "vasmed_r": -3.622
+        },
+        "15": {
+          "recfem_r": -4.13,
+          "vasint_r": -4.137,
+          "vaslat140_r": -4.177,
+          "vasmed_r": -4.046
+        },
+        "30": {
+          "recfem_r": -4.419,
+          "vasint_r": -4.427,
+          "vaslat140_r": -4.455,
+          "vasmed_r": -4.354
+        },
+        "45": {
+          "recfem_r": -4.49,
+          "vasint_r": -4.499,
+          "vaslat140_r": -4.508,
+          "vasmed_r": -4.455
+        },
+        "60": {
+          "recfem_r": -4.212,
+          "vasint_r": -4.223,
+          "vaslat140_r": -4.204,
+          "vasmed_r": -4.226
+        },
+        "90": {
+          "recfem_r": -1.442,
+          "vasint_r": -1.439,
+          "vaslat140_r": -1.422,
+          "vasmed_r": -1.558
+        },
+        "120": {
+          "recfem_r": 1.996,
+          "vasint_r": 2.016,
+          "vaslat140_r": 1.934,
+          "vasmed_r": 2.02
+        }
+      },
+      "verdict": "beta is unobservable (no marker on the kneecap) and unclamped, and moving it over a plausible range swings the quadriceps knee moment arm from -2.94 cm to +2.00 cm \u2014 a sign flip. Welding removes the DOF; the after-DOF count is unchanged at 163+6."
+    },
+    "dofs_added_by_this_fix": 0
+  },
+  "defect_2_shoulder": {
+    "axis_change_deg": {
+      "rotation1 = shoulder_elv": 3.3791,
+      "rotation2 = shoulder_rot": 2.4456,
+      "rotation3 = elv_angle": 2.4456
+    },
+    "axis_norms_before": [
+      0.99999865,
+      1.00000081,
+      1.00000081
+    ],
+    "orthogonality": {
+      "before": {
+        "r1.r2": 4e-06,
+        "r1.r3": 0.05415,
+        "r2.r3": 0.084746
+      },
+      "after": {
+        "r1.r2": 0.0,
+        "r1.r3": 0.0,
+        "r2.r3": 0.0
+      },
+      "nimble_gate": 0.0001
+    },
+    "humerus_orientation_error_deg_over_coordinate_ranges": {
+      "mean": 3.963,
+      "p95": 7.321,
+      "max": 9.748,
+      "sampled_ranges_deg": {
+        "shoulder_elv": [
+          0,
+          115
+        ],
+        "shoulder_rot": [
+          -45,
+          45
+        ],
+        "elv_angle": [
+          -90,
+          90
+        ]
+      },
+      "context": "ARKit body tracking, the actual input to this pipeline, is 18.8 +/- 12.12 deg MAE (doi:10.3390/app12104806)."
+    },
+    "humeral_elevation_plane_check": {
+      "what": "pure elevation (elv_angle = 0, shoulder_rot = 0); the humeral long axis must sweep the same plane before and after",
+      "samples": [
+        {
+          "shoulder_elv_deg": 0,
+          "humeral_long_axis_before": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "humeral_long_axis_after": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "delta_deg": 0.0
+        },
+        {
+          "shoulder_elv_deg": 30,
+          "humeral_long_axis_before": [
+            0.0298,
+            -0.866,
+            0.4991
+          ],
+          "humeral_long_axis_after": [
+            0.0,
+            -0.866,
+            0.5
+          ],
+          "delta_deg": 1.706
+        },
+        {
+          "shoulder_elv_deg": 60,
+          "humeral_long_axis_before": [
+            0.0522,
+            -0.5,
+            0.8645
+          ],
+          "humeral_long_axis_after": [
+            0.0,
+            -0.5,
+            0.866
+          ],
+          "delta_deg": 2.99
+        },
+        {
+          "shoulder_elv_deg": 90,
+          "humeral_long_axis_before": [
+            0.0612,
+            -0.0,
+            0.9981
+          ],
+          "humeral_long_axis_after": [
+            0.0,
+            -0.0,
+            1.0
+          ],
+          "delta_deg": 3.508
+        },
+        {
+          "shoulder_elv_deg": 115,
+          "humeral_long_axis_before": [
+            0.0566,
+            0.4226,
+            0.9045
+          ],
+          "humeral_long_axis_after": [
+            0.0,
+            0.4226,
+            0.9063
+          ],
+          "delta_deg": 3.248
+        }
+      ],
+      "verdict": "the elevation component is unchanged to 4 decimals; the snapped axes remove a 0.03-0.06 out-of-plane leak, so the elevation plane convention is preserved (arguably cleaner)."
+    },
+    "shoulder_muscles": [
+      "CORB",
+      "CORB_l",
+      "DELT1",
+      "DELT1_l",
+      "DELT2",
+      "DELT2_l",
+      "DELT3",
+      "DELT3_l",
+      "INFSP",
+      "INFSP_l",
+      "PECM1",
+      "PECM1_l",
+      "PECM2",
+      "PECM2_l",
+      "PECM3",
+      "PECM3_l",
+      "SUBSC",
+      "SUBSC_l",
+      "SUPSP",
+      "SUPSP_l",
+      "TMAJ",
+      "TMAJ_l",
+      "TMIN",
+      "TMIN_l"
+    ],
+    "pathwraps_on_shoulder_muscles": 0,
+    "extra_muscles_crossing_the_joint": {
+      "latissimus_dorsi_slips": 28,
+      "pathwraps": 0,
+      "note": "these also gain moment arms; no provenance claim is made here."
+    },
+    "moment_arm_cm_right_shoulder": {
+      "neutral_arm_down": {
+        "before": {
+          "DELT1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUPSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "INFSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUBSC": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMIN": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "CORB": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          }
+        },
+        "after": {
+          "DELT1": {
+            "shoulder_elv_r": 0.232,
+            "shoulder_rot_r": 0.145,
+            "elv_angle_r": 4.785
+          },
+          "DELT2": {
+            "shoulder_elv_r": 1.476,
+            "shoulder_rot_r": 0.246,
+            "elv_angle_r": 0.547
+          },
+          "DELT3": {
+            "shoulder_elv_r": 0.677,
+            "shoulder_rot_r": -0.666,
+            "elv_angle_r": -4.712
+          },
+          "SUPSP": {
+            "shoulder_elv_r": 2.078,
+            "shoulder_rot_r": -0.445,
+            "elv_angle_r": 0.388
+          },
+          "INFSP": {
+            "shoulder_elv_r": -0.262,
+            "shoulder_rot_r": -2.144,
+            "elv_angle_r": 0.519
+          },
+          "SUBSC": {
+            "shoulder_elv_r": 1.239,
+            "shoulder_rot_r": 1.469,
+            "elv_angle_r": -0.379
+          },
+          "TMIN": {
+            "shoulder_elv_r": -1.362,
+            "shoulder_rot_r": -1.686,
+            "elv_angle_r": -0.919
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -2.299,
+            "shoulder_rot_r": 0.942,
+            "elv_angle_r": -4.951
+          },
+          "PECM1": {
+            "shoulder_elv_r": -3.043,
+            "shoulder_rot_r": 0.849,
+            "elv_angle_r": 2.564
+          },
+          "PECM2": {
+            "shoulder_elv_r": -4.004,
+            "shoulder_rot_r": 0.892,
+            "elv_angle_r": 2.54
+          },
+          "PECM3": {
+            "shoulder_elv_r": -2.251,
+            "shoulder_rot_r": -0.551,
+            "elv_angle_r": 3.122
+          },
+          "CORB": {
+            "shoulder_elv_r": -3.096,
+            "shoulder_rot_r": 0.083,
+            "elv_angle_r": 1.353
+          }
+        }
+      },
+      "elv45": {
+        "before": {
+          "DELT1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUPSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "INFSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUBSC": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMIN": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "CORB": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          }
+        },
+        "after": {
+          "DELT1": {
+            "shoulder_elv_r": 0.261,
+            "shoulder_rot_r": 0.142,
+            "elv_angle_r": 4.84
+          },
+          "DELT2": {
+            "shoulder_elv_r": 2.97,
+            "shoulder_rot_r": 0.368,
+            "elv_angle_r": 0.733
+          },
+          "DELT3": {
+            "shoulder_elv_r": 0.5,
+            "shoulder_rot_r": -0.696,
+            "elv_angle_r": -4.968
+          },
+          "SUPSP": {
+            "shoulder_elv_r": 2.565,
+            "shoulder_rot_r": -0.901,
+            "elv_angle_r": 0.623
+          },
+          "INFSP": {
+            "shoulder_elv_r": 0.787,
+            "shoulder_rot_r": -2.189,
+            "elv_angle_r": 0.147
+          },
+          "SUBSC": {
+            "shoulder_elv_r": 0.485,
+            "shoulder_rot_r": 1.924,
+            "elv_angle_r": 0.703
+          },
+          "TMIN": {
+            "shoulder_elv_r": -0.637,
+            "shoulder_rot_r": -1.593,
+            "elv_angle_r": -0.901
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -3.344,
+            "shoulder_rot_r": 1.006,
+            "elv_angle_r": -3.718
+          },
+          "PECM1": {
+            "shoulder_elv_r": -2.076,
+            "shoulder_rot_r": 0.473,
+            "elv_angle_r": 2.495
+          },
+          "PECM2": {
+            "shoulder_elv_r": -3.376,
+            "shoulder_rot_r": 0.69,
+            "elv_angle_r": 2.554
+          },
+          "PECM3": {
+            "shoulder_elv_r": -4.768,
+            "shoulder_rot_r": 0.12,
+            "elv_angle_r": 2.939
+          },
+          "CORB": {
+            "shoulder_elv_r": -4.376,
+            "shoulder_rot_r": 0.153,
+            "elv_angle_r": 1.208
+          }
+        }
+      },
+      "elv90": {
+        "before": {
+          "DELT1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUPSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "INFSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUBSC": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMIN": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "CORB": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          }
+        },
+        "after": {
+          "DELT1": {
+            "shoulder_elv_r": 0.135,
+            "shoulder_rot_r": 0.163,
+            "elv_angle_r": 4.885
+          },
+          "DELT2": {
+            "shoulder_elv_r": 3.734,
+            "shoulder_rot_r": 0.589,
+            "elv_angle_r": 1.287
+          },
+          "DELT3": {
+            "shoulder_elv_r": -0.005,
+            "shoulder_rot_r": -0.699,
+            "elv_angle_r": -5.085
+          },
+          "SUPSP": {
+            "shoulder_elv_r": 0.835,
+            "shoulder_rot_r": -1.968,
+            "elv_angle_r": 0.889
+          },
+          "INFSP": {
+            "shoulder_elv_r": 1.529,
+            "shoulder_rot_r": -2.121,
+            "elv_angle_r": -0.135
+          },
+          "SUBSC": {
+            "shoulder_elv_r": -0.791,
+            "shoulder_rot_r": 1.151,
+            "elv_angle_r": 1.56
+          },
+          "TMIN": {
+            "shoulder_elv_r": 0.37,
+            "shoulder_rot_r": -1.561,
+            "elv_angle_r": -0.934
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -2.415,
+            "shoulder_rot_r": 0.739,
+            "elv_angle_r": -2.81
+          },
+          "PECM1": {
+            "shoulder_elv_r": -0.677,
+            "shoulder_rot_r": -0.085,
+            "elv_angle_r": 2.495
+          },
+          "PECM2": {
+            "shoulder_elv_r": -1.678,
+            "shoulder_rot_r": 0.138,
+            "elv_angle_r": 2.629
+          },
+          "PECM3": {
+            "shoulder_elv_r": -3.834,
+            "shoulder_rot_r": -0.072,
+            "elv_angle_r": 2.843
+          },
+          "CORB": {
+            "shoulder_elv_r": -3.112,
+            "shoulder_rot_r": 0.095,
+            "elv_angle_r": 1.138
+          }
+        }
+      },
+      "elv90_abducted_plane": {
+        "before": {
+          "DELT1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "DELT3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUPSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "INFSP": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "SUBSC": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMIN": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM1": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM2": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "PECM3": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          },
+          "CORB": {
+            "shoulder_elv_r": -0.0,
+            "shoulder_rot_r": -0.0,
+            "elv_angle_r": -0.0
+          }
+        },
+        "after": {
+          "DELT1": {
+            "shoulder_elv_r": 0.06,
+            "shoulder_rot_r": 0.22,
+            "elv_angle_r": 2.418
+          },
+          "DELT2": {
+            "shoulder_elv_r": 1.113,
+            "shoulder_rot_r": 3.135,
+            "elv_angle_r": 1.38
+          },
+          "DELT3": {
+            "shoulder_elv_r": -0.142,
+            "shoulder_rot_r": -1.778,
+            "elv_angle_r": -5.888
+          },
+          "SUPSP": {
+            "shoulder_elv_r": 1.448,
+            "shoulder_rot_r": -2.245,
+            "elv_angle_r": 0.854
+          },
+          "INFSP": {
+            "shoulder_elv_r": 1.587,
+            "shoulder_rot_r": -1.843,
+            "elv_angle_r": 0.745
+          },
+          "SUBSC": {
+            "shoulder_elv_r": -1.197,
+            "shoulder_rot_r": 0.857,
+            "elv_angle_r": 0.774
+          },
+          "TMIN": {
+            "shoulder_elv_r": 0.69,
+            "shoulder_rot_r": -2.111,
+            "elv_angle_r": -0.893
+          },
+          "TMAJ": {
+            "shoulder_elv_r": -2.206,
+            "shoulder_rot_r": -1.84,
+            "elv_angle_r": -4.709
+          },
+          "PECM1": {
+            "shoulder_elv_r": -0.523,
+            "shoulder_rot_r": -0.439,
+            "elv_angle_r": 0.157
+          },
+          "PECM2": {
+            "shoulder_elv_r": -1.247,
+            "shoulder_rot_r": -1.084,
+            "elv_angle_r": -0.272
+          },
+          "PECM3": {
+            "shoulder_elv_r": -2.637,
+            "shoulder_rot_r": -2.77,
+            "elv_angle_r": -0.007
+          },
+          "CORB": {
+            "shoulder_elv_r": -1.748,
+            "shoulder_rot_r": -2.588,
+            "elv_angle_r": -1.276
+          }
+        }
+      }
+    },
+    "nonzero_summary": {
+      "before": "0 of 144 (the coordinates do not exist as DOFs at all)",
+      "after": "137 of 144 entries exceed 0.1 cm"
+    },
+    "dofs_added_by_this_fix": 6
+  },
+  "limitations": [
+    "The iOS app was not built or run (forbidden for this workstream). Every number is computed by a Python re-implementation of the two decisive C++ files, not observed on device. The re-implementation independently reproduces four facts recorded in STATUS.md (163 DOFs, 520 muscles = 422 Thelen + 98 Millard, exactly 2 crash-guard welds, and the shoulder dot products 0.000004 / 0.054150 / 0.084746), which is the evidence that it models the same skeleton nimble builds.",
+    "PathWrap is not implemented anywhere in this pipeline (not in nimble's parse, not in MomentArmComputer.mm, not here). Each quadriceps carries 1 PathWrap, so all quadriceps absolute values carry that error in BOTH columns; beyond ~90 deg knee flexion the straight-line path cuts through the condyles and the magnitudes are unreliable in all three columns. The 24 shoulder muscles carry 0 PathWraps, so the shoulder numbers do not have this problem.",
+    "The 'reference' column applies the CoordinateCouplerConstraint, which nimble never enforces. It is the yardstick for how good the weld is; it is not something the shipped pipeline can compute.",
+    "Moment arms are geometry. They are a necessary condition for a sane muscle solution, not a sufficient one: whether the OSQP stage now produces sensible quadriceps activation during a squat depends additionally on force-length state, inverse-dynamics torque quality and the ARKit input, none of which this measurement touches.",
+    "Body scaling was not exercised: all numbers are at the model's unscaled size. The groupScale() patch is verified by reading, not by measurement."
+  ]
+}

@@ -15,8 +15,9 @@ biggest links were **not** where the effort had been going.
 - The dominant remaining error source is **not** the muscle solver: it is that IK solves
   **163 degrees of freedom from ~40 scalar observations**. ~127 of those DOFs are spine and rib
   coordinates that ARKit cannot see.
-- The shipped model's **shoulders are welded** (zero shoulder DOFs), so upper-limb muscle output
-  is currently meaningless regardless of anything else.
+- ~~The shipped model's **shoulders are welded** (zero shoulder DOFs), so upper-limb muscle output
+  is currently meaningless regardless of anything else.~~ **Fixed 2026-08-06** — see
+  [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
 - A **commercial licence blocker** was found on the upper limb (MoBL-ARMS is non-commercial).
   A BSD-3 alternative exists.
 
@@ -271,8 +272,14 @@ fp16 body-path weights **1.285 GiB**, and max activation magnitude sits **145× 
 ceiling** — so the AutoLevel DINOv2 fp16-overflow experience does not transfer to this model.
 "Not real-time" still holds; "cannot run on the phone" does not. Still-image tier is plausible.
 
-The reason not to do it is now **observability, not compute**. MHR carries 4 spine anchors and
-**0 rib anchors** against this model's 54 spine and 72 rib coordinates, so ≥114 of the spine+rib
+**2026-08-06, second update — the model now ships.** It was converted to Core ML and integrated, but
+as a **new video/photo input path**, not as a replacement for the ARKit marker set. See
+[SAM 3D Body integration](#sam-3d-body-is-integrated-as-an-offline-videophoto-path-2026-08-06).
+The paragraph below remains correct about what it is correct about: a better per-frame pose source
+does not buy spinal observability.
+
+The reason not to swap the marker set is **observability, not compute**. MHR carries 4 spine anchors
+and **0 rib anchors** against this model's 54 spine and 72 rib coordinates, so ≥114 of the spine+rib
 DOFs stay in the null space before and after the swap. Meanwhile 54 coordinates in `FullBody.osim`
 already carry `<locked>true</locked>` and nimble appears not to honour it (171 − 54 = 117, yet
 nimble reports 163 DOF). Runtime DOF masking is the cheaper lever by an order of magnitude.
@@ -306,6 +313,74 @@ hold duration and sway, CoM position within the base of support, and — once GR
 (single-leg) — **joint moments** (Nm/kg). Joint moments are uniquely determined by inverse dynamics;
 the redundancy problem lives strictly *downstream* of them. That is the honest muscle-adjacent
 number.
+
+---
+
+## Muscle-output ship blockers (fixed 2026-08-06)
+
+Both defects below were long-diagnosed in this file and are now repaired. The edit, the
+measurement harness and the revert instructions are in `tools/osim_fixes/`; the pristine model is
+kept at `tools/osim_fixes/FullBody.osim.orig`.
+
+**Measurement method matters here:** the app was NOT built or run to produce these numbers.
+`tools/osim_fixes/osim_kinematics.py` is a Python re-implementation of the two pieces of code that
+decide the answer — nimble's `OpenSimParser.cpp` joint construction (including the patella
+literal-name skip, the `first3Linear` orthogonality gate and BioMotion's WeldJoint crash-guard) and
+`MomentArmComputer.mm`'s polyline + central-difference moment arm. Before, after and a coupled
+reference all run through the same code, so differences are attributable to the model change.
+Its credibility rests on independently reproducing figures this file records as hand-verified:
+163 DOFs, 520 muscles = 422 Thelen + 98 Millard, exactly 2 crash-guard welds, the dot products
+`0.000004 / 0.054150 / 0.084746`, 0 PathWraps on the 24 shoulder muscles, and 9 unresolved patella
+path points per leg.
+
+### Quadriceps
+
+`patella_r/l` → `kneecap_r/l`, and the patellofemoral `CustomJoint` → `WeldJoint` with the
+`knee_angle_beta = 0` spline evaluation folded into the fixed offset (verified: at `q = 0` every
+body's world transform is bit-identical before and after). `NimbleBridge.mm` `groupScale()` gained a
+`kneecap` branch in the same change — without it the renamed body silently scales with the torso.
+
+| Quadriceps knee moment arm | Before | After | Coupled reference |
+|---|---|---|---|
+| at 30° flexion (mean of 4 R-leg quads) | −0.0014 m | **−0.0463 m** | — |
+| RMSE vs reference over 0–120° | 4.79 cm | **0.55 cm** | — |
+| max abs error | 8.05 cm | **1.31 cm** | — |
+
+⚠️ **This file was wrong about the mechanism.** The quadriceps did not have a *zero* moment arm.
+They had a **sign-inverted, 2.7–5× mis-scaled** one (+3.63 cm at 0°, reading as a knee *flexor*;
+−6.54 cm at 90°) that merely happens to cross zero near 30°. The "pinned at the activation lower
+bound" conclusion still holds, but via force-length collapse from a 2–3.4× over-long path, not via a
+zero moment arm.
+
+### Shoulders
+
+The two shoulder axis triples were snapped to unit vectors, so `first3Linear` no longer trips the
+`|dot| < 1e-4` gate and the WeldJoint crash-guard no longer fires. Axis changes: 3.38°, 2.45°, 2.45°.
+Shoulder DOFs **0 → 3 per side**; 137 of 144 measured moment arms now exceed 0.1 cm and pass four
+anatomical sign checks (anterior vs posterior deltoid `+4.79 / −4.71` on `elv_angle`; subscapularis
+`+1.47` vs infraspinatus `−2.14` and teres minor `−1.69` on `shoulder_rot`).
+
+⚠️ **Correction to this file's earlier claim** that "the generic `createCustomJoint<N>` path does not
+require orthogonality and could represent this joint fine": only half right. `createCustomJoint`
+calls `getAxisOrder()` (`OpenSimParser.cpp:4424`), which requires the three rotation axes to be
+exactly ±UnitX/Y/Z in one of four orderings and `NIMBLE_THROW`s otherwise. Only the Euler(R-basis)
+branch tolerates non-unit axes. "Just reach the generic path" would not have worked — the unit-snap
+was necessary, not merely convenient.
+
+### What this does NOT establish
+
+- **PathWrap is still unimplemented pipeline-wide.** Each quadriceps carries exactly 1 PathWrap, so
+  quadriceps *absolute* values carry that error in every column, and past ~90° knee flexion the
+  straight-line path cuts through the condyles. Differences between columns are meaningful; absolute
+  deep-flexion values are not. The 24 shoulder muscles carry 0 PathWraps and are free of this.
+- Moment arms are geometry — necessary but not sufficient. Whether OSQP now reports loaded
+  quadriceps in a real squat also depends on force-length state and inverse-dynamics torque quality.
+- `shoulder_rot_{r,l}` (humeral axial rotation) is **not observable** from one point per shoulder
+  plus one at the elbow. Per this file's own E1 finding that unobservable DOFs get excited by the
+  solver, those two should enter the runtime DOF mask before shoulder output is trusted.
+- Coordinate counts changed: **171 → 169** XML coordinates (the 2 `knee_angle_*_beta` are gone with
+  the weld) and **nothing is dropped any more** (was 8: 2 patellofemoral + 6 shoulder). Test fixtures
+  in `FullBodyDOFFixture.swift` were updated to match.
 
 ---
 
@@ -367,6 +442,84 @@ about X.
 
 ---
 
+## SAM 3D Body is integrated, as an offline video/photo path (2026-08-06)
+
+**This is not a reversal of E1.** E1 asked "does swapping the pose source close the spine null
+space?" and the answer is still no. This asks a different question — "can the app analyse a recorded
+video or photo at all?" — and the answer is yes. The two are orthogonal: E1 gave both arms the same
+8 mm marker noise, so it tested marker-set *geometry*, never model accuracy. E1's G4 (limb
+non-regression) **passed**; the failure was entirely spinal, and the spine-claim constraint below
+applies to both input paths equally.
+
+### What ships
+
+```
+video/photo → Vision person box → affine warp 512×512 → crop 512×384
+  → SAM3DBodyPose.mlpackage (Core ML, CPU+GPU) → 127 MHR joints
+  → MHRRetarget → BodyFrame with the 20 ARKit joint ids
+  → the existing NimbleEngine pipeline, unchanged
+```
+
+The whole integration is one seam: `NimbleEngine.processFrame` takes a plain `BodyFrame` and has
+zero ARKit dependency, so producing that struct makes IK, ID, moment arms, the muscle QP and both
+`MuscleOverlay` render passes work with no changes.
+
+### Measured, on this Mac (M2 Pro) — phone numbers are not yet taken
+
+| | |
+|---|---|
+| mlpackage on disk | 1.31 GiB |
+| warm inference | **256.7 ms** (PyTorch MPS baseline was 700.4 ms) |
+| cold load | 19.2 s |
+| peak process memory | 3.43 GiB |
+| CPU-fallback ops | **none** |
+| parity vs the released pipeline | 1.72 mm max joint error |
+
+Two engineering choices are worth not re-litigating. Compute precision is **not** blanket fp16: only
+`linear`/`matmul`/`conv` are fp16 and every elementwise/reduction/trig/FK op stays fp32, which
+measured **3.7× more accurate and 10% faster** than blanket fp16 for +14 MB. And the antialiased
+resize in `camera_embed` was replaced by two extracted constant matrices (102 KB) rather than by
+area pooling — area pooling measured 2.81 mm of joint error because it diverges at the border, and
+the 6-stage decoder feedback amplifies that.
+
+The MHR rig is reimplemented as pure forward kinematics: 8480 bytes, **zero learned parameters**.
+The 166M-parameter mesh blob was reduced to the **468 vertices** that the 70 feedback keypoints
+actually read (a 39.4× reduction, verified lossless to 0.0008 mm), because 21 of those 70 keypoints
+are >50% vertex-driven and dropping the mesh outright would silently change the answer.
+
+### Verified end-to-end
+
+`labs/sam-3d-body/export/e2e_check.py` runs the shipping chain — Core ML → retarget → anatomy — and
+is the only check that crosses that seam. 6/6 pass: vertical ordering, segment lengths in adult
+range, bilateral symmetry to 1e-7 (this is what proves the L/R indices are not crossed), and the
+three `scaleModelWithHeight` factors inside the `[0.7, 1.4]` clamp. Its scale factors
+(0.957 / 0.989 / 1.014) independently match the PyTorch-side measurement (0.954 / 0.984 / 1.017).
+
+Left/right assignment was confirmed three ways, all external to the model, because any
+model-internal chirality test is circular: COCO-WholeBody keypoint naming, a photo with externally
+known facing, and a mirror test (36× residual separation).
+
+### The limitation that shapes the product claim
+
+**`joint_coords` pins the pelvis at a model constant `(0, 0.924, 0)` in every frame.** `global_trans`
+is zeroed (`sam3d_body.py:1600`), so that number is not the subject's pelvis height and `y = 0` is
+not the floor.
+
+Joint *angles* are frame-invariant and therefore correct. But the body has no global vertical
+motion, so **dynamic** inverse dynamics is not sound on this path — in a squat the pelvis does not
+descend, the feet appear to rise instead. This points the same way as next-step 5 below:
+static-equilibrium ID (`q̇ = q̈ = 0` over a detected hold) is both the honest reading of this input
+and the largest accuracy lever available. Recovering true global motion from monocular video needs
+camera-pose/SLAM, which is a different project.
+
+T-pose calibration **is** skippable, but only via `segmentScaleMarkers`, which rebuilds a synthetic
+straight-limb marker set from pose-invariant chain sums. Handing the bridge raw posed markers fails
+the `[0.7, 1.4]` clamp on 6 of 6 test predictions (a seated yoga pose gives lower 0.351).
+The method cannot rescue a bad prediction: a small, heavily occluded subject produced a degenerate
+0.070 m hip width. A plausibility gate on hip width and stature is recommended and **not yet built**.
+
+---
+
 ## Next steps (ordered)
 
 ### Immediate — unblocked, no licence exposure
@@ -416,9 +569,23 @@ about X.
    average the pose over the hold, and run ID with `q̇ = q̈ = 0`. This deletes the 1/dt²
    amplification chain entirely on the static path, and it matches the product's own framing
    ("current posture"). Largest single accuracy lever available.
-6. **Patella rename + weld** (with the `groupScale()` patch). Ship blocker for squat analysis.
-7. **Shoulder axis orthogonalisation** (6 lines). Now known to actually pay off, since shoulder
-   muscles carry no wraps. Sequence after step 1 so it is not applied to data that may be replaced.
+6. ~~**Patella rename + weld** (with the `groupScale()` patch). Ship blocker for squat analysis.~~
+   **DONE 2026-08-06** — see [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
+7. ~~**Shoulder axis orthogonalisation** (6 lines).~~ **DONE 2026-08-06**, same section. Note it was
+   *not* 6 lines of "reach the generic path" — that route is blocked by `getAxisOrder()`; the axes
+   had to be unit-snapped.
+
+### Newly opened by the 2026-08-06 work
+
+8. **Mask `shoulder_rot_{r,l}`.** The shoulder unweld added 6 DOFs, of which the two axial-rotation
+   coordinates are structurally unobservable from one point per shoulder plus one at the elbow.
+   By this file's own E1 finding, unobservable DOFs get excited by the solver. Do this before
+   trusting any shoulder muscle number.
+9. **Plausibility gate on the offline path.** Reject predictions whose hip width falls outside
+   ~0.10–0.28 m or whose chain-sum stature falls outside ~1.3–2.1 m, before they reach
+   `scaleModelWithHeight`. One occluded test subject produced a 0.070 m hip width.
+10. **Static-hold detection** (this is next-step 5 above, now load-bearing). The offline path's
+    pelvis pinning means dynamic ID is not sound; static-equilibrium ID is the honest reading.
 
 ### Owner decisions still open
 

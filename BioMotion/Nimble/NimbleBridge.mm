@@ -604,9 +604,21 @@ static double markerReliabilityWeight(const std::string& name) {
             bodyName.find("scapula") != std::string::npos) {
             return upperScale;
         }
-        // Lower extremity bodies
+        // Lower extremity bodies.
+        //
+        // "kneecap" is the patella. It is spelled that way in FullBody.osim
+        // because nimble skips any body literally named `patella_r` /
+        // `patella_l` (OpenSimParser.cpp:6562 exact-string match, plus the
+        // matching joint skip at :6737-6739). Under the old name the body was
+        // never built, so it never reached this lambda at all; under the new
+        // name it does, and without this branch it would silently fall through
+        // to `trunkScale` and scale the kneecap — and therefore the four
+        // quadriceps attachment points it carries — with the torso instead of
+        // the leg. `patella` is kept as an alias so the lambda stays correct if
+        // the model is ever reverted or a different .osim is loaded.
         if (bodyName.find("femur") != std::string::npos ||
             bodyName.find("tibia") != std::string::npos ||
+            bodyName.find("kneecap") != std::string::npos ||
             bodyName.find("patella") != std::string::npos ||
             bodyName.find("talus") != std::string::npos ||
             bodyName.find("calcn") != std::string::npos ||

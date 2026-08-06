@@ -42,7 +42,9 @@ final class DOFMaskTests: XCTestCase {
         XCTAssertTrue(absent.isEmpty)
     }
 
-    /// The 8-coordinate gap between 171 XML coordinates and 163 parsed DOFs.
+    /// XML coordinates vs parsed DOFs. The gap used to be 8 (2 patellofemoral +
+    /// 6 shoulder); after the `tools/osim_fixes` change it is 0 and the counts
+    /// are 169 == 169.
     func testDOFCountAccounting() throws {
         try loadFullBody()
         let names = Set(bridge.dofNames)
@@ -52,10 +54,11 @@ final class DOFMaskTests: XCTestCase {
 
         XCTAssertEqual(bridge.numDOFs, FullBodyDOFFixture.expectedNimbleDOFCount)
 
-        // The 8 missing ones are NOT the locked coordinates: they are the two
-        // patellofemoral coordinates (skipped by literal name match) and the
-        // six shoulder coordinates (non-orthogonal rotation axes -> the
-        // BioMotion WeldJoint crash-guard).
+        // This list is now empty: the patellofemoral coordinates were removed
+        // from the XML with the weld, and the shoulder axes were orthogonalised
+        // so the WeldJoint crash-guard no longer fires. The loop is kept so the
+        // invariant is re-checked if a future model reintroduces a dropped
+        // coordinate.
         for n in FullBodyDOFFixture.coordinatesNimbleDrops {
             XCTAssertFalse(names.contains(n),
                            "\(n) should not exist as a DOF in the built skeleton")
@@ -64,7 +67,7 @@ final class DOFMaskTests: XCTestCase {
             FullBodyDOFFixture.xmlCoordinateCount
                 - FullBodyDOFFixture.coordinatesNimbleDrops.count,
             bridge.numDOFs,
-            "171 - 8 must equal the parsed DOF count")
+            "xmlCoordinateCount - coordinatesNimbleDrops must equal the parsed DOF count")
     }
 
     /// Whether a locked coordinate is actually *held* at its pinned value

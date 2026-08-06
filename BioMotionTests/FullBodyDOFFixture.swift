@@ -235,19 +235,24 @@ enum FullBodyDOFFixture {
         "wrist_flex_r",
     ]
 
-    /// The 8 XML coordinates nimble never builds: 2 patellofemoral (skipped by name, OpenSimParser.cpp:6738) + 6 shoulder (non-orthogonal axes -> WeldJoint patch, OpenSimParser.cpp:5791).
-    static let coordinatesNimbleDrops: [String] = [
-        "elv_angle_l",
-        "elv_angle_r",
-        "knee_angle_l_beta",
-        "knee_angle_r_beta",
-        "shoulder_elv_l",
-        "shoulder_elv_r",
-        "shoulder_rot_l",
-        "shoulder_rot_r",
-    ]
+    /// Nimble now builds every coordinate in the XML. This list used to hold 8
+    /// entries and is empty by construction, not by accident:
+    ///
+    /// - The 2 `knee_angle_*_beta` coordinates are gone from the XML. The
+    ///   patellofemoral CustomJoint became a WeldJoint (and `patella_*` was
+    ///   renamed to `kneecap_*`, since OpenSimParser.cpp:6562/:6738 skip that
+    ///   body by literal name), so 171 XML coordinates became 169.
+    /// - The 6 shoulder coordinates are now built. Their rotation axes were
+    ///   snapped to unit vectors, so `first3Linear` no longer trips the
+    ///   `|dot| < 1e-4` gate at OpenSimParser.cpp:5375 and the WeldJoint
+    ///   crash-guard at :5791 no longer fires.
+    ///
+    /// See `tools/osim_fixes/` for the edit, its measurements and how to revert.
+    static let coordinatesNimbleDrops: [String] = []
 
-    static let xmlCoordinateCount = 171
-    static let expectedNimbleDOFCount = 163
-    static let expectedFreeDOFCountAfterMask = 106
+    static let xmlCoordinateCount = 169
+    static let expectedNimbleDOFCount = 169
+    /// 106 before the shoulder fix. The 6 new shoulder coordinates are real
+    /// DOFs and are not in the runtime mask, so they land in the free set.
+    static let expectedFreeDOFCountAfterMask = 112
 }

@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var showCalibration = true
     @State private var showCharts = false
     @State private var showMuscleOverlay = true
+    @State private var showOfflineImport = false
 
     var body: some View {
         Group {
@@ -51,6 +52,9 @@ struct ContentView: View {
         .sheet(isPresented: $showExportSheet) {
             ShareSheet(items: exportURLs)
         }
+        .sheet(isPresented: $showOfflineImport) {
+            OfflineImportView(nimble: nimble, onDismiss: { showOfflineImport = false })
+        }
     }
 
     private var trackingView: some View {
@@ -74,6 +78,14 @@ struct ContentView: View {
                         StatusBadge(text: String(format: "IK %.1fms", nimble.ikSolveTimeMs), isActive: true)
                     }
                     Spacer()
+                    Button {
+                        showOfflineImport = true
+                    } label: {
+                        Image(systemName: "photo.on.rectangle")
+                            .foregroundStyle(.white)
+                            .padding(8)
+                            .background(.black.opacity(0.6), in: Circle())
+                    }
                     if let frame = bodyTracking.currentFrame {
                         let tracked = frame.joints.filter(\.isTracked).count
                         StatusBadge(text: "\(tracked)/\(frame.joints.count)", isActive: tracked > 0)
