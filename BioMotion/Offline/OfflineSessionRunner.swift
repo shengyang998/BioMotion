@@ -77,15 +77,21 @@ final class OfflineSessionRunner: ObservableObject {
     /// solve was still in flight. See `submitAndWait`.
     private static let maxSubmitAttempts = 8
     private static let dropRetryDelay: TimeInterval = 0.25
-    /// SavitzkyGolayFilter.swift: 9 pushes fill the filter's window before ANY
-    /// muscle/ID output exists.
-    private static let sgWarmupFrameCount = 9
-    /// Synthetic frame spacing used only for the end-of-clip warm-up pad — an
-    /// arbitrary but plausible live cadence. Because every padded push replays
-    /// the IDENTICAL pose, the Savitzky-Golay filter's velocity/acceleration
-    /// coefficients (which sum to zero for a constant input, by construction)
-    /// come out at ~0 regardless of the exact spacing chosen.
-    private static let padSyntheticFrameInterval: TimeInterval = 1.0 / 30.0
+    /// Slack when matching a Savitzky-Golay centre timestamp back to its source
+    /// frame. The value is a copy of a real frame timestamp, so this only has to
+    /// absorb float representation, not sampling jitter.
+    private static let biomechanicsMatchTolerance: TimeInterval = 0.001
+    /// Lag of the centred Savitzky-Golay window, in samples
+    /// (`SavitzkyGolayFilter.windowSize / 2` = 4). Also the number of synthetic
+    /// frames padded onto each end of the clip.
+    private static let sgHalfWindow = SavitzkyGolayFilter.halfWindow
+
+    /// Spacing used for the synthetic edge-padding frames. Set from the decoded
+    /// clip so the padded samples sit on the SAME cadence as the real ones —
+    /// the filter derives `dt` from the window span, so mixing a 1/30 s pad into
+    /// a 2 fps clip would corrupt `dq`/`ddq` for every window that straddles the
+    /// boundary.
+    private var sampleInterval: TimeInterval = 1.0 / 30.0
 
     init(nimble: NimbleEngine) {
         self.nimble = nimble
@@ -142,7 +148,16 @@ final class OfflineSessionRunner: ObservableObject {
         }
 
         var failureCount = 0
-        var totalPushes = 0  // real pushes to nimble.processFrame, including warm-up padding
+        var totalPushes = 0  // real pushes to nimble.processFrame, including edge padding
+
+        // Median gap between decoded frames, so edge padding lands on the same
+        // cadence. A single photo has no gap to measure and keeps the default.
+        if decoded.count > 1 {
+            let gaps = zip(decoded.dropFirst(), decoded).map { $0.timestamp - $1.timestamp }.filter { $0 > 0 }
+            if !gaps.isEmpty {
+                sampleInterval = gaps.sorted()[gaps.count / 2]
+            }
+        }
 
         for (i, frame) in decoded.enumerated() {
             if Task.isCancelled {
@@ -163,11 +178,15 @@ final class OfflineSessionRunner: ObservableObject {
             return
         }
 
-        // Short clip / single photo: pad so the Savitzky-Golay filter still
-        // warms up and the user gets a (static-hold) muscle estimate instead of
-        // pose-only results forever. See this class's header comment.
-        if totalPushes > 0, totalPushes < Self.sgWarmupFrameCount, let last = lastSuccessfulFrame {
-            await padToWarmUp(last, totalPushes: &totalPushes)
+        // Edge-pad the tail. Mirrors the head priming in `processOneFrame`: the
+        // centred SG window lags 4 samples, so without this the LAST 4 real
+        // frames never reach the middle of a full window. Each of these pushes
+        // yields a result centred on a real frame, which
+        // `routeBiomechanicsToOwningFrame` files correctly. A single photo
+        // (1 real push) is just the degenerate case — 4 head + 1 + 4 tail = 9,
+        // centred exactly on the photo.
+        if totalPushes > 0, let last = lastSuccessfulFrame {
+            await padFilterTail(with: last.bodyFrame, totalPushes: &totalPushes)
         }
 
         phase = .finished(processed: decoded.count, failed: failureCount, cancelled: false)
@@ -211,6 +230,16 @@ final class OfflineSessionRunner: ObservableObject {
             calibrated = true
         }
 
+        // Edge-pad the head of the sequence. The SG filter is CENTRED, so
+        // without this the first 4 real frames can never sit at the middle of a
+        // full window and would show pose with no muscle. Replaying this frame
+        // backdated fills the leading half-window; the results those pushes
+        // produce are centred on synthetic timestamps and get discarded by
+        // `routeBiomechanicsToOwningFrame`, which is what we want.
+        if totalPushes == 0 {
+            await primeFilterHead(with: bodyFrame, totalPushes: &totalPushes)
+        }
+
         let published = await submitAndWait(bodyFrame, timeout: Self.solveTimeout)
         totalPushes += 1
         lastSuccessfulFrame = (frameIndex, bodyFrame)
@@ -223,34 +252,79 @@ final class OfflineSessionRunner: ObservableObject {
             return false
         }
 
+        // Biomechanics are deliberately NOT attached here — see
+        // `routeBiomechanicsToOwningFrame`. The newest solve does not describe
+        // the newest frame.
         resultStore.append(OfflineResultStore.FrameResult(
             id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
             status: .success, usedFallbackBBox: estimate.usedFallbackBBox,
-            bodyFrame: bodyFrame, ikResult: nimble.lastIKResult, idResult: nimble.lastIDResult,
-            muscleResult: nimble.lastMuscleResult, isStaticHoldEstimate: false))
+            bodyFrame: bodyFrame, ikResult: nil, idResult: nil,
+            muscleResult: nil, isStaticHoldEstimate: false))
+        routeBiomechanicsToOwningFrame()
         return true
     }
 
-    /// Replays the last real frame's pose with synthetic, evenly-spaced
-    /// timestamps until the SG filter has seen `sgWarmupFrameCount` total
-    /// pushes, then writes whatever muscle/ID/IK result that produced back onto
-    /// the ORIGINAL frame's row (not a new one) via
-    /// `OfflineResultStore.updateBiomechanics`.
-    private func padToWarmUp(_ last: (id: Int, bodyFrame: BodyFrame), totalPushes: inout Int) async {
-        let baseTimestamp = last.bodyFrame.timestamp
-        while totalPushes < Self.sgWarmupFrameCount {
+    /// Files the newest ID/muscle solve against the frame it actually describes.
+    ///
+    /// `NimbleEngine` dates ID and muscle output at `centerTimestamp` — the
+    /// centre of the 9-tap Savitzky-Golay window — because that is the sample
+    /// its `dq`/`ddq` are valid for (`NimbleEngine.swift:318-320`). So the
+    /// newest published result is roughly half a window OLDER than the frame
+    /// just pushed. Attaching it to the frame we just submitted would label
+    /// every overlay with a pose it does not belong to: about 4 frames of lag,
+    /// which at the 2 fps default is two seconds of visibly wrong muscle.
+    ///
+    /// `MuscleOutput` carries that timestamp, so match on it. The centre value
+    /// is a copy of a previously pushed frame timestamp, so the match is exact
+    /// up to float representation; a result with no close frame belongs to a
+    /// dropped frame or a previous clip and is discarded rather than misfiled.
+    private func routeBiomechanicsToOwningFrame() {
+        guard let muscle = nimble.lastMuscleResult else { return }
+        guard let owner = resultStore.frames.min(by: {
+            abs($0.timestamp - muscle.timestamp) < abs($1.timestamp - muscle.timestamp)
+        }), abs(owner.timestamp - muscle.timestamp) <= Self.biomechanicsMatchTolerance else { return }
+
+        resultStore.updateBiomechanics(forFrameID: owner.id, muscleResult: muscle,
+                                       idResult: nimble.lastIDResult, ikResult: nimble.lastIKResult,
+                                       isStaticHoldEstimate: false)
+    }
+
+    /// Replays `bodyFrame` on backdated timestamps to fill the LEADING half of
+    /// the Savitzky-Golay window before the first real frame is pushed.
+    ///
+    /// Held-pose padding is the right choice here rather than reflection or
+    /// extrapolation: it makes `dq`/`ddq` tend to zero at the clip edges, which
+    /// matches what this input can actually support. `joint_coords` pins the
+    /// pelvis every frame, so global motion is unavailable and the defensible
+    /// reading of the muscle numbers is a static-equilibrium one anyway.
+    private func primeFilterHead(with bodyFrame: BodyFrame, totalPushes: inout Int) async {
+        let dt = sampleInterval
+        for step in stride(from: Self.sgHalfWindow, through: 1, by: -1) {
             if Task.isCancelled { return }
-            let syntheticTimestamp = baseTimestamp + Double(totalPushes) * Self.padSyntheticFrameInterval
-            let padded = BodyFrame(timestamp: syntheticTimestamp, frameNumber: last.bodyFrame.frameNumber,
-                                    joints: last.bodyFrame.joints)
+            let padded = BodyFrame(timestamp: bodyFrame.timestamp - Double(step) * dt,
+                                   frameNumber: bodyFrame.frameNumber,
+                                   joints: bodyFrame.joints)
+            _ = await submitAndWait(padded, timeout: Self.solveTimeout)
+            totalPushes += 1
+            // Deliberately not routed: these are centred on synthetic
+            // timestamps that match no real frame.
+        }
+    }
+
+    /// Mirror of `primeFilterHead` for the TRAILING half-window. Each push here
+    /// advances the window centre onto one of the last real frames, so unlike
+    /// the head padding these results are routed and kept.
+    private func padFilterTail(with bodyFrame: BodyFrame, totalPushes: inout Int) async {
+        let dt = sampleInterval
+        for step in 1...Self.sgHalfWindow {
+            if Task.isCancelled { return }
+            let padded = BodyFrame(timestamp: bodyFrame.timestamp + Double(step) * dt,
+                                   frameNumber: bodyFrame.frameNumber,
+                                   joints: bodyFrame.joints)
             let published = await submitAndWait(padded, timeout: Self.solveTimeout)
             totalPushes += 1
             guard published else { continue }
-            if let muscle = nimble.lastMuscleResult {
-                resultStore.updateBiomechanics(forFrameID: last.id, muscleResult: muscle,
-                                                idResult: nimble.lastIDResult, ikResult: nimble.lastIKResult,
-                                                isStaticHoldEstimate: true)
-            }
+            routeBiomechanicsToOwningFrame()
         }
     }
 

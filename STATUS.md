@@ -499,6 +499,33 @@ Left/right assignment was confirmed three ways, all external to the model, becau
 model-internal chirality test is circular: COCO-WholeBody keypoint naming, a photo with externally
 known facing, and a mirror test (36× residual separation).
 
+### The Savitzky-Golay window is CENTRED — this shapes the offline path (build 18)
+
+`SavitzkyGolayFilter` is a 9-tap centred filter: it emits nothing until 9 samples are in, and what it
+then emits is dated at `centerTimestamp`, **4 samples behind the newest push**
+(`SavitzkyGolayFilter.swift:9`, `NimbleEngine.swift:318-320`). Two defects followed from that and are
+fixed in build 18; both are easy to reintroduce.
+
+1. **Muscle output was filed against the wrong frame.** `OfflineSessionRunner` attached
+   `nimble.lastMuscleResult` to the frame it had just submitted, but that result describes a frame
+   ~4 earlier. At the 2 fps default that is a **2-second offset** between the pose drawn and the
+   muscle overlay drawn on top of it. Fixed by `routeBiomechanicsToOwningFrame()`, which matches on
+   `MuscleOutput.timestamp` instead of assuming newest-result-belongs-to-newest-frame. A result with
+   no close frame is discarded rather than misfiled.
+
+2. **The first and last 4 real frames could never have muscle**, because they cannot sit at the
+   centre of a full window. Fixed by edge-padding: `primeFilterHead` replays the first pose on
+   backdated timestamps, `padFilterTail` replays the last pose forward. Head-pad results are centred
+   on synthetic timestamps and are deliberately dropped; tail-pad results are centred on real frames
+   and are kept. A single photo is the degenerate case — 4 + 1 + 4 = 9, centred exactly on the photo.
+
+⚠️ **Pad on the clip's own cadence.** The filter derives `dt` from the window span
+(`SavitzkyGolayFilter.swift:51`), so padding a 2 fps clip with 1/30 s synthetic frames corrupts
+`dq`/`ddq` for every window straddling the boundary. `sampleInterval` is taken as the median decoded
+frame gap for this reason. Held-pose padding (not reflection or extrapolation) is the deliberate
+choice: it drives `dq`/`ddq` toward zero at the edges, which is the only reading this input supports
+given the pelvis pinning described below.
+
 ### The limitation that shapes the product claim
 
 **`joint_coords` pins the pelvis at a model constant `(0, 0.924, 0)` in every frame.** `global_trans`
