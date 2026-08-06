@@ -70,3 +70,24 @@ targets:
       base:
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: "YES"
+        # TEMPORARY (IK drift diagnosis): lets an ObjC++ XCTestCase in this
+        # target call nimblephysics directly. Remove with
+        # BioMotionTests/IKSolverInternalsTests.mm.
+        CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+        HEADER_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/BioMotion/Nimble"
+          - "$(PROJECT_DIR)/nimblephysics"
+          - "$(PROJECT_DIR)/nimblephysics/third_party/eigen"
+          - "$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2"
+          - "/opt/homebrew/Cellar/boost/1.90.0_1/include"
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - "DART_IOS_BUILD=1"
+          - "DART_USE_IDENTITY_JACOBIAN=1"
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
+          - "$(PROJECT_DIR)/nimblephysics/build_sim"
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(PROJECT_DIR)/nimblephysics/build_ios"
+        OTHER_LDFLAGS:
+          - "-lnimble_ios"
+          - "-lc++"

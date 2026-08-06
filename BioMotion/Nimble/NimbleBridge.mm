@@ -13,6 +13,7 @@
 #include "dart/dynamics/BodyNode.hpp"
 #include "dart/dynamics/Joint.hpp"
 #include "dart/math/MathTypes.hpp"
+#include "dart/math/IKSolver.hpp"
 
 using namespace dart;
 
@@ -210,6 +211,17 @@ static double markerReliabilityWeight(const std::string& name) {
     // an unrelated pose since the last IK.
     Eigen::VectorXs _lastIKPose;
     BOOL _hasLastIKPose;
+
+    // Runtime DOF mask. `_dofMasked[i]` is 1 when DOF i is held fixed at
+    // `_dofPinnedValues(i)` for the duration of an IK solve. Masking is a
+    // solver-side restriction only: the skeleton keeps all its DOFs, the .osim
+    // is untouched, no joint is welded, and `clearDOFMask` restores the full
+    // solve exactly. See `applyDOFMaskWithNames:` for why this cannot be done
+    // through `math::IKConfig`.
+    std::vector<char> _dofMasked;
+    std::vector<int> _freeDofIndices;
+    Eigen::VectorXs _dofPinnedValues;
+    BOOL _dofMaskActive;
 }
 
 - (instancetype)init {
@@ -622,6 +634,170 @@ static double markerReliabilityWeight(const std::string& name) {
     return YES;
 }
 
+// MARK: - Runtime DOF mask
+
+- (NSInteger)applyDOFMaskWithNames:(NSArray<NSString *> *)dofNamesToMask {
+    // WHY THIS IS NOT DONE THROUGH math::IKConfig
+    //
+    // `math::IKConfig` (nimblephysics/dart/math/IKSolver.hpp:16-42) carries
+    // exactly eleven fields — convergenceThreshold, maxStepCount,
+    // leastSquaresDamping, maxRestarts, lossLowerBound, startClamped,
+    // dontExitTranspose, lineSearch, logOutput, inputNames, outputNames. There
+    // is no DOF selection vector of any kind, and `refineIK` explicitly
+    // discards the bounds it is handed (`(void)upperBound; (void)lowerBound;`
+    // at IKSolver.cpp:303-304). So a mask cannot be expressed as a config
+    // option; it has to be expressed as a smaller *parameterisation* handed to
+    // `math::solveIK`. That is what `solveMaskedIKWithMarkers:` does.
+    //
+    // Reversibility: this touches only `_dofMasked` / `_freeDofIndices` /
+    // `_dofPinnedValues`. The skeleton keeps all 163 DOFs, no joint is welded,
+    // and the .osim on disk is never written. `clearDOFMask` restores the
+    // original solve bit-for-bit.
+    if (!_modelLoaded) return 0;
+
+    const int n = (int)_skeleton->getNumDofs();
+    _dofMasked.assign((size_t)n, 0);
+    _dofPinnedValues = _skeleton->getPositions();
+
+    std::set<std::string> wanted;
+    for (NSString *name in dofNamesToMask) {
+        wanted.insert(std::string([name UTF8String]));
+    }
+
+    NSInteger matched = 0;
+    for (int i = 0; i < n; i++) {
+        const std::string dofName = _skeleton->getDof(i)->getName();
+        if (wanted.find(dofName) == wanted.end()) continue;
+        _dofMasked[(size_t)i] = 1;
+        // Pin at the coordinate's own rest position when the parser gave it a
+        // degenerate [lo, lo] range (that is what nimble does for
+        // <locked>true</locked>: OpenSimParser.cpp:5923-5943), otherwise pin at
+        // wherever the DOF currently sits.
+        const double lo = (double)_skeleton->getDof(i)->getPositionLowerLimit();
+        const double hi = (double)_skeleton->getDof(i)->getPositionUpperLimit();
+        if (std::isfinite(lo) && std::isfinite(hi) && std::abs(hi - lo) < 1e-12) {
+            _dofPinnedValues(i) = (s_t)lo;
+        }
+        matched++;
+    }
+
+    _freeDofIndices.clear();
+    _freeDofIndices.reserve((size_t)n);
+    for (int i = 0; i < n; i++) {
+        if (!_dofMasked[(size_t)i]) _freeDofIndices.push_back(i);
+    }
+    _dofMaskActive = (matched > 0);
+
+    // The warm-start pose is still dimensionally valid (masking does not
+    // change getNumDofs()), but its masked entries may disagree with the pin,
+    // so bring it onto the constraint manifold.
+    if (_hasLastIKPose && _lastIKPose.size() == n) {
+        for (int i = 0; i < n; i++) {
+            if (_dofMasked[(size_t)i]) _lastIKPose(i) = _dofPinnedValues(i);
+        }
+    }
+
+    NSLog(@"NimbleBridge: DOF mask applied — %ld of %ld requested names matched; "
+          @"%lu free DOFs of %d",
+          (long)matched, (long)dofNamesToMask.count,
+          (unsigned long)_freeDofIndices.size(), n);
+    return matched;
+}
+
+- (void)clearDOFMask {
+    _dofMasked.clear();
+    _freeDofIndices.clear();
+    _dofPinnedValues = Eigen::VectorXs();
+    _dofMaskActive = NO;
+}
+
+- (BOOL)isDOFMaskActive {
+    return _dofMaskActive;
+}
+
+- (NSInteger)numFreeDOFs {
+    if (!_modelLoaded) return 0;
+    if (!_dofMaskActive) return (NSInteger)_skeleton->getNumDofs();
+    return (NSInteger)_freeDofIndices.size();
+}
+
+- (NSArray<NSString *> *)maskedDOFNames {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    if (!_modelLoaded || !_dofMaskActive) return out;
+    for (int i = 0; i < (int)_dofMasked.size(); i++) {
+        if (!_dofMasked[(size_t)i]) continue;
+        [out addObject:[NSString stringWithUTF8String:
+                        _skeleton->getDof(i)->getName().c_str()]];
+    }
+    return out;
+}
+
+/// Solve IK over only the unmasked DOFs.
+///
+/// Structurally identical to `Skeleton::fitMarkersToWorldPositions`
+/// (Skeleton.cpp:7959-7987) except that the optimisation variable is the
+/// F-vector of free coordinates rather than the full n-vector, and the
+/// Jacobian handed to the solver is the corresponding F-column slice. Masked
+/// coordinates are written from `_dofPinnedValues` on every `setPositions`, so
+/// they are held exactly — not merely clamped at the end of a run, which is
+/// all that nimble's `<locked>` handling achieves.
+- (double)solveMaskedIKWithMarkers:(const std::vector<std::pair<dynamics::BodyNode*, Eigen::Vector3s>>&)markerList
+                   targetPositions:(const Eigen::VectorXs&)targetPositions
+                     markerWeights:(const Eigen::VectorXs&)markerWeights
+                            config:(math::IKConfig)config {
+    const int f = (int)_freeDofIndices.size();
+    const std::vector<int>& freeIdx = _freeDofIndices;
+    Eigen::VectorXs pinned = _dofPinnedValues;
+
+    auto gather = [&](const Eigen::VectorXs& full) {
+        Eigen::VectorXs sub(f);
+        for (int k = 0; k < f; k++) sub(k) = full(freeIdx[(size_t)k]);
+        return sub;
+    };
+    auto scatter = [&](const Eigen::VectorXs& sub) {
+        Eigen::VectorXs full = pinned;
+        for (int k = 0; k < f; k++) full(freeIdx[(size_t)k]) = sub(k);
+        return full;
+    };
+
+    Eigen::VectorXs initial = gather(_skeleton->getPositions());
+    Eigen::VectorXs upper = gather(_skeleton->getPositionUpperLimits());
+    Eigen::VectorXs lower = gather(_skeleton->getPositionLowerLimits());
+
+    auto* skel = _skeleton.get();
+
+    return (double)math::solveIK(
+        initial,
+        upper,
+        lower,
+        (int)markerList.size() * 3,
+        [skel, scatter, gather](const Eigen::VectorXs pos, bool clamp) {
+            skel->setPositions(scatter(pos));
+            if (clamp) {
+                skel->clampPositionsToLimits();
+                // Re-impose the pin: clampPositionsToLimits() only enforces
+                // [lo, hi], which for an unlocked masked DOF is wide open.
+                skel->setPositions(scatter(gather(skel->getPositions())));
+                return gather(skel->getPositions());
+            }
+            return pos;
+        },
+        [skel, targetPositions, markerList, markerWeights, freeIdx, f](
+            Eigen::Ref<Eigen::VectorXs> diff, Eigen::Ref<Eigen::MatrixXs> jac) {
+            diff = skel->getMarkerWorldPositions(markerList) - targetPositions;
+            for (int j = 0; j < markerWeights.size(); j++) {
+                diff.segment<3>(j * 3) *= markerWeights(j);
+            }
+            Eigen::MatrixXs fullJac =
+                skel->getMarkerWorldPositionsJacobianWrtJointPositions(markerList);
+            for (int k = 0; k < f; k++) jac.col(k) = fullJac.col(freeIdx[(size_t)k]);
+        },
+        [skel, gather](Eigen::Ref<Eigen::VectorXs> val) {
+            val = gather(skel->getRandomPose());
+        },
+        config);
+}
+
 - (nullable NimbleIKResult *)solveIKWithMarkerPositions:(NSArray<NSNumber *> *)markerPositions
                                             markerNames:(NSArray<NSString *> *)markerNames {
     if (!_modelLoaded) return nil;
@@ -704,8 +880,13 @@ static double markerReliabilityWeight(const std::string& name) {
             config.setMaxRestarts(kIKColdRestarts);
         }
 
-        double error = _skeleton->fitMarkersToWorldPositions(
-            markerList, targetPositions, weights, false, config);
+        double error = _dofMaskActive
+            ? [self solveMaskedIKWithMarkers:markerList
+                             targetPositions:targetPositions
+                               markerWeights:weights
+                                      config:config]
+            : _skeleton->fitMarkersToWorldPositions(
+                  markerList, targetPositions, weights, false, config);
 
         if (warmStarted && error > lossBoundForResidual(kIKWarmStartRejectMeters)) {
             // The previous pose was not a usable seed — fall back to a cold
@@ -713,8 +894,13 @@ static double markerReliabilityWeight(const std::string& name) {
             math::IKConfig coldConfig;
             coldConfig.setLossLowerBound(lossBoundForResidual(kIKMarkerToleranceMeters));
             coldConfig.setMaxRestarts(kIKColdRestarts);
-            error = _skeleton->fitMarkersToWorldPositions(
-                markerList, targetPositions, weights, false, coldConfig);
+            error = _dofMaskActive
+                ? [self solveMaskedIKWithMarkers:markerList
+                                 targetPositions:targetPositions
+                                   markerWeights:weights
+                                          config:coldConfig]
+                : _skeleton->fitMarkersToWorldPositions(
+                      markerList, targetPositions, weights, false, coldConfig);
         }
 
         // Extract joint angles

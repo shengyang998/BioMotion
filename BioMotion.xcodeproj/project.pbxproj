@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		030DB864178EF4BB7B0439BA /* CalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 622F2E1A346D02B435A0299C /* CalibrationView.swift */; };
+		04F1EE7570C3EC744DB0552D /* IKDriftDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFAE9EC6FC90AA7AC829F48E /* IKDriftDiagnosticsTests.swift */; };
 		19E2D7453EE33B78EB0260AA /* MuscleSolver.mm in Sources */ = {isa = PBXBuildFile; fileRef = D8B9BD44107DF71632646C0E /* MuscleSolver.mm */; };
 		2054C2A9E28C0BC0833FCFC9 /* NimbleBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = CF5D35BA98B286FEF7D0F3A2 /* NimbleBridge.mm */; };
 		20F59FB07F06FD0CAC0E3C90 /* MuscleSolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F66CB7BEA67689B99D4833 /* MuscleSolverTests.swift */; };
@@ -15,10 +16,13 @@
 		235F9CF6080D2CE0E058DA15 /* MotionRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C37A4A07CA2D87A4DFFF4348 /* MotionRecorder.swift */; };
 		32F526B0CAC7BDF4677DC5BF /* BodyJointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C64A42A229077EC3CF47FD /* BodyJointTests.swift */; };
 		39A5BD9ECC7553A6C9F6E556 /* OneEuroFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5E8807D42FF44784FCF22F /* OneEuroFilter.swift */; };
+		58D9B346925617BEEE77A5D3 /* FullBodyDOFFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E68C0715E9D9E407234A2F8 /* FullBodyDOFFixture.swift */; };
 		59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */; };
 		5EAF2F8A2F45C0B4C65E83C0 /* CalibrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */; };
 		5EB4E09CAD2BF5644147136D /* MomentArmTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */; };
+		68ADD79B07C15C342DFB2CB5 /* E1MarkerSetComparisonTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = A8E2DEF6905CA595DA267C6A /* E1MarkerSetComparisonTests.mm */; };
 		7ED1CE05D8C199C942D22051 /* SkeletonOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */; };
+		868099F18F8814906F1D269C /* IKSolverInternalsTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 9C8305C52C48DE409E73AB10 /* IKSolverInternalsTests.mm */; };
 		8804D81FA38EF570856C727E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A021DA9E5DE28ED2E1F45BB4 /* Assets.xcassets */; };
 		98613DC9BB618D40355A1196 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = DD8D8EE2FB43D7D0467DA761 /* Resources */; };
 		ABE29919DAB357CEDBF7D9E5 /* MuscleOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCE04065D9DEF183FAB2526A /* MuscleOverlay.swift */; };
@@ -30,6 +34,7 @@
 		D6ACBD79AA382B7E59CAF0A3 /* MomentArmComputer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7CC0C79CED5BDA3ECDCC98F2 /* MomentArmComputer.mm */; };
 		E1C04472A89C653399F92677 /* BioMotionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61281090913631B0CE9A7C73 /* BioMotionApp.swift */; };
 		EA0D96BEE590A8EC44964245 /* SessionChartsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB61194FADC588D790C9D483 /* SessionChartsView.swift */; };
+		ED327C5D32C21DB76E6D959B /* DOFMaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */; };
 		EDA3373BCD3746A22F7CD272 /* NimbleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BCF8A0B85EADE0EACE2E91D /* NimbleEngine.swift */; };
 		EFDB7E94C87B175ECC83B78E /* SavitzkyGolayFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069BD05C894EA1A3D4B71811 /* SavitzkyGolayFilter.swift */; };
 		F5D3FF290D1F2FC2D53CD448 /* osqp_interrupt_stub.c in Sources */ = {isa = PBXBuildFile; fileRef = 61F7A23E87AFC3190713C1D6 /* osqp_interrupt_stub.c */; };
@@ -69,12 +74,17 @@
 		85CB2DC650F7D9EA6AA72EF6 /* MotionRecorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionRecorderTests.swift; sourceTree = "<group>"; };
 		91F66CB7BEA67689B99D4833 /* MuscleSolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuscleSolverTests.swift; sourceTree = "<group>"; };
 		9892753635961827833D0E4C /* MuscleSolver.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MuscleSolver.h; sourceTree = "<group>"; };
+		9C8305C52C48DE409E73AB10 /* IKSolverInternalsTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = IKSolverInternalsTests.mm; sourceTree = "<group>"; };
+		9E68C0715E9D9E407234A2F8 /* FullBodyDOFFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullBodyDOFFixture.swift; sourceTree = "<group>"; };
 		A021DA9E5DE28ED2E1F45BB4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonOverlayView.swift; sourceTree = "<group>"; };
+		A8E2DEF6905CA595DA267C6A /* E1MarkerSetComparisonTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = E1MarkerSetComparisonTests.mm; sourceTree = "<group>"; };
 		ACD092133DD2189F1200C6F3 /* BioMotion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = BioMotion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NimbleBridgeTests.swift; sourceTree = "<group>"; };
+		AFAE9EC6FC90AA7AC829F48E /* IKDriftDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IKDriftDiagnosticsTests.swift; sourceTree = "<group>"; };
 		BB61194FADC588D790C9D483 /* SessionChartsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionChartsView.swift; sourceTree = "<group>"; };
 		BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentArmTests.swift; sourceTree = "<group>"; };
+		C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DOFMaskTests.swift; sourceTree = "<group>"; };
 		C37A4A07CA2D87A4DFFF4348 /* MotionRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionRecorder.swift; sourceTree = "<group>"; };
 		CCE04065D9DEF183FAB2526A /* MuscleOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuscleOverlay.swift; sourceTree = "<group>"; };
 		CF5D35BA98B286FEF7D0F3A2 /* NimbleBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = NimbleBridge.mm; sourceTree = "<group>"; };
@@ -121,6 +131,11 @@
 			children = (
 				39C64A42A229077EC3CF47FD /* BodyJointTests.swift */,
 				3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */,
+				C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */,
+				A8E2DEF6905CA595DA267C6A /* E1MarkerSetComparisonTests.mm */,
+				9E68C0715E9D9E407234A2F8 /* FullBodyDOFFixture.swift */,
+				AFAE9EC6FC90AA7AC829F48E /* IKDriftDiagnosticsTests.swift */,
+				9C8305C52C48DE409E73AB10 /* IKSolverInternalsTests.mm */,
 				BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */,
 				85CB2DC650F7D9EA6AA72EF6 /* MotionRecorderTests.swift */,
 				91F66CB7BEA67689B99D4833 /* MuscleSolverTests.swift */,
@@ -336,6 +351,11 @@
 			files = (
 				32F526B0CAC7BDF4677DC5BF /* BodyJointTests.swift in Sources */,
 				5EAF2F8A2F45C0B4C65E83C0 /* CalibrationTests.swift in Sources */,
+				ED327C5D32C21DB76E6D959B /* DOFMaskTests.swift in Sources */,
+				68ADD79B07C15C342DFB2CB5 /* E1MarkerSetComparisonTests.mm in Sources */,
+				58D9B346925617BEEE77A5D3 /* FullBodyDOFFixture.swift in Sources */,
+				04F1EE7570C3EC744DB0552D /* IKDriftDiagnosticsTests.swift in Sources */,
+				868099F18F8814906F1D269C /* IKSolverInternalsTests.mm in Sources */,
 				5EB4E09CAD2BF5644147136D /* MomentArmTests.swift in Sources */,
 				BFE358FA68B0E8249A400DBF /* MotionRecorderTests.swift in Sources */,
 				20F59FB07F06FD0CAC0E3C90 /* MuscleSolverTests.swift in Sources */,
@@ -359,11 +379,34 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DART_IOS_BUILD=1",
+					"DART_USE_IDENTITY_JACOBIAN=1",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/BioMotion/Nimble",
+					"$(PROJECT_DIR)/nimblephysics",
+					"$(PROJECT_DIR)/nimblephysics/third_party/eigen",
+					"$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2",
+					/opt/homebrew/Cellar/boost/1.90.0_1/include,
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(PROJECT_DIR)/nimblephysics/build_ios",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(PROJECT_DIR)/nimblephysics/build_sim",
+				);
+				OTHER_LDFLAGS = (
+					"-lnimble_ios",
+					"-lc++",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.soleil.BioMotionTests;
 				SDKROOT = iphoneos;
@@ -483,11 +526,34 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DART_IOS_BUILD=1",
+					"DART_USE_IDENTITY_JACOBIAN=1",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/BioMotion/Nimble",
+					"$(PROJECT_DIR)/nimblephysics",
+					"$(PROJECT_DIR)/nimblephysics/third_party/eigen",
+					"$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2",
+					/opt/homebrew/Cellar/boost/1.90.0_1/include,
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(PROJECT_DIR)/nimblephysics/build_ios",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(PROJECT_DIR)/nimblephysics/build_sim",
+				);
+				OTHER_LDFLAGS = (
+					"-lnimble_ios",
+					"-lc++",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.soleil.BioMotionTests;
 				SDKROOT = iphoneos;

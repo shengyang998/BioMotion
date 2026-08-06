@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-07-22.
+Last updated: 2026-08-06.
 
 ---
 
@@ -110,6 +110,27 @@ Related: the drift value varies between identical full-suite runs, and `NimbleBr
 documents that the skeleton is **shared across instances** — so tests are order-dependent. Test
 isolation is its own open item.
 
+**2026-08-06 — the diagnosis above is confirmed, but this test must NOT be used as a score.**
+
+Root cause, measured by a four-arm causal experiment: the marker Jacobian is rank-deficient, the IK
+objective is flat along the unobservable directions, and `refineIK` terminates on an absolute
+error-*change* test (< 1e-7 m²) rather than on stationarity — so it stops while `q` is still moving,
+and every new call resets `lr` to 1.0 and resumes. With a full-column-rank Jacobian the solver
+reaches a fixed point within ≤4 solves (drift 6.1e-16 rad); at rank 21/37 it still drifts
+3.5e-3 rad/solve after 40 solves **even with an exactly reachable, zero-residual target**.
+
+Three reasons it is a broken instrument:
+
+1. **Confounded.** A solver-only change (gradient-based termination, or null-space damping toward the
+   seed) turns it green with *zero* accuracy gain.
+2. **Not a stable measurement.** Same binary, same minute, no rebuild: running the single test gives
+   `0.00575`, running its enclosing class gives `0.00984`, running the 111-test suite gives `0.17676`
+   — a **31× swing**, driven by the process-global `std::rand()` stream feeding the cold solve's five
+   random restarts.
+3. The marker residual cannot score it either, because the loss is flat exactly where `q` moves.
+
+Score observability work on ground-truth coordinate error instead (see E1 below).
+
 ---
 
 ## The upper-limb licence blocker
@@ -211,12 +232,28 @@ numbers are ground truth; the "upstream chose this approach" argument is not.
 
 ## Accuracy ceilings (external evidence)
 
-| Method | Joint-angle error |
-|---|---|
-| Marker-based (Vicon, gold standard) | ~2–3° |
-| OpenCap (2 synchronised cameras) | **4.1° MAE** (RMSE 2.0–10.2°) |
-| Monocular SMPL (HMR2.0 class) | **8.5° MAE** |
-| **ARKit body tracking (current input)** | **18.8° ± 12.12° MAE** (per-joint 3.75–47°) |
+| Method | Joint-angle error | Source |
+|---|---|---|
+| Marker-based (Vicon, gold standard) | ~2–3° | conventional figure, no single citation |
+| OpenCap (2 synchronised cameras) | **4.1° MAE** (RMSE 2.0–10.2°) | Uhlrich et al. 2023, PLoS Comput Biol |
+| OpenCap Monocular (1 phone camera) | **4.8° MAE** | [arXiv:2603.24733](https://arxiv.org/abs/2603.24733) |
+| SAM 3D Body / MHR (1 phone camera) | **4.66° raw**, 3.46° centred | [arXiv:2607.17639](https://arxiv.org/abs/2607.17639) — **v1 preprint, not peer reviewed**, n=9, needs a fitted per-model offset table |
+| **ARKit body tracking (current input)** | **18.8° ± 12.12° MAE** (per-joint 3.75–47°) | [doi:10.3390/app12104806](https://doi.org/10.3390/app12104806) (peer reviewed) |
+
+⚠️ **These rows are not mutually comparable, and no ratio derived from them is a measurement.**
+The cohorts, movements, ground-truth pipelines and — decisively — the *DOF sets* differ. The ARKit
+study covers shoulder/elbow/neck/knee/ankle; the SAM 3D Body study covers ankle/knee/hip/pelvis/torso.
+They barely overlap, and ARKit's worst per-joint errors are likely in the upper limb, which the
+SAM 3D Body study never measured. Offset correction is also asymmetric (raw vs centred).
+
+Apple has **never published any accuracy figure** for ARKit body tracking or
+`VNDetectHumanBodyPose3DRequest` (checked: API docs + WWDC23 "Explore 3D body pose and person
+segmentation in Vision"). Any "N× better than ARKit" claim therefore has no measured denominator.
+
+**Removed 2026-08-06:** a row reading `Monocular SMPL (HMR2.0 class) | 8.5° MAE`. It carried no
+citation and none could be found. `18.8 ÷ 8.5 = 2.21` was the sole origin of the belief that
+monocular mesh recovery is "about 2× more accurate than ARKit". Do not reintroduce an uncited
+number here — see `labs/sam-3d-body/findings/DECISION.md` §6.
 
 **Do not attempt real-time ViT-H HMR2.0 or WHAM+SLAM on iPhone.** ViT-H is ~630M params (~1.2–1.3 GB
 fp16); the reference implementations are offline CUDA batch scripts. HMR2.0 is also per-frame and
@@ -224,6 +261,22 @@ camera-relative — it fixes single-frame pose plausibility while leaving accele
 actual muscle-side bottlenecks, untouched. WHAM's expensive half (camera pose + gravity) is already
 solved for free by ARKit; the useful part to borrow is its **architecture** — a small AMASS-trained
 temporal denoiser + foot-contact head, ANE-sized — not its code.
+
+**2026-08-06 — partially superseded by measurement.** The *compute* half of this paragraph was
+pessimistic; the *value* half was right, and is now the whole argument.
+
+Measured on M2 Pro for SAM 3D Body (`vith`, a 631.65M ViT-H): body-only path **0.70 s/image**
+(the often-quoted 2.52 s is the full pipeline including a hand decoder this project does not use),
+fp16 body-path weights **1.285 GiB**, and max activation magnitude sits **145× below the fp16
+ceiling** — so the AutoLevel DINOv2 fp16-overflow experience does not transfer to this model.
+"Not real-time" still holds; "cannot run on the phone" does not. Still-image tier is plausible.
+
+The reason not to do it is now **observability, not compute**. MHR carries 4 spine anchors and
+**0 rib anchors** against this model's 54 spine and 72 rib coordinates, so ≥114 of the spine+rib
+DOFs stay in the null space before and after the swap. Meanwhile 54 coordinates in `FullBody.osim`
+already carry `<locked>true</locked>` and nimble appears not to honour it (171 − 54 = 117, yet
+nimble reports 163 DOF). Runtime DOF masking is the cheaper lever by an order of magnitude.
+Full accounting, measurements and pre-registered gates: `labs/sam-3d-body/findings/DECISION.md`.
 
 ### Hard limits on "quantitative muscle activation"
 
@@ -256,6 +309,64 @@ number.
 
 ---
 
+## E1 — pose-source replacement was tested and REJECTED (2026-08-06)
+
+**Verdict: STOP. Do not replace ARKit with SAM 3D Body / MHR markers.** Gates were frozen to disk
+2h09m before any result existed (`E1_PREREGISTRATION.md` 10:49:00, `E1_results.json` 12:57:22), and
+an independent adversarial audit recomputed every gate from the raw JSON and could not overturn it.
+Full record: `labs/sam-3d-body/findings/{E1_PREREGISTRATION.md, E1_results.json, E1_gates.json}`;
+harness `BioMotionTests/E1MarkerSetComparisonTests.mm`.
+
+Design: three arms on the same synthetic scripted motion with known ground-truth `q(t)`
+(120 frames @ 30 fps, 30° torso flexion distributed evenly across the 17 intervertebral joints,
+markers = `FK(q_true)` + i.i.d. gaussian σ = 8 mm, fixed seeds).
+**A** = the 20 shipped ARKit virtual markers · **A′/A″** = A plus runtime DOF masking ·
+**A_damp** = A plus the null-space-damped solver · **B** = 25 MHR-derived markers.
+
+| Gate | Result | Decisive number (5/5 seeds, both seed conditions) |
+|---|---|---|
+| G3 spine truth | **FAIL** | `E_B` 0.2124 rad vs `E_A` 0.1997 — B is *worse*, and 10.8× the null model |
+| G5-CROSS | **FAIL — STOP** | B / A_damp = **4.20** (spine motion), 3.09 (`ddq`), 1.72 (spine error) |
+| G5-DAMP | **FAIL — STOP** | solver held identical: B / A_damp = 1.51, 1.25, 0.96 — B loses 2 of 3 axes |
+| G1, G2, G6 | FAIL | B produces **33% more** spurious intervertebral motion than the shipped set |
+| G4 limb non-regression | PASS | limbs are fine; the failure is entirely spinal |
+
+Robustness: re-run giving arm B a **2:1 noise advantage** (4 mm vs 8 mm — roughly what good temporal
+smoothing would buy). Still STOP.
+
+**Why, structurally:** MHR carries 4 spine anchors and **0 rib anchors** against this model's 54 spine
+and 72 rib coordinates. Per-frame pose accuracy cannot buy spinal observability. This is a spatial
+result, not a temporal one — hand-written smoothing does not address it, and the experiment fed arm B
+an *idealised* marker stream with no model error at all, i.e. SAM 3D Body's ceiling. The ceiling lost.
+
+**Audit caveats, recorded so they are not lost:** leakage exists but every asymmetry favours arm B
+(it received 7 real vertebral-level markers MHR cannot produce, and a perfect retarget), so the STOP
+is conservative. Arm B's one surviving advantage: with the solver held fixed it is consistently
+~4% better on spine error (`E` ratio 0.963, 4/5 seeds < 1.0) — small, real, and far from the 0.7 gate.
+
+### The constraint this puts on product claims
+
+> **Spine coordinates are not measurements. They are priors.**
+> **Make no quantitative spine-loading claim.**
+
+This is not a consequence of choosing ARKit. **No arm beat the null model.** The best arm
+(`B_damp`, 0.1113 rad) is 5.7× the null (0.0196 rad); `A_damp` is 5.9×. At 8 mm marker noise,
+per-intervertebral joint angles are **not recoverable by any marker set**. Shrinking the null space
+buys smoothness, not spinal truth.
+
+### Reopening this line
+
+Requires a new pre-registration. The only legitimate technical reason is implementing an
+**orientation residual** in the nimble fork — E1 fed arm B marker *positions* only, because rotation
+constraints need new C++ residuals and Jacobians that do not exist yet. MHR emits
+`pred_global_rots` (127×3×3), so that is the untested upside.
+⚠️ Known trap: `pred_global_rots` is **not** in the same frame as `pred_joint_coords`
+(`sam3d_body.py:1615-1619` flips the latter but not the former). Correct transform:
+`R_cam = diag(1,−1,−1) @ pred_global_rots @ diag(1,−1,−1)`. A naive retarget is silently off by 180°
+about X.
+
+---
+
 ## Next steps (ordered)
 
 ### Immediate — unblocked, no licence exposure
@@ -278,10 +389,24 @@ number.
 
 ### High-value engineering — independent of the licence question
 
-4. **IK null-space damping / runtime DOF masking.** Use the existing `math::IKConfig` at
-   `NimbleBridge.mm:690` to lock unobservable coordinates at runtime rather than welding them in the
-   model file — reversible, no new shipped artifact, no rename, no patella bake, and it avoids
-   nimble's own documented penalty for intermediate WeldJoints (`OpenSimParser.cpp:5229`).
+4. **IK null-space damping / runtime DOF masking.** ~~Use the existing `math::IKConfig` at
+   `NimbleBridge.mm:690` to lock unobservable coordinates at runtime~~ — **corrected 2026-08-06:
+   `math::IKConfig` cannot express a DOF mask.** It has 11 fields and none of them selects DOFs, and
+   `refineIK` explicitly discards the bounds it is given (`(void)upperBound; (void)lowerBound;`).
+   Masking has to be done by reparameterising the solve instead; that was implemented and measured
+   (163 → 106 DOFs, marker fit unchanged).
+
+   **Damping is now the highest-value change in this file, on measured evidence — do it first.**
+   E1 (below) measured a ~40-line solver change (gradient/step-based convergence in `refineIK`
+   plus null-space damping toward the seed, μ=1e-3) as beating an entire pose-source replacement by
+   **3.1–5.1×** on every axis: spurious spine motion 3.08×, SG-filtered `ddq` 3.55×, spine error
+   1.70×, downstream torque 5.05× (measured against the healthy A′ arm, so this is not inflated by
+   arm A's own ill-conditioning).
+   Record it as a **stability** fix, not an accuracy fix — see the spine-claim constraint below.
+
+   Rest of the original rationale still stands — reversible, no new shipped artifact, no rename, no
+   patella bake, and it avoids nimble's documented penalty for intermediate WeldJoints
+   (`OpenSimParser.cpp:5229`).
    This single change targets the red test, the ~200 ms/frame cost, and the `ddq` noise at once.
    ⚠️ **Do not weld the sternum or costovertebral joints.** Because the clavicle and scapula are
    already welded, those are the shoulder girdle's *only* articulation; welding them kills all 24

@@ -165,6 +165,39 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// pose belonging to a different subject/placement.
 - (void)resetSessionState;
 
+/// Restrict IK to a subset of the model's coordinates, holding the named ones
+/// fixed for the duration of every subsequent solve.
+///
+/// This is a *runtime* restriction, not a model edit: the skeleton keeps all
+/// of its DOFs, no joint is welded, the .osim file is never rewritten, and
+/// `clearDOFMask` restores the unmasked solve exactly. Inverse dynamics, the
+/// moment-arm computer and the muscle QP are unaffected — they continue to see
+/// the full coordinate vector — so masking cannot silently change a reported
+/// muscle moment arm.
+///
+/// Note that this could NOT be expressed through `math::IKConfig`: that struct
+/// has no DOF-selection field (see `IKSolver.hpp:16-42`). The mask is applied
+/// by reparameterising the solve, which is why it lives here rather than in a
+/// config object.
+///
+/// @param dofNamesToMask Coordinate names as reported by `dofNames`. Names that
+///        do not resolve to a DOF in the loaded model are ignored.
+/// @return How many names actually matched a DOF. 0 leaves the mask inactive.
+- (NSInteger)applyDOFMaskWithNames:(NSArray<NSString *> *)dofNamesToMask;
+
+/// Drop any active DOF mask and return to solving all `numDOFs` coordinates.
+- (void)clearDOFMask;
+
+/// Whether a DOF mask is currently restricting IK.
+@property (nonatomic, readonly) BOOL isDOFMaskActive;
+
+/// Number of coordinates IK actually optimises. Equals `numDOFs` when no mask
+/// is active.
+@property (nonatomic, readonly) NSInteger numFreeDOFs;
+
+/// Names of the currently masked coordinates. Empty when no mask is active.
+@property (nonatomic, readonly) NSArray<NSString *> *maskedDOFNames;
+
 /// Whether a model is currently loaded.
 @property (nonatomic, readonly) BOOL isModelLoaded;
 
