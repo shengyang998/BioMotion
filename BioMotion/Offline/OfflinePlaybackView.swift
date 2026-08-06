@@ -161,6 +161,23 @@ private struct OfflineSceneView: UIViewRepresentable {
         context.coordinator.rootAnchor = rootAnchor
         context.coordinator.muscleOverlay.setup(anchor: rootAnchor)
 
+        // Orbit / zoom / reset. A fixed viewpoint is not enough for this data:
+        // pelvic tilt, rounded shoulders and knee valgus are all invisible from
+        // a single frontal angle, which is exactly what the analysis is for.
+        let pan = UIPanGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handlePan(_:)))
+        pan.maximumNumberOfTouches = 1
+        arView.addGestureRecognizer(pan)
+
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator,
+                                             action: #selector(Coordinator.handlePinch(_:)))
+        arView.addGestureRecognizer(pinch)
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator,
+                                               action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        arView.addGestureRecognizer(doubleTap)
+
         return arView
     }
 
@@ -186,7 +203,7 @@ private struct OfflineSceneView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    final class Coordinator {
+    final class Coordinator: NSObject {
         var rootAnchor: AnchorEntity?
         var cameraEntity: PerspectiveCamera?
         let muscleOverlay = MuscleOverlay()
@@ -194,6 +211,28 @@ private struct OfflineSceneView: UIViewRepresentable {
         private var jointEntities: [String: ModelEntity] = [:]
         private var boneEntities: [String: ModelEntity] = [:]
         private var hasFramedCamera = false
+
+        // MARK: Orbit camera state
+        //
+        // The camera is parameterised in spherical coordinates around the
+        // subject rather than stored as a position, so drag and pinch stay
+        // independent: azimuth/elevation from the pan, radius from the pinch.
+        // A stored position would need re-deriving angles from it every gesture
+        // and would drift.
+        private var orbitCenter: SIMD3<Float> = .zero
+        private var orbitRadius: Float = 2.5
+        private var orbitAzimuth: Float = 0      // radians, 0 = facing -Z toward subject
+        private var orbitElevation: Float = 0    // radians, + = looking down
+        private var framedRadius: Float = 2.5    // auto-framed default, for reset
+        private var pinchStartRadius: Float = 2.5
+
+        /// Clamped just short of the poles. At exactly +-90 degrees the look-at
+        /// up-vector becomes parallel to the view direction and the camera
+        /// orientation is undefined, which shows up as a spin at the top of a
+        /// drag.
+        private static let maxElevation: Float = .pi / 2 - 0.05
+        private static let minRadius: Float = 0.4
+        private static let maxRadius: Float = 12.0
 
         /// Positions the camera once, from the first frame's tracked-joint
         /// bounding box, and leaves it fixed for the rest of the scrub session
@@ -218,13 +257,61 @@ private struct OfflineSceneView: UIViewRepresentable {
             // to fit it plus margin, with a floor so a near-degenerate (e.g.
             // single-joint) bounding box doesn't put the camera inside the body.
             let distance = max(extent * 1.6, 1.5)
-            // Arbitrary viewing angle (not derived from any body-facing
-            // convention — world-space facing direction isn't something this
-            // view has a signal for): back off along +Z, look at center.
-            let position = center + SIMD3<Float>(0, 0, Float(distance))
-            cameraEntity.position = position
-            cameraEntity.look(at: center, from: position, relativeTo: nil)
+            // Starting angle only — the user can orbit from here. Not derived
+            // from any body-facing convention; world-space facing direction is
+            // not something this view has a signal for.
+            orbitCenter = center
+            orbitRadius = distance
+            framedRadius = distance
+            orbitAzimuth = 0
+            orbitElevation = 0
+            applyCamera()
             hasFramedCamera = true
+        }
+
+        /// Places the camera on the orbit sphere and aims it at the subject.
+        func applyCamera() {
+            guard let cameraEntity else { return }
+            let ce = cos(orbitElevation), se = sin(orbitElevation)
+            let ca = cos(orbitAzimuth), sa = sin(orbitAzimuth)
+            // Azimuth 0 / elevation 0 puts the camera on +Z looking toward -Z,
+            // which reproduces the previous fixed framing exactly.
+            let offset = SIMD3<Float>(ce * sa, se, ce * ca) * orbitRadius
+            let position = orbitCenter + offset
+            cameraEntity.position = position
+            cameraEntity.look(at: orbitCenter, from: position, relativeTo: nil)
+        }
+
+        // MARK: Gestures
+
+        @objc func handlePan(_ gr: UIPanGestureRecognizer) {
+            guard hasFramedCamera else { return }
+            let t = gr.translation(in: gr.view)
+            gr.setTranslation(.zero, in: gr.view)
+            // Full drag across the view is about half a turn horizontally, which
+            // makes inspecting the far side a one-gesture action.
+            let width = Float(gr.view?.bounds.width ?? 400)
+            let height = Float(gr.view?.bounds.height ?? 700)
+            orbitAzimuth -= Float(t.x) / width * .pi
+            orbitElevation += Float(t.y) / height * .pi
+            orbitElevation = min(max(orbitElevation, -Self.maxElevation), Self.maxElevation)
+            applyCamera()
+        }
+
+        @objc func handlePinch(_ gr: UIPinchGestureRecognizer) {
+            guard hasFramedCamera else { return }
+            if gr.state == .began { pinchStartRadius = orbitRadius }
+            // Divide: pinching OUT (scale > 1) should move the camera closer.
+            orbitRadius = min(max(pinchStartRadius / Float(gr.scale), Self.minRadius), Self.maxRadius)
+            applyCamera()
+        }
+
+        @objc func handleDoubleTap(_ gr: UITapGestureRecognizer) {
+            guard hasFramedCamera else { return }
+            orbitAzimuth = 0
+            orbitElevation = 0
+            orbitRadius = framedRadius
+            applyCamera()
         }
 
         /// Minimal joint/bone rendering for visual context around the muscle
