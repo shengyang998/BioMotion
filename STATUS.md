@@ -592,12 +592,90 @@ Path endpoints were verified to be spatially co-located with the joint positions
 (`path_bounds` vs `joint_bounds` in `OfflineOrchestrationTests`), so this was density and flicker,
 never misplacement.
 
-⚠️ **Still unfixed, and the deeper cause of the saturation:** peak joint torque on a real solve
-measures **672 Nm**, against a plausible human peak of roughly 50–250 Nm. The QP is being asked for
-torque it cannot produce, so muscles rail to their bounds. This traces back to the pelvis pinning
-below — there is no trustworthy centre-of-mass motion, and ground height is inferred from foot
-position alone. Static-hold detection plus static-equilibrium ID (next-step 10) is the fix; until
-then, treat which muscles are lit as indicative and their magnitudes as not measured.
+~~⚠️ **Still unfixed, and the deeper cause of the saturation:** peak joint torque measures 672 Nm…
+This traces back to the pelvis pinning below.~~ **That attribution was WRONG and is fixed — see
+[Gravity pointed sideways](#gravity-pointed-sideways-fixed-2026-08-07).** `max_ddq` on that fixture
+is 1.7e-16, so there was no dynamic term to attribute anything to; the 672 Nm was pure static
+gravity, pulling along the wrong axis.
+
+### Gravity pointed sideways (fixed 2026-08-07)
+
+**Every torque this project ever computed was wrong, because the skeleton's gravity vector ran along
+the subject's medio-lateral axis.**
+
+DART's `Skeleton` defaults gravity to `Eigen::Vector3s(0, 0, -9.81)` — a **Z-up** convention
+(`nimblephysics/dart/dynamics/detail/SkeletonAspect.hpp:82`). OpenSim models are **Y-up**.
+`FullBody.osim:38` even declares `<gravity>0 -9.8066 0</gravity>`, but `OpenSimParser` never reads
+that element, and BioMotion never called `setGravity`. Nothing warns.
+
+The measurement that settles it, at `q = 0` with `dq = ddq = 0`: the generalised force at the
+coordinate antiparallel to gravity must be exactly `Σmᵢ·g`.
+
+| | before | after |
+|---|---|---|
+| `τ(pelvis_ty)` | 3.6e-15 N | **780.714 N** |
+| `τ(pelvis_tz)` | **780.714 N** | 3.6e-15 N |
+
+With gravity sideways, body **height** became the moment arm instead of the few-centimetre
+horizontal offsets that actually load a standing leg — a ~48× inflation at the hip from orientation
+alone.
+
+A second, independent defect was found in the same pass. `getMultipleContactInverseDynamicsNearCoP`
+takes and returns wrenches in **each contact body's own frame at the body origin** — it builds its
+Jacobians with `getJacobian(bodies[i])`, maps guesses to world with `dAdInvT` internally
+(`Skeleton.cpp:10205`), and writes results out untransformed with the author's world conversion
+commented out (`Skeleton.cpp:10352-10354`). BioMotion passed world-frame guesses and read the
+results back as world. Component ordering (`[angular; linear]`) was already right; only the frame
+was wrong. Fixed with `math::dAdT` / `math::dAdInvT`, and the hand-rolled CoP projection replaced by
+nimble's own `math::projectWrenchToCoP`.
+
+Attribution, measured by reverting the second fix while keeping the first: on a **single**-contact
+pose the two are indistinguishable (the wrench is fully determined by the root torque, so the guess
+cancels); on **double** support the frame bug moves the net CoP by 11 cm and the subtalar torque by
+2.5×.
+
+| | before | after |
+|---|---|---|
+| dancer ankle torque | 472.5 Nm | **22.5 Nm** |
+| standing benchmark ankle | — | **18.55 Nm** (independently hand-derived 18.2) |
+| GRF vector | 780 N sideways | **(0, 780.71, 0) N** |
+| muscle QP torque residual | 785.3 Nm | **122.8 Nm** |
+| muscles pinned at the activation floor | 277 | **193** |
+
+⚠️ **Three things this file and I previously asserted were false. Do not reuse them.**
+
+1. **`rootResidualNorm = 0.0` was not evidence of equilibrium — it was a hard-coded zero.**
+   `Skeleton.cpp:10365` unconditionally does `result.jointTorques.head<6>().setZero()`, and the
+   assert above it is compiled out (`build_sim/CMakeCache.txt`: Release, `-DNDEBUG`). The field is
+   now redefined as a real linear-momentum residual in **newtons**, which is what caught the frame
+   bug (2.31 N vs 6e-13 N). It is a frame-consistency check, never a balance check.
+2. **The "CoP implies 70 Nm" cross-check was invalid.** The hand-rolled `copFromWrench` divided by
+   `force.y()` of a *body-local* wrench while the real load was along z.
+3. **`NimbleIKResult.error` is nimble's LOSS, not an RMS**, despite the header comment. The dancer's
+   true per-marker RMS is `sqrt(0.013753/20)` = **2.6 cm**, and it never reached the 0.02 m
+   convergence bound.
+
+⚠️ **"Torques decrease distally" is NOT a law — do not assert it.** The adversarial pass disproved it
+inside a single solve: in single-leg stance the *free* leg decreases distally (hip 37.2 → knee 5.7 →
+ankle 0.90) while the *loaded* leg increases toward the contact (hip 29.8 → knee 44.5 → ankle 62.6).
+Both are correct: with ground contact the dominant load enters at the foot. The real invariant, now
+asserted in `StaticEquilibriumBenchmarkTests`, is the statics identity
+`|τⱼ| ≤ |F_GRF|·|p_CoP − cⱼ| + W_distal·L_distal`, which the pre-fix numbers violated 8× at the ankle.
+
+**Still open, and now proven NOT to be an ID-magnitude problem:** the muscle QP still saturates
+(14 → 17 muscles at 1.0) with `relativeTorqueResidual` 0.612 against the 0.3 line `MuscleSolver.h`
+itself documents. Only 4 of 169 coordinates exceed their musculature's torque capacity, and all four
+are wrist DOFs that have *zero* muscles in the model and are asked for < 0.3 Nm. The live lead is a
+**unit mix**: `SternumY` is a translational coordinate, so its generalised force is a **force in
+newtons** (72.5 N, the largest single entry in both standing poses), and `FullBody.osim` has 6
+sternum + 72 rib coordinates like it. `MuscleSolver`'s `‖A·a − τ‖` sums newtons and newton-metres in
+one norm. Whether those coordinates belong in the muscle QP at all is the next question.
+
+**Not re-run, and now stale:** `E1MarkerSetComparisonTests` calls `getInverseDynamics` on the shared
+skeleton, so its archived torque statistics were computed under the wrong gravity. The E1 STOP
+verdict rests on kinematic gates (spine error, spurious intervertebral motion, `ddq`) which are
+gravity-independent, so it is very likely safe — but nobody has confirmed it, and one E1 run costs
+over an hour.
 
 ### The limitation that shapes the product claim
 

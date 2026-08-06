@@ -28,7 +28,10 @@ final class NimbleEngine: ObservableObject {
     /// Sum should be ~1.0 in steady stance, 0 in flight, 1.0-3.0 during impact.
     @Published var leftFootLoadFraction: Double = 0
     @Published var rightFootLoadFraction: Double = 0
-    /// Root 6D residual after GRF solve. < ~0.5 Nm/kg means GRF is consistent.
+    /// Linear-momentum residual after the GRF solve, in NEWTONS per kg:
+    /// ‖ΣF_contact + m·g − m·a_com‖ / m. A correct pipeline reports ~0 every
+    /// frame — it is a consistency check on the contact-wrench readback, not a
+    /// measure of how balanced the pose is. See `NimbleIDResult.rootResidualNorm`.
     @Published var rootResidualPerKg: Double = 0
     /// Current ground-plane height (ARKit world y), for display only.
     @Published var groundHeightY: Double = 0

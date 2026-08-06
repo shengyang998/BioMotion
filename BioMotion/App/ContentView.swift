@@ -131,9 +131,14 @@ struct ContentView: View {
                                 value: String(format: "%.2f|%.2f", nimble.leftFootLoadFraction, nimble.rightFootLoadFraction),
                                 good: abs(totalLoad - 1.0) < 0.3 || totalLoad < 0.1
                             )
+                            // N/kg, not Nm/kg: this is now a linear-momentum
+                            // residual. It checks that the contact wrenches were
+                            // read back in the right frame, so a correct pipeline
+                            // reports ~0 whether or not the pose is balanced —
+                            // green here means "consistent", never "balanced".
                             AccuracyBadge(
-                                label: "root res",
-                                value: String(format: "%.2f Nm/kg", nimble.rootResidualPerKg),
+                                label: "frame chk",
+                                value: String(format: "%.2f N/kg", nimble.rootResidualPerKg),
                                 good: nimble.rootResidualPerKg < 0.5
                             )
                             Spacer()

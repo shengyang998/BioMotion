@@ -10,6 +10,7 @@
 		030DB864178EF4BB7B0439BA /* CalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 622F2E1A346D02B435A0299C /* CalibrationView.swift */; };
 		04F1EE7570C3EC744DB0552D /* IKDriftDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFAE9EC6FC90AA7AC829F48E /* IKDriftDiagnosticsTests.swift */; };
 		19E2D7453EE33B78EB0260AA /* MuscleSolver.mm in Sources */ = {isa = PBXBuildFile; fileRef = D8B9BD44107DF71632646C0E /* MuscleSolver.mm */; };
+		1D59AE434199F406B1B6F502 /* StaticEquilibriumBenchmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C18C6B5EE39B4A7DCDF41DE4 /* StaticEquilibriumBenchmarkTests.swift */; };
 		2054C2A9E28C0BC0833FCFC9 /* NimbleBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = CF5D35BA98B286FEF7D0F3A2 /* NimbleBridge.mm */; };
 		20F59FB07F06FD0CAC0E3C90 /* MuscleSolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F66CB7BEA67689B99D4833 /* MuscleSolverTests.swift */; };
 		230B1F67B40CFD95799F8811 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 137569E8BB6168170913C1FE /* ContentView.swift */; };
@@ -105,6 +106,7 @@
 		BB61194FADC588D790C9D483 /* SessionChartsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionChartsView.swift; sourceTree = "<group>"; };
 		BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentArmTests.swift; sourceTree = "<group>"; };
 		C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DOFMaskTests.swift; sourceTree = "<group>"; };
+		C18C6B5EE39B4A7DCDF41DE4 /* StaticEquilibriumBenchmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaticEquilibriumBenchmarkTests.swift; sourceTree = "<group>"; };
 		C37A4A07CA2D87A4DFFF4348 /* MotionRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionRecorder.swift; sourceTree = "<group>"; };
 		C7AB824FE7872485E9CEBFC3 /* SAM3DPoseEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SAM3DPoseEstimator.swift; sourceTree = "<group>"; };
 		CCE04065D9DEF183FAB2526A /* MuscleOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuscleOverlay.swift; sourceTree = "<group>"; };
@@ -168,6 +170,7 @@
 				AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */,
 				FF0F23C51614668A2D0002E4 /* OfflineMuscleChainTests.swift */,
 				421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */,
+				C18C6B5EE39B4A7DCDF41DE4 /* StaticEquilibriumBenchmarkTests.swift */,
 				4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */,
 			);
 			path = BioMotionTests;
@@ -424,6 +427,7 @@
 				59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */,
 				FAFDAE32C4C82F3339D97B8C /* OfflineMuscleChainTests.swift in Sources */,
 				A1255E337CF95E0639A20E10 /* OfflineOrchestrationTests.swift in Sources */,
+				1D59AE434199F406B1B6F502 /* StaticEquilibriumBenchmarkTests.swift in Sources */,
 				F879356CA878DC33DEF470D4 /* TRCExporterTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

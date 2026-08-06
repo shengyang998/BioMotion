@@ -13,6 +13,7 @@
 #include "dart/dynamics/BodyNode.hpp"
 #include "dart/dynamics/Joint.hpp"
 #include "dart/math/MathTypes.hpp"
+#include "dart/math/Geometry.hpp"
 #include "dart/math/IKSolver.hpp"
 
 using namespace dart;
@@ -311,6 +312,21 @@ static double markerReliabilityWeight(const std::string& name) {
         }
 
         _skeleton = osimFile.skeleton;
+
+        // The .osim declares `<gravity>0 -9.8066 0</gravity>` (OpenSim models
+        // are Y-up), but `OpenSimParser` never reads that element — it builds
+        // the skeleton with `Skeleton::create()`, and DART's default gravity is
+        // `Eigen::Vector3s(0, 0, -9.81)` (Z-up; see
+        // nimblephysics/dart/dynamics/detail/SkeletonAspect.hpp:82). Left
+        // unset, the whole ID stack pulls along the subject's medio-lateral
+        // axis, which turns body HEIGHT into the moment arm instead of the
+        // few-centimetre horizontal offsets that actually load a standing leg,
+        // and inflates every joint torque by one to two orders of magnitude.
+        //
+        // Every nimble biomechanics entry point sets this explicitly right
+        // after parsing for the same reason — SubjectOnDisk.cpp:807,
+        // DynamicsFitter.cpp:13706.
+        _skeleton->setGravity(Eigen::Vector3s(0.0, -9.81, 0.0));
 
         // Store the model's own markers
         _markers.clear();
@@ -1016,6 +1032,10 @@ static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
 
         _skeleton->setPositions(q);
         _skeleton->setVelocities(dq);
+        // ddq is passed to the solver explicitly, but the skeleton also has to
+        // carry it for `getCOMLinearAcceleration()` in the residual check below
+        // to describe THIS frame rather than the previous one.
+        _skeleton->setAccelerations(ddq);
 
         // --- 1. Ground height auto-calibration ---
         // Feed this frame's lowest heel height to the rolling estimator (see
@@ -1075,11 +1095,28 @@ static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
         }
 
         Eigen::Vector3s perFootForce = weightUp / contactCount;
+        // getMultipleContactInverseDynamicsNearCoP takes and returns wrenches
+        // in each contact body's OWN frame, at the body origin, ordered
+        // [angular; linear]: it builds its Jacobians with
+        // `getJacobian(bodies[i])` (body-frame, body-origin — MetaSkeleton.hpp:
+        // 559) and maps the guesses to world with `dAdInvT` before projecting
+        // them to a CoP (Skeleton.cpp:10205). Handing it a world-frame wrench
+        // silently rotates the guess into the foot's frame, so on a two-foot
+        // stance the least-squares solve lands on a physically wrong split of
+        // bodyweight between the feet. The reference caller does the same
+        // conversion: DynamicsFitter.cpp:16541.
+        //
+        // The guess itself is the Newton-Euler baseline: this foot's share of
+        // bodyweight, pushing straight up, applied on the ground directly
+        // below the foot's origin. `projectWrenchToCoP` then recovers exactly
+        // that point as the CoP guess.
         auto makeWrenchGuess = [&](dynamics::BodyNode* foot) -> Eigen::Vector6s {
-            Eigen::Vector6s w;
-            w.head<3>() = Eigen::Vector3s::Zero();   // torque (angular)
-            w.tail<3>() = perFootForce;              // force  (linear, world)
-            return w;
+            Eigen::Vector3s origin = foot->getWorldTransform().translation();
+            Eigen::Vector3s applyAt(origin.x(), (s_t)_groundHeightY, origin.z());
+            Eigen::Vector6s world;
+            world.head<3>() = applyAt.cross(perFootForce);  // moment about the world origin
+            world.tail<3>() = perFootForce;                 // force, world frame
+            return math::dAdT(foot->getWorldTransform(), world);
         };
 
         if (leftContact)  {
@@ -1114,43 +1151,60 @@ static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
 
         // Pull left/right wrenches back out of result.contactWrenches in the
         // same order we pushed them. Extract force and CoP where applicable.
+        //
+        // `result.contactWrenches[i]` comes back in body-local coordinates —
+        // nimble's own world conversion is commented out at Skeleton.cpp:10354
+        // — so it has to be mapped back before any of it means anything in the
+        // world frame. `dAdInvT` is that dual transform: f_world = R*f_local,
+        // m_world = R*m_local + p x f_world.
+        //
+        // Once the wrench IS in world coordinates, the centre of pressure is
+        // nimble's own `projectWrenchToCoP`, which solves for the point on the
+        // ground plane where the wrench reduces to a force plus a normal free
+        // moment. The hand-rolled projection this replaces used `force.y()` as
+        // the vertical load, which is only the vertical load in the world
+        // frame, and divided by it — on a body-local wrench that is an
+        // arbitrary component of the force.
         Eigen::Vector3s zero3 = Eigen::Vector3s::Zero();
         Eigen::Vector3s leftForce = zero3, rightForce = zero3;
         Eigen::Vector3s leftCoP = zero3, rightCoP = zero3;
         size_t idx = 0;
-        auto copFromWrench = [&](const Eigen::Vector6s& w, const Eigen::Vector3s& ctr)
-            -> Eigen::Vector3s {
-            // CoP on the ground plane: project from body origin along force
-            // direction to hit y = _groundHeightY. For a vertical-y
-            // convention, CoP_xz = body_xz + (body_y - ground_y) * f_xz/f_y
-            Eigen::Vector3s force = w.tail<3>();
-            if (std::abs(force.y()) < 1e-6) return ctr;
-            double lambda = (ctr.y() - _groundHeightY) / force.y();
-            Eigen::Vector3s cop = ctr - lambda * force;
-            cop.y() = _groundHeightY;
-            return cop;
+        auto worldWrench = [&](size_t i, const dynamics::BodyNode* foot) -> Eigen::Vector6s {
+            return math::dAdInvT(foot->getWorldTransform(), result.contactWrenches[i]);
         };
+        Eigen::Vector3s totalContactForce = Eigen::Vector3s::Zero();
         if (leftContact) {
-            leftForce = result.contactWrenches[idx].tail<3>();
-            leftCoP = copFromWrench(result.contactWrenches[idx],
-                                    calcnL->getWorldTransform().translation());
+            Eigen::Vector6s w = worldWrench(idx, calcnL);
+            leftForce = w.tail<3>();
+            leftCoP = math::projectWrenchToCoP(w, (s_t)_groundHeightY, 1).head<3>();
+            totalContactForce += leftForce;
             idx++;
         }
         if (rightContact) {
-            rightForce = result.contactWrenches[idx].tail<3>();
-            rightCoP = copFromWrench(result.contactWrenches[idx],
-                                     calcnR->getWorldTransform().translation());
+            Eigen::Vector6s w = worldWrench(idx, calcnR);
+            rightForce = w.tail<3>();
+            rightCoP = math::projectWrenchToCoP(w, (s_t)_groundHeightY, 1).head<3>();
+            totalContactForce += rightForce;
             idx++;
         }
 
-        // Root residual: the 6DoF component of jointTorques at the floating
-        // root joint. For a correctly-modelled GRF system this should be
-        // ~zero (the free joint has no actuator, so any residual there is
-        // unphysical "error"). We take the norm as a scalar diagnostic.
-        double rootResidual = 0.0;
-        if (result.jointTorques.size() >= 6) {
-            rootResidual = result.jointTorques.head<6>().norm();
-        }
+        // Root residual: how far this frame is from global linear equilibrium,
+        // in Newtons.
+        //
+        // This deliberately does NOT read `jointTorques.head<6>()`. Nimble ends
+        // `getMultipleContactInverseDynamicsNearCoP` with
+        // `result.jointTorques.head<6>().setZero()` (Skeleton.cpp:10365) and the
+        // assert above that line is compiled out of the Release static libs, so
+        // that quantity is a hard-coded zero and carries no information.
+        //
+        // The falsifiable version: the solved contact forces plus gravity must
+        // sum to the whole-body linear momentum rate. Quasi-statically that is
+        // ~0; under acceleration it is m * a_com, so the residual is reported
+        // against that, not against zero.
+        Eigen::Vector3s momentumRate = _skeleton->getMass() * _skeleton->getCOMLinearAcceleration();
+        double rootResidual =
+            (totalContactForce + _skeleton->getMass() * _skeleton->getGravity() - momentumRate)
+                .norm();
 
         return [[NimbleIDResult alloc] initWithTorques:torqueArray
                                              leftForce:vec3ToNSArray(leftForce)

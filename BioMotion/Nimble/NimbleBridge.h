@@ -41,10 +41,21 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 @property (nonatomic, readonly) NSArray<NSNumber *> *rightFootCoP;    // [x, y, z] m
 @property (nonatomic, readonly) BOOL leftFootInContact;
 @property (nonatomic, readonly) BOOL rightFootInContact;
-/// Norm of the 6D residual at the free (root) joint — a measure of how well
-/// the GRF solution reconciles with the inertial state. Should be small
-/// (< ~10 Nm total) when GRF is correctly estimated. Large values mean the
-/// contact model is wrong (wrong ground height, missed contact, airborne).
+/// Linear-momentum residual in NEWTONS: ‖ΣF_contact + m·g − m·a_com‖, with the
+/// contact forces taken from the solved wrenches after they are mapped out of
+/// body-local coordinates.
+///
+/// This is a self-consistency check on the readback, NOT evidence that the pose
+/// is balanced. Nimble solves the six floating-base equations exactly, so a
+/// correct pipeline reports ~0 here for every frame, balanced or not. It goes
+/// nonzero when the contact wrenches are being interpreted in the wrong frame,
+/// when the root joint is not a free joint (nimble then returns all zeros), or
+/// when gravity is not what the model expects.
+///
+/// It replaced a read of `jointTorques.head<6>()`, which nimble unconditionally
+/// `setZero()`s at the end of the solve (Skeleton.cpp:10365) with its assert
+/// compiled out of the Release static libs — that field was a hard-coded zero
+/// and had been mistaken for proof of static equilibrium.
 @property (nonatomic, readonly) double rootResidualNorm;
 @end
 
