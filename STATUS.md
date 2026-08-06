@@ -562,6 +562,43 @@ reproduced the failure. A visible skeleton says nothing about the solver — the
 drawn straight from `BodyFrame.joints`, while muscle output requires the whole IK → SG → ID →
 moment-arm → QP chain. Those two share no stage.
 
+### Muscle rendering: rank, never threshold (build 22)
+
+A fixed activation cut is wrong on a 520-muscle model, and the measured distribution says why:
+
+| | |
+|---|---|
+| muscles | 520 |
+| clearing the old 0.08 cut | **139** |
+| min activation | 0.02 (the `aMin` bound) |
+| **median activation** | **0.0200027** |
+| max activation | 1.0 (saturated) |
+
+Almost every muscle is either pinned at the floor or railed at the ceiling; there is no spread in
+between. Two consequences, both of which showed up on device as "muscles drawn everywhere, and
+twitching":
+
+1. **Drawing floor-valued muscles presents a rendering parameter as a measurement.** `aMin`/`epsA`
+   were tuned so the visualisation would not go "permanently blue" (recorded above). That value
+   carries no information about effort.
+2. **A fixed threshold flickers.** With 139 near-identical values sitting at the floor, which ones
+   happened to clear 0.08 changed frame to frame. That flicker was the "twitching", not muscle
+   activity.
+
+Fix: drop anything not meaningfully above the observed floor, then render only the strongest 24.
+Ranking is inherently stable where thresholding a degenerate distribution is not.
+
+Path endpoints were verified to be spatially co-located with the joint positions
+(`path_bounds` vs `joint_bounds` in `OfflineOrchestrationTests`), so this was density and flicker,
+never misplacement.
+
+⚠️ **Still unfixed, and the deeper cause of the saturation:** peak joint torque on a real solve
+measures **672 Nm**, against a plausible human peak of roughly 50–250 Nm. The QP is being asked for
+torque it cannot produce, so muscles rail to their bounds. This traces back to the pelvis pinning
+below — there is no trustworthy centre-of-mass motion, and ground height is inferred from foot
+position alone. Static-hold detection plus static-equilibrium ID (next-step 10) is the fix; until
+then, treat which muscles are lit as indicative and their magnitudes as not measured.
+
 ### The limitation that shapes the product claim
 
 **`joint_coords` pins the pelvis at a model constant `(0, 0.924, 0)` in every frame.** `global_trans`
