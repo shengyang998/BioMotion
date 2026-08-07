@@ -847,6 +847,64 @@ one genuinely new constant (0.08 m/s²) is exactly `2 × 0.02 / 0.5` — chosen 
 gate itself is sound and was not fitted to any fixture (a 0.9×–1.1× sweep flips exactly at 0.020),
 but "0.82% of g" is a post-hoc description, not a budget set first.
 
+### Device vs Mac: the same model gives a different pose (open, 2026-08-07)
+
+On a real frame the phone and this Mac disagree about the pose. A sprinter's recovery leg — folded,
+heel raised behind — is drawn by the app **down onto the track**. The same frame through the same
+`.mlpackage` here puts that foot raised, which is what the photograph shows. The front leg is
+correct in both.
+
+**Everything upstream is ruled out, measured rather than argued:**
+
+| checked | result |
+|---|---|
+| video rotation / photo EXIF | both handled (`appliesPreferredTrackTransform`, `cgOrientation` to Vision) |
+| projection, crop geometry, intrinsics, retarget indices | **1.0 px mean vs the model's own `keypoints_2d`; 0.0 px at the shoulders** |
+| which frame the app displays | image correlation → the frame tested here, unambiguously |
+| sampling timestamps | app and reproduction both `t = 0, 0.5, 1.0, …` |
+| bone connectivity table | identical |
+| vs an independent estimator (Vision body pose) | agree to ~13 px on a body ~450 px tall (≈3%) |
+
+**And the Mac's prediction is invariant to twelve perturbations**: six person-box variants including
+the whole-image fallback, ±1 and ±2 LSB pixel noise, and an RGB/BGR channel swap. All twelve give
+the raised foot with the toe-height difference unchanged at 169 px. The input side has nothing left
+in it that flips the answer.
+
+**Plausible mechanism.** The decoder is not a single forward pass: six iterations, each projecting
+the current pose to 2-D, `grid_sample`-ing image features at those predicted points, and feeding
+them back. That is a positive feedback loop, and it can amplify a small backend difference into a
+different *mode* on a pose where the monocular depth is genuinely ambiguous — shin up versus shin
+down. It also explains why input perturbations do nothing: on this machine that mode is stable.
+
+**How to settle it.** Two fingerprints ship in builds 27–28, order-sensitive FNV-1a over raw bit
+patterns so one flipped mantissa bit changes them:
+
+- **Per-frame** (build 27): checksums the `image` tensor handed to Core ML and the returned
+  `joint_coords`+`cam_t`. Confounded — the app decodes the video itself, so two machines can
+  legitimately produce different pixels for "the same frame".
+- **Backend self-test** (build 28, import screen): runs the model on tensors from a fixed integer
+  formula. No decode, no Vision, no warp, no intrinsics. Every value is an exact multiple of 1/256
+  in `[-0.5, 0.5)`, which Float16 holds without rounding, so the input checksum is a property of the
+  formula. Same input checksum + different output checksum leaves only the two Core ML backends.
+
+Reference on this Mac (M2 Pro, `CPU_AND_GPU`):
+
+```
+self-test        in 0a6dd7e25b3013e8   out 24f80e92616dbaf7
+video_015 t=26.5s in bd7f952e8e69ed34   out 79cba1631fb7ccd7   (Vision box 96,214,367,667)
+```
+
+⚠️ **ANE cannot help here, and is measured to be worse.** With `ComputeUnit.all`, **33 of 12,198
+ops** go to the Neural Engine — 32 `linear`, nothing else — and warm inference goes **256.5 ms →
+330.0 ms** (+29%) with cold load 17.0 s → 25.0 s. The model is dominated by elementwise and control
+ops (2898 `mul`, 1809 `slice_by_index`, 1441 `cast`, 566 `logical_and`, 162 `select`, plus
+`atan`/`sin`/`cos`), which is the MHR forward kinematics and the branchless rotation maths — not
+work ANE is built for. The `grid_sample` feedback loop stays on GPU either way, so ANE would add a
+*third* numeric implementation rather than remove a divergence.
+
+**Also observed and not yet explained:** the app reported 76 sampled frames but only 57 pose-only
+results, i.e. **19 frames produced no pose at all**, while Vision found a person in 76/76 here.
+
 ### The limitation that shapes the product claim
 
 **`joint_coords` pins the pelvis at a model constant `(0, 0.924, 0)` in every frame.** `global_trans`
