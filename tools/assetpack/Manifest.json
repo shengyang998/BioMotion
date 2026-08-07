@@ -1,0 +1,12 @@
+{
+	"assetPackID": "sam3d-body-pose",
+	"downloadPolicy": {
+		"prefetch": {
+			"installationEventTypes": ["firstInstallation", "subsequentUpdate"]
+		}
+	},
+	"fileSelectors": [
+		{ "directory": "SAM3DBodyPose.mlmodelc" }
+	],
+	"platforms": ["iOS"]
+}

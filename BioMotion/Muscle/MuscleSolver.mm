@@ -4,7 +4,10 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
+#include <sstream>
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 
 #include <Eigen/Core>
@@ -151,6 +154,87 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
     return muscles;
 }
 
+// MARK: - .osim Coordinate Classifier
+//
+// Two facts about each coordinate that the solve needs and that no caller
+// supplies, because `solveReal...` receives only names and numbers:
+//
+//   LOCKED — `<locked>true</locked>`. The model author declared the coordinate
+//     immobile, so whatever generalised force appears there is carried by that
+//     constraint. nimble does not implement `<locked>`, so it arrives as a
+//     muscle demand instead.
+//
+//   TRANSLATIONAL — every `<TransformAxis>` naming the coordinate is a
+//     `translationN` axis, so the coordinate is a displacement in metres, its
+//     generalised force is a force in newtons, and its moment arm −∂L_MT/∂q is
+//     dimensionless. A coordinate named by BOTH a rotation and a translation
+//     axis (`knee_angle_{r,l}`, whose rotation drives coupled translation
+//     splines) is rotational.
+//
+// Walked with an explicit stack rather than by name-matched iteration: the
+// same mistake — assuming a known element path — is what silently dropped 418
+// ConditionalPathPoints in `MomentArmComputer` (see STATUS.md).
+struct CoordinateClasses {
+    std::set<std::string> locked;
+    std::set<std::string> translational;
+};
+
+static void splitWhitespace(const char* text, std::vector<std::string>& out) {
+    if (!text) return;
+    std::istringstream stream(text);
+    std::string token;
+    while (stream >> token) out.push_back(token);
+}
+
+static CoordinateClasses parseCoordinateClassesFromOsim(const std::string& path) {
+    CoordinateClasses classes;
+    std::set<std::string> rotational;
+
+    tinyxml2::XMLDocument doc;
+    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return classes;
+
+    std::vector<tinyxml2::XMLElement*> stack;
+    for (auto* child = doc.FirstChildElement(); child; child = child->NextSiblingElement()) {
+        stack.push_back(child);
+    }
+    while (!stack.empty()) {
+        tinyxml2::XMLElement* el = stack.back();
+        stack.pop_back();
+        const char* tag = el->Name();
+
+        if (tag && std::strcmp(tag, "Coordinate") == 0) {
+            const char* name = el->Attribute("name");
+            auto* lockedEl = el->FirstChildElement("locked");
+            if (name && lockedEl && lockedEl->GetText()) {
+                std::string v = lockedEl->GetText();
+                v.erase(0, v.find_first_not_of(" \t\r\n"));
+                v.erase(v.find_last_not_of(" \t\r\n") + 1);
+                if (v == "true") classes.locked.insert(name);
+            }
+        } else if (tag && std::strcmp(tag, "TransformAxis") == 0) {
+            const char* axisName = el->Attribute("name");
+            auto* coords = el->FirstChildElement("coordinates");
+            if (axisName && coords) {
+                std::vector<std::string> names;
+                splitWhitespace(coords->GetText(), names);
+                const bool isTranslation =
+                    std::strncmp(axisName, "translation", 11) == 0;
+                for (const auto& n : names) {
+                    if (isTranslation) classes.translational.insert(n);
+                    else rotational.insert(n);
+                }
+            }
+        }
+
+        for (auto* child = el->FirstChildElement(); child; child = child->NextSiblingElement()) {
+            stack.push_back(child);
+        }
+    }
+
+    for (const auto& n : rotational) classes.translational.erase(n);
+    return classes;
+}
+
 // MARK: - MuscleActivationResult
 
 @implementation MuscleActivationResult {
@@ -161,6 +245,8 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
     BOOL _converged;
     double _torqueResidualNm;
     double _relativeTorqueResidual;
+    double _forceResidualN;
+    double _relativeForceResidual;
 }
 
 - (instancetype)initWithNames:(NSArray<NSString *> *)names
@@ -169,7 +255,9 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
                    solveTimeMs:(double)solveTimeMs
                      converged:(BOOL)converged
               torqueResidualNm:(double)torqueResidualNm
-        relativeTorqueResidual:(double)relativeTorqueResidual {
+        relativeTorqueResidual:(double)relativeTorqueResidual
+                forceResidualN:(double)forceResidualN
+         relativeForceResidual:(double)relativeForceResidual {
     self = [super init];
     if (self) {
         _muscleNames = [names copy];
@@ -179,6 +267,8 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
         _converged = converged;
         _torqueResidualNm = torqueResidualNm;
         _relativeTorqueResidual = relativeTorqueResidual;
+        _forceResidualN = forceResidualN;
+        _relativeForceResidual = relativeForceResidual;
     }
     return self;
 }
@@ -190,6 +280,8 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
 - (BOOL)converged { return _converged; }
 - (double)torqueResidualNm { return _torqueResidualNm; }
 - (double)relativeTorqueResidual { return _relativeTorqueResidual; }
+- (double)forceResidualN { return _forceResidualN; }
+- (double)relativeForceResidual { return _relativeForceResidual; }
 
 @end
 
@@ -202,8 +294,32 @@ static std::vector<muscle::MuscleParams> parseMusclesFromOsim(const std::string&
 // This is an optimizer bound, not a display choice; see `minActivation`.
 static const double kMuscleMinActivation = 0.02;
 
+// A coordinate enters the torque-matching penalty only if some muscle has a
+// moment arm above this about it (metres for a rotational coordinate,
+// dimensionless for a translational one).
+//
+// This is NOT a tuned constant, and the measurement that says so is the
+// distribution of max_m |R[m, j]| over the 169 coordinates of FullBody.osim.
+// On three independent poses (neutral standing, 4° forward lean, and a
+// real single-leg dancer pose) it is bimodal with a NINE-DECADE gap:
+//   159 coordinates in [1e-3, 1e0]      <- every muscled coordinate
+//     0 coordinates in (1e-12, 1e-3)    <- nothing in between
+//    10 coordinates in [0, 3e-12]       <- 4-5 exactly 0, rest at FK round-off
+// The lower group is the six floating-base coordinates plus the four wrist
+// coordinates, which have no muscles in this model. Any cut between 1e-11 and
+// 1e-4 selects exactly the same 159, so the value is reading a structural fact
+// about the model rather than setting one.
+//
+// The floor also has to clear numerical noise: MomentArmComputer central
+// differences L_MT with a 1e-4 rad stencil, so round-off of order 1e-15 m in a
+// path length lands at |r| ~ 1e-11. 1e-6 sits five decades above that noise and
+// three decades below the smallest real moment arm.
+static const double kMomentArmFloor = 1e-6;
+
 @implementation MuscleSolver {
     std::vector<muscle::MuscleParams> _muscles;
+    std::set<std::string> _lockedCoordinates;
+    std::set<std::string> _translationalCoordinates;
 
     // Previous activations for warm starting
     std::vector<double> _prevActivations;
@@ -245,6 +361,7 @@ static const double kMuscleMinActivation = 0.02;
         _realSolver = nullptr;
         _realSolverNMuscles = 0;
         _loggedVelocityFallback = NO;
+        _excludesLockedCoordinates = YES;
     }
     return self;
 }
@@ -256,10 +373,40 @@ static const double kMuscleMinActivation = 0.02;
 }
 
 - (BOOL)loadMusclesFromOsimPath:(NSString *)path {
-    _muscles = parseMusclesFromOsim(std::string([path UTF8String]));
+    const std::string cpath = std::string([path UTF8String]);
+    _muscles = parseMusclesFromOsim(cpath);
     _prevActivations.assign(_muscles.size(), 0.01);
-    NSLog(@"MuscleSolver: Loaded %lu muscles", (unsigned long)_muscles.size());
+    // Coordinate classes come from the SAME file as the muscles, so a caller
+    // cannot end up with muscles from one model and a lock/unit table from
+    // another. A caller that never loads a model gets empty sets, which makes
+    // every QP row rotational and disables the locked-coordinate exclusion —
+    // the pre-2026-08-07 behaviour, and the right default for the synthetic
+    // single-DOF rigs in MuscleSolverTests.
+    CoordinateClasses classes = parseCoordinateClassesFromOsim(cpath);
+    _lockedCoordinates = std::move(classes.locked);
+    _translationalCoordinates = std::move(classes.translational);
+    NSLog(@"MuscleSolver: Loaded %lu muscles, %lu locked coordinates, "
+          @"%lu translational coordinates",
+          (unsigned long)_muscles.size(),
+          (unsigned long)_lockedCoordinates.size(),
+          (unsigned long)_translationalCoordinates.size());
     return !_muscles.empty();
+}
+
+- (NSArray<NSString *> *)lockedCoordinateNames {
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:_lockedCoordinates.size()];
+    for (const auto& n : _lockedCoordinates) {
+        [out addObject:[NSString stringWithUTF8String:n.c_str()]];
+    }
+    return out;
+}
+
+- (NSArray<NSString *> *)translationalCoordinateNames {
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:_translationalCoordinates.size()];
+    for (const auto& n : _translationalCoordinates) {
+        [out addObject:[NSString stringWithUTF8String:n.c_str()]];
+    }
+    return out;
 }
 
 - (NSInteger)numMuscles {
@@ -438,23 +585,37 @@ static const double kMuscleMinActivation = 0.02;
     // Objective: ½ aᵀ (λ·RᵀR + ε·I) a − λ (τᵀ R) a  + const
     // where R_row[j] is the row of R·diag(forceScale) corresponding to DOF j.
     //
-    // We split the full R matrix into ACTIVE DOFs — DOFs that have at
-    // least one non-zero moment-arm entry — and only soft-penalize those.
-    // DOFs with no muscles (e.g. upper body in Rajagopal2016) are ignored.
-    // Unmuscled DOFs are not the muscle solver's responsibility; ID
-    // already published the torques there.
+    // We split the full R matrix into ACTIVE DOFs and only soft-penalize
+    // those. A coordinate is active iff BOTH:
+    //
+    //   (a) some muscle can generate generalised force about it, i.e. some
+    //       |R[m, j]| > kMomentArmFloor. If nothing crosses the coordinate,
+    //       no activation vector can change its row, so keeping it would add
+    //       a constant nothing in the QP can reduce. See kMomentArmFloor for
+    //       the measurement showing this is a structural cut, not a threshold.
+    //
+    //   (b) the model does not declare it `<locked>true</locked>` (and only
+    //       when `excludesLockedCoordinates`). A locked coordinate's
+    //       generalised force is carried by that constraint. nimble does not
+    //       implement the lock, so ID hands it over as a muscle demand.
+    //
+    // Coordinates dropped by (a) or (b) are not the muscle solver's
+    // responsibility; ID already published the generalised force there.
 
     // Compute effective R*forceScale as a nDOFs × nMuscles matrix in
     // column-major for OSQP ingestion.
-    // A[j, m] = R[m, j] * forceScale[m]  (if DOF j has non-zero moment)
-    // We scan once to find active DOFs so we can drop empty rows.
+    // A[j, m] = R[m, j] * forceScale[m]  (if DOF j is active)
 
     std::vector<int> activeDOFs;
     activeDOFs.reserve(nDOFs);
     for (NSInteger j = 0; j < nDOFs; j++) {
+        if (_excludesLockedCoordinates && !_lockedCoordinates.empty()) {
+            const std::string name = std::string([dofNames[j] UTF8String]);
+            if (_lockedCoordinates.count(name)) continue;
+        }
         bool any = false;
         for (NSInteger m = 0; m < nMuscles; m++) {
-            if (std::abs(R(m, j)) > 1e-10) { any = true; break; }
+            if (std::abs(R(m, j)) > kMomentArmFloor) { any = true; break; }
         }
         if (any) activeDOFs.push_back((int)j);
     }
@@ -468,11 +629,25 @@ static const double kMuscleMinActivation = 0.02;
 
     // Build A_eff (nActive × nMuscles): A_eff[k, m] = R[m, dof_k] * fs[m]
     // Target τ_eff[k] = jointTorques[dof_k]
+    //
+    // `isForceRow` records which rows are in NEWTONS rather than newton-metres
+    // — a translational coordinate's generalised force is a force and its
+    // moment arm is dimensionless. Both kinds are genuine equilibrium
+    // equations and both stay in the objective; they are only separated when
+    // the residual is REPORTED, because ‖·‖ over a mixed vector is not a
+    // physical quantity. On FullBody.osim exactly three rows are forces
+    // (SternumX/Y/Z); pelvis_t{x,y,z} are translational too but no muscle
+    // crosses them, so (a) has already removed them.
     Eigen::MatrixXd Aeff(nActive, nMuscles);
     Eigen::VectorXd tauEff(nActive);
+    std::vector<bool> isForceRow(nActive, false);
     for (NSInteger k = 0; k < nActive; k++) {
         int j = activeDOFs[k];
         tauEff(k) = [jointTorques[j] doubleValue];
+        if (!_translationalCoordinates.empty()) {
+            isForceRow[k] =
+                _translationalCoordinates.count(std::string([dofNames[j] UTF8String])) > 0;
+        }
         for (NSInteger m = 0; m < nMuscles; m++) {
             Aeff(k, m) = R(m, j) * forceScale[m];
         }
@@ -651,19 +826,42 @@ static const double kMuscleMinActivation = 0.02;
         aOut(m) = a;
     }
 
-    // --- 4. Torque residual of the solution we are actually returning ---
+    // --- 4. Residual of the solution we are actually returning ---
     // The τ match is a penalty term, not a constraint, so `converged` alone
     // cannot distinguish "muscles reproduce the ID torques" from "the ‖a‖²
     // regularizer won and the torques were abandoned". Evaluate the residual
-    // on the post-clamp activations, over the active (muscled) DOFs only —
-    // those are the rows the objective actually contains.
-    const Eigen::VectorXd residual = Aeff * aOut - tauEff;
-    const double residualNm = residual.norm();
-    // The 1e-6 Nm floor only prevents a division by zero; it does not make
-    // the ratio meaningful when ‖τ‖ is itself near zero (the aMin floor
-    // guarantees some residual torque there). On such frames read
-    // torqueResidualNm instead.
-    const double relativeResidual = residualNm / std::max(tauEff.norm(), 1e-6);
+    // on the post-clamp activations, over the active DOFs only — those are the
+    // rows the objective actually contains.
+    //
+    // Reported as TWO norms, because the rows do not share units. Adding a
+    // newton squared to a newton-metre squared and taking the square root
+    // produces a number with no dimension anyone can name, and on this model
+    // it is not a small effect in either direction: in neutral standing
+    // `SternumY` alone carries 72.697 N of the demand — more than the entire
+    // rotational demand of 38.46 Nm — and it is matched to 0.02 N, so mixing
+    // the two FLATTERED the old ratio by 2.1× (0.124 mixed vs 0.266 on the
+    // moment rows). The unit split makes the number worse and correct.
+    double momentSq = 0.0, forceSq = 0.0;
+    double momentTauSq = 0.0, forceTauSq = 0.0;
+    for (NSInteger k = 0; k < nActive; k++) {
+        const double r = Aeff.row(k).dot(aOut) - tauEff(k);
+        if (isForceRow[k]) {
+            forceSq += r * r;
+            forceTauSq += tauEff(k) * tauEff(k);
+        } else {
+            momentSq += r * r;
+            momentTauSq += tauEff(k) * tauEff(k);
+        }
+    }
+    const double residualNm = std::sqrt(momentSq);
+    const double residualN = std::sqrt(forceSq);
+    // The 1e-6 floor only prevents a division by zero; it does not make the
+    // ratio meaningful when ‖τ‖ is itself near zero (the aMin floor guarantees
+    // some residual there). On such frames read the absolute residual instead.
+    const double relativeResidual = residualNm / std::max(std::sqrt(momentTauSq), 1e-6);
+    const double relativeForce =
+        (forceTauSq > 0.0 || forceSq > 0.0) ? residualN / std::max(std::sqrt(forceTauSq), 1e-6)
+                                            : 0.0;
 
     double solveTime = (CACurrentMediaTime() - startTime) * 1000.0;
 
@@ -674,7 +872,9 @@ static const double kMuscleMinActivation = 0.02;
                                              solveTimeMs:solveTime
                                                converged:converged
                                         torqueResidualNm:residualNm
-                                  relativeTorqueResidual:relativeResidual];
+                                  relativeTorqueResidual:relativeResidual
+                                          forceResidualN:residualN
+                                   relativeForceResidual:relativeForce];
 }
 
 @end

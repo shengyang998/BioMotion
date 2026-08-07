@@ -35,6 +35,17 @@ import UIKit
 /// SERIAL `solverQueue`, which preserves submission order, so
 /// `bridge.scaleModelWithHeight` finishes before `bridge.solveIK` for that same
 /// frame begins.
+///
+/// # Static holds only
+/// This runner turns on `NimbleEngine.staticHoldGating` for the duration of a
+/// run. On this path the pose source zeroes `global_trans`, so the pelvis sits
+/// at a model constant in every frame and the body has no global translation:
+/// `M·q̈` and the centre-of-mass acceleration would be computed from motion
+/// that did not happen (in a squat the pelvis never descends — the feet appear
+/// to rise). So frames where the subject was measurably moving get pose and no
+/// muscle magnitudes, and frames where they were still are solved as statics.
+/// The engine is SHARED with the live ARKit view, whose q̈ IS observable, hence
+/// the flag is scoped to the run rather than made unconditional.
 @MainActor
 final class OfflineSessionRunner: ObservableObject {
 
@@ -66,6 +77,9 @@ final class OfflineSessionRunner: ObservableObject {
     private var perFrameDurations: [TimeInterval] = []
     private var calibrated = false
     private var lastSuccessfulFrame: (id: Int, bodyFrame: BodyFrame)?
+    /// Identifies the current run so a cancelled predecessor cannot clean up
+    /// shared engine state that now belongs to its successor. See `runInternal`.
+    private var runToken: UInt64 = 0
 
     /// Generous upper bound on one `nimble.processFrame` solve. NimbleEngine's
     /// module docs record ~200ms/frame for the shipped FullBody.osim (520
@@ -118,6 +132,21 @@ final class OfflineSessionRunner: ObservableObject {
         perFrameDurations.removeAll()
         calibrated = false
         lastSuccessfulFrame = nil
+
+        // Scoped to this run — see the class header. `defer` covers every exit
+        // path including cancellation, so the shared engine goes back to
+        // dynamic ID for the live camera view.
+        //
+        // Guarded by a token rather than flipped unconditionally: `run()`
+        // cancels the previous task and immediately starts a new one, but
+        // cancellation is cooperative — the old task keeps going until its next
+        // check. Without the guard its `defer` could fire AFTER the new run set
+        // the flag, silently leaving the new clip on dynamic ID, which is
+        // exactly the failure this gate exists to prevent.
+        runToken &+= 1
+        let myToken = runToken
+        nimble.staticHoldGating = true
+        defer { if runToken == myToken { nimble.staticHoldGating = false } }
 
         phase = .loadingModel
         do {
@@ -205,7 +234,7 @@ final class OfflineSessionRunner: ObservableObject {
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed(error.localizedDescription), usedFallbackBBox: false,
                 camT: nil,
-                bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false))
+                bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
 
@@ -218,7 +247,7 @@ final class OfflineSessionRunner: ObservableObject {
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed("retarget produced no usable joints"), usedFallbackBBox: estimate.usedFallbackBBox,
                 camT: estimate.camT,
-                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false))
+                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
 
@@ -251,7 +280,7 @@ final class OfflineSessionRunner: ObservableObject {
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .nimbleTimeout, usedFallbackBBox: estimate.usedFallbackBBox,
                 camT: estimate.camT,
-                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false))
+                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
 
@@ -263,34 +292,52 @@ final class OfflineSessionRunner: ObservableObject {
             status: .success, usedFallbackBBox: estimate.usedFallbackBBox,
             camT: estimate.camT,
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil,
-            muscleResult: nil, isStaticHoldEstimate: false))
-        routeBiomechanicsToOwningFrame()
+            muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
+        routeSolveToOwningFrame()
         return true
     }
 
-    /// Files the newest ID/muscle solve against the frame it actually describes.
+    /// Files the newest complete solve against the frame it actually describes.
     ///
-    /// `NimbleEngine` dates ID and muscle output at `centerTimestamp` — the
-    /// centre of the 9-tap Savitzky-Golay window — because that is the sample
-    /// its `dq`/`ddq` are valid for (`NimbleEngine.swift:318-320`). So the
-    /// newest published result is roughly half a window OLDER than the frame
-    /// just pushed. Attaching it to the frame we just submitted would label
-    /// every overlay with a pose it does not belong to: about 4 frames of lag,
-    /// which at the 2 fps default is two seconds of visibly wrong muscle.
+    /// `NimbleEngine` dates ID, muscle and the motion verdict at
+    /// `centerTimestamp` — the centre of the 9-tap Savitzky-Golay window —
+    /// because that is the sample its `dq`/`ddq` are valid for. So the newest
+    /// published result is roughly half a window OLDER than the frame just
+    /// pushed. Attaching it to the frame we just submitted would label every
+    /// overlay with a pose it does not belong to: about 4 frames of lag, which
+    /// at the 2 fps default is two seconds of visibly wrong muscle.
     ///
-    /// `MuscleOutput` carries that timestamp, so match on it. The centre value
+    /// `SolveRecord` carries that timestamp, so match on it. The centre value
     /// is a copy of a previously pushed frame timestamp, so the match is exact
     /// up to float representation; a result with no close frame belongs to a
-    /// dropped frame or a previous clip and is discarded rather than misfiled.
-    private func routeBiomechanicsToOwningFrame() {
-        guard let muscle = nimble.lastMuscleResult else { return }
+    /// synthetic head-pad push or a previous clip and is discarded rather than
+    /// misfiled.
+    ///
+    /// Reading `SolveRecord` rather than the individual `@Published` fields is
+    /// load-bearing now that a moving frame publishes IK with muscle = nil: the
+    /// engine leaves `lastMuscleResult` pointing at the previous HOLD, so
+    /// pairing it with a fresh `lastIKResult` would file a stale muscle result
+    /// under a fresh pose. Everything in the record shares one timestamp.
+    private func routeSolveToOwningFrame() {
+        guard let solve = nimble.lastSolve else { return }
+        let t = solve.centerTimestamp
         guard let owner = resultStore.frames.min(by: {
-            abs($0.timestamp - muscle.timestamp) < abs($1.timestamp - muscle.timestamp)
-        }), abs(owner.timestamp - muscle.timestamp) <= Self.biomechanicsMatchTolerance else { return }
+            abs($0.timestamp - t) < abs($1.timestamp - t)
+        }), abs(owner.timestamp - t) <= Self.biomechanicsMatchTolerance else { return }
 
-        resultStore.updateBiomechanics(forFrameID: owner.id, muscleResult: muscle,
-                                       idResult: nimble.lastIDResult, ikResult: nimble.lastIKResult,
-                                       isStaticHoldEstimate: false)
+        let motion = solve.motion
+        let state: OfflineResultStore.MotionState = motion.isHold
+            ? .hold(peakSpeedMetersPerSecond: motion.peakMarkerSpeedMetersPerSecond,
+                    windowSeconds: motion.windowSeconds)
+            : .moving(peakSpeedMetersPerSecond: motion.peakMarkerSpeedMetersPerSecond,
+                      windowSeconds: motion.windowSeconds)
+
+        resultStore.updateBiomechanics(forFrameID: owner.id,
+                                       muscleResult: solve.muscle,
+                                       idResult: solve.id,
+                                       ikResult: solve.ik,
+                                       isStaticHoldEstimate: solve.isStaticHoldEstimate,
+                                       motionState: state)
     }
 
     /// Replays `bodyFrame` on backdated timestamps to fill the LEADING half of
@@ -301,6 +348,15 @@ final class OfflineSessionRunner: ObservableObject {
     /// matches what this input can actually support. `joint_coords` pins the
     /// pelvis every frame, so global motion is unavailable and the defensible
     /// reading of the muscle numbers is a static-equilibrium one anyway.
+    ///
+    /// ⚠️ These pads have ZERO marker displacement by construction, so the hold
+    /// detector sees them as still. The verdict for the first real frame is
+    /// therefore built from 4 real transitions after it and 4 synthetic zeros
+    /// before it: whatever the subject was doing in the moment before the clip
+    /// started is unobservable and is scored as stillness. The tail padding has
+    /// the mirror-image bias. A single photo is the fully degenerate case —
+    /// all 8 transitions are synthetic — which is why "one frame is a hold" is
+    /// an ASSUMPTION this path inherits from the padding, not a measurement.
     private func primeFilterHead(with bodyFrame: BodyFrame, totalPushes: inout Int) async {
         let dt = sampleInterval
         for step in stride(from: Self.sgHalfWindow, through: 1, by: -1) {
@@ -328,7 +384,7 @@ final class OfflineSessionRunner: ObservableObject {
             let published = await submitAndWait(padded, timeout: Self.solveTimeout)
             totalPushes += 1
             guard published else { continue }
-            routeBiomechanicsToOwningFrame()
+            routeSolveToOwningFrame()
         }
     }
 

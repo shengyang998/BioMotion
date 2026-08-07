@@ -65,6 +65,15 @@ struct OfflinePlaybackView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(statusText(frame))
                     .font(.caption2)
+                    .foregroundStyle(statusTint(frame))
+                // The reason a frame has no muscle numbers is the point of this
+                // badge, not a footnote: "warming up" is a startup artifact,
+                // "moving" is a statement about what this input can support.
+                if let detail = motionDetail(frame) {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.75))
+                }
                 if frame.usedFallbackBBox {
                     Text("no person detected — used full frame")
                         .font(.caption2)
@@ -74,19 +83,49 @@ struct OfflinePlaybackView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
-            .foregroundStyle(.white)
         }
     }
 
     private func statusText(_ frame: OfflineResultStore.FrameResult) -> String {
         switch frame.status {
         case .success:
-            if frame.isStaticHoldEstimate { return "Pose + static-hold muscle estimate" }
-            return frame.hasFullBiomechanics ? "Pose + muscles" : "Pose only (warming up)"
+            if frame.hasFullBiomechanics {
+                // `isStaticHoldEstimate` now means the ID and muscle solve ran
+                // with q̇ = q̈ = 0 on a DETECTED hold, so say so — these are
+                // posture loads, not measured dynamics.
+                return frame.isStaticHoldEstimate ? "Pose + muscle (static hold)" : "Pose + muscle"
+            }
+            if frame.isPoseOnlyBecauseMoving { return "Pose only — subject moving" }
+            return "Pose only (warming up)"
         case .poseEstimationFailed(let reason):
             return "Pose failed: \(reason)"
         case .nimbleTimeout:
             return "Solver timed out on this frame"
+        }
+    }
+
+    private func statusTint(_ frame: OfflineResultStore.FrameResult) -> Color {
+        switch frame.status {
+        case .success:
+            if frame.hasFullBiomechanics { return .green }
+            if frame.isPoseOnlyBecauseMoving { return .orange }
+            return .white
+        case .poseEstimationFailed, .nimbleTimeout:
+            return .red
+        }
+    }
+
+    /// One line of the actual measurement behind the verdict, so the number is
+    /// inspectable rather than a badge the user has to trust.
+    private func motionDetail(_ frame: OfflineResultStore.FrameResult) -> String? {
+        switch frame.motionState {
+        case .hold(let speed, let window):
+            return String(format: "still: peak %.1f cm/s over %.1f s", speed * 100, window)
+        case .moving(let speed, let window):
+            return String(format: "moving: peak %.1f cm/s over %.1f s — muscle loads need a still pose",
+                          speed * 100, window)
+        case .undetermined:
+            return nil
         }
     }
 
@@ -129,7 +168,12 @@ struct OfflinePlaybackView: View {
 
     private var frameLabel: String {
         guard !resultStore.frames.isEmpty else { return "No frames" }
-        return "Frame \(resultStore.selectedIndex + 1)/\(resultStore.frames.count) — \(resultStore.biomechanicsCount) with muscle data"
+        var label = "Frame \(resultStore.selectedIndex + 1)/\(resultStore.frames.count) — \(resultStore.biomechanicsCount) with muscle data"
+        // Without this, a clip of a moving subject reads as "1 with muscle
+        // data" and looks like the solver failed 40 times.
+        let moving = resultStore.poseOnlyMovingCount
+        if moving > 0 { label += ", \(moving) pose-only (moving)" }
+        return label
     }
 }
 

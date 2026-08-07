@@ -10,7 +10,36 @@ targets:
     type: application
     platform: iOS
     sources:
-      - BioMotion
+      # `CoreML/` holds the 1.3 GB SAM3DBodyPose.mlpackage. It is DELIBERATELY
+      # excluded: the model now ships as an Apple-Hosted Managed Background
+      # Assets pack (see tools/assetpack/README.md), not inside the app binary.
+      # Re-adding it here re-inflates the download by ~1.31 GiB.
+      #
+      # `AssetPack/Downloader` and `AssetPack/Support` belong to the extension
+      # target below. The Downloader source declares its own `@main`, so
+      # compiling it into the app too is a hard build error.
+      - path: BioMotion
+        excludes:
+          - "CoreML/**"
+          - "CoreML"
+          - "AssetPack/Downloader/**"
+          - "AssetPack/Downloader"
+          - "AssetPack/Support/**"
+          - "AssetPack/Support"
+      # Developer-only escape hatch. Absent by default (hence `optional`), so a
+      # normal build/archive carries no model. Populate it to get a bundled,
+      # Xcode-compiled `SAM3DBodyPose.mlmodelc` that
+      # `AssetPackModelStore.resolveCompiledModelURL()` prefers over the asset
+      # pack — required for the Simulator, where Background Assets serves no
+      # packs:
+      #   bash tools/assetpack/dev_bundle_model.sh on   (then xcodegen generate)
+      #   bash tools/assetpack/dev_bundle_model.sh off  (then xcodegen generate)
+      # It lives under build/ because .gitignore already covers that — a 1.3 GiB
+      # copy must never be committable by accident.
+      - path: build/DevBundledModel
+        optional: true
+    dependencies:
+      - target: AssetPackDownloader   # embeds the Background Download extension
     settings:
       base:
         INFOPLIST_FILE: BioMotion/Info.plist
@@ -18,8 +47,9 @@ targets:
         SWIFT_VERSION: "5.9"
         DEVELOPMENT_TEAM: "N7VVB6PWZS"
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "22"
+        CURRENT_PROJECT_VERSION: "23"
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: BioMotion/AssetPack/Support/BioMotion.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: BioMotion/Nimble/BioMotion-Bridging-Header.h
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
           - "$(PROJECT_DIR)/nimblephysics/build_ios"
@@ -62,6 +92,43 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        # Apple-Hosted Managed Background Assets (iOS 26). These three keys are
+        # the only ones permitted in Apple-hosted mode — adding any of the
+        # self-hosting keys (BAManifestURL, BADownloadAllowance…) makes the
+        # build's Background Assets configuration invalid.
+        BAUsesAppleHosting: true
+        BAHasManagedAssetPacks: true
+        BAAppGroupID: group.com.soleil.BioMotion
+
+  # Background Download extension. The system, not the app, drives asset-pack
+  # downloads; this extension exists so the OS has an in-app policy hook and so
+  # `prefetch` at install time is honoured. Apple's Managed Background Assets
+  # setup requires it ("Add a managed Background Download extension to your
+  # project"), even though the app also drives an explicit
+  # `ensureLocalAvailability`.
+  AssetPackDownloader:
+    type: extensionkit-extension
+    platform: iOS
+    sources:
+      - path: BioMotion/AssetPack/Downloader
+    info:
+      path: BioMotion/AssetPack/Support/AssetPackDownloader-Info.plist
+      properties:
+        CFBundleDisplayName: "Model Downloader"
+        # Must track the containing app or the upload warns ITMS-90473.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.background-asset-downloader-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.soleil.BioMotion.AssetPackDownloader
+        SWIFT_VERSION: "5.9"
+        DEVELOPMENT_TEAM: "N7VVB6PWZS"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "23"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: BioMotion/AssetPack/Support/AssetPackDownloader.entitlements
 
   BioMotionTests:
     type: bundle.unit-test

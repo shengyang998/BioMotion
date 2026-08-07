@@ -54,7 +54,6 @@ final class SAM3DPoseEstimator {
 
     enum EstimatorError: LocalizedError {
         case imageDecodeFailed
-        case modelNotBundled(String)
         case modelLoadFailed(Error)
         case preprocessingFailed(String)
         case predictionFailed(Error)
@@ -65,8 +64,6 @@ final class SAM3DPoseEstimator {
             switch self {
             case .imageDecodeFailed:
                 return "Couldn't read pixel data from the selected image."
-            case .modelNotBundled(let detail):
-                return "Pose model not found in the app bundle: \(detail)"
             case .modelLoadFailed(let error):
                 return "Pose model failed to load: \(error.localizedDescription)"
             case .preprocessingFailed(let detail):
@@ -121,10 +118,6 @@ final class SAM3DPoseEstimator {
         static let imageStd: [Float] = [0.229, 0.224, 0.225]
         static let numBodyJoints = 127
         static let numOutputKeypoints2D = 70
-        /// Bundled model resource name (without extension). Xcode compiles a
-        /// `.mlpackage` target member into `<name>.mlmodelc` inside the app
-        /// bundle — that's what ships, not the raw `.mlpackage`.
-        static let modelResourceName = "SAM3DBodyPose"
     }
 
     // MARK: - State
@@ -135,10 +128,33 @@ final class SAM3DPoseEstimator {
 
     // MARK: - Loading
 
+    /// Observable download state for the Background Assets pack that carries the
+    /// weights. Exposed so a view can show live progress; the message on the
+    /// error thrown by `loadModelIfNeeded()` already carries the same numbers.
+    @MainActor static var modelStore: AssetPackModelStore { AssetPackModelStore.shared }
+
+    /// An estimator is constructed when the import screen appears, several user
+    /// actions before the model is actually needed (pick a clip, choose a
+    /// sampling rate, tap Run). Spending that time starting the asset-pack
+    /// download is free: the pack's manifest already marks it `prefetch`, so the
+    /// OS was going to fetch it after install anyway — this only removes the
+    /// case where the very first Run tap is the thing that starts a 1.31 GiB
+    /// transfer. Fire-and-forget; failures surface later through
+    /// `loadModelIfNeeded()`.
+    init() {
+        Task { await AssetPackModelStore.shared.beginPrefetch() }
+    }
+
     /// Idempotent — safe to call before every `estimate(uiImage:)`.
+    ///
+    /// The 1.31 GiB model is no longer in the app bundle; it arrives as an
+    /// Apple-Hosted Managed Background Assets pack. `AssetPackModelStore`
+    /// resolves it (preferring a bundled developer copy when one exists) and,
+    /// when the pack has not arrived yet, throws promptly with a message that
+    /// states the download percentage — this call never blocks on the transfer.
     func loadModelIfNeeded() async throws {
         if model != nil { return }
-        let url = try Self.resolveModelURL()
+        let url = try await AssetPackModelStore.shared.resolveCompiledModelURL()
         let config = MLModelConfiguration()
         // computeUnits = .cpuAndGPU, deliberately NOT .all: ANE compilation of a
         // comparable model has previously cost ~10 minutes of cold load on this
@@ -156,22 +172,6 @@ final class SAM3DPoseEstimator {
         }
         model = loaded
         isLoaded = true
-    }
-
-    private static func resolveModelURL() throws -> URL {
-        let candidates: [(String, String)] = [
-            (PreprocessingConstants.modelResourceName, "mlmodelc"),
-            (PreprocessingConstants.modelResourceName, "mlpackage"),
-        ]
-        for (name, ext) in candidates {
-            if let url = Bundle.main.url(forResource: name, withExtension: ext) {
-                return url
-            }
-        }
-        throw EstimatorError.modelNotBundled(
-            "\(PreprocessingConstants.modelResourceName).mlmodelc (or .mlpackage) not found. " +
-            "It must be copied into BioMotion/Resources/ and the Xcode project regenerated."
-        )
     }
 
     // MARK: - Estimate

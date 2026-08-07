@@ -23,6 +23,35 @@ final class OfflineResultStore: ObservableObject {
         case nimbleTimeout
     }
 
+    /// What the static-hold detector concluded about this frame — the reason a
+    /// frame does or does not carry muscle magnitudes.
+    ///
+    /// This exists because "no muscle data" had two very different causes that
+    /// looked identical in the UI: the Savitzky-Golay window had not filled
+    /// yet (a startup artifact, harmless), versus the subject was moving (a
+    /// statement about what this input can support). See
+    /// `NimbleEngine.staticHoldGating`.
+    enum MotionState: Equatable {
+        /// Marker motion around this frame stayed inside the static-hold
+        /// bound, so ID and the muscle QP were solved with q̇ = q̈ = 0.
+        case hold(peakSpeedMetersPerSecond: Double, windowSeconds: Double)
+        /// The subject was measurably moving. Pose is still shown; muscle
+        /// magnitudes are deliberately withheld, because the pose source pins
+        /// the pelvis every frame and so cannot supply the accelerations those
+        /// magnitudes would be derived from.
+        case moving(peakSpeedMetersPerSecond: Double, windowSeconds: Double)
+        /// No verdict reached this frame: the filter was still warming up, the
+        /// solve failed, or nothing was ever routed to it.
+        case undetermined
+
+        var peakSpeedMetersPerSecond: Double? {
+            switch self {
+            case .hold(let v, _), .moving(let v, _): return v
+            case .undetermined: return nil
+            }
+        }
+    }
+
     struct FrameResult: Identifiable {
         let id: Int  // frame index — stable, matches the scrubber position
         let sourceImage: UIImage
@@ -46,13 +75,24 @@ final class OfflineResultStore: ObservableObject {
         let ikResult: NimbleEngine.IKOutput?
         let idResult: NimbleEngine.IDOutput?
         let muscleResult: NimbleEngine.MuscleOutput?
-        /// True once `OfflineSessionRunner`'s end-of-clip padding has replayed
-        /// this exact frame's pose to warm up the SG filter and produced a
-        /// static-hold muscle estimate — lets the UI say "static estimate"
-        /// instead of implying continuous dynamics were measured.
+        /// True iff this frame's ID and muscle results were solved as a STATIC
+        /// EQUILIBRIUM problem (q̇ = q̈ = 0) on a detected hold — i.e. the
+        /// muscle numbers are a posture estimate, not a measurement of dynamics.
+        ///
+        /// It used to mean "the end-of-clip padding replayed this pose", which
+        /// was true of the last four frames of every clip regardless of whether
+        /// the subject had moved, so it distinguished nothing.
         let isStaticHoldEstimate: Bool
+        /// Why this frame does or does not carry muscle data.
+        let motionState: MotionState
 
         var hasFullBiomechanics: Bool { muscleResult != nil }
+        /// Pose was solved fine, but the subject was moving, so no muscle
+        /// magnitudes are claimed. Distinct from the warm-up case.
+        var isPoseOnlyBecauseMoving: Bool {
+            if case .moving = motionState { return muscleResult == nil }
+            return false
+        }
     }
 
     @Published private(set) var frames: [FrameResult] = []
@@ -71,15 +111,20 @@ final class OfflineResultStore: ObservableObject {
         selectedIndex = frames.count - 1
     }
 
-    /// Rewrites frame `id`'s biomechanics fields in place. Used only by
-    /// `OfflineSessionRunner`'s end-of-clip Savitzky-Golay warm-up padding, so
-    /// the padding shows up as an update to the last real frame rather than as
-    /// phantom extra rows in the scrubber.
+    /// Rewrites frame `id`'s biomechanics fields in place.
+    ///
+    /// The Savitzky-Golay window is centred, so a solve never describes the
+    /// frame that was just pushed — `OfflineSessionRunner` matches on the
+    /// solve's own timestamp and calls this to file it against the frame it
+    /// actually belongs to. That includes solves that produced NO muscle
+    /// output because the subject was moving: `motionState` is the payload
+    /// there, and passing `muscleResult: nil` must not erase the reason.
     func updateBiomechanics(forFrameID id: Int,
                              muscleResult: NimbleEngine.MuscleOutput?,
                              idResult: NimbleEngine.IDOutput?,
                              ikResult: NimbleEngine.IKOutput?,
-                             isStaticHoldEstimate: Bool) {
+                             isStaticHoldEstimate: Bool,
+                             motionState: MotionState) {
         guard let index = frames.firstIndex(where: { $0.id == id }) else { return }
         let existing = frames[index]
         frames[index] = FrameResult(
@@ -93,7 +138,8 @@ final class OfflineResultStore: ObservableObject {
             ikResult: ikResult ?? existing.ikResult,
             idResult: idResult ?? existing.idResult,
             muscleResult: muscleResult ?? existing.muscleResult,
-            isStaticHoldEstimate: isStaticHoldEstimate
+            isStaticHoldEstimate: isStaticHoldEstimate,
+            motionState: motionState
         )
     }
 
@@ -106,4 +152,9 @@ final class OfflineResultStore: ObservableObject {
     }
 
     var biomechanicsCount: Int { frames.filter(\.hasFullBiomechanics).count }
+
+    /// Frames whose pose was solved but whose muscle numbers were withheld
+    /// because the subject was moving. Surfaced so "few frames have muscle
+    /// data" reads as a property of the clip rather than as a solver failure.
+    var poseOnlyMovingCount: Int { frames.filter(\.isPoseOnlyBecauseMoving).count }
 }
