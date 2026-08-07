@@ -96,6 +96,19 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 
 ## Readings that lie — each has already cost a wrong conclusion
 
+- **`Executed N tests, with 0 failures (0 unexpected)` is not a pass, and this one governs every
+  other reading in this file.** A killed test host still prints that line for every suite that
+  finished before the kill, and reports the lost tests as neither passed nor failed. Measured:
+  two `xcodebuild test` processes sharing one simulator UDID each ended `Executed 2 tests, with 0
+  failures (0 unexpected)` / 5 `Restarting after unexpected exit` / `** TEST FAILED **`, on a
+  19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
+  alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
+  whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run
+  `tools/run_tests.sh` — it takes a private device plus a lock, and gates on all three numbers.
+  Corollary for reading a crash report: six suites carry 95% of the wall clock (GaitDynamics 369 s,
+  IKConvergence 91 s, ShoulderRotMask 51 s, StaticHold 48 s, MuscleQPUnits 41 s,
+  IKSolverInternals 33 s), so "the kill landed just after X" is almost always a statement about the
+  schedule, not about X.
 - **`NimbleIDResult.jointTorques.head<6>()` is a hard-coded zero.** `Skeleton.cpp:10365` does `setZero()` unconditionally and its assert is compiled out of the Release static libs. `rootResidualNorm` is now a real linear-momentum residual in **newtons** — a frame-consistency check, never a balance check.
 - **`NimbleIKResult.error` is nimble's LOSS** (`Σ wᵢ²‖Δpᵢ‖²`, in m²), not an RMS and not in metres. Read `markerRMSMeters` for accuracy. `NimbleEngine.IKOutput` exposes both as `ikLossSquaredMeters` and `markerRMSMeters` for the same reason.
 - **"Torque decreases distally" is not a law.** In single-leg stance the free leg decreases distally while the loaded leg increases toward the contact. Both are correct.

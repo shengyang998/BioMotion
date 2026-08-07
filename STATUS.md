@@ -121,10 +121,10 @@ optimizer bound by colormap appearance; dead `maxMuscleForceAtState` and the leg
 
 ### Test suite
 
-| | 2026-08-06 start | after Phase 0 | 2026-08-07 |
-|---|---|---|---|
-| Test target | **did not compile** (`MomentArmTests.swift:124` used a stale signature) | builds | builds |
-| Tests | 0 runnable | 88 total, 87 pass | **219 total, 219 pass, 0 crash-restarts** |
+| | 2026-08-06 start | after Phase 0 | 2026-08-07 | 2026-08-08 |
+|---|---|---|---|---|
+| Test target | **did not compile** (`MomentArmTests.swift:124` used a stale signature) | builds | builds | builds |
+| Tests | 0 runnable | 88 total, 87 pass | 219 total, 219 pass | **353 total, 353 pass, 0 crash-restarts, ×3 consecutive runs** |
 
 `E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
 fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
@@ -133,19 +133,68 @@ next-step 14.
 
 Run with:
 ```bash
-# XcodeBuildMCP session defaults: project BioMotion.xcodeproj, scheme BioMotion,
-# simulator "iPhone 17" (F85FB2DA-66AD-428D-A4EC-1390A42D9FCB), Debug
-xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
-  -skip-testing:BioMotionTests/E1MarkerSetComparisonTests test
+tools/run_tests.sh
 ```
 
-Per class (2026-08-07): NimbleBridgeTests 22 · PostureFindingsTests 26 · IKConvergenceTests 13 ·
-TRCExporterTests 14 · StaticHoldTests 13 · MomentArmTests / CalibrationTests / MuscleSolverTests 11 ·
-BodyPlausibilityTests 11 · MotionRecorderTests 10 · BodyJointTests / DOFMaskTests 9 ·
-StaticEquilibriumBenchmarkTests 7 · IKDriftDiagnosticsTests / MuscleQPUnitsTests 6 ·
-ShoulderRotMaskTests 5 · ShoulderRotObservabilityTests 3 · OfflineMuscleChainTests /
-OfflineOrchestrationTests 1.
+**Do not hand-type an `xcodebuild test` line.** The script exists because typed lines named the
+simulator by NAME, and that is what made this suite untrustworthy — see
+[the commit gate](#the-commit-gate-what-green-means-and-what-it-does-not-2026-08-08). It provisions
+a private device, refuses to start if another run holds it, and prints the only three numbers that
+decide whether a run means anything: the executed count, the restart count, and the final verdict.
+It exits non-zero unless all three are right.
+
+Per class (2026-08-08, 353 total): GaitLoadSummaryTests 27 · PostureFindingsTests 26 ·
+NimbleBridgeTests 22 · GaitReportTests / GaitClipFixtureTests 20 · StaticHoldTests 19 ·
+TRCExporterTests 14 · MuscleSolverTests / IKConvergenceTests 13 · NativeWindowSamplingTests /
+MomentArmTests / GaitDynamicsTests / CalibrationTests / BodyPlausibilityTests 11 ·
+MotionRecorderTests 10 · GaitStanceDetectionTests / DOFMaskTests / DerivativeWindowTests /
+BodyJointTests 9 · OfflineDisclosureTests / IKSolverInternalsTests 8 ·
+StaticEquilibriumBenchmarkTests 7 · RootTranslationTests / MuscleQPUnitsTests /
+IKDriftDiagnosticsTests 6 · ShoulderRotMaskTests / GaitLoadStatisticTests 5 ·
+PostureFindingsRealPoseTests / GaitContactAgreementTests / GaitConstantSensitivityTests /
+DecodedFrameMemoryTests 4 · ShoulderRotObservabilityTests / PersonBoxTests /
+BodyFrameOrientationTests 3 · OfflineOrchestrationTests / OfflineMuscleChainTests 1.
+
+Six suites carry 95% of the 668 s wall clock: GaitDynamicsTests 369 s · IKConvergenceTests 91 s ·
+ShoulderRotMaskTests 51 s · StaticHoldTests 48 s · MuscleQPUnitsTests 41 s ·
+IKSolverInternalsTests 33 s. That distribution matters for reading a crash report — see below.
+
+### The commit gate: what green means, and what it does not (2026-08-08)
+
+Three reviewers ran "the suite" on 2026-08-07 and got three different answers, so "the suite is
+green" carried no information. Both causes were mechanical and neither was in the tests.
+
+**Cause 1 — the shared simulator.** Every documented invocation named the device by NAME
+(`name=iPhone 17` here, `name=iPhone 17 Pro` in `README.md`), so two `xcodebuild test` processes
+resolved to one UDID and evicted each other's test host. Measured, same binary, same tests, same
+device, one variable:
+
+| | last `Executed` line | restarts | verdict |
+|---|---|---|---|
+| two processes sharing one UDID (proc A) | `Executed 2 tests, with 0 failures (0 unexpected)` | 5 | `** TEST FAILED **` |
+| two processes sharing one UDID (proc B) | `Executed 2 tests, with 0 failures (0 unexpected)` | 5 | `** TEST FAILED **` |
+| one process, private UDID | `Executed 19 tests, with 0 failures (0 unexpected)` | 0 | `** TEST SUCCEEDED **` |
+
+**Cause 2 — `Executed N tests, with 0 failures` is not a verdict.** Look at the table: the killed
+runs print exactly that line, with zero failures, having run 2 of 19 tests. A killed host reports
+its lost tests as neither passed nor failed. Only the trailing `** TEST ... **`, a zero restart
+count, and a full test count together mean anything. `tools/run_tests.sh` checks all three.
+
+**The `DecodedFrameMemoryTests` attribution did not survive.** The finding was that its ~250 MB
+hold destabilises the rest of the suite. On a private device the full suite **including** it ran
+green twice before any change — `Executed 353 tests, with 0 failures`, `** TEST SUCCEEDED **`,
+0 restarts, 692 s and 678 s. Sampling the test host's RSS once a second across a whole run
+(n = 626): median **463 MB**, peak **721 MB**, and the peak is indeed that test — but the engine
+suites reach **600 MB** on their own, so it lifts the suite's high-water mark by 121 MB, to 2.1% of
+this machine's 34.36 GB. The reported temporal adjacency ("the first kill is 1 s after it logs its
+footprint") is what the schedule looks like anyway: `GaitDynamicsTests`, 369 s and 55% of the whole
+suite, starts 0.35 s after `DecodedFrameMemoryTests` ends, and every named victim is one of the six
+long suites above. Wall-clock exposure, not memory adjacency. The test is unchanged.
+
+Residual, so it is not mistaken for closed: this is a 34 GB machine and no memory limit was in play.
+On a much smaller host `DecodedFrameMemoryTests` is still the suite's peak, and the held-frame count
+(`held = 60`, whose footprint check measured expected 248.7 MB vs observed 251.6 MB, ratio 1.012) is
+the lever — the assertion is a ratio, so it survives a smaller hold.
 
 ### Known-red test
 

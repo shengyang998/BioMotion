@@ -130,9 +130,11 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
   -destination 'generic/platform=iOS' \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build
 
-# Tests on simulator
-xcodebuild -project BioMotion.xcodeproj -scheme BioMotionTests \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+# Tests on simulator — always via the script, never a hand-typed xcodebuild line.
+# It provisions a private simulator (naming one shared with another xcodebuild
+# process is what made this suite untrustworthy), and reports the executed count,
+# the restart count and the final verdict. See STATUS.md, "The commit gate".
+tools/run_tests.sh
 ```
 
 ## TestFlight upload
