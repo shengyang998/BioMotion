@@ -45,6 +45,16 @@ struct OfflinePlaybackView: View {
                                       cameraDepthAxis: PostureFindings.offlineCameraDepthAxis)
     }
 
+    /// The relative-load view of a running clip. Nil unless the clip was
+    /// analysed as a run AND at least one stance frame produced muscle output.
+    private var loadSummary: GaitLoadSummary? {
+        guard case .analysed(let report, let plan, let fps)? = resultStore.gait else { return nil }
+        return GaitLoadSummary.make(frames: resultStore.frames,
+                                    report: report,
+                                    framesPerSecond: fps,
+                                    filterTaps: plan.filterTaps)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
@@ -72,12 +82,23 @@ struct OfflinePlaybackView: View {
                 }
             }
 
-            // Findings sit between the image and the transport controls, with
-            // no tap needed: for a single imported photo — the common case —
-            // this is the whole reason the user opened the app, so it must be
-            // on screen the moment the frame resolves. Capped so the photo
-            // above it stays visible; the panel scrolls inside its own bounds.
-            if let findings {
+            // On a running clip the gait panel replaces the posture findings:
+            // the findings are single-pose measurements and a runner has no
+            // single pose.
+            //
+            // `.notAttempted` deliberately does NOT count — the gait pass runs
+            // on every clip and declines most of them, so treating "declined"
+            // as "this is a gait screen" would have replaced the findings panel
+            // on every photo in the app with a sentence about strides.
+            if let gait = resultStore.gait, gait.isAboutRunning {
+                GaitReportPanel(outcome: gait, summary: loadSummary)
+                    .frame(maxHeight: 320)
+            } else if let findings {
+                // Findings sit between the image and the transport controls, with
+                // no tap needed: for a single imported photo — the common case —
+                // this is the whole reason the user opened the app, so it must be
+                // on screen the moment the frame resolves. Capped so the photo
+                // above it stays visible; the panel scrolls inside its own bounds.
                 PostureFindingsPanel(report: findings)
                     .frame(maxHeight: 300)
             }
@@ -123,6 +144,21 @@ struct OfflinePlaybackView: View {
     private func statusText(_ frame: OfflineResultStore.FrameResult) -> String {
         switch frame.status {
         case .success:
+            // The gait cases come first: on a running clip they are what
+            // decided the frame, and the stillness wording ("hold the
+            // position") is advice a runner cannot act on.
+            if case .gait(let verdict, _) = frame.motionState {
+                switch verdict {
+                case .gaitStance:
+                    return frame.hasFullBiomechanics
+                        ? "Pose + muscle (foot down — relative loads)"
+                        : "Pose only — foot down, no solve"
+                case .gaitFlight: return "Pose only — both feet off the ground"
+                case .gaitOutsideAnalysis: return "Pose only — outside the analysed strides"
+                case .gaitRefused: return "Pose only — strides too uneven to model"
+                default: break
+                }
+            }
             if frame.hasFullBiomechanics {
                 // `isStaticHoldEstimate` now means the ID and muscle solve ran
                 // with q̇ = q̈ = 0 on a DETECTED hold, so say so — these are
@@ -137,9 +173,14 @@ struct OfflinePlaybackView: View {
                 guard case .measured(let verdict, _, _, _) = frame.motionState else {
                     return "Pose only"
                 }
-                return verdict == .indistinguishableFromNoise
-                    ? "Pose only — movement below what this clip can resolve"
-                    : "Pose only — subject moving"
+                switch verdict {
+                case .indistinguishableFromNoise:
+                    return "Pose only — movement below what this clip can resolve"
+                case .poseDidNotConverge:
+                    return "Pose only — the skeleton did not settle here"
+                default:
+                    return "Pose only — subject moving"
+                }
             }
             return "Pose only (warming up)"
         case .poseEstimationFailed(let reason):
@@ -169,24 +210,49 @@ struct OfflinePlaybackView: View {
     /// One line of the actual measurement behind the verdict, so the number is
     /// inspectable rather than a badge the user has to trust.
     private func motionDetail(_ frame: OfflineResultStore.FrameResult) -> String? {
-        guard case .measured(let verdict, let speed, let window, let floor) = frame.motionState else {
+        switch frame.motionState {
+        case .undetermined:
             return nil
-        }
-        switch verdict {
-        case .hold:
-            return String(format: "still: peak %.1f cm/s over %.1f s", speed * 100, window)
-        case .noMeasurement:
-            return verdict.advice
-        case .indistinguishableFromNoise:
-            // The measured speed alone would read as the subject's fault here.
-            // Showing the floor beside it is the whole point: the instrument
-            // cannot resolve movement this small on this clip.
-            return String(format: "peak %.1f cm/s over %.1f s, but the pose estimate itself "
-                          + "jitters %.1f cm/s — %@",
-                          speed * 100, window, floor * 100, verdict.advice)
-        case .movingBeyondStaticBudget:
-            return String(format: "moving: peak %.1f cm/s over %.1f s — %@",
-                          speed * 100, window, verdict.advice)
+
+        case .gait(let verdict, let outcome):
+            guard let outcome, verdict == .gaitStance else {
+                return verdict.advice.isEmpty ? nil : verdict.advice
+            }
+            // Deliberately shows the RATIO to body weight and the disagreement,
+            // not a newton figure. The modelled force is a timing estimate; the
+            // number worth putting on screen is how far the body's own inertia
+            // is from agreeing with it.
+            let side = outcome.contactSide < 0 ? "left" : "right"
+            return String(format: "%@ foot down · modelled %.2f BW · inverse dynamics %.2f BW "
+                          + "· disagreement %.2f BW%@",
+                          side,
+                          outcome.modelledVerticalForceInBodyWeights,
+                          outcome.solvedVerticalForceInBodyWeights,
+                          outcome.residualInBodyWeights,
+                          outcome.contactDetectorsAgree ? "" : " · contact detectors disagree")
+
+        case .measured(let verdict, let speed, let window, let floor):
+            switch verdict {
+            case .hold:
+                return String(format: "still: peak %.1f cm/s over %.1f s", speed * 100, window)
+            case .noMeasurement, .poseDidNotConverge:
+                return verdict.advice
+            case .indistinguishableFromNoise:
+                // The measured speed alone would read as the subject's fault here.
+                // Showing the floor beside it is the whole point: the instrument
+                // cannot resolve movement this small on this clip.
+                return String(format: "peak %.1f cm/s over %.1f s, but the pose estimate itself "
+                              + "jitters %.1f cm/s — %@",
+                              speed * 100, window, floor * 100, verdict.advice)
+            case .movingBeyondStaticBudget:
+                return String(format: "moving: peak %.1f cm/s over %.1f s — %@",
+                              speed * 100, window, verdict.advice)
+            case .gaitStance, .gaitFlight, .gaitOutsideAnalysis, .gaitRefused:
+                // A gait verdict can only arrive through `.gait`; this arm
+                // exists so a new verdict cannot be added without deciding what
+                // this screen says about it.
+                return verdict.advice.isEmpty ? nil : verdict.advice
+            }
         }
     }
 

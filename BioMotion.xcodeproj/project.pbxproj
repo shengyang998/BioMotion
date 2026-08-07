@@ -22,8 +22,10 @@
 		29D930260612AA4E66B15B3B /* SAM3DPoseEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7AB824FE7872485E9CEBFC3 /* SAM3DPoseEstimator.swift */; };
 		2C7506D9DF3193772049F56A /* PhotoOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B44E86911B6D34B6D8EEBA /* PhotoOverlayView.swift */; };
 		32F526B0CAC7BDF4677DC5BF /* BodyJointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C64A42A229077EC3CF47FD /* BodyJointTests.swift */; };
+		33EE0024E2EEA2DEC59B9DDA /* GaitLoadSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A0577D615043AFBD9112E8 /* GaitLoadSummary.swift */; };
 		39898570C7128B9A2770FC21 /* ShoulderRotObservabilityTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1F460BBF2CEB2DE7A1735390 /* ShoulderRotObservabilityTests.mm */; };
 		39A5BD9ECC7553A6C9F6E556 /* OneEuroFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5E8807D42FF44784FCF22F /* OneEuroFilter.swift */; };
+		3BD50F1DD2B09065EADEE2A6 /* GaitDynamicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4874B31C9C33272450AE6B44 /* GaitDynamicsTests.swift */; };
 		41CA409DD6CBEBF78E2B0EEE /* GaitSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DD62C1285CC0A293F53014 /* GaitSignal.swift */; };
 		440AB016E47D178EFB6CA14F /* OfflineImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 809295CEBE3A3EE0C68051A9 /* OfflineImportView.swift */; };
 		4E7BB08733F58643DA1F0946 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 548ECA121A57E096D1964D0B /* README.md */; };
@@ -31,10 +33,12 @@
 		59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */; };
 		5EAF2F8A2F45C0B4C65E83C0 /* CalibrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */; };
 		5EB4E09CAD2BF5644147136D /* MomentArmTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */; };
+		61C67AFA01C9529323A6BF7B /* DerivativeWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7125E0AE9F8D942866F064D4 /* DerivativeWindowTests.swift */; };
 		667892EA2E6CC9FACD3EA3C5 /* StanceDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F4015F4D866CCE543FF3AD /* StanceDetector.swift */; };
 		68975B28DCF3CD55E9EB1746 /* PostureFindingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */; };
 		68ADD79B07C15C342DFB2CB5 /* E1MarkerSetComparisonTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = A8E2DEF6905CA595DA267C6A /* E1MarkerSetComparisonTests.mm */; };
 		732EF1424B7BE159A1A2A35B /* GaitClipFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */; };
+		776F7C63402275798F72DCF9 /* GaitReportPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6812C3DE8176C6B95FB8FFB6 /* GaitReportPanel.swift */; };
 		7CC7D377AAE200F3C611F8F2 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = BB09CCB3DD5A4B20A3553080 /* Fixtures */; };
 		7ED1CE05D8C199C942D22051 /* SkeletonOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */; };
 		8124CC275659661624C356FD /* PostureFindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFD138F9C20ED4CCDD68860 /* PostureFindings.swift */; };
@@ -53,10 +57,12 @@
 		B1670D1FDAE907294D961E3F /* FullBody.osim in Resources */ = {isa = PBXBuildFile; fileRef = 4B9713307F6A75E4289F37D8 /* FullBody.osim */; };
 		BBC1A480E4FC736ABFD96A8C /* AssetPackDownloader.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 63E261BAC88A15FDC743D492 /* AssetPackDownloader.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BFE358FA68B0E8249A400DBF /* MotionRecorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85CB2DC650F7D9EA6AA72EF6 /* MotionRecorderTests.swift */; };
+		C46293E89DE399B7557FE5B5 /* NativeWindowSamplingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6518DB5CBEDA2DA4D714B81B /* NativeWindowSamplingTests.swift */; };
 		C75C2BE5D8B1D4D7FC19605E /* BodyPlausibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B51E2644E744BA3FADE38F5 /* BodyPlausibilityTests.swift */; };
 		CA4C90FFF7B1ED61CEF58379 /* GaitAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5055C094326123A7DB8A83A /* GaitAnalysis.swift */; };
 		CC6C983411E3BECBF5DD0CF8 /* BodyJoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F2FCB0E08D59A9A2F873C83 /* BodyJoint.swift */; };
 		CE98EA93BAD66AC816E5C2AC /* GaitReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCFAD06A6BF102ABB5018D18 /* GaitReportTests.swift */; };
+		CF9ACF63C6AA5E0514A60D74 /* GaitLoadSummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2021A035EB1CD21341A0AF09 /* GaitLoadSummaryTests.swift */; };
 		D093D465CAC7E39DD39FDCE5 /* TRCExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D7EE8254FA65A2ED3CA941A /* TRCExporter.swift */; };
 		D0CA7F6666EE286577915C91 /* BodyFrameOrientationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */; };
 		D5042C5568E0CC26BBB00D03 /* ShoulderRotMaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */; };
@@ -118,6 +124,7 @@
 		137569E8BB6168170913C1FE /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		1B380AE0D8895B17AF002FC4 /* OfflineSessionRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineSessionRunner.swift; sourceTree = "<group>"; };
 		1F460BBF2CEB2DE7A1735390 /* ShoulderRotObservabilityTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ShoulderRotObservabilityTests.mm; sourceTree = "<group>"; };
+		2021A035EB1CD21341A0AF09 /* GaitLoadSummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitLoadSummaryTests.swift; sourceTree = "<group>"; };
 		2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyFrameOrientationTests.swift; sourceTree = "<group>"; };
 		3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationTests.swift; sourceTree = "<group>"; };
 		371D7852068443A4209F4461 /* OfflinePlaybackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflinePlaybackView.swift; sourceTree = "<group>"; };
@@ -126,6 +133,8 @@
 		421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineOrchestrationTests.swift; sourceTree = "<group>"; };
 		4472D307677A7F2DBB60C275 /* AssetPackModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetPackModelStore.swift; sourceTree = "<group>"; };
 		44D59B2D4FBCD3D020D9136A /* Rajagopal2016.osim */ = {isa = PBXFileReference; path = Rajagopal2016.osim; sourceTree = "<group>"; };
+		47A0577D615043AFBD9112E8 /* GaitLoadSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitLoadSummary.swift; sourceTree = "<group>"; };
+		4874B31C9C33272450AE6B44 /* GaitDynamicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitDynamicsTests.swift; sourceTree = "<group>"; };
 		4A5E8807D42FF44784FCF22F /* OneEuroFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneEuroFilter.swift; sourceTree = "<group>"; };
 		4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TRCExporterTests.swift; sourceTree = "<group>"; };
 		4B51E2644E744BA3FADE38F5 /* BodyPlausibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyPlausibilityTests.swift; sourceTree = "<group>"; };
@@ -141,10 +150,13 @@
 		635955A3754AEA4532DD5F11 /* PersonBoxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonBoxTests.swift; sourceTree = "<group>"; };
 		63E261BAC88A15FDC743D492 /* AssetPackDownloader.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = AssetPackDownloader.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		640BA97ED28345730C5FFFB8 /* BioMotionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BioMotionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6518DB5CBEDA2DA4D714B81B /* NativeWindowSamplingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWindowSamplingTests.swift; sourceTree = "<group>"; };
 		675A6A481192DE8527711A02 /* BodyTrackingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyTrackingSession.swift; sourceTree = "<group>"; };
 		67BF7FEBED56390D642A6136 /* GaitClipFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitClipFixture.swift; sourceTree = "<group>"; };
+		6812C3DE8176C6B95FB8FFB6 /* GaitReportPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitReportPanel.swift; sourceTree = "<group>"; };
 		6BCF8A0B85EADE0EACE2E91D /* NimbleEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NimbleEngine.swift; sourceTree = "<group>"; };
 		6FFD138F9C20ED4CCDD68860 /* PostureFindings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostureFindings.swift; sourceTree = "<group>"; };
+		7125E0AE9F8D942866F064D4 /* DerivativeWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DerivativeWindowTests.swift; sourceTree = "<group>"; };
 		76B44E86911B6D34B6D8EEBA /* PhotoOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoOverlayView.swift; sourceTree = "<group>"; };
 		775F4957CF5DB42E50C8792A /* PostureFindingsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostureFindingsPanel.swift; sourceTree = "<group>"; };
 		7CC0C79CED5BDA3ECDCC98F2 /* MomentArmComputer.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = MomentArmComputer.mm; sourceTree = "<group>"; };
@@ -234,12 +246,15 @@
 				39C64A42A229077EC3CF47FD /* BodyJointTests.swift */,
 				4B51E2644E744BA3FADE38F5 /* BodyPlausibilityTests.swift */,
 				3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */,
+				7125E0AE9F8D942866F064D4 /* DerivativeWindowTests.swift */,
 				C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */,
 				A8E2DEF6905CA595DA267C6A /* E1MarkerSetComparisonTests.mm */,
 				9E68C0715E9D9E407234A2F8 /* FullBodyDOFFixture.swift */,
 				67BF7FEBED56390D642A6136 /* GaitClipFixture.swift */,
 				52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */,
 				F1F28CC69642340D5C1B6598 /* GaitConstantSensitivityTests.swift */,
+				4874B31C9C33272450AE6B44 /* GaitDynamicsTests.swift */,
+				2021A035EB1CD21341A0AF09 /* GaitLoadSummaryTests.swift */,
 				DCFAD06A6BF102ABB5018D18 /* GaitReportTests.swift */,
 				8C0E18BE1C40CA18DEADE2D0 /* GaitStanceDetectionTests.swift */,
 				037B01AB81518DD0C605F421 /* IKConvergenceTests.swift */,
@@ -249,6 +264,7 @@
 				85CB2DC650F7D9EA6AA72EF6 /* MotionRecorderTests.swift */,
 				F450A13A5F81381FF86F4B39 /* MuscleQPUnitsTests.swift */,
 				91F66CB7BEA67689B99D4833 /* MuscleSolverTests.swift */,
+				6518DB5CBEDA2DA4D714B81B /* NativeWindowSamplingTests.swift */,
 				AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */,
 				FF0F23C51614668A2D0002E4 /* OfflineMuscleChainTests.swift */,
 				421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */,
@@ -310,6 +326,8 @@
 			isa = PBXGroup;
 			children = (
 				938B58C5B8D77095B3471883 /* FrameSource.swift */,
+				47A0577D615043AFBD9112E8 /* GaitLoadSummary.swift */,
+				6812C3DE8176C6B95FB8FFB6 /* GaitReportPanel.swift */,
 				F2A4C75E6AA932E8711E81C0 /* MHRRetarget.swift */,
 				809295CEBE3A3EE0C68051A9 /* OfflineImportView.swift */,
 				371D7852068443A4209F4461 /* OfflinePlaybackView.swift */,
@@ -536,6 +554,8 @@
 				B02E6F6E8214B6D20AF49FAF /* FrameSource.swift in Sources */,
 				CA4C90FFF7B1ED61CEF58379 /* GaitAnalysis.swift in Sources */,
 				FF414DA499FA347E42CA9E02 /* GaitForceModel.swift in Sources */,
+				33EE0024E2EEA2DEC59B9DDA /* GaitLoadSummary.swift in Sources */,
+				776F7C63402275798F72DCF9 /* GaitReportPanel.swift in Sources */,
 				41CA409DD6CBEBF78E2B0EEE /* GaitSignal.swift in Sources */,
 				DE75B8575F912B5A02976E0B /* MHRRetarget.swift in Sources */,
 				D6ACBD79AA382B7E59CAF0A3 /* MomentArmComputer.mm in Sources */,
@@ -579,11 +599,14 @@
 				C75C2BE5D8B1D4D7FC19605E /* BodyPlausibilityTests.swift in Sources */,
 				5EAF2F8A2F45C0B4C65E83C0 /* CalibrationTests.swift in Sources */,
 				ED327C5D32C21DB76E6D959B /* DOFMaskTests.swift in Sources */,
+				61C67AFA01C9529323A6BF7B /* DerivativeWindowTests.swift in Sources */,
 				68ADD79B07C15C342DFB2CB5 /* E1MarkerSetComparisonTests.mm in Sources */,
 				58D9B346925617BEEE77A5D3 /* FullBodyDOFFixture.swift in Sources */,
 				E125B69E6C815538A4DA62A7 /* GaitClipFixture.swift in Sources */,
 				732EF1424B7BE159A1A2A35B /* GaitClipFixtureTests.swift in Sources */,
 				066964231F95A13EC1CA5E97 /* GaitConstantSensitivityTests.swift in Sources */,
+				3BD50F1DD2B09065EADEE2A6 /* GaitDynamicsTests.swift in Sources */,
+				CF9ACF63C6AA5E0514A60D74 /* GaitLoadSummaryTests.swift in Sources */,
 				CE98EA93BAD66AC816E5C2AC /* GaitReportTests.swift in Sources */,
 				91A0F486E88C77E1E700D9C5 /* GaitStanceDetectionTests.swift in Sources */,
 				95BAAF1059E75E5002D4E766 /* IKConvergenceTests.swift in Sources */,
@@ -593,6 +616,7 @@
 				BFE358FA68B0E8249A400DBF /* MotionRecorderTests.swift in Sources */,
 				A4E5CF602F7F6EA2A4112740 /* MuscleQPUnitsTests.swift in Sources */,
 				20F59FB07F06FD0CAC0E3C90 /* MuscleSolverTests.swift in Sources */,
+				C46293E89DE399B7557FE5B5 /* NativeWindowSamplingTests.swift in Sources */,
 				59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */,
 				FAFDAE32C4C82F3339D97B8C /* OfflineMuscleChainTests.swift in Sources */,
 				A1255E337CF95E0639A20E10 /* OfflineOrchestrationTests.swift in Sources */,

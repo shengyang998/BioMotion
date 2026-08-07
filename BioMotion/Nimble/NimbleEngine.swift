@@ -180,9 +180,40 @@ final class NimbleEngine: ObservableObject {
         /// Nothing measurable in the window (first sample of a clip, no marker
         /// in common with the predecessor, non-increasing timestamps).
         case noMeasurement
+        /// The IK solve stopped on its iteration cap rather than at a
+        /// stationary point, so the pose is drawable but its derivatives are
+        /// not trustworthy and no dynamics ran.
+        ///
+        /// This case existed as behaviour before it existed as a word: the
+        /// engine already withheld dynamics on a non-converged solve, but it
+        /// published whatever the STILLNESS test had concluded, so a frame the
+        /// solver could not settle was reported to the user as "the subject
+        /// moved" — advice they cannot act on, about a thing that did not
+        /// happen. On the running path it was worse: the frame fell out of the
+        /// gait vocabulary entirely.
+        case poseDidNotConverge
+        /// RUNNING. This instant is inside a foot contact, and inverse dynamics
+        /// ran with the root acceleration the gait cycle implies rather than
+        /// with one differentiated out of the data. Muscle magnitudes exist and
+        /// are to be read as RELATIVE loads within this contact.
+        case gaitStance
+        /// RUNNING. This instant is in flight. Neither foot is on the ground,
+        /// so there is no stance load to report and none is claimed.
+        case gaitFlight
+        /// A running clip was analysed, but this frame fell outside the window
+        /// the gait model covers (before the first complete contact, after the
+        /// last, or in a gap where the pose was lost).
+        case gaitOutsideAnalysis
+        /// The clip's own gait model refused — the strides are not alike enough,
+        /// or there are too few complete contacts — so no dynamics ran at all.
+        case gaitRefused
 
         /// One sentence the user can act on. Lives here rather than in the view
         /// so it is covered by unit tests and cannot drift from the numbers.
+        ///
+        /// Every case has to answer "what do I do differently?". Two of them
+        /// answer "film at a higher frame rate", which is a real, actionable
+        /// lever and the ONLY one that moves the left/right resolution.
         var advice: String {
             switch self {
             case .hold:
@@ -193,6 +224,93 @@ final class NimbleEngine: ObservableObject {
                 return "The pose estimate jitters as much as the movement being measured, so stillness cannot be confirmed. Fill more of the frame, improve the lighting, or sample at a higher rate."
             case .noMeasurement:
                 return "Not enough frames around this instant to measure motion."
+            case .poseDidNotConverge:
+                return "The skeleton did not settle on this frame, so no load is claimed for it. Keep the whole body in frame and unobstructed."
+            case .gaitStance:
+                return ""
+            case .gaitFlight:
+                return "Both feet are off the ground here, so there is no ground load to measure. Scrub to a frame where a foot is down."
+            case .gaitOutsideAnalysis:
+                return "This frame sits outside the strides the analysis covers. Scrub into the middle of the clip, or film a longer stretch of steady running."
+            case .gaitRefused:
+                return "The strides in this clip are not alike enough to model as a repeating cycle. Film a longer run at a steady pace, side-on, and keep the whole body in frame."
+            }
+        }
+
+        /// True for the two cases that mean "running, and the gait cycle — not
+        /// the static-hold detector — decided what happens on this frame".
+        var isGait: Bool {
+            switch self {
+            case .gaitStance, .gaitFlight, .gaitOutsideAnalysis, .gaitRefused: return true
+            case .hold, .movingBeyondStaticBudget, .indistinguishableFromNoise,
+                 .noMeasurement, .poseDidNotConverge: return false
+            }
+        }
+    }
+
+    /// What the gait dynamics path did on ONE frame, and the number that can
+    /// contradict it.
+    ///
+    /// # The falsifier, and why it is not closed by construction
+    ///
+    /// The root's vertical acceleration is SET from the gait model:
+    /// `a_root,y = g·(F/mg − 1)`, where `F/mg` is the half-sine stance force
+    /// implied by contact and flight timing alone. That is the whole point of
+    /// the route — the root acceleration need not be measured.
+    ///
+    /// Inverse dynamics then returns its OWN answer for the total contact
+    /// force, `ΣF_contact = m·a_com − m·g`. Those two are not the same
+    /// quantity: `a_com = a_root + a_artic`, and `a_artic` — the centre of mass
+    /// accelerating relative to the root as the limbs swing — comes from the
+    /// skeleton's mass distribution and the measured joint accelerations, which
+    /// the gait model has no access to. So
+    ///
+    ///     residual = ‖ΣF_contact − F_gait‖ / (m·g) = ‖a_artic‖ / g
+    ///
+    /// is a real, computed disagreement between the timing model and the
+    /// articulated body, in body weights. It is exactly the term the
+    /// whole-body half-sine model throws away, and when it is large the
+    /// model's force is not a common rescaling of the contact any more — which
+    /// is the assumption every ratio this product reports rests on.
+    ///
+    /// ⚠️ **What it does NOT test.** The half-sine SHAPE and the peak magnitude
+    /// enter both sides (`a_root` was derived from them), so they cancel and
+    /// this residual is blind to them. Those are tested elsewhere and by
+    /// different quantities: `GaitReport.flightDisagreementFrames` compares
+    /// flight measured between contacts against flight implied by closing the
+    /// stride, and `GaitReport.steadiness` tests the periodicity the closure
+    /// assumes. This residual is one more independent check, not the only one.
+    struct GaitFrameOutcome: Equatable {
+        /// `F/(m·g)` from the gait model — timing only.
+        let modelledVerticalForceInBodyWeights: Double
+        /// `ΣF_contact,y/(m·g)` as inverse dynamics solved it.
+        let solvedVerticalForceInBodyWeights: Double
+        /// `‖ΣF_contact − F_gait‖/(m·g)`. The falsifier.
+        let residualInBodyWeights: Double
+        /// −1 left foot down, +1 right, 0 flight — from the KINEMATIC stance
+        /// detector (pelvis-relative horizontal foot velocity).
+        let contactSide: Int
+        /// What the ID solver's own GEOMETRIC contact detector saw (foot height
+        /// versus the estimated ground plane). Two independent detectors on two
+        /// different signals; when they disagree, one of them is wrong about
+        /// which foot is carrying the load.
+        let solverSawLeftContact: Bool
+        let solverSawRightContact: Bool
+        /// The acceleration actually written into the root's vertical DOF.
+        let rootVerticalAccelerationMetersPerSecondSquared: Double
+        /// **Always false, and published rather than hidden.** The gait model
+        /// supplies a vertical force only; it says nothing about the braking
+        /// and propulsive force along the running direction. That term is left
+        /// UNMODELLED rather than silently set to zero, and this flag is what
+        /// carries that fact to the user.
+        let horizontalRootAccelerationModelled: Bool
+
+        /// True when the two contact detectors agree about this frame.
+        var contactDetectorsAgree: Bool {
+            switch contactSide {
+            case -1: return solverSawLeftContact
+            case 1: return solverSawRightContact
+            default: return !solverSawLeftContact && !solverSawRightContact
             }
         }
     }
@@ -232,6 +350,24 @@ final class NimbleEngine: ObservableObject {
         /// global translation and the root's contribution to `M·q̈` is missing.
         /// See `MHRRetarget.rootTranslation(camT:)`.
         let rootTranslationObservable: Bool
+
+        /// The same measurement under a different verdict. Used by the gait
+        /// path, where the reason a frame does or does not carry muscle numbers
+        /// is decided by the gait cycle rather than by the stillness test — but
+        /// the stillness numbers are still worth publishing, because they are
+        /// what a reader checks when the two disagree.
+        func replacingVerdict(_ newVerdict: MotionVerdict) -> MotionClassification {
+            MotionClassification(timestamp: timestamp,
+                                 isHold: newVerdict == .hold,
+                                 peakMarkerSpeedMetersPerSecond: peakMarkerSpeedMetersPerSecond,
+                                 medianMarkerSpeedMetersPerSecond: medianMarkerSpeedMetersPerSecond,
+                                 windowSeconds: windowSeconds,
+                                 sampleCount: sampleCount,
+                                 impliedMeanAccelMetersPerSecondSquared: impliedMeanAccelMetersPerSecondSquared,
+                                 verdict: newVerdict,
+                                 poseNoiseFloorMetersPerSecond: poseNoiseFloorMetersPerSecond,
+                                 rootTranslationObservable: rootTranslationObservable)
+        }
     }
 
     /// Everything one warm solve produced, all dated at the SAME Savitzky-Golay
@@ -253,7 +389,64 @@ final class NimbleEngine: ObservableObject {
         /// subject was measured to be holding still. False means they came from
         /// the Savitzky-Golay derivatives (live-camera path).
         let isStaticHoldEstimate: Bool
+        /// Non-nil only on the running path. See `GaitFrameOutcome`.
+        var gait: GaitFrameOutcome? = nil
     }
+
+    // MARK: - Gait dynamics
+
+    /// Per-frame root acceleration and ground force for a RUNNING clip, derived
+    /// from contact/flight timing by `GaitAnalysis` and handed to the engine.
+    ///
+    /// Deliberately made of primitives: the engine does not import the gait
+    /// module's types, so the two can be tested apart and the seam is one
+    /// value type wide.
+    struct GaitPlan: Equatable {
+        struct Frame: Equatable {
+            let timestamp: TimeInterval
+            /// Vertical GRF at this instant in BODY WEIGHTS. Zero in flight.
+            let verticalForceInBodyWeights: Double
+            /// −1 left foot down, +1 right foot down, 0 flight.
+            let contactSide: Int
+        }
+
+        let frames: [Frame]
+        /// Taps for this clip's derivative filter — chosen so the window fits
+        /// INSIDE one contact. See `WindowedDerivativeFilter`.
+        let filterTaps: Int
+        let sampleInterval: TimeInterval
+
+        /// The plan's entry for a window-centre timestamp, matched to within
+        /// half a sampling interval. `nil` means this instant is outside the
+        /// strides the model covers, which the caller reports rather than
+        /// guessing through.
+        func entry(at t: TimeInterval) -> Frame? {
+            guard sampleInterval > 0 else { return nil }
+            let tolerance = sampleInterval / 2
+            var best: Frame?
+            var bestGap = Double.infinity
+            for f in frames {
+                let gap = abs(f.timestamp - t)
+                if gap < bestGap { bestGap = gap; best = f }
+            }
+            return bestGap <= tolerance ? best : nil
+        }
+    }
+
+    /// The gate every gait frame's force output has to pass, in body weights.
+    ///
+    /// **Pre-registered before the residual was measured on the real skeleton.**
+    /// 0.5 BW is half the subject's own weight: above that, the segment
+    /// acceleration the timing model omits is comparable to the gravitational
+    /// term the model is built out of, so the modelled force stops being a
+    /// common rescaling of the whole contact — and "a common scale cancels in
+    /// every ratio" is the entire reason relative output is defensible here.
+    static let maxGaitForceResidualInBodyWeights: Double = 0.5
+
+    /// Set to run the offline path as RUNNING rather than as a static hold.
+    /// Nil restores the previous behaviour exactly. Read and captured on the
+    /// main thread inside `processFrame`, like `staticHoldGating`.
+    var gaitPlan: GaitPlan?
 
     // Normalize model-specific muscle ids to the stable ids used by the
     // overlay and diagnostic bar.
@@ -274,10 +467,20 @@ final class NimbleEngine: ObservableObject {
     private let solverQueue = DispatchQueue(label: "com.biomotion.nimble", qos: .userInteractive)
 
     // Per-DOF Savitzky–Golay filters for smoothed q / dq / ddq.
-    // Warms up after 9 frames (~150 ms @ 60 fps); once warm, outputs lag
-    // the raw input by 4 frames (~66 ms @ 60 fps) in exchange for much
-    // cleaner numerical derivatives than naive finite differences.
-    private var dofFilters: [SavitzkyGolayFilter] = []
+    //
+    // The window is now CHOSEN PER CLIP rather than fixed at 9 taps, because a
+    // 9-tap centred window spans 8·dt = 267 ms at 30 fps — longer than every
+    // foot contact this app measures (167-247 ms on the owner's clips). Under
+    // that window no stance frame has a neighbourhood free of a touchdown or a
+    // toe-off (0 of 114 interior frames on `video_012`), so the second
+    // derivative at every stance frame is fitted across a discontinuity. See
+    // `WindowedDerivativeFilter` for the measured frequency response.
+    //
+    // Default stays 9 taps / cubic, which reproduces the previous filter
+    // exactly (asserted in `DerivativeWindowTests`), so the live camera and
+    // static-hold paths are unchanged.
+    private var dofFilters: [WindowedDerivativeFilter] = []
+    private var dofFilterTaps = SavitzkyGolayFilter.windowSize
 
     // Marker-motion history behind `staticHoldGating`. Pushed in lockstep with
     // `dofFilters` (both only on a frame whose IK succeeded), so "the last 9
@@ -458,6 +661,7 @@ final class NimbleEngine: ObservableObject {
         // Captured on main (see `staticHoldGating`) so the whole solve uses one
         // consistent policy even if the flag flips mid-clip.
         let gateOnHolds = staticHoldGating
+        let plan = gaitPlan
 
         solverQueue.async { [weak self] in
             guard let self else { return }
@@ -495,9 +699,15 @@ final class NimbleEngine: ObservableObject {
             let numDOFs = ikResult.jointAngles.count
             let dofNames = ikResult.dofNames
 
-            // Lazy-init per-DOF SG filters whenever the DOF count changes.
-            if self.dofFilters.count != numDOFs {
-                self.dofFilters = (0..<numDOFs).map { _ in SavitzkyGolayFilter() }
+            // Lazy-init per-DOF SG filters whenever the DOF count OR the window
+            // length changes. The window is a per-clip choice on the gait path
+            // (see `WindowedDerivativeFilter`), so a plan arriving mid-session
+            // has to rebuild them — carrying 9-tap history into a 5-tap filter
+            // would date the first outputs at the wrong instant.
+            let taps = WindowedDerivativeFilter.admissibleTaps(plan?.filterTaps ?? WindowedDerivativeFilter.maximumTaps)
+            if self.dofFilters.count != numDOFs || self.dofFilterTaps != taps {
+                self.dofFilters = (0..<numDOFs).map { _ in WindowedDerivativeFilter(taps: taps) }
+                self.dofFilterTaps = taps
             }
 
             // --- Push raw IK angles into SG filters, pull smoothed q/dq/ddq ---
@@ -594,48 +804,119 @@ final class NimbleEngine: ObservableObject {
             // dynamics exactly as a moving frame does: the pose is still good
             // enough to draw and to export, the derivatives are not.
             guard ikResult.converged else {
-                if self.isRecordingResults {
-                    self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.markerRMSMeters))
-                }
-                self.publishResults(ik: smoothedIkOutput, id: nil, muscle: nil,
-                                    motion: motion, isStaticHoldEstimate: false,
-                                    ikTime: ikTime, idTime: 0, muscleTime: 0,
-                                    ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
-                                    groundY: self.bridge.groundHeightY,
-                                    generation: frameGeneration)
+                // Reported as what it IS. Publishing the stillness verdict here
+                // labelled a solver failure as subject motion, and on the gait
+                // path it put a frame outside the gait vocabulary altogether.
+                self.publishPoseOnly(ik: smoothedIkOutput,
+                                     motion: motion.replacingVerdict(.poseDidNotConverge),
+                                     smoothedAngles: smoothedAngles,
+                                     markerRMS: ikResult.markerRMSMeters,
+                                     ikTime: ikTime, generation: frameGeneration)
                 return
             }
 
-            guard !gateOnHolds || motion.isHold else {
-                // Measurably moving. Publish the pose and the verdict; publish
-                // NO muscle magnitudes. The alternative — reporting them anyway
-                // — would be reporting `M·q̈` computed from a translation this
-                // input cannot see.
-                //
-                // The POSE is still recorded. Only the dynamics are withheld,
-                // so a .mot export of a moving clip stays complete; it is the
-                // matching .sto that legitimately has a gap.
-                if self.isRecordingResults {
-                    self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.markerRMSMeters))
-                }
-                self.publishResults(ik: smoothedIkOutput, id: nil, muscle: nil,
-                                    motion: motion, isStaticHoldEstimate: false,
-                                    ikTime: ikTime, idTime: 0, muscleTime: 0,
-                                    ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
-                                    groundY: self.bridge.groundHeightY,
-                                    generation: frameGeneration)
-                return
-            }
+            // --- Which policy decides this frame? ------------------------------
+            //
+            // Two mutually exclusive regimes, and the gait plan wins when it is
+            // present. On a running clip the static-hold question is not just
+            // answered "no", it is the WRONG QUESTION: nothing about a runner is
+            // still, and the reason the dynamics are computable anyway is that
+            // the gait cycle supplies the root acceleration the stillness test
+            // was standing in for.
+            var solveAsStatics = false
+            var idDQ: [Double]
+            var idDDQ: [Double]
+            var publishedMotion = motion
+            var plannedForce: Double?          // body weights, from timing alone
+            var plannedSide = 0
+            var rootVerticalAccel = 0.0
 
-            // On a detected hold, solve statics: q̇ = q̈ = 0 exactly. That is
-            // the whole point of the detector — it deletes the 1/dt²
-            // Savitzky-Golay amplification chain from τ = M·q̈ + C − JᵀF_ext
-            // instead of feeding it derivatives of a motion we half-observed.
-            // It also zeroes the Hill force-velocity term downstream
-            // (`dL_MT/dt = −Rᵀ·q̇`), which is what "isometric" means.
-            let solveAsStatics = gateOnHolds && motion.isHold
-            let idDQ = solveAsStatics ? [Double](repeating: 0, count: numDOFs) : smoothedDQ
-            let idDDQ = solveAsStatics ? [Double](repeating: 0, count: numDOFs) : smoothedDDQ
+            if let plan {
+                guard let entry = plan.entry(at: centerTimestamp) else {
+                    self.publishPoseOnly(ik: smoothedIkOutput,
+                                         motion: motion.replacingVerdict(.gaitOutsideAnalysis),
+                                         smoothedAngles: smoothedAngles,
+                                         markerRMS: ikResult.markerRMSMeters,
+                                         ikTime: ikTime, generation: frameGeneration)
+                    return
+                }
+                guard entry.contactSide != 0 else {
+                    // Flight. No foot is on the ground, so there is no stance
+                    // load to report — and reporting one would be inventing a
+                    // contact. The pose is still published.
+                    self.publishPoseOnly(ik: smoothedIkOutput,
+                                         motion: motion.replacingVerdict(.gaitFlight),
+                                         smoothedAngles: smoothedAngles,
+                                         markerRMS: ikResult.markerRMSMeters,
+                                         ikTime: ikTime, generation: frameGeneration)
+                    return
+                }
+                guard let rootTY = dofNames.firstIndex(of: Self.rootVerticalDOFName) else {
+                    // Defensive: both shipped models carry `pelvis_ty`
+                    // (asserted in `GaitDynamicsTests`). Without it there is no
+                    // channel to put the root acceleration into, so nothing is
+                    // claimed.
+                    self.publishPoseOnly(ik: smoothedIkOutput,
+                                         motion: motion.replacingVerdict(.gaitRefused),
+                                         smoothedAngles: smoothedAngles,
+                                         markerRMS: ikResult.markerRMSMeters,
+                                         ikTime: ikTime, generation: frameGeneration)
+                    return
+                }
+
+                // THE SUBSTITUTION. Whole-body Newton in the vertical:
+                // `F − m·g = m·a`, so `a = g·(F/(m·g) − 1)`. In flight
+                // `F/(m·g) = 0` and this is exactly `−g`, free fall; at the
+                // half-sine peak of 2.87 BW it is +1.87 g upward. No mass, no
+                // camera, no depth channel enters it — which is the whole
+                // reason a hand-held tracking shot is analysable at all.
+                rootVerticalAccel = StaticHoldDetector.gravityMetersPerSecondSquared
+                    * (entry.verticalForceInBodyWeights - 1.0)
+
+                idDQ = smoothedDQ
+                idDDQ = smoothedDDQ
+                idDDQ[rootTY] = rootVerticalAccel
+                // ⚠️ `pelvis_tx` / `pelvis_tz` are LEFT ALONE, at whatever the
+                // filter produced from the data — which on a pelvis-pinned
+                // stream is ~0. The gait model supplies a vertical force only;
+                // it says nothing about braking and propulsion along the
+                // running direction, and writing a zero there deliberately
+                // would be asserting there is none. That term is reported as
+                // UNMODELLED (`GaitFrameOutcome.horizontalRootAccelerationModelled`)
+                // and surfaced to the user, rather than being absorbed
+                // silently — an earlier implementation forced it to zero and
+                // injected an undisclosed 0.2-0.35 BW error into every joint
+                // moment.
+                plannedForce = entry.verticalForceInBodyWeights
+                plannedSide = entry.contactSide
+                publishedMotion = motion.replacingVerdict(.gaitStance)
+            } else {
+                guard !gateOnHolds || motion.isHold else {
+                    // Measurably moving. Publish the pose and the verdict; publish
+                    // NO muscle magnitudes. The alternative — reporting them anyway
+                    // — would be reporting `M·q̈` computed from a translation this
+                    // input cannot see.
+                    //
+                    // The POSE is still recorded. Only the dynamics are withheld,
+                    // so a .mot export of a moving clip stays complete; it is the
+                    // matching .sto that legitimately has a gap.
+                    self.publishPoseOnly(ik: smoothedIkOutput, motion: motion,
+                                         smoothedAngles: smoothedAngles,
+                                         markerRMS: ikResult.markerRMSMeters,
+                                         ikTime: ikTime, generation: frameGeneration)
+                    return
+                }
+
+                // On a detected hold, solve statics: q̇ = q̈ = 0 exactly. That is
+                // the whole point of the detector — it deletes the 1/dt²
+                // Savitzky-Golay amplification chain from τ = M·q̈ + C − JᵀF_ext
+                // instead of feeding it derivatives of a motion we half-observed.
+                // It also zeroes the Hill force-velocity term downstream
+                // (`dL_MT/dt = −Rᵀ·q̇`), which is what "isometric" means.
+                solveAsStatics = gateOnHolds && motion.isHold
+                idDQ = solveAsStatics ? [Double](repeating: 0, count: numDOFs) : smoothedDQ
+                idDDQ = solveAsStatics ? [Double](repeating: 0, count: numDOFs) : smoothedDDQ
+            }
 
             // --- ID on SG-smoothed q, and dq/ddq per the policy above ---
             let smoothedQNS: [NSNumber] = smoothedQ.map { NSNumber(value: $0) }
@@ -791,6 +1072,30 @@ final class NimbleEngine: ObservableObject {
                 }
             }
 
+            // --- The falsifier ------------------------------------------------
+            //
+            // Only on the gait path, and only where a contact was claimed. The
+            // gait model said the ground pushed with `plannedForce` body
+            // weights; inverse dynamics, from the skeleton's own mass
+            // distribution and the measured joint accelerations, says it pushed
+            // with `solved`. Their difference is `‖a_artic‖/g` — see
+            // `GaitFrameOutcome`.
+            var gaitOutcome: GaitFrameOutcome?
+            if let planned = plannedForce {
+                let weightN = max(self.bridge.totalMass, 1e-6) * StaticHoldDetector.gravityMetersPerSecondSquared
+                let solvedN = (idOutput?.leftFootForce.y ?? 0) + (idOutput?.rightFootForce.y ?? 0)
+                let solved = solvedN / weightN
+                gaitOutcome = GaitFrameOutcome(
+                    modelledVerticalForceInBodyWeights: planned,
+                    solvedVerticalForceInBodyWeights: solved,
+                    residualInBodyWeights: abs(solved - planned),
+                    contactSide: plannedSide,
+                    solverSawLeftContact: idOutput?.leftFootInContact ?? false,
+                    solverSawRightContact: idOutput?.rightFootInContact ?? false,
+                    rootVerticalAccelerationMetersPerSecondSquared: rootVerticalAccel,
+                    horizontalRootAccelerationModelled: false)
+            }
+
             // Record if enabled (history always uses the SG-centered timestamp
             // so downstream .mot/.sto exports are temporally consistent).
             if self.isRecordingResults {
@@ -801,12 +1106,39 @@ final class NimbleEngine: ObservableObject {
             }
 
             self.publishResults(ik: smoothedIkOutput, id: idOutput, muscle: muscleOutput,
-                                motion: motion, isStaticHoldEstimate: solveAsStatics,
+                                motion: publishedMotion, isStaticHoldEstimate: solveAsStatics,
                                 ikTime: ikTime, idTime: idTime, muscleTime: muscleTime,
                                 ikResidual: ikResult.markerRMSMeters, maxTorqueNm: maxTorqueNm,
                                 groundY: self.bridge.groundHeightY,
-                                generation: frameGeneration)
+                                generation: frameGeneration,
+                                gait: gaitOutcome)
         }
+    }
+
+    /// The root's world-vertical translation coordinate. `FullBody.osim` and
+    /// `Rajagopal2016.osim` both name it this, and both define it as a
+    /// translation along the ground frame's +Y (`<axis>0 1 0</axis>` on the
+    /// pelvis `CustomJoint`), which is why writing an acceleration into it is a
+    /// world-frame vertical acceleration and not a body-local one.
+    static let rootVerticalDOFName = "pelvis_ty"
+
+    /// Publishes pose and a verdict with NO ID and NO muscle magnitudes.
+    /// solverQueue-only (it touches `ikHistory`).
+    private func publishPoseOnly(ik: IKOutput,
+                                 motion: MotionClassification,
+                                 smoothedAngles: [String: Double],
+                                 markerRMS: Double,
+                                 ikTime: Double,
+                                 generation: UInt64) {
+        if isRecordingResults {
+            ikHistory.append((ik.timestamp, smoothedAngles, markerRMS))
+        }
+        publishResults(ik: ik, id: nil, muscle: nil,
+                       motion: motion, isStaticHoldEstimate: false,
+                       ikTime: ikTime, idTime: 0, muscleTime: 0,
+                       ikResidual: markerRMS, maxTorqueNm: 0,
+                       groundY: bridge.groundHeightY,
+                       generation: generation)
     }
 
     private func publishResults(ik: IKOutput, id: IDOutput?, muscle: MuscleOutput?,
@@ -815,7 +1147,8 @@ final class NimbleEngine: ObservableObject {
                                 ikTime: Double, idTime: Double, muscleTime: Double,
                                 ikResidual: Double, maxTorqueNm: Double,
                                 groundY: Double,
-                                generation: UInt64) {
+                                generation: UInt64,
+                                gait: GaitFrameOutcome? = nil) {
         let mass = max(totalMassKg, 1e-6)
         let torquePerKg = maxTorqueNm / mass
         // Vertical load on each foot as a fraction of body weight. Useful for
@@ -827,7 +1160,8 @@ final class NimbleEngine: ObservableObject {
         let displayMuscle = muscle.map(normalizeForDisplay)
         let solve = motion.map {
             SolveRecord(centerTimestamp: $0.timestamp, motion: $0, ik: ik, id: id,
-                        muscle: muscle, isStaticHoldEstimate: isStaticHoldEstimate)
+                        muscle: muscle, isStaticHoldEstimate: isStaticHoldEstimate,
+                        gait: gait)
         }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -868,6 +1202,7 @@ final class NimbleEngine: ObservableObject {
         solverQueue.async { [weak self] in
             guard let self else { return }
             self.dofFilters.removeAll(keepingCapacity: false)
+            self.dofFilterTaps = WindowedDerivativeFilter.maximumTaps
             // Must be cleared with the SG filters, not separately: the two are
             // pushed in lockstep and the classifier reads "the last 9 samples"
             // as "the samples that produced this ddq".
@@ -1051,6 +1386,215 @@ final class NimbleEngine: ObservableObject {
 
     enum ExportError: Error {
         case noData
+    }
+}
+
+// MARK: - Derivative window
+
+/// Savitzky–Golay smoothing and differentiation over a window whose LENGTH is a
+/// parameter, because the right length is a property of the motion being
+/// measured and not of the code.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+/// WHY THIS EXISTS: 9 TAPS IS LONGER THAN A FOOT CONTACT
+/// ─────────────────────────────────────────────────────────────────────────
+/// A centred `T`-tap window spans `(T−1)·dt`. At 30 fps the shipped 9-tap
+/// window spans **266.7 ms**, against foot contacts measured at **167-247 ms**
+/// on the owner's own clips. So no stance frame has a window free of a
+/// touchdown or a toe-off — measured, 0 of 114 interior frames on `video_012`
+/// — and every stance acceleration is a cubic fitted across a discontinuity in
+/// the very quantity being differentiated.
+///
+/// That is a correctness problem for exactly the thing a correction product
+/// shows: the SHAPE of the activation curve through stance. A window that
+/// straddles the edges flattens the onset and the release, so the curve looks
+/// smoother and later than it is.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+/// WHAT THE SHORTER WINDOWS COST AND BUY — measured, not asserted
+/// ─────────────────────────────────────────────────────────────────────────
+/// Second-derivative gain `H(ω)/(−ω²)` at `dt = 1/30 s`. 3.30 Hz is the step
+/// fundamental of a 606 ms stride; 1.0 would be an ideal differentiator.
+///
+///     taps  order  span     @1 Hz   @3.30 Hz  @5 Hz   @7 Hz    @10 Hz
+///       9     3    266.7ms  0.9413   0.4894   0.1401  −0.0392   0.0044
+///       7     2    200.0ms  0.9655   0.6699   0.3691   0.0855  −0.0489
+///       5     2    133.3ms  0.9839   0.8348   0.6514   0.4069   0.0977
+///       3     2     66.7ms  0.9963   0.9608   0.9119   0.8332   0.6839
+///
+/// **The 9-tap window halves the very term the gait route depends on** (0.4894
+/// at the step fundamental) and INVERTS ITS SIGN above 7 Hz. The 5-tap window
+/// passes 83 % at the fundamental and does not invert anywhere in the band. It
+/// pays for that with noise: a shorter window averages fewer samples, so the
+/// variance of `ddq` rises. That trade is the right way round here, because on
+/// this path the alternative to noise is BIAS — a systematically halved and
+/// smeared stance transient, which no amount of averaging elsewhere recovers.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+/// EQUIVALENCE WITH WHAT SHIPPED
+/// ─────────────────────────────────────────────────────────────────────────
+/// At `taps = 9, order = 3` the coefficients this type derives are the ones
+/// `SavitzkyGolayFilter` hard-codes, to within 1e-15. `DerivativeWindowTests`
+/// asserts that on both the coefficients and on filtered output, so the live
+/// camera path and the static-hold path are provably unchanged.
+final class WindowedDerivativeFilter {
+
+    /// Shortest usable centred window. Two taps cannot carry a second
+    /// derivative at all; three is the plain second difference.
+    static let minimumTaps = 3
+    /// Longest window this app uses. Beyond 9 the span grows past a stride.
+    static let maximumTaps = SavitzkyGolayFilter.windowSize
+
+    /// Rounds any requested length into an odd, in-range tap count. A CENTRED
+    /// window must be odd — an even one has no middle sample to date the
+    /// answer at.
+    static func admissibleTaps(_ requested: Int) -> Int {
+        let clamped = min(max(requested, minimumTaps), maximumTaps)
+        return clamped % 2 == 1 ? clamped : clamped - 1
+    }
+
+    /// Polynomial order for a given window. 9 taps keep the cubic that shipped;
+    /// shorter windows drop to quadratic, because a cubic through 5 points is
+    /// nearly an interpolant and its second derivative is then dominated by
+    /// noise.
+    static func order(forTaps taps: Int) -> Int { taps >= 9 ? 3 : 2 }
+
+    let taps: Int
+    let order: Int
+    let posCoefficients: [Double]
+    let velCoefficients: [Double]
+    let accCoefficients: [Double]
+
+    private var samples: [Double] = []
+    private var timestamps: [Double] = []
+
+    init(taps: Int = maximumTaps) {
+        let t = Self.admissibleTaps(taps)
+        self.taps = t
+        self.order = Self.order(forTaps: t)
+        posCoefficients = Self.coefficients(taps: t, order: order, derivative: 0)
+        velCoefficients = Self.coefficients(taps: t, order: order, derivative: 1)
+        accCoefficients = Self.coefficients(taps: t, order: order, derivative: 2)
+    }
+
+    var halfWindow: Int { taps / 2 }
+    /// `(taps − 1)·dt` for a given sampling interval — the quantity that has to
+    /// fit inside one contact.
+    func spanSeconds(sampleInterval: Double) -> Double { Double(taps - 1) * sampleInterval }
+
+    /// Push a sample; returns nil until the window is full.
+    func push(_ x: Double, timestamp: Double) -> (pos: Double, vel: Double, acc: Double, center: Double)? {
+        samples.append(x)
+        timestamps.append(timestamp)
+        if samples.count > taps {
+            samples.removeFirst()
+            timestamps.removeFirst()
+        }
+        guard samples.count == taps else { return nil }
+        let dt = (timestamps[taps - 1] - timestamps[0]) / Double(taps - 1)
+        guard dt > 1e-6 else { return nil }
+
+        var pos = 0.0, vel = 0.0, acc = 0.0
+        for i in 0..<taps {
+            let s = samples[i]
+            pos += posCoefficients[i] * s
+            vel += velCoefficients[i] * s
+            acc += accCoefficients[i] * s
+        }
+        return (pos, vel / dt, acc / (dt * dt), timestamps[halfWindow])
+    }
+
+    func reset() {
+        samples.removeAll(keepingCapacity: true)
+        timestamps.removeAll(keepingCapacity: true)
+    }
+
+    var isWarmedUp: Bool { samples.count == taps }
+
+    // MARK: Coefficients
+
+    /// Least-squares polynomial fit of `order` to `taps` uniformly spaced
+    /// samples, evaluated for the `derivative`-th derivative at the centre.
+    ///
+    /// `c = d! · [ (AᵀA)⁻¹Aᵀ ]_d` with `A[i][p] = k_i^p`, `k = −h…h`. Derived
+    /// rather than tabulated so a new window length cannot ship with a
+    /// transcription error; the derivation is checked against the hard-coded
+    /// 9-tap table in `DerivativeWindowTests`.
+    static func coefficients(taps: Int, order: Int, derivative: Int) -> [Double] {
+        precondition(taps > order, "a polynomial of order \(order) needs more than \(order) samples")
+        let h = taps / 2
+        let ks = (0..<taps).map { Double($0 - h) }
+        let cols = order + 1
+
+        // A (taps × cols)
+        var a = [[Double]](repeating: [Double](repeating: 0, count: cols), count: taps)
+        for i in 0..<taps {
+            var power = 1.0
+            for p in 0..<cols {
+                a[i][p] = power
+                power *= ks[i]
+            }
+        }
+        // N = AᵀA (cols × cols)
+        var n = [[Double]](repeating: [Double](repeating: 0, count: cols), count: cols)
+        for p in 0..<cols {
+            for q in 0..<cols {
+                var s = 0.0
+                for i in 0..<taps { s += a[i][p] * a[i][q] }
+                n[p][q] = s
+            }
+        }
+        let nInv = invert(n)
+        var out = [Double](repeating: 0, count: taps)
+        var scale = 1.0
+        if derivative > 1 { for k in 2...derivative { scale *= Double(k) } }
+        for i in 0..<taps {
+            var s = 0.0
+            for p in 0..<cols { s += nInv[derivative][p] * a[i][p] }
+            out[i] = scale * s
+        }
+        return out
+    }
+
+    /// Gauss-Jordan with partial pivoting. The matrix is at most 4×4 and always
+    /// non-singular here (a Vandermonde Gram matrix on distinct nodes).
+    private static func invert(_ m: [[Double]]) -> [[Double]] {
+        let n = m.count
+        var a = m
+        var inv = (0..<n).map { i in (0..<n).map { $0 == i ? 1.0 : 0.0 } }
+        for col in 0..<n {
+            var pivot = col
+            for r in col..<n where abs(a[r][col]) > abs(a[pivot][col]) { pivot = r }
+            if pivot != col { a.swapAt(col, pivot); inv.swapAt(col, pivot) }
+            let d = a[col][col]
+            precondition(d != 0, "singular normal-equation matrix")
+            for c in 0..<n { a[col][c] /= d; inv[col][c] /= d }
+            for r in 0..<n where r != col {
+                let f = a[r][col]
+                guard f != 0 else { continue }
+                for c in 0..<n {
+                    a[r][c] -= f * a[col][c]
+                    inv[r][c] -= f * inv[col][c]
+                }
+            }
+        }
+        return inv
+    }
+
+    /// `H(ω)/(−ω²)` for the acceleration coefficients — 1.0 is an ideal
+    /// differentiator. Used by tests to re-measure the table in this type's
+    /// documentation instead of trusting it.
+    func secondDerivativeGain(atHz f: Double, sampleInterval dt: Double) -> Double {
+        guard f > 0, dt > 0 else { return .nan }
+        let w = 2 * Double.pi * f
+        var real = 0.0, imag = 0.0
+        for i in 0..<taps {
+            let k = Double(i - halfWindow)
+            real += accCoefficients[i] * cos(w * k * dt)
+            imag += accCoefficients[i] * sin(w * k * dt)
+        }
+        _ = imag  // symmetric window: the imaginary part is zero by construction
+        return (real / (dt * dt)) / (-(w * w))
     }
 }
 

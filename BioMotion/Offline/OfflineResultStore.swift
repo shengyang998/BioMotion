@@ -65,6 +65,15 @@ final class OfflineResultStore: ObservableObject {
                       peakSpeedMetersPerSecond: Double,
                       windowSeconds: Double,
                       noiseFloorMetersPerSecond: Double)
+        /// RUNNING. The gait cycle, not the stillness test, decided this frame.
+        /// `outcome` is non-nil only where a contact was claimed and dynamics
+        /// actually ran, and it carries the falsifier.
+        ///
+        /// A separate CASE rather than a separate TYPE: the vocabulary the UI
+        /// renders stays one enum wide, which is the whole reason
+        /// `NimbleEngine.MotionVerdict` is carried here instead of restated.
+        case gait(verdict: NimbleEngine.MotionVerdict,
+                  outcome: NimbleEngine.GaitFrameOutcome?)
         /// Nothing reached the detector for this frame: the filter was still
         /// warming up, the solve failed, or nothing was ever routed to it.
         case undetermined
@@ -72,15 +81,28 @@ final class OfflineResultStore: ObservableObject {
         var peakSpeedMetersPerSecond: Double? {
             switch self {
             case .measured(_, let v, _, _): return v
-            case .undetermined: return nil
+            case .gait, .undetermined: return nil
             }
         }
 
         var isHold: Bool {
             switch self {
             case .measured(let verdict, _, _, _): return verdict == .hold
-            case .undetermined: return false
+            case .gait, .undetermined: return false
             }
+        }
+
+        var verdict: NimbleEngine.MotionVerdict? {
+            switch self {
+            case .measured(let v, _, _, _): return v
+            case .gait(let v, _): return v
+            case .undetermined: return nil
+            }
+        }
+
+        var gaitOutcome: NimbleEngine.GaitFrameOutcome? {
+            if case .gait(_, let outcome) = self { return outcome }
+            return nil
         }
     }
 
@@ -132,14 +154,55 @@ final class OfflineResultStore: ObservableObject {
             guard case .measured(let verdict, _, _, _) = motionState else { return false }
             return verdict != .hold && muscleResult == nil
         }
+
+        /// True on a running clip's stance frames — the ones whose muscle
+        /// numbers came from the gait cycle rather than from a static hold.
+        var isGaitStance: Bool { motionState.verdict == .gaitStance }
     }
 
     @Published private(set) var frames: [FrameResult] = []
     @Published var selectedIndex: Int = 0
+    /// What the gait pass concluded about the clip as a whole, or why it never
+    /// ran. Nil until the batch finishes.
+    @Published private(set) var gait: GaitOutcome?
+
+    /// What `GaitAnalysis` concluded about this clip.
+    enum GaitOutcome {
+        /// Not a run, or not enough of one to try. The reason is the analysis's
+        /// own error text.
+        case notAttempted(reason: String)
+        /// A run, but the clip's own model refused it. Every refusal carries the
+        /// number that produced it.
+        case refused(report: GaitReport)
+        /// A usable run: dynamics were solved on its stance frames.
+        case analysed(report: GaitReport,
+                      plan: NimbleEngine.GaitPlan,
+                      framesPerSecond: Double)
+
+        var report: GaitReport? {
+            switch self {
+            case .notAttempted: return nil
+            case .refused(let r): return r
+            case .analysed(let r, _, _): return r
+            }
+        }
+
+        /// True only when the clip really was a run. The gait pass runs on
+        /// EVERY clip and declines most of them, so a UI that keyed off "a gait
+        /// outcome exists" would put a sentence about strides in front of every
+        /// imported photo.
+        var isAboutRunning: Bool {
+            if case .notAttempted = self { return false }
+            return true
+        }
+    }
+
+    func setGait(_ outcome: GaitOutcome) { gait = outcome }
 
     func reset() {
         frames.removeAll()
         selectedIndex = 0
+        gait = nil
     }
 
     /// Appends a new frame result and pins the scrubber to it — while a run is

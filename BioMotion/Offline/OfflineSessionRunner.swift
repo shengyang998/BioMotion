@@ -68,6 +68,10 @@ final class OfflineSessionRunner: ObservableObject {
     /// `FrameSource.maxFramesPerRun` and was capped — surfaced so the UI can say
     /// so rather than silently processing fewer frames than the user asked for.
     @Published private(set) var wasFrameCountCapped = false
+    /// The frame rate the analysis window was sampled at, i.e. the video's own.
+    /// Published because every duration this app measures is expressed in
+    /// frames, so a wrong rate would rescale all of them silently.
+    @Published private(set) var sampledFrameRate: Double = FrameSource.assumedFrameRateWhenUnknown
 
     let resultStore = OfflineResultStore()
 
@@ -77,6 +81,10 @@ final class OfflineSessionRunner: ObservableObject {
     private var perFrameDurations: [TimeInterval] = []
     private var calibrated = false
     private var lastSuccessfulFrame: (id: Int, bodyFrame: BodyFrame)?
+    /// Every frame that produced a usable skeleton, in decode order. The gait
+    /// analysis needs the WHOLE window before it can say anything — a stride is
+    /// not visible one frame at a time — so it runs after the batch.
+    private var usableBodyFrames: [BodyFrame] = []
     /// Identifies the current run so a cancelled predecessor cannot clean up
     /// shared engine state that now belongs to its successor. See `runInternal`.
     private var runToken: UInt64 = 0
@@ -132,6 +140,8 @@ final class OfflineSessionRunner: ObservableObject {
         perFrameDurations.removeAll()
         calibrated = false
         lastSuccessfulFrame = nil
+        usableBodyFrames.removeAll()
+        nimble.gaitPlan = nil
 
         // Scoped to this run — see the class header. `defer` covers every exit
         // path including cancellation, so the shared engine goes back to
@@ -215,10 +225,144 @@ final class OfflineSessionRunner: ObservableObject {
         // (1 real push) is just the degenerate case — 4 head + 1 + 4 tail = 9,
         // centred exactly on the photo.
         if totalPushes > 0, let last = lastSuccessfulFrame {
-            await padFilterTail(with: last.bodyFrame, totalPushes: &totalPushes)
+            await padFilterTail(with: last.bodyFrame, totalPushes: &totalPushes,
+                                halfWindow: Self.sgHalfWindow)
         }
 
+        // --- Is this a RUN? ---------------------------------------------------
+        //
+        // Only now, because a stride is not visible one frame at a time. The
+        // static-hold pass above has already produced everything it can; if the
+        // clip turns out to be running, the second pass re-solves the STANCE
+        // frames with the root acceleration the gait cycle supplies, which is
+        // the only way a moving subject gets muscle numbers at all.
+        await runGaitPassIfThisIsARun()
+
         phase = .finished(processed: decoded.count, failed: failureCount, cancelled: false)
+    }
+
+    // MARK: - Gait pass
+
+    /// Runs `GaitAnalysis` over the whole window and, if the clip is a usable
+    /// run, re-solves its stance frames with gait dynamics.
+    ///
+    /// Everything here is guarded so a non-running clip — a photo, a squat, a
+    /// subject standing still — costs one cheap analysis and changes nothing.
+    private func runGaitPassIfThisIsARun() async {
+        guard !Task.isCancelled, usableBodyFrames.count >= GaitSignal.minimumFrames else {
+            resultStore.setGait(.notAttempted(reason: usableBodyFrames.isEmpty
+                                              ? "no usable frames"
+                                              : "\(usableBodyFrames.count) usable frames; a stride needs at least \(GaitSignal.minimumFrames)"))
+            return
+        }
+
+        let report: GaitReport
+        do {
+            report = try GaitAnalysis.analyse(frames: usableBodyFrames)
+        } catch {
+            resultStore.setGait(.notAttempted(reason: "\(error)"))
+            return
+        }
+
+        guard report.isUsable else {
+            // Refused BY THE CLIP'S OWN MODEL. The reasons are published so the
+            // user is told what to film differently, not just that it failed.
+            resultStore.setGait(.refused(report: report))
+            return
+        }
+
+        guard let plan = Self.makePlan(from: report) else {
+            resultStore.setGait(.notAttempted(reason: "the report has no complete contact to build a plan from"))
+            return
+        }
+
+        // Clip boundary between passes: the derivative window changes length
+        // here (9 taps -> `plan.filterTaps`), and the IK warm start belongs to
+        // the last frame of pass 1, not the first of pass 2.
+        nimble.resetSessionState()
+        nimble.staticHoldGating = false
+        nimble.gaitPlan = plan
+        defer { nimble.gaitPlan = nil; nimble.staticHoldGating = true }
+
+        let half = plan.filterTaps / 2
+        var pushes = 0
+        guard let first = usableBodyFrames.first else { return }
+        await primeFilterHead(with: first, totalPushes: &pushes, halfWindow: half)
+
+        for (i, body) in usableBodyFrames.enumerated() {
+            if Task.isCancelled { return }
+            phase = .running(current: i, total: usableBodyFrames.count, etaSeconds: nil)
+            if await submitAndWait(body, timeout: Self.solveTimeout) {
+                routeSolveToOwningFrame()
+            }
+            pushes += 1
+        }
+        if let last = usableBodyFrames.last {
+            await padFilterTail(with: last, totalPushes: &pushes, halfWindow: half)
+        }
+
+        resultStore.setGait(.analysed(report: report,
+                                      plan: plan,
+                                      framesPerSecond: sampledFrameRate))
+    }
+
+    /// Turns a `GaitReport` into the per-frame root acceleration and ground
+    /// force the engine consumes.
+    ///
+    /// The stance force is the half sine the impulse derivation implies:
+    /// `F(t)/(m·g) = Fmax_bw · sin(π·φ)`, with `φ` the fraction through the
+    /// contact. Samples are placed at the MIDPOINTS of their sampling
+    /// intervals (`φ = (k + ½)/N`), not at the edges — a sample is an average
+    /// over the interval it represents, and putting the first one at `φ = 0`
+    /// would claim the foot carries exactly zero force at the instant it is
+    /// already measurably planted.
+    ///
+    /// Frames between contacts get force 0 and side 0: flight. Frames outside
+    /// the first touchdown or the last toe-off get NO entry at all, so the
+    /// engine reports them as outside the analysis rather than guessing.
+    nonisolated static func makePlan(from report: GaitReport) -> NimbleEngine.GaitPlan? {
+        let dt = report.sampleInterval
+        guard dt > 0 else { return nil }
+        let intervals = report.stance.left + report.stance.right
+        guard !intervals.isEmpty else { return nil }
+
+        let fmax = report.force.peakVerticalForceInBodyWeights
+        guard fmax.isFinite, fmax > 0 else { return nil }
+
+        var entries: [TimeInterval: NimbleEngine.GaitPlan.Frame] = [:]
+        var earliest = Double.infinity
+        var latest = -Double.infinity
+
+        for interval in intervals {
+            let n = interval.frames
+            guard n > 0 else { continue }
+            let side = interval.side == .left ? -1 : 1
+            for k in 0..<n {
+                let t = interval.touchdown + Double(k) * dt
+                let phase = (Double(k) + 0.5) / Double(n)
+                let force = fmax * sin(Double.pi * phase)
+                entries[t] = .init(timestamp: t,
+                                   verticalForceInBodyWeights: force,
+                                   contactSide: side)
+            }
+            earliest = Swift.min(earliest, interval.touchdown)
+            latest = Swift.max(latest, interval.lastStanceSample)
+        }
+        guard earliest.isFinite, latest.isFinite, latest > earliest else { return nil }
+
+        // Fill the gaps between contacts with flight.
+        var t = earliest
+        while t <= latest + dt / 2 {
+            if entries[t] == nil, !entries.keys.contains(where: { abs($0 - t) < dt / 2 }) {
+                entries[t] = .init(timestamp: t, verticalForceInBodyWeights: 0, contactSide: 0)
+            }
+            t += dt
+        }
+
+        return NimbleEngine.GaitPlan(
+            frames: entries.values.sorted { $0.timestamp < $1.timestamp },
+            filterTaps: WindowedDerivativeFilter.admissibleTaps(report.filterTapsThatFitOneContact),
+            sampleInterval: dt)
     }
 
     /// Returns true iff the frame produced a `.success` result (pose estimated,
@@ -239,9 +383,16 @@ final class OfflineSessionRunner: ObservableObject {
             return false
         }
 
+        // `frame.index` is the DECODER SLOT, not this frame's position in the
+        // surviving array. They differ exactly when a timestamp failed to
+        // decode, and the difference is what makes a dropped frame visible:
+        // `GaitSignal` reads `frameNumber` gaps to report `droppedFrameCount`,
+        // and `video_013` lost 3 frames to Vision finding no person. Passing the
+        // array position instead would present a clip with holes as a
+        // continuous one sampled slightly slower.
         let bodyFrame = MHRRetarget.makeBodyFrame(jointCoords: estimate.jointCoords,
                                                    timestamp: frame.timestamp,
-                                                   frameNumber: frameIndex)
+                                                   frameNumber: frame.index)
 
         // BODY-SIZE GATE — must sit ahead of `nimble.scaleModel`.
         //
@@ -294,12 +445,14 @@ final class OfflineSessionRunner: ObservableObject {
         // produce are centred on synthetic timestamps and get discarded by
         // `routeBiomechanicsToOwningFrame`, which is what we want.
         if totalPushes == 0 {
-            await primeFilterHead(with: bodyFrame, totalPushes: &totalPushes)
+            await primeFilterHead(with: bodyFrame, totalPushes: &totalPushes,
+                                  halfWindow: Self.sgHalfWindow)
         }
 
         let published = await submitAndWait(bodyFrame, timeout: Self.solveTimeout)
         totalPushes += 1
         lastSuccessfulFrame = (frameIndex, bodyFrame)
+        usableBodyFrames.append(bodyFrame)
 
         guard published else {
             resultStore.append(OfflineResultStore.FrameResult(
@@ -356,11 +509,20 @@ final class OfflineSessionRunner: ObservableObject {
         }), abs(owner.timestamp - t) <= Self.biomechanicsMatchTolerance else { return }
 
         let motion = solve.motion
-        let state = OfflineResultStore.MotionState.measured(
-            verdict: motion.verdict,
-            peakSpeedMetersPerSecond: motion.peakMarkerSpeedMetersPerSecond,
-            windowSeconds: motion.windowSeconds,
-            noiseFloorMetersPerSecond: motion.poseNoiseFloorMetersPerSecond)
+        // The gait cases carry different evidence — a modelled force and the
+        // residual that can contradict it — so they get their own case in the
+        // SAME enum rather than being flattened into the stillness numbers,
+        // which mean nothing about a runner.
+        let state: OfflineResultStore.MotionState
+        if motion.verdict.isGait {
+            state = .gait(verdict: motion.verdict, outcome: solve.gait)
+        } else {
+            state = .measured(
+                verdict: motion.verdict,
+                peakSpeedMetersPerSecond: motion.peakMarkerSpeedMetersPerSecond,
+                windowSeconds: motion.windowSeconds,
+                noiseFloorMetersPerSecond: motion.poseNoiseFloorMetersPerSecond)
+        }
 
         resultStore.updateBiomechanics(forFrameID: owner.id,
                                        muscleResult: solve.muscle,
@@ -387,9 +549,11 @@ final class OfflineSessionRunner: ObservableObject {
     /// the mirror-image bias. A single photo is the fully degenerate case —
     /// all 8 transitions are synthetic — which is why "one frame is a hold" is
     /// an ASSUMPTION this path inherits from the padding, not a measurement.
-    private func primeFilterHead(with bodyFrame: BodyFrame, totalPushes: inout Int) async {
+    private func primeFilterHead(with bodyFrame: BodyFrame, totalPushes: inout Int,
+                                 halfWindow: Int) async {
         let dt = sampleInterval
-        for step in stride(from: Self.sgHalfWindow, through: 1, by: -1) {
+        guard halfWindow >= 1 else { return }
+        for step in stride(from: halfWindow, through: 1, by: -1) {
             if Task.isCancelled { return }
             let padded = BodyFrame(timestamp: bodyFrame.timestamp - Double(step) * dt,
                                    frameNumber: bodyFrame.frameNumber,
@@ -404,9 +568,11 @@ final class OfflineSessionRunner: ObservableObject {
     /// Mirror of `primeFilterHead` for the TRAILING half-window. Each push here
     /// advances the window centre onto one of the last real frames, so unlike
     /// the head padding these results are routed and kept.
-    private func padFilterTail(with bodyFrame: BodyFrame, totalPushes: inout Int) async {
+    private func padFilterTail(with bodyFrame: BodyFrame, totalPushes: inout Int,
+                               halfWindow: Int) async {
         let dt = sampleInterval
-        for step in 1...Self.sgHalfWindow {
+        guard halfWindow >= 1 else { return }
+        for step in 1...halfWindow {
             if Task.isCancelled { return }
             let padded = BodyFrame(timestamp: bodyFrame.timestamp + Double(step) * dt,
                                    frameNumber: bodyFrame.frameNumber,
@@ -452,7 +618,11 @@ final class OfflineSessionRunner: ObservableObject {
             phase = .decodingFrames
             let decoder = FrameSource.VideoDecoder(url: url)
             let duration = try await decoder.duration()
-            let (timestamps, truncated) = FrameSource.sampleTimestamps(duration: duration, mode: samplingMode)
+            let rate = await decoder.nominalFrameRate()
+            sampledFrameRate = rate
+            let (timestamps, truncated) = FrameSource.sampleTimestamps(duration: duration,
+                                                                      mode: samplingMode,
+                                                                      nominalFrameRate: rate)
             wasFrameCountCapped = truncated
 
             var frames: [FrameSource.DecodedFrame] = []

@@ -22,6 +22,7 @@ struct OfflineImportView: View {
     @State private var pickedPhoto: UIImage?
     @State private var pickedVideoURL: URL?
     @State private var isSingleFrameMode = false
+    @State private var useNativeWindow = true
     @State private var fps: Double = OfflineImportView.defaultFPS
     @State private var showPlayback = false
     @State private var pickError: String?
@@ -133,15 +134,27 @@ struct OfflineImportView: View {
             if pickedVideoURL != nil {
                 Toggle("Single frame only", isOn: $isSingleFrameMode)
                 if !isSingleFrameMode {
-                    Stepper(value: $fps, in: 0.5...10.0, step: 0.5) {
-                        Text(String(format: "%.1f frames / second", fps))
+                    Toggle("Analyse movement (every frame, \(Int(FrameSource.analysisWindowSeconds)) s)",
+                           isOn: $useNativeWindow)
+                    if useNativeWindow {
+                        // The trade this toggle makes, stated in the terms that
+                        // decide it: a foot contact is 150-250 ms, so at 2 fps
+                        // it is under half a sample and simply not there. The
+                        // model-call budget is the same either way.
+                        Text("Samples every frame the video has, over \(Int(FrameSource.analysisWindowSeconds)) seconds from the middle of the clip. This is what makes running measurable: a foot contact lasts about 200 ms, so at 2 frames/second it falls between samples entirely. Same number of model calls as the sparse mode.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Stepper(value: $fps, in: 0.5...10.0, step: 0.5) {
+                            Text(String(format: "%.1f frames / second", fps))
+                        }
+                        Text("Sparse sampling over the whole clip — for a held pose, not for movement. The pose model runs at roughly 1 second per frame on-device.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    Text("Higher rates take proportionally longer — the pose model runs at roughly 1 second per frame on-device, so a 10s clip at 2fps is about 20 model calls.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 if runner.wasFrameCountCapped {
-                    Text("Clip is long enough that sampling was capped to \(FrameSource.maxFramesPerRun) frames.")
+                    Text("The clip is longer than the analysis window, so only \(FrameSource.maxFramesPerRun) frames from the middle were used.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -200,7 +213,14 @@ struct OfflineImportView: View {
         if let pickedPhoto {
             runner.run(source: .photo(pickedPhoto), samplingMode: .singleFrame)
         } else if let pickedVideoURL {
-            let mode: FrameSource.SamplingMode = isSingleFrameMode ? .singleFrame : .fps(fps)
+            let mode: FrameSource.SamplingMode
+            if isSingleFrameMode {
+                mode = .singleFrame
+            } else if useNativeWindow {
+                mode = .nativeWindow(seconds: FrameSource.analysisWindowSeconds)
+            } else {
+                mode = .fps(fps)
+            }
             runner.run(source: .video(pickedVideoURL), samplingMode: mode)
         }
     }
