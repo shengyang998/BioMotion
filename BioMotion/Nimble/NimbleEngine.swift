@@ -177,6 +177,14 @@ final class NimbleEngine: ObservableObject {
         /// told apart. NOT the same as "the subject moved": at a sparse
         /// sampling rate a perfectly still subject lands here.
         case indistinguishableFromNoise
+        /// The subject is moving TOWARD OR AWAY from the camera faster than the
+        /// budget allows. This path holds the root's depth at one per-clip value
+        /// because monocular depth cannot be differentiated (see
+        /// `RootDepthHold`), which is exact for motion in the image plane and
+        /// wrong for motion along the optical axis. This is that assumption
+        /// failing its check, and it is the one failure the user can fix by
+        /// standing side-on to the camera.
+        case depthMotionNotResolvable
         /// Nothing measurable in the window (first sample of a clip, no marker
         /// in common with the predecessor, non-increasing timestamps).
         case noMeasurement
@@ -191,6 +199,8 @@ final class NimbleEngine: ObservableObject {
                 return "The subject moved too fast for a still-pose reading. Hold the position, or sample the clip at a higher rate so a shorter stretch of stillness is enough."
             case .indistinguishableFromNoise:
                 return "The pose estimate jitters as much as the movement being measured, so stillness cannot be confirmed. Fill more of the frame, improve the lighting, or sample at a higher rate."
+            case .depthMotionNotResolvable:
+                return "The subject is moving toward or away from the camera. A single camera cannot measure that direction accurately — stand side-on to the camera, or keep your distance from it constant."
             case .noMeasurement:
                 return "Not enough frames around this instant to measure motion."
             }
@@ -225,9 +235,27 @@ final class NimbleEngine: ObservableObject {
         let verdict: MotionVerdict
         /// A LOWER BOUND on how much of `peakMarkerSpeedMetersPerSecond` is
         /// pose-estimation noise rather than the subject moving, in m/s,
-        /// measured on THIS clip from distances that physically cannot change.
-        /// See `StaticHoldDetector.rigidPairs`.
+        /// measured on THIS clip. `max` of the two floors below, because a
+        /// marker inherits both.
         let poseNoiseFloorMetersPerSecond: Double
+        /// The ARTICULATION half of that floor: measured from distances that
+        /// physically cannot change (`StaticHoldDetector.rigidPairs`). It is
+        /// invariant to root translation by construction — every rigid pair is
+        /// unchanged when the same offset is added to both endpoints — so it is
+        /// structurally blind to `cam_t` jitter, which is why the root has its
+        /// own floor below.
+        let articulationNoiseFloorMetersPerSecond: Double
+        /// The ROOT half: measured from the root marker's own 4th difference,
+        /// which annihilates anything the cubic Savitzky-Golay filter can
+        /// represent, so what it leaves is what the filter will turn into
+        /// acceleration. Zero on a pelvis-pinned stream, where the root does not
+        /// move at all.
+        let rootNoiseFloorMetersPerSecond: Double
+        /// Least-squares slope of the root's RAW depth over the examined window,
+        /// m/s — the quantity `RootDepthHold` is assuming to be zero. Positive
+        /// means moving away from the camera. NaN when the root is not
+        /// observable (a pinned stream carries no depth to trend).
+        let depthDriftMetersPerSecond: Double
         /// False when the pose source pins the pelvis, i.e. the body carries no
         /// global translation and the root's contribution to `M·q̈` is missing.
         /// See `MHRRetarget.rootTranslation(camT:)`.
@@ -1177,6 +1205,109 @@ final class NimbleEngine: ObservableObject {
 ///   buildable; it belongs upstream, where the frames are. ⚠️ It must run at
 ///   the video's NATIVE rate: at a 10 fps analysis sampling the same estimator
 ///   aliased `video_012`'s pan down to ~0.
+/// Holds the root's DEPTH at one per-clip value, because monocular depth is the
+/// one channel of the recovered root translation that cannot be differentiated.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+/// WHY HELD AND NOT FILTERED — this is a measurement, and it ruled out the
+/// obvious design
+/// ─────────────────────────────────────────────────────────────────────────
+/// `cam_t`'s depth comes from apparent size (`tz = 2f/(bbox_side·s)`), and its
+/// error is NOT high-frequency. Structure function on 284 consecutive frames of
+/// a real clip at 30 fps — median `|T(t+τ) − T(t)|`, cm:
+///
+///     τ        0.033  0.100  0.167  0.400  0.500
+///     x         0.66   1.73   1.99   2.26   2.53
+///     y         1.36   3.43   4.14   3.55   3.81
+///     z         5.15  12.56  14.33  15.44  15.27     <- saturates by ~0.15 s
+///
+/// The depth error reaches 12-15 cm by τ ≈ 0.15 s and then plateaus, i.e. it
+/// lives at exactly the timescale a 9-tap window is trying to measure motion
+/// at. A rolling low-pass therefore does nothing: measured, a rolling mean over
+/// 0.25 / 0.5 / 1.0 / 2.0 s leaves the smoothed depth still moving at
+/// 0.298 / 0.305 / 0.267 / 0.217 m/s, against a 0.20 m/s hold cap. There is no
+/// window that separates this error from motion.
+///
+/// The only operation that removes an error which is smooth at the window scale
+/// is to hold the channel at a single per-clip value — which is also the literal
+/// content of the assumption this path is making: **the subject's distance from
+/// the camera does not change**. That assumption is not declared and hoped for;
+/// `StaticHoldDetector` gates on `depthDriftMetersPerSecond` and refuses the
+/// frame with `.depthMotionNotResolvable` when it fails.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+/// WHY THE RESIDUAL POSITION ERROR IS BENIGN
+/// ─────────────────────────────────────────────────────────────────────────
+/// The correction is the SAME shift applied to every marker, so it is a rigid
+/// translation of the whole body. Under uniform gravity a rigid translation
+/// changes no joint torque, and it moves the contact polygon with the body so
+/// the centre of pressure relative to the foot is unchanged. Only the body's
+/// absolute z moves, and nothing downstream reads that as an absolute.
+/// `StaticHoldTests` measures this rather than trusting it.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+/// IT IS A BIT-EXACT NO-OP UNTIL `cam_t` IS COMPOSED IN
+/// ─────────────────────────────────────────────────────────────────────────
+/// On a pelvis-pinned stream the root marker's z is the model constant 0 in
+/// every frame, so the reference equals the current value and the offset is
+/// exactly 0.0. This ships live and provably does nothing until
+/// `OfflineSessionRunner` passes `camT:` — see `MHRRetarget.makeBodyFrame`.
+struct RootDepthHold {
+
+    /// Samples kept for the reference and the trend. 600 covers 10 s at 60 fps.
+    static let maxHistorySamples = 600
+
+    private var history: [(timestamp: TimeInterval, depth: Double)] = []
+    /// The per-clip reference. Deliberately the MEDIAN of everything seen so
+    /// far rather than the first value: the first frame is as noisy as any
+    /// other, and a 15 cm wander on frame 1 would offset the whole clip.
+    private var reference: Double?
+
+    mutating func ingest(rootDepth: Double, timestamp: TimeInterval) {
+        history.append((timestamp, rootDepth))
+        if history.count > Self.maxHistorySamples {
+            history.removeFirst(history.count - Self.maxHistorySamples)
+        }
+        let sorted = history.map(\.depth).sorted()
+        reference = sorted[sorted.count / 2]
+    }
+
+    /// How much to SUBTRACT from every marker's z so the root sits at the
+    /// reference depth. Exactly 0 when nothing has been seen, and exactly 0 on
+    /// a pinned stream.
+    func offset(forRootDepth z: Double) -> Double {
+        guard let reference else { return 0 }
+        return z - reference
+    }
+
+    /// Least-squares slope of the raw depth over the last `sampleCount`
+    /// samples, m/s. Positive = moving away from the camera.
+    ///
+    /// A slope is used rather than an endpoint difference because the endpoints
+    /// carry the full 12-15 cm wander while the slope averages it down: measured
+    /// on a real clip, split-half slopes agreed to 0.0020 m/s against a 0.20 m/s
+    /// budget, so the estimator is 100× sharper than the thing it gates.
+    func driftMetersPerSecond(overLast sampleCount: Int) -> Double {
+        let w = history.suffix(max(2, sampleCount))
+        guard w.count >= 2 else { return .nan }
+        let t0 = w.first!.timestamp
+        var sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0
+        let n = Double(w.count)
+        for s in w {
+            let x = s.timestamp - t0
+            sx += x; sy += s.depth; sxx += x * x; sxy += x * s.depth
+        }
+        let denom = n * sxx - sx * sx
+        guard abs(denom) > 1e-12 else { return .nan }
+        return (n * sxy - sx * sy) / denom
+    }
+
+    mutating func reset() {
+        history.removeAll(keepingCapacity: true)
+        reference = nil
+    }
+}
+
 struct StaticHoldDetector {
 
     /// Standard gravity, the term static ID keeps. Both budgets below are
@@ -1243,7 +1374,17 @@ struct StaticHoldDetector {
         /// Distance the root marker moved since the previous sample, metres.
         /// nil when it was absent from either frame.
         let rootDisplacementMeters: Double?
+        /// The root marker's position, for the root noise floor. nil when the
+        /// marker was absent.
+        let rootPosition: SIMD3<Double>?
     }
+
+    /// Scaling for the 4th-difference noise estimator. For a signal that is
+    /// locally cubic — exactly what the 9-tap Savitzky-Golay filter fits — the
+    /// 4th difference is identically zero, so what survives is what the filter
+    /// will turn into acceleration. For gaussian noise of std σ the 4th
+    /// difference has std `σ·√C(8,4) = σ·√70`, and `median|·| = 0.6745·std`.
+    static let fourthDifferenceToSigma: Double = 0.6745 * 70.0.squareRoot()
 
     private var history: [Sample] = []
     private var previous: (timestamp: TimeInterval, markers: [String: SIMD3<Double>])?
@@ -1300,7 +1441,8 @@ struct StaticHoldDetector {
 
         history.append(Sample(timestamp: timestamp, peakSpeed: peak, medianSpeed: median,
                               rigidDistanceDriftMeters: rigidDrift,
-                              rootDisplacementMeters: rootStep))
+                              rootDisplacementMeters: rootStep,
+                              rootPosition: markers[Self.rootMarkerName]))
         if history.count > Self.maxHistorySamples {
             history.removeFirst(history.count - Self.maxHistorySamples)
         }
@@ -1334,7 +1476,9 @@ struct StaticHoldDetector {
     /// not been pushed yet. That asymmetry is harmless: the symmetric filter
     /// window is always fully inside the examined window, and the extension
     /// only adds further evidence on the past side.
-    func classify(centeredAt center: TimeInterval) -> NimbleEngine.MotionClassification {
+    func classify(centeredAt center: TimeInterval,
+                  depthDriftMetersPerSecond depthDrift: Double = .nan)
+        -> NimbleEngine.MotionClassification {
         guard let newest = history.last else {
             return Self.empty(at: center, windowSeconds: 0, sampleCount: 0)
         }
@@ -1365,17 +1509,28 @@ struct StaticHoldDetector {
         // markers share the drift) and divided by the sampling interval.
         let drifts = window.compactMap(\.rigidDistanceDriftMeters).sorted()
         let sampleInterval = window.count > 1 ? span / Double(window.count - 1) : 0
-        let noiseFloor: Double
+        let articulationFloor: Double
         if drifts.isEmpty || sampleInterval <= 0 {
-            noiseFloor = 0
+            articulationFloor = 0
         } else {
-            noiseFloor = drifts[drifts.count / 2] / (2 * sampleInterval)
+            articulationFloor = drifts[drifts.count / 2] / (2 * sampleInterval)
         }
+
+        // The root's own floor. `rigidPairs` is invariant to root translation —
+        // adding the same offset to both endpoints of a pair changes nothing —
+        // so the articulation floor above is STRUCTURALLY BLIND to `cam_t`
+        // jitter and would report a still subject as moving the moment the root
+        // translation is composed in.
+        let rootFloor = Self.fourthDifferenceFloor(
+            window.compactMap(\.rootPosition), sampleInterval: sampleInterval)
+        let noiseFloor = max(articulationFloor, rootFloor)
 
         // No measured sample at all means no motion information — not stillness.
         guard let peak = measured.max() else {
             return Self.empty(at: center, windowSeconds: span, sampleCount: window.count,
-                              noiseFloor: noiseFloor, rootObservable: rootObservable)
+                              noiseFloor: noiseFloor, rootObservable: rootObservable,
+                              articulationFloor: articulationFloor, rootFloor: rootFloor,
+                              depthDrift: depthDrift)
         }
 
         // 2·v/T. A zero-span window (every sample at one timestamp, i.e. a

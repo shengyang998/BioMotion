@@ -129,7 +129,18 @@ struct OfflinePlaybackView: View {
                 // posture loads, not measured dynamics.
                 return frame.isStaticHoldEstimate ? "Pose + muscle (static hold)" : "Pose + muscle"
             }
-            if frame.isPoseOnlyBecauseMoving { return "Pose only — subject moving" }
+            if frame.isPoseOnlyBecauseNotStill {
+                // Naming the reason matters: one of these is something the user
+                // can change by holding still, the other is the app failing to
+                // resolve movement at all and telling them to hold still would
+                // be advice that cannot work.
+                guard case .measured(let verdict, _, _, _) = frame.motionState else {
+                    return "Pose only"
+                }
+                return verdict == .indistinguishableFromNoise
+                    ? "Pose only — movement below what this clip can resolve"
+                    : "Pose only — subject moving"
+            }
             return "Pose only (warming up)"
         case .poseEstimationFailed(let reason):
             return "Pose failed: \(reason)"
@@ -148,7 +159,7 @@ struct OfflinePlaybackView: View {
         switch frame.status {
         case .success:
             if frame.hasFullBiomechanics { return .green }
-            if frame.isPoseOnlyBecauseMoving { return .orange }
+            if frame.isPoseOnlyBecauseNotStill { return .orange }
             return .white
         case .poseEstimationFailed, .nimbleTimeout, .implausibleBody:
             return .red
@@ -158,14 +169,24 @@ struct OfflinePlaybackView: View {
     /// One line of the actual measurement behind the verdict, so the number is
     /// inspectable rather than a badge the user has to trust.
     private func motionDetail(_ frame: OfflineResultStore.FrameResult) -> String? {
-        switch frame.motionState {
-        case .hold(let speed, let window):
-            return String(format: "still: peak %.1f cm/s over %.1f s", speed * 100, window)
-        case .moving(let speed, let window):
-            return String(format: "moving: peak %.1f cm/s over %.1f s — muscle loads need a still pose",
-                          speed * 100, window)
-        case .undetermined:
+        guard case .measured(let verdict, let speed, let window, let floor) = frame.motionState else {
             return nil
+        }
+        switch verdict {
+        case .hold:
+            return String(format: "still: peak %.1f cm/s over %.1f s", speed * 100, window)
+        case .noMeasurement:
+            return verdict.advice
+        case .indistinguishableFromNoise:
+            // The measured speed alone would read as the subject's fault here.
+            // Showing the floor beside it is the whole point: the instrument
+            // cannot resolve movement this small on this clip.
+            return String(format: "peak %.1f cm/s over %.1f s, but the pose estimate itself "
+                          + "jitters %.1f cm/s — %@",
+                          speed * 100, window, floor * 100, verdict.advice)
+        case .movingBeyondStaticBudget:
+            return String(format: "moving: peak %.1f cm/s over %.1f s — %@",
+                          speed * 100, window, verdict.advice)
         }
     }
 
@@ -224,8 +245,8 @@ struct OfflinePlaybackView: View {
         var label = "Frame \(resultStore.selectedIndex + 1)/\(resultStore.frames.count) — \(resultStore.biomechanicsCount) with muscle data"
         // Without this, a clip of a moving subject reads as "1 with muscle
         // data" and looks like the solver failed 40 times.
-        let moving = resultStore.poseOnlyMovingCount
-        if moving > 0 { label += ", \(moving) pose-only (moving)" }
+        let notStill = resultStore.poseOnlyNotStillCount
+        if notStill > 0 { label += ", \(notStill) pose-only (not a still pose)" }
         // Same reasoning one step earlier in the chain: a clip where the person
         // is too small in frame otherwise reads as "0 with muscle data" and
         // looks like a solver failure rather than a framing problem.

@@ -356,11 +356,11 @@ final class OfflineSessionRunner: ObservableObject {
         }), abs(owner.timestamp - t) <= Self.biomechanicsMatchTolerance else { return }
 
         let motion = solve.motion
-        let state: OfflineResultStore.MotionState = motion.isHold
-            ? .hold(peakSpeedMetersPerSecond: motion.peakMarkerSpeedMetersPerSecond,
-                    windowSeconds: motion.windowSeconds)
-            : .moving(peakSpeedMetersPerSecond: motion.peakMarkerSpeedMetersPerSecond,
-                      windowSeconds: motion.windowSeconds)
+        let state = OfflineResultStore.MotionState.measured(
+            verdict: motion.verdict,
+            peakSpeedMetersPerSecond: motion.peakMarkerSpeedMetersPerSecond,
+            windowSeconds: motion.windowSeconds,
+            noiseFloorMetersPerSecond: motion.poseNoiseFloorMetersPerSecond)
 
         resultStore.updateBiomechanics(forFrameID: owner.id,
                                        muscleResult: solve.muscle,

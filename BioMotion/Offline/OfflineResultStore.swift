@@ -47,28 +47,39 @@ final class OfflineResultStore: ObservableObject {
     /// What the static-hold detector concluded about this frame — the reason a
     /// frame does or does not carry muscle magnitudes.
     ///
-    /// This exists because "no muscle data" had two very different causes that
-    /// looked identical in the UI: the Savitzky-Golay window had not filled
-    /// yet (a startup artifact, harmless), versus the subject was moving (a
+    /// This exists because "no muscle data" had causes that looked identical in
+    /// the UI: the Savitzky-Golay window had not filled yet (a startup
+    /// artifact, harmless), versus the detector declining the instant (a
     /// statement about what this input can support). See
     /// `NimbleEngine.staticHoldGating`.
+    ///
+    /// Carries `NimbleEngine.MotionVerdict` rather than restating it. The two
+    /// used to be parallel taxonomies — `hold`/`moving` here against the
+    /// engine's four cases — which meant the UI could only ever say "moving",
+    /// and the engine's distinction between *the subject moved* and *the pose
+    /// estimate is too noisy to tell* was discarded at this boundary. Those are
+    /// different problems with different fixes, and only one of them is
+    /// something the user did.
     enum MotionState: Equatable {
-        /// Marker motion around this frame stayed inside the static-hold
-        /// bound, so ID and the muscle QP were solved with q̇ = q̈ = 0.
-        case hold(peakSpeedMetersPerSecond: Double, windowSeconds: Double)
-        /// The subject was measurably moving. Pose is still shown; muscle
-        /// magnitudes are deliberately withheld, because the pose source pins
-        /// the pelvis every frame and so cannot supply the accelerations those
-        /// magnitudes would be derived from.
-        case moving(peakSpeedMetersPerSecond: Double, windowSeconds: Double)
-        /// No verdict reached this frame: the filter was still warming up, the
-        /// solve failed, or nothing was ever routed to it.
+        case measured(verdict: NimbleEngine.MotionVerdict,
+                      peakSpeedMetersPerSecond: Double,
+                      windowSeconds: Double,
+                      noiseFloorMetersPerSecond: Double)
+        /// Nothing reached the detector for this frame: the filter was still
+        /// warming up, the solve failed, or nothing was ever routed to it.
         case undetermined
 
         var peakSpeedMetersPerSecond: Double? {
             switch self {
-            case .hold(let v, _), .moving(let v, _): return v
+            case .measured(_, let v, _, _): return v
             case .undetermined: return nil
+            }
+        }
+
+        var isHold: Bool {
+            switch self {
+            case .measured(let verdict, _, _, _): return verdict == .hold
+            case .undetermined: return false
             }
         }
     }
@@ -112,11 +123,14 @@ final class OfflineResultStore: ObservableObject {
         let motionState: MotionState
 
         var hasFullBiomechanics: Bool { muscleResult != nil }
-        /// Pose was solved fine, but the subject was moving, so no muscle
-        /// magnitudes are claimed. Distinct from the warm-up case.
-        var isPoseOnlyBecauseMoving: Bool {
-            if case .moving = motionState { return muscleResult == nil }
-            return false
+        /// Pose was solved fine, but the detector could not certify a still
+        /// instant, so no muscle magnitudes are claimed. Distinct from the
+        /// warm-up case — and deliberately NOT named "because moving": one of
+        /// the two reasons is that the pose estimate is too noisy to tell,
+        /// which is the app's limitation and not the subject's.
+        var isPoseOnlyBecauseNotStill: Bool {
+            guard case .measured(let verdict, _, _, _) = motionState else { return false }
+            return verdict != .hold && muscleResult == nil
         }
     }
 
@@ -189,5 +203,5 @@ final class OfflineResultStore: ObservableObject {
     /// Frames whose pose was solved but whose muscle numbers were withheld
     /// because the subject was moving. Surfaced so "few frames have muscle
     /// data" reads as a property of the clip rather than as a solver failure.
-    var poseOnlyMovingCount: Int { frames.filter(\.isPoseOnlyBecauseMoving).count }
+    var poseOnlyNotStillCount: Int { frames.filter(\.isPoseOnlyBecauseNotStill).count }
 }
