@@ -98,7 +98,7 @@ targets:
         # build's Background Assets configuration invalid.
         BAUsesAppleHosting: true
         BAHasManagedAssetPacks: true
-        BAAppGroupID: group.com.soleil.BioMotion
+        BAAppGroupID: group.com.soleilyu.biomotion
 
   # Background Download extension. The system, not the app, drives asset-pack
   # downloads; this extension exists so the OS has an in-app policy hook and so

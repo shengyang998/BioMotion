@@ -7,7 +7,7 @@
 	     Info.plist's BAAppGroupID (set in project.yml). -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.soleil.BioMotion</string>
+		<string>group.com.soleilyu.biomotion</string>
 	</array>
 </dict>
 </plist>

@@ -155,7 +155,7 @@ away in `OfflineImportView` — that view is not part of this change.
 | piece | where |
 |---|---|
 | `BAUsesAppleHosting` / `BAHasManagedAssetPacks` / `BAAppGroupID` | `project.yml` → generated `BioMotion/Info.plist` (never edit the plist) |
-| app group `group.com.soleil.BioMotion` | `BioMotion/AssetPack/Support/BioMotion.entitlements` + the extension's |
+| app group `group.com.soleilyu.biomotion` | `BioMotion/AssetPack/Support/BioMotion.entitlements` + the extension's |
 | Background Download extension | target `AssetPackDownloader`, `BioMotion/AssetPack/Downloader/` |
 | runtime loader | `BioMotion/AssetPack/AssetPackModelStore.swift` |
 | pack id `sam3d-body-pose` | `Manifest.json`, `AssetPackModelStore.assetPackID`, `AssetPackIdentity.modelPackID` — all three must agree |
