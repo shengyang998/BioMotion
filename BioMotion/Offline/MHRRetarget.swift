@@ -357,6 +357,99 @@ enum MHRRetarget {
         return (positions, names)
     }
 
+    // MARK: - Gross-implausibility gate
+
+    /// Verdict on whether one prediction is worth scaling the skeleton to.
+    enum Plausibility: Equatable {
+        case plausible(hipWidthMeters: Double, statureMeters: Double)
+        /// `reason` is written for the user and always carries the measured
+        /// number that failed, because "we threw your photo away" without the
+        /// number is indistinguishable from a crash.
+        case implausible(reason: String, hipWidthMeters: Double, statureMeters: Double)
+
+        var isPlausible: Bool { if case .plausible = self { return true }; return false }
+        var reason: String? { if case .implausible(let r, _, _) = self { return r }; return nil }
+        var hipWidthMeters: Double {
+            switch self {
+            case .plausible(let w, _), .implausible(_, let w, _): return w
+            }
+        }
+        var statureMeters: Double {
+            switch self {
+            case .plausible(_, let s), .implausible(_, _, let s): return s
+            }
+        }
+    }
+
+    /// Bounds on a prediction that is about to drive `scaleModelWithHeight`.
+    ///
+    /// # These are a GROSS-IMPLAUSIBILITY gate, not an anthropometric norm
+    /// They exist to catch a prediction that has collapsed — the recorded case
+    /// is `sample2`, a small heavily-occluded rider on a horse, which produced a
+    /// **0.070 m** inter-hip distance, 0.116 m shoulder width and a 0.178 m
+    /// humerus, i.e. a person roughly half scale (STATUS.md, "The limitation
+    /// that shapes the product claim"; `segmentScaleMarkers`' doc comment).
+    /// Nothing downstream noticed: `scaleModelWithHeight` clamps its per-segment
+    /// factors into `[0.7, 1.4]`, which TRUNCATES the damage into a silently
+    /// wrong model instead of reporting it.
+    ///
+    /// A real person outside these bounds would be rejected, and that is the
+    /// deliberate trade: the alternative is a muscle number computed on a
+    /// skeleton scaled to somebody who does not exist. Nothing here is a
+    /// clinical or normative statement about a body.
+    ///
+    /// Margins on the five predictions this pipeline is known to fit
+    /// (`segmentScaleMarkers`' recorded runs — dancing / yoga / football /
+    /// sample4 pass, sample2 fails): the passing statures are 1.602–1.715 m,
+    /// so the 1.3 m floor sits ~19% below the smallest and the 2.1 m ceiling
+    /// ~22% above the largest. `sample2`'s 0.070 m hip width is 30% below the
+    /// 0.10 m floor.
+    static let minHipWidthMeters = 0.10
+    static let maxHipWidthMeters = 0.28
+    static let minStatureMeters = 1.30
+    static let maxStatureMeters = 2.10
+
+    /// Distance between the two hip joint centres, in metres. This is an
+    /// inter-JOINT-CENTRE distance, not a bi-trochanteric or a surface width.
+    static func hipWidthMeters(jointCoords: [SIMD3<Float>]) -> Double {
+        guard jointCoords.count >= MHR.jointCount else { return .nan }
+        return Double(norm(jointCoords[MHR.lUpleg] - jointCoords[MHR.rUpleg]))
+    }
+
+    /// Gate one prediction before it reaches `scaleModelWithHeight`.
+    ///
+    /// Deliberately reads only pose-INVARIANT quantities — an inter-joint-centre
+    /// distance across a rigid pelvis, and the chain-sum stature. A bent knee or
+    /// a raised arm cannot trip it; only a prediction whose skeleton is the
+    /// wrong size can. That is why it is safe to run on every frame rather than
+    /// only on the calibration frame.
+    static func plausibility(jointCoords: [SIMD3<Float>]) -> Plausibility {
+        guard jointCoords.count >= MHR.jointCount else {
+            return .implausible(reason: "the pose model returned \(jointCoords.count) joints, not \(MHR.jointCount)",
+                                hipWidthMeters: .nan, statureMeters: .nan)
+        }
+        let hip = hipWidthMeters(jointCoords: jointCoords)
+        let stature = Double(estimatedStatureMeters(jointCoords: jointCoords))
+
+        guard hip.isFinite, stature.isFinite else {
+            return .implausible(reason: "the pose model returned a non-finite body size",
+                                hipWidthMeters: hip, statureMeters: stature)
+        }
+        if hip < minHipWidthMeters || hip > maxHipWidthMeters {
+            return .implausible(
+                reason: String(format: "hip width came out %.0f cm, outside the %.0f–%.0f cm this app can measure — the person is probably too small in frame, or partly hidden",
+                               hip * 100, minHipWidthMeters * 100, maxHipWidthMeters * 100),
+                hipWidthMeters: hip, statureMeters: stature)
+        }
+        if stature < minStatureMeters || stature > maxStatureMeters {
+            return .implausible(
+                reason: String(format: "estimated height came out %.2f m, outside the %.1f–%.1f m this app can measure — the person is probably too small in frame, or partly hidden",
+                               stature, minStatureMeters, maxStatureMeters),
+                hipWidthMeters: hip, statureMeters: stature)
+        }
+        return .plausible(hipWidthMeters: hip, statureMeters: stature)
+    }
+
     /// Standing height in meters, estimated from segment lengths rather than vertical extent.
     ///
     /// Vertical extent is useless off a single arbitrary frame: measured top-of-head-to-lowest-

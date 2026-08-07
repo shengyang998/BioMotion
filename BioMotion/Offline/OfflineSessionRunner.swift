@@ -83,7 +83,7 @@ final class OfflineSessionRunner: ObservableObject {
 
     /// Generous upper bound on one `nimble.processFrame` solve. NimbleEngine's
     /// module docs record ~200ms/frame for the shipped FullBody.osim (520
-    /// muscles / 171 coordinates) on comparable hardware; this leaves wide
+    /// muscles / 169 coordinates) on comparable hardware; this leaves wide
     /// margin for thermal throttling or a cold (non-warm-started) first solve
     /// without letting one stuck frame stall the whole batch indefinitely.
     private static let solveTimeout: TimeInterval = 6.0
@@ -241,6 +241,27 @@ final class OfflineSessionRunner: ObservableObject {
         let bodyFrame = MHRRetarget.makeBodyFrame(jointCoords: estimate.jointCoords,
                                                    timestamp: frame.timestamp,
                                                    frameNumber: frameIndex)
+
+        // BODY-SIZE GATE — must sit ahead of `nimble.scaleModel`.
+        //
+        // `scaleModelWithHeight` clamps its per-segment factors into
+        // [0.7, 1.4], so a collapsed prediction does not fail there, it is
+        // silently truncated into a model scaled to nobody (STATUS.md: one
+        // occluded subject produced a 0.070 m hip width and nothing flagged it).
+        // The frame is kept in the store with its image, its retargeted
+        // skeleton and the measured numbers, so the user sees WHY — dropping it
+        // silently is what made the original case invisible.
+        let plausibility = MHRRetarget.plausibility(jointCoords: estimate.jointCoords)
+        if case .implausible(let reason, let hip, let stature) = plausibility {
+            resultStore.append(OfflineResultStore.FrameResult(
+                id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
+                status: .implausibleBody(reason: reason, hipWidthMeters: hip, statureMeters: stature),
+                usedFallbackBBox: estimate.usedFallbackBBox,
+                camT: estimate.camT,
+                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil,
+                isStaticHoldEstimate: false, motionState: .undetermined))
+            return false
+        }
 
         guard bodyFrame.joints.contains(where: \.isTracked) else {
             resultStore.append(OfflineResultStore.FrameResult(

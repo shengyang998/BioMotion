@@ -4,7 +4,8 @@ import XCTest
 /// Settles two questions and measures the third:
 ///
 /// 1. Does nimble honour `<locked>true</locked>`?  (`testNimbleKeepsLockedCoordinatesAsDOFs`)
-/// 2. What is the exact 171 -> 163 accounting?     (`testDOFCountAccounting`)
+/// 2. What is the exact XML-coordinate -> DOF accounting? (`testDOFCountAccounting`)
+///    It was 171 -> 163; since the 2026-08-06 osim edit it is 169 -> 169.
 /// 3. What does runtime DOF masking cost/buy?      (`testMaskedVsUnmaskedIK`)
 ///
 /// Every number this file prints is written to the test log with an

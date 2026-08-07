@@ -72,7 +72,25 @@ final class NimbleEngine: ObservableObject {
     /// Processed IK output with named DOFs.
     struct IKOutput {
         let jointAngles: [String: Double]  // DOF name → angle in radians
-        let error: Double                   // RMS marker error in meters
+
+        /// TRUE per-marker RMS position error, in METRES. This is the number to
+        /// show a user or compare against a distance.
+        let markerRMSMeters: Double
+
+        /// The solver's LOSS: `Σ wᵢ²‖p_model,i − p_target,i‖²`, in **m²**.
+        /// Kept because loss-domain bounds are compared against it, and named
+        /// so it cannot be printed as a length again.
+        ///
+        /// ⚠️ This field was called `error` and documented as "RMS marker error
+        /// in meters" until 2026-08-07. It is neither. On the dancer fixture the
+        /// loss is 0.0138, which read as metres says "1.4 cm" while the true
+        /// per-marker RMS is 5.5 cm — and the weights are below 1 on exactly the
+        /// markers that fit worst, so the misreading always flatters the fit.
+        /// `ContentView` printed it as `"%.3f m"` with a green cut at 0.05, i.e.
+        /// it showed a *squared* quantity as a length and called anything under
+        /// 0.05 good.
+        let ikLossSquaredMeters: Double
+
         let timestamp: TimeInterval
     }
 
@@ -207,7 +225,9 @@ final class NimbleEngine: ObservableObject {
     private var activationFilters: [String: OneEuroFilter] = [:]
 
     // IK history for recording
-    private(set) var ikHistory: [(timestamp: TimeInterval, angles: [String: Double], error: Double)] = []
+    /// `markerRMSMeters` is the TRUE per-marker RMS in metres, not the solver
+    /// loss. See `IKOutput.ikLossSquaredMeters` for why the distinction matters.
+    private(set) var ikHistory: [(timestamp: TimeInterval, angles: [String: Double], markerRMSMeters: Double)] = []
     private(set) var idHistory: [(timestamp: TimeInterval, jointTorques: [String: Double])] = []
     private var isRecordingResults = false
 
@@ -234,6 +254,34 @@ final class NimbleEngine: ObservableObject {
     // Accessed only from main.
     private var isFrameInFlight = false
     private(set) var droppedFrameCount: Int = 0
+
+    // NO RUNTIME DOF MASK IS INSTALLED HERE, AND THAT IS A MEASURED DECISION.
+    //
+    // STATUS.md next-step 8 asked for `shoulder_rot_{r,l}` (axial humeral
+    // rotation) to be masked, on the premise that they are "structurally
+    // unobservable from one marker per shoulder plus one at the elbow" and that
+    // unobservable coordinates get excited by the solver. Measured 2026-08-07,
+    // the premise is false and the change is a regression:
+    //
+    //   * The marker-Jacobian column for `shoulder_rot_r` has norm
+    //     0.0343 m/rad at the model's neutral pose — small next to
+    //     `shoulder_elv_r` (0.6077) but not null. It moves REJC 16.3 mm and
+    //     RWJC 30.2 mm per radian with the elbow STRAIGHT, because the ulna and
+    //     hand body origins are offset from the humeral long axis, and 0.266
+    //     m/rad at 90° of elbow flexion. It is not one of the 72 identically-
+    //     zero columns in `FullBodyDOFFixture.structurallyUnreachableCoordinates`.
+    //   * Masking it costs the dancer fixture 0.565 cm of marker RMS
+    //     (2.122 -> 2.687) and 0.045 of relative torque residual
+    //     (0.3545 -> 0.3991).
+    //   * At upright standing it buys nothing (the unmasked solver puts 0.04°
+    //     into the coordinate) and it breaks convergence: 0 -> 123 iterations,
+    //     converged YES -> NO, per-solve drift 0 -> 9.3e-5 rad.
+    //
+    // Harness and every number: `ShoulderRotMaskTests` /
+    // `ShoulderRotObservabilityTests.mm`. If a future marker set drops the
+    // wrist markers, or a future model puts the ulna origin on the humeral
+    // axis, re-measure before reviving this — the column norm is the number
+    // that decides it.
 
     /// Load the bundled .osim model.
     func loadBundledModel() {
@@ -421,7 +469,8 @@ final class NimbleEngine: ObservableObject {
             }
             let liveIkOutput = IKOutput(
                 jointAngles: liveAngles,
-                error: ikResult.error,
+                markerRMSMeters: ikResult.markerRMSMeters,
+                ikLossSquaredMeters: ikResult.error,
                 timestamp: frame.timestamp
             )
 
@@ -432,7 +481,7 @@ final class NimbleEngine: ObservableObject {
                 self.publishResults(ik: liveIkOutput, id: nil, muscle: nil,
                                     motion: nil, isStaticHoldEstimate: false,
                                     ikTime: ikTime, idTime: 0, muscleTime: 0,
-                                    ikResidual: ikResult.error, maxTorqueNm: 0,
+                                    ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
                                     groundY: self.bridge.groundHeightY,
                                     generation: frameGeneration)
                 return
@@ -447,7 +496,8 @@ final class NimbleEngine: ObservableObject {
             }
             let smoothedIkOutput = IKOutput(
                 jointAngles: smoothedAngles,
-                error: ikResult.error,
+                markerRMSMeters: ikResult.markerRMSMeters,
+                ikLossSquaredMeters: ikResult.error,
                 timestamp: centerTimestamp
             )
 
@@ -456,6 +506,31 @@ final class NimbleEngine: ObservableObject {
             // the instant ID and the muscle solve are dated at, and the centred
             // window means we already hold 4 samples of "future" around it.
             let motion = self.holdDetector.classify(centeredAt: centerTimestamp)
+
+            // An IK solve that exited on the iteration cap has NOT reached a
+            // fixed point, and the next solve on identical markers will still be
+            // moving. Adversarial testing found a legitimate in-limits pose where
+            // that residual motion is 2.0e-2 rad — twenty times the drift bound
+            // the old known-red test asserted. The Savitzky-Golay stage
+            // differentiates twice (gain ≈ 1/dt² ≈ 3600 at 60 fps), so it becomes
+            // ~73 rad/s² of acceleration the subject never had, and every torque
+            // downstream inherits it.
+            //
+            // `converged` was already reported and nothing read it. Withhold the
+            // dynamics exactly as a moving frame does: the pose is still good
+            // enough to draw and to export, the derivatives are not.
+            guard ikResult.converged else {
+                if self.isRecordingResults {
+                    self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.markerRMSMeters))
+                }
+                self.publishResults(ik: smoothedIkOutput, id: nil, muscle: nil,
+                                    motion: motion, isStaticHoldEstimate: false,
+                                    ikTime: ikTime, idTime: 0, muscleTime: 0,
+                                    ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
+                                    groundY: self.bridge.groundHeightY,
+                                    generation: frameGeneration)
+                return
+            }
 
             guard !gateOnHolds || motion.isHold else {
                 // Measurably moving. Publish the pose and the verdict; publish
@@ -467,12 +542,12 @@ final class NimbleEngine: ObservableObject {
                 // so a .mot export of a moving clip stays complete; it is the
                 // matching .sto that legitimately has a gap.
                 if self.isRecordingResults {
-                    self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.error))
+                    self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.markerRMSMeters))
                 }
                 self.publishResults(ik: smoothedIkOutput, id: nil, muscle: nil,
                                     motion: motion, isStaticHoldEstimate: false,
                                     ikTime: ikTime, idTime: 0, muscleTime: 0,
-                                    ikResidual: ikResult.error, maxTorqueNm: 0,
+                                    ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
                                     groundY: self.bridge.groundHeightY,
                                     generation: frameGeneration)
                 return
@@ -645,7 +720,7 @@ final class NimbleEngine: ObservableObject {
             // Record if enabled (history always uses the SG-centered timestamp
             // so downstream .mot/.sto exports are temporally consistent).
             if self.isRecordingResults {
-                self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.error))
+                self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.markerRMSMeters))
                 if let id = idOutput {
                     self.idHistory.append((centerTimestamp, id.jointTorques))
                 }
@@ -654,7 +729,7 @@ final class NimbleEngine: ObservableObject {
             self.publishResults(ik: smoothedIkOutput, id: idOutput, muscle: muscleOutput,
                                 motion: motion, isStaticHoldEstimate: solveAsStatics,
                                 ikTime: ikTime, idTime: idTime, muscleTime: muscleTime,
-                                ikResidual: ikResult.error, maxTorqueNm: maxTorqueNm,
+                                ikResidual: ikResult.markerRMSMeters, maxTorqueNm: maxTorqueNm,
                                 groundY: self.bridge.groundHeightY,
                                 generation: frameGeneration)
         }

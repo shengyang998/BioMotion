@@ -20,9 +20,26 @@ using namespace dart;
 
 // MARK: - NimbleIKResult
 
+@interface NimbleIKResult ()
+/// Populated by the solver after the fit, so the accuracy fields describe the
+/// pose that was actually returned rather than an intermediate iterate.
+- (void)setMarkerRMSMeters:(double)rms
+      markerMaxErrorMeters:(double)maxErr
+        markerErrorsMeters:(NSDictionary<NSString *, NSNumber *> *)errors
+               markerCount:(NSInteger)count
+                iterations:(NSInteger)iterations
+                 converged:(BOOL)converged;
+@end
+
 @implementation NimbleIKResult {
     NSArray<NSNumber *> *_jointAngles;
     double _error;
+    double _markerRMSMeters;
+    double _markerMaxErrorMeters;
+    NSDictionary<NSString *, NSNumber *> *_markerErrorsMeters;
+    NSInteger _markerCount;
+    NSInteger _iterations;
+    BOOL _converged;
     NSInteger _numDOFs;
     NSArray<NSString *> *_dofNames;
 }
@@ -35,14 +52,40 @@ using namespace dart;
     if (self) {
         _jointAngles = [angles copy];
         _error = error;
+        _markerRMSMeters = NAN;
+        _markerMaxErrorMeters = NAN;
+        _markerErrorsMeters = @{};
+        _markerCount = 0;
+        _iterations = 0;
+        _converged = NO;
         _numDOFs = numDOFs;
         _dofNames = [dofNames copy];
     }
     return self;
 }
 
+- (void)setMarkerRMSMeters:(double)rms
+      markerMaxErrorMeters:(double)maxErr
+        markerErrorsMeters:(NSDictionary<NSString *, NSNumber *> *)errors
+               markerCount:(NSInteger)count
+                iterations:(NSInteger)iterations
+                 converged:(BOOL)converged {
+    _markerRMSMeters = rms;
+    _markerMaxErrorMeters = maxErr;
+    _markerErrorsMeters = [errors copy];
+    _markerCount = count;
+    _iterations = iterations;
+    _converged = converged;
+}
+
 - (NSArray<NSNumber *> *)jointAngles { return _jointAngles; }
 - (double)error { return _error; }
+- (double)markerRMSMeters { return _markerRMSMeters; }
+- (double)markerMaxErrorMeters { return _markerMaxErrorMeters; }
+- (NSDictionary<NSString *, NSNumber *> *)markerErrorsMeters { return _markerErrorsMeters; }
+- (NSInteger)markerCount { return _markerCount; }
+- (NSInteger)iterations { return _iterations; }
+- (BOOL)converged { return _converged; }
 - (NSInteger)numDOFs { return _numDOFs; }
 - (NSArray<NSString *> *)dofNames { return _dofNames; }
 
@@ -145,21 +188,135 @@ static const double kGroundContactOffsetMeters = 0.01;
 // tuned for offline marker-set fitting where the data is clean enough to drive
 // the loss to numerical zero. ARKit joint positions carry 1-3 cm of error, so
 // that bound is unreachable, every restart always runs, and each restart calls
-// getRandomPose() — discarding the previous frame's solution at 171 DOF and
+// getRandomPose() — discarding the previous frame's solution at 169 DOF and
 // injecting joint-angle jitter that the Savitzky-Golay stage differentiates
 // twice (gain ~1/dt^2) straight into the accelerations that drive ID.
 //
-// Per-marker residual we consider "converged" given the ARKit noise floor.
-static const double kIKMarkerToleranceMeters = 0.02;
 // A warm-started solve landing above this per-marker residual is not a
 // refinement of the previous pose at all (subject left and re-entered frame,
-// recovery from a long occlusion), so it is redone cold — once.
+// recovery from a long occlusion), so it is redone from the neutral seed —
+// once.
 static const double kIKWarmStartRejectMeters = 0.15;
-// Restart budget for a cold solve, i.e. the first frame of a session or a
-// rejected warm solve. Matches Nimble's default; the point of the fix is that
-// warm frames don't pay it, not that global search is never useful.
-static const int kIKColdRestarts = 5;
-static const int kIKWarmRestarts = 1;
+
+// --- The app-side solve that replaced math::solveIK / refineIK -------------
+//
+// WHY THE SOLVE IS REIMPLEMENTED HERE RATHER THAN CONFIGURED
+//
+// `math::refineIK` (IKSolver.cpp:291-493) cannot be made to converge from the
+// outside, and the failure is structural, not a matter of tuning:
+//
+//  * It terminates on error-CHANGE (`errorChange > -convergenceThreshold`,
+//    IKSolver.cpp:392) or on step count. It never tests stationarity, and it
+//    never consults `lossLowerBound` — that bound is only read by the enclosing
+//    restart loop. So it stops while `q` is still moving along the flat
+//    directions of the objective, and the next call resets `lr` to 1.0 and
+//    resumes from there. Measured on the dancer fixture: 0.11-0.22 rad of pose
+//    movement per solve on IDENTICAL markers, not decaying over 8 solves.
+//  * Its damping is a FIXED `leastSquaresDamping` (0.01). A fixed damping is
+//    wrong in both directions at once: too large near the solution (it caps the
+//    convergence rate at `1 - sigma^2/(sigma^2+lambda)` per step, which for the
+//    weakly-observed coordinates of a 163-DOF model is glacial) and too small
+//    far from it (steps overshoot, the learning rate halves, and the solver
+//    falls into its gradient-transpose branch at `lr = 5e-5` and gives up).
+//  * `getRandomPose()` draws from `Eigen::VectorXs::Random`, i.e. the
+//    process-global `std::rand()`. Any solve that uses a random restart
+//    therefore depends on how much unrelated work ran earlier in the process.
+//    Measured: the same dancer markers after `resetSessionState` produced
+//    ‖q‖ 4.54 and 6.86 — 1.69 rad apart, 5.5 cm vs 42 cm marker RMS.
+//  * `fitMarkersToWorldPositions` seeds `math::solveIK` with the skeleton's
+//    CURRENT positions (Skeleton.cpp:8001), and the skeleton is shared with
+//    `MomentArmComputer` and the ID path. `resetSessionState` cleared the
+//    bridge's warm-start pose but not the skeleton, so a "cold" solve still
+//    inherited whatever pose the process had last written.
+//
+// The replacement is a Levenberg-Marquardt solve in two phases, run on the free
+// coordinates only (all of them when no DOF mask is active):
+//
+//   phase A   min_q  1/2‖W(f(q) − x*)‖²  +  1/2·mu·‖q − q_seed‖²
+//   phase B   min_q  1/2‖W(f(q) − x*)‖²          (started from phase A's answer)
+//
+// Phase A is the null-space damping E1 measured. It is what decides WHICH of
+// the many poses that fit the markers equally well gets returned: coordinates
+// the markers barely move stay at the seed instead of wandering.
+//
+// Phase B exists because phase A alone has no fixed point. Phase A's stationary
+// point satisfies `Jᵀr = −mu·(q − q_seed)`, so re-entering with `q_seed` set to
+// the previous answer leaves a residual gradient of order `mu·‖Δq‖` and the
+// pose keeps creeping — a proximal-point iteration that only converges
+// geometrically. Phase B drives `Jᵀr` to zero. Its steps lie in the row space
+// of `J`, so it cannot undo phase A's choice in the unobservable directions; it
+// only finishes the fit in the observable ones. The pose that comes back is
+// therefore a stationary point of the marker fit, which means the next call on
+// the same markers exits on its first convergence test having moved nothing.
+// That is the fixed point, and it is a property of the termination test rather
+// than of any tolerance.
+//
+// mu = 1e-3 m²/rad² is E1's value. Read it as an observability threshold: a
+// coordinate is fit-driven when the markers move more than sqrt(mu) = 3.2 cm
+// per radian of it (0.55 mm/degree) and seed-driven below that. Every real limb
+// rotation is far above that line; the spine and rib coordinates ARKit and MHR
+// cannot see are far below it.
+static const double kIKSeedDamping = 1e-3;
+// Convergence tests. Both are absolute and neither is a fit-quality bound.
+//   * step: no free coordinate would move by 1e-9 rad (6e-8 degrees).
+//   * gradient: the BOUND-PROJECTED gradient, ‖Jᵀr + mu(q−q_seed)‖_inf over the
+//     coordinates that are free to move in the descent direction, in m²/rad.
+//     Projecting matters: this model's extreme poses put several coordinates on
+//     their joint limits, and an unprojected gradient there never goes to zero,
+//     so the solver would keep proposing steps the clamp immediately undoes.
+// The fixed-point property holds for ANY value of these, because it comes from
+// the entry test passing on re-entry, not from the tolerance being tight.
+//
+// ⚠️ MEASURED, AND IT REFUTES THE OBVIOUS HYPOTHESIS. A moving subject costs
+// ~78 solver iterations per frame, and the natural guess was that most of them
+// are spent grinding the step from "physically settled" down to machine
+// precision. That guess is wrong: relaxing this tolerance 100x, from 1e-9 to
+// 1e-7 rad, changed the iteration count by 6% (77.8 -> 73.2) and changed the
+// dancer's marker RMS by nothing at all (2.1224 cm either way, all printed
+// digits identical). The iterations are real convergence work, not last-digit
+// polishing, so the tolerance was left at the conservative value. Do not
+// relax it expecting speed.
+//
+// For the record, the headroom that made 1e-7 look safe: the pose is
+// differentiated TWICE by `SavitzkyGolayFilter` (gain ~1/dt² ≈ 3600 at 60 fps),
+// so a residual step of `eps` rad manufactures at most `eps · 3600` rad/s²;
+// `StaticHoldDetector`'s discarded-acceleration budget of 0.08 m/s² is ~0.16
+// rad/s² over a 0.5 m segment, so anything under ~4e-6 rad is invisible. 1e-9
+// is 4400x inside that. The bound is not what costs the iterations.
+static const double kIKStepTolerance = 1e-9;
+static const double kIKGradientTolerance = 1e-12;
+// Levenberg-Marquardt trust-region schedule. lambda multiplies the identity
+// added to JᵀJ: small lambda = Gauss-Newton (fast, may overshoot), large lambda
+// = short gradient steps (always descends). It is adapted from the observed
+// decrease, so it is not a tuned constant in the way nimble's fixed 0.01 is.
+// Both ends are expressed as multiples of `max(diag(JᵀJ))` so they mean the
+// same thing whatever the marker set and model scale are.
+static const double kIKLambdaInitRel = 1e-4;
+static const double kIKLambdaMaxRel  = 1e12;
+static const double kIKLambdaDown = 0.25;
+static const double kIKLambdaUp   = 8.0;
+// Numerical floor on the damping, also relative to `max(diag(JᵀJ))`.
+//
+// This is a conditioning constant, not a regularisation choice: `JᵀJ` is
+// 163x163 with rank at most 3 x 20 markers = 60, so 103 of its eigenvalues are
+// exactly zero. Solving `(JᵀJ + lambda I) d = g` with lambda below the level at
+// which double-precision round-off in `g` (relative ~1e-16) is amplified past
+// the step tolerance produces pure noise in the null space: at lambda = 1e-9
+// that noise is ~1e-7 rad per step, a hundred times the step tolerance, so the
+// solver could never terminate and burned its whole budget ramping lambda up
+// and back down. 1e-6 caps the condition number at 1e6 and the amplified
+// round-off at ~1e-10 rad, below the step tolerance.
+//
+// It is added to the MATRIX only, never to the gradient, so it changes how far
+// each step goes but not where the solver is allowed to stop: stationarity is
+// still exactly `g = 0`.
+static const double kIKConditionFloorRel = 1e-6;
+// Iteration ceiling per phase. Only a cold solve ever approaches it; a warm
+// solve on unchanged markers exits on the first test.
+static const int kIKMaxIterations = 120;
+// Flip to YES to get a per-solve trace on stderr while diagnosing. Compile-time
+// constant so the shipping build carries no logging in the per-frame path.
+static const BOOL kIKTraceSolve = NO;
 
 // Static reliability prior over the ARKit virtual markers, used as IK marker
 // weights. ARKit's positional error is not uniform across the body: the pelvis
@@ -685,7 +842,29 @@ static double markerReliabilityWeight(const std::string& name) {
 
     const int n = (int)_skeleton->getNumDofs();
     _dofMasked.assign((size_t)n, 0);
-    _dofPinnedValues = _skeleton->getPositions();
+
+    // WHERE THE PIN COMES FROM, AND WHY IT IS NOT `getPositions()`
+    //
+    // This used to read `_skeleton->getPositions()`, i.e. "pin each masked
+    // coordinate wherever it currently sits". The skeleton is SHARED across
+    // NimbleBridge instances and with `MomentArmComputer` and the ID path
+    // (`sharedSkeleton`, NimbleBridge.mm:296), so "currently" meant "whatever
+    // pose the last stage in the process happened to write". Measured
+    // 2026-08-07: masking `shoulder_rot_{r,l}` right after solving the dancer
+    // fixture pinned them at 0.6235 / 0.2877 rad — the dancer's own answer —
+    // whereas the same call on a freshly loaded model pins them at 0. That is
+    // the same class of order dependence the cold-start seed was fixed for, and
+    // it makes a masked coordinate's value a function of process history rather
+    // than of the model.
+    //
+    // The pin is now the model's NEUTRAL pose: the all-zero coordinate vector
+    // clamped into the coordinate limits. For the 54 coordinates carrying
+    // <locked>true</locked> this is unchanged behaviour — nimble represents the
+    // lock as a degenerate [lo, lo] range (OpenSimParser.cpp:5923-5943) and the
+    // clamp lands exactly on `lo`, which is what the old special case did by
+    // hand. For an UNLOCKED masked coordinate it is a change: the pin is now a
+    // declared prior (anatomical neutral) instead of an inherited accident.
+    _dofPinnedValues = [self neutralSeedPose];
 
     std::set<std::string> wanted;
     for (NSString *name in dofNamesToMask) {
@@ -697,15 +876,6 @@ static double markerReliabilityWeight(const std::string& name) {
         const std::string dofName = _skeleton->getDof(i)->getName();
         if (wanted.find(dofName) == wanted.end()) continue;
         _dofMasked[(size_t)i] = 1;
-        // Pin at the coordinate's own rest position when the parser gave it a
-        // degenerate [lo, lo] range (that is what nimble does for
-        // <locked>true</locked>: OpenSimParser.cpp:5923-5943), otherwise pin at
-        // wherever the DOF currently sits.
-        const double lo = (double)_skeleton->getDof(i)->getPositionLowerLimit();
-        const double hi = (double)_skeleton->getDof(i)->getPositionUpperLimit();
-        if (std::isfinite(lo) && std::isfinite(hi) && std::abs(hi - lo) < 1e-12) {
-            _dofPinnedValues(i) = (s_t)lo;
-        }
         matched++;
     }
 
@@ -760,70 +930,303 @@ static double markerReliabilityWeight(const std::string& name) {
     return out;
 }
 
-/// Solve IK over only the unmasked DOFs.
+// MARK: - The IK solve
+
+/// The deterministic pose a cold solve starts from: the model's all-zero
+/// coordinate vector, clamped into the coordinate limits.
 ///
-/// Structurally identical to `Skeleton::fitMarkersToWorldPositions`
-/// (Skeleton.cpp:7959-7987) except that the optimisation variable is the
-/// F-vector of free coordinates rather than the full n-vector, and the
-/// Jacobian handed to the solver is the corresponding F-column slice. Masked
-/// coordinates are written from `_dofPinnedValues` on every `setPositions`, so
-/// they are held exactly — not merely clamped at the end of a run, which is
-/// all that nimble's `<locked>` handling achieves.
-- (double)solveMaskedIKWithMarkers:(const std::vector<std::pair<dynamics::BodyNode*, Eigen::Vector3s>>&)markerList
-                   targetPositions:(const Eigen::VectorXs&)targetPositions
-                     markerWeights:(const Eigen::VectorXs&)markerWeights
-                            config:(math::IKConfig)config {
-    const int f = (int)_freeDofIndices.size();
-    const std::vector<int>& freeIdx = _freeDofIndices;
-    Eigen::VectorXs pinned = _dofPinnedValues;
+/// It has to be an explicit pose rather than "whatever the skeleton currently
+/// holds", because the skeleton is shared with `MomentArmComputer` and the ID
+/// path (`sharedSkeleton`), so the previous cold-solve seed was in practice the
+/// last pose any stage in the process had written. That is the second half of
+/// the order-dependence — the first half being `getRandomPose()`'s use of the
+/// process-global `rand()`.
+- (Eigen::VectorXs)neutralSeedPose {
+    const int n = (int)_skeleton->getNumDofs();
+    Eigen::VectorXs saved = _skeleton->getPositions();
+    _skeleton->setPositions(Eigen::VectorXs::Zero(n));
+    _skeleton->clampPositionsToLimits();
+    Eigen::VectorXs neutral = _skeleton->getPositions();
+    _skeleton->setPositions(saved);
+    return neutral;
+}
 
-    auto gather = [&](const Eigen::VectorXs& full) {
-        Eigen::VectorXs sub(f);
-        for (int k = 0; k < f; k++) sub(k) = full(freeIdx[(size_t)k]);
-        return sub;
-    };
-    auto scatter = [&](const Eigen::VectorXs& sub) {
-        Eigen::VectorXs full = pinned;
-        for (int k = 0; k < f; k++) full(freeIdx[(size_t)k]) = sub(k);
-        return full;
-    };
+/// Levenberg-Marquardt marker fit over the free coordinates, optionally with a
+/// quadratic pull toward `seedPose`.
+///
+/// Leaves the skeleton at the solved pose. Returns the weighted loss
+/// `‖W(f(q) − x*)‖²` (same quantity `math::solveIK` returned, so loss-domain
+/// bounds at the call site stay valid), and reports through `outIterations` /
+/// `outConverged` whether it stopped because it reached a stationary point or
+/// because it ran out of budget.
+///
+/// Masked coordinates are written from `_dofPinnedValues` on every
+/// `setPositions`, so they are held exactly rather than merely clamped at the
+/// end of a run, which is all nimble's `<locked>` handling achieves.
+- (double)runLMWithMarkers:(const std::vector<std::pair<dynamics::BodyNode*, Eigen::Vector3s>>&)markerList
+           targetPositions:(const Eigen::VectorXs&)targetPositions
+             markerWeights:(const Eigen::VectorXs&)markerWeights
+                  seedPose:(const Eigen::VectorXs&)seedPose
+               seedDamping:(double)mu
+             outIterations:(int*)outIterations
+              outConverged:(BOOL*)outConverged {
+    const int n = (int)_skeleton->getNumDofs();
+    const int m = (int)markerList.size();
+    const int rows = m * 3;
 
-    Eigen::VectorXs initial = gather(_skeleton->getPositions());
-    Eigen::VectorXs upper = gather(_skeleton->getPositionUpperLimits());
-    Eigen::VectorXs lower = gather(_skeleton->getPositionLowerLimits());
+    // Column selection. Without a DOF mask every coordinate is free, so the
+    // masked and unmasked solves are literally the same code path — a mask can
+    // therefore not change the answer for the coordinates it leaves free.
+    std::vector<int> allIdx;
+    const std::vector<int>* idxPtr = &_freeDofIndices;
+    if (!_dofMaskActive) {
+        allIdx.resize((size_t)n);
+        for (int i = 0; i < n; i++) allIdx[(size_t)i] = i;
+        idxPtr = &allIdx;
+    }
+    const std::vector<int>& idx = *idxPtr;
+    const int f = (int)idx.size();
 
-    auto* skel = _skeleton.get();
+    // Full-length pose that masked coordinates are written back into.
+    Eigen::VectorXs base = seedPose;
+    if (_dofMaskActive) {
+        for (int i = 0; i < n; i++) {
+            if (_dofMasked[(size_t)i]) base(i) = _dofPinnedValues(i);
+        }
+    }
 
-    return (double)math::solveIK(
-        initial,
-        upper,
-        lower,
-        (int)markerList.size() * 3,
-        [skel, scatter, gather](const Eigen::VectorXs pos, bool clamp) {
-            skel->setPositions(scatter(pos));
-            if (clamp) {
-                skel->clampPositionsToLimits();
-                // Re-impose the pin: clampPositionsToLimits() only enforces
-                // [lo, hi], which for an unlocked masked DOF is wide open.
-                skel->setPositions(scatter(gather(skel->getPositions())));
-                return gather(skel->getPositions());
+    if (f == 0) {
+        // Everything is masked. Still put the skeleton at the pose the caller
+        // asked for, so the pose it reads back afterwards is the seed and not
+        // whatever the previous stage left behind.
+        _skeleton->setPositions(base);
+        if (outIterations) *outIterations = 0;
+        if (outConverged) *outConverged = YES;
+        Eigen::VectorXs r0 = _skeleton->getMarkerWorldPositions(markerList) - targetPositions;
+        for (int j = 0; j < m; j++) r0.segment<3>(j * 3) *= markerWeights(j);
+        return (double)r0.squaredNorm();
+    }
+
+    // Writes `x` (free coordinates) into the skeleton, applies the model's own
+    // joint limits, re-imposes the pins, and reads the clamped values back into
+    // `x` so the optimiser's state and the skeleton never disagree.
+    auto applyAndClamp = [&](Eigen::VectorXs& x) {
+        Eigen::VectorXs full = base;
+        for (int k = 0; k < f; k++) full(idx[(size_t)k]) = x(k);
+        _skeleton->setPositions(full);
+        _skeleton->clampPositionsToLimits();
+        Eigen::VectorXs clamped = _skeleton->getPositions();
+        bool moved = false;
+        for (int k = 0; k < f; k++) {
+            if (clamped(idx[(size_t)k]) != x(k)) { x(k) = clamped(idx[(size_t)k]); moved = true; }
+        }
+        if (moved && _dofMaskActive) {
+            // clampPositionsToLimits() enforces [lo, hi], which for an unlocked
+            // masked coordinate is wide open, so the pin has to be reapplied.
+            for (int i = 0; i < n; i++) {
+                if (_dofMasked[(size_t)i]) clamped(i) = _dofPinnedValues(i);
             }
-            return pos;
-        },
-        [skel, targetPositions, markerList, markerWeights, freeIdx, f](
-            Eigen::Ref<Eigen::VectorXs> diff, Eigen::Ref<Eigen::MatrixXs> jac) {
-            diff = skel->getMarkerWorldPositions(markerList) - targetPositions;
-            for (int j = 0; j < markerWeights.size(); j++) {
-                diff.segment<3>(j * 3) *= markerWeights(j);
-            }
+            _skeleton->setPositions(clamped);
+        }
+    };
+
+    // Coordinate limits, gathered onto the free set once.
+    Eigen::VectorXs loAll = _skeleton->getPositionLowerLimits();
+    Eigen::VectorXs hiAll = _skeleton->getPositionUpperLimits();
+    Eigen::VectorXs lo(f), hi(f);
+    for (int k = 0; k < f; k++) {
+        lo(k) = loAll(idx[(size_t)k]);
+        hi(k) = hiAll(idx[(size_t)k]);
+    }
+
+    Eigen::VectorXs xSeed(f);
+    for (int k = 0; k < f; k++) xSeed(k) = seedPose(idx[(size_t)k]);
+    Eigen::VectorXs x = xSeed;
+    applyAndClamp(x);
+
+    Eigen::VectorXs r(rows), rTry(rows);
+    auto residualAtCurrentPose = [&](Eigen::VectorXs& out) {
+        out = _skeleton->getMarkerWorldPositions(markerList) - targetPositions;
+        for (int j = 0; j < m; j++) out.segment<3>(j * 3) *= markerWeights(j);
+    };
+    residualAtCurrentPose(r);
+
+    auto objective = [&](const Eigen::VectorXs& res, const Eigen::VectorXs& xx) -> double {
+        double v = 0.5 * (double)res.squaredNorm();
+        if (mu > 0) v += 0.5 * mu * (double)(xx - xSeed).squaredNorm();
+        return v;
+    };
+    double F = objective(r, x);
+
+    Eigen::MatrixXs J(rows, f);
+    Eigen::MatrixXs H(f, f);
+    Eigen::VectorXs g(f), delta(f), xTry(f);
+    std::vector<int> inactive;
+    inactive.reserve((size_t)f);
+
+    double lambda = 0.0;   // set from the first Jacobian's scale
+    double lambdaMax = 0.0;
+    double conditionFloor = 0.0;
+    BOOL lambdaInitialised = NO;
+    int iterations = 0;
+    BOOL converged = NO;
+    const char* stopReason = "iteration-cap";
+
+    for (int it = 0; it < kIKMaxIterations; it++) {
+        // The Jacobian is scaled by the SAME marker weights as the residual.
+        // Nimble scaled only the residual (Skeleton.cpp:7979-7986), which makes
+        // its step the minimiser of ‖J·d − W·r‖ rather than the weighted
+        // Gauss-Newton direction — a descent direction for no objective the
+        // solver is measuring.
+        {
             Eigen::MatrixXs fullJac =
-                skel->getMarkerWorldPositionsJacobianWrtJointPositions(markerList);
-            for (int k = 0; k < f; k++) jac.col(k) = fullJac.col(freeIdx[(size_t)k]);
-        },
-        [skel, gather](Eigen::Ref<Eigen::VectorXs> val) {
-            val = gather(skel->getRandomPose());
-        },
-        config);
+                _skeleton->getMarkerWorldPositionsJacobianWrtJointPositions(markerList);
+            for (int k = 0; k < f; k++) J.col(k) = fullJac.col(idx[(size_t)k]);
+            for (int j = 0; j < m; j++) J.middleRows(j * 3, 3) *= markerWeights(j);
+        }
+        g.noalias() = J.transpose() * r;
+        if (mu > 0) g += (s_t)mu * (x - xSeed);
+
+        if (!lambdaInitialised) {
+            // `J.colwise().squaredNorm()` IS `diag(JᵀJ)`, computed without
+            // forming the full matrix so the convergence test below can run
+            // before any O(f³) work. A warm solve on unchanged markers exits
+            // there, so it costs one Jacobian per phase and no factorisation.
+            const double scale =
+                std::max(1e-12, (double)J.colwise().squaredNorm().maxCoeff() + mu);
+            lambda = kIKLambdaInitRel * scale;
+            lambdaMax = kIKLambdaMaxRel * scale;
+            conditionFloor = kIKConditionFloorRel * scale;
+            lambdaInitialised = YES;
+        }
+
+        // Active set: a coordinate sitting on a joint limit whose gradient
+        // wants to push it further out cannot move, so it is excluded from both
+        // the step and the convergence test. Without this the solver spends its
+        // whole budget proposing steps that `clampPositionsToLimits` undoes,
+        // which is exactly what an extreme pose like the dancer's produces.
+        // The descent step is `x − A⁻¹g` with `A` positive definite, so a
+        // positive `g` component pushes `x` down.
+        inactive.clear();
+        double projGradInf = 0.0;
+        for (int k = 0; k < f; k++) {
+            const double gk = (double)g(k);
+            const bool atLower = std::isfinite((double)lo(k)) && (double)x(k) <= (double)lo(k);
+            const bool atUpper = std::isfinite((double)hi(k)) && (double)x(k) >= (double)hi(k);
+            if ((atLower && gk > 0) || (atUpper && gk < 0)) continue;   // blocked
+            inactive.push_back(k);
+            projGradInf = std::max(projGradInf, std::abs(gk));
+        }
+
+        if (inactive.empty() || projGradInf <= kIKGradientTolerance) {
+            converged = YES;
+            stopReason = "gradient";
+            break;
+        }
+
+        H.noalias() = J.transpose() * J;
+        if (mu > 0) H.diagonal().array() += (s_t)mu;
+
+        const int nf = (int)inactive.size();
+        Eigen::MatrixXs Ared(nf, nf), Adamped(nf, nf);
+        Eigen::VectorXs gred(nf), dred(nf);
+        for (int a = 0; a < nf; a++) {
+            gred(a) = g(inactive[(size_t)a]);
+            for (int b = 0; b < nf; b++) {
+                Ared(a, b) = H(inactive[(size_t)a], inactive[(size_t)b]);
+            }
+        }
+
+        // Trust-region loop: shrink the step (raise lambda) until it decreases
+        // the objective. This is what nimble's fixed `leastSquaresDamping`
+        // cannot do, and why its step count is spent halving a learning rate
+        // and then falling back to the gradient transpose.
+        BOOL accepted = NO;
+        BOOL tinyStep = NO;
+        while (true) {
+            Adamped = Ared;
+            Adamped.diagonal().array() += (s_t)(lambda + conditionFloor);
+            dred = Adamped.ldlt().solve(gred);
+            if (!dred.allFinite()) {
+                lambda = std::max(lambda, conditionFloor) * kIKLambdaUp;
+                if (lambda > lambdaMax) break;
+                continue;
+            }
+            delta.setZero();
+            for (int a = 0; a < nf; a++) delta(inactive[(size_t)a]) = dred(a);
+
+            if ((double)delta.cwiseAbs().maxCoeff() <= kIKStepTolerance) {
+                tinyStep = YES;
+                break;
+            }
+            xTry = x - delta;
+            applyAndClamp(xTry);
+            residualAtCurrentPose(rTry);
+            const double FTry = objective(rTry, xTry);
+            if (FTry < F) {
+                x = xTry;
+                r = rTry;
+                F = FTry;
+                lambda *= kIKLambdaDown;
+                accepted = YES;
+                break;
+            }
+            lambda = std::max(lambda, conditionFloor) * kIKLambdaUp;
+            if (lambda > lambdaMax) break;
+        }
+
+        iterations++;
+
+        if (tinyStep) { converged = YES; stopReason = "step"; break; }
+        if (!accepted) {
+            // No damping up to lambdaMax produced a decrease. That is a
+            // stationary point to the precision this arithmetic supports.
+            converged = YES;
+            stopReason = "no-decrease";
+            break;
+        }
+    }
+
+    applyAndClamp(x);
+    residualAtCurrentPose(r);
+
+    if (kIKTraceSolve) {
+        NSLog(@"IKTRACE mu=%g iters=%d stop=%s loss=%.9g", mu, iterations, stopReason,
+              (double)r.squaredNorm());
+    }
+    if (outIterations) *outIterations = iterations;
+    if (outConverged) *outConverged = converged;
+    return (double)r.squaredNorm();
+}
+
+/// Phase A (seed-damped) followed by phase B (undamped polish). See the note by
+/// `kIKSeedDamping` for why both are needed.
+- (double)solveIKFromSeed:(const Eigen::VectorXs&)seedPose
+                  markers:(const std::vector<std::pair<dynamics::BodyNode*, Eigen::Vector3s>>&)markerList
+          targetPositions:(const Eigen::VectorXs&)targetPositions
+            markerWeights:(const Eigen::VectorXs&)markerWeights
+            outIterations:(int*)outIterations
+             outConverged:(BOOL*)outConverged {
+    int itA = 0, itB = 0;
+    BOOL convA = NO, convB = NO;
+    [self runLMWithMarkers:markerList
+           targetPositions:targetPositions
+             markerWeights:markerWeights
+                  seedPose:seedPose
+               seedDamping:kIKSeedDamping
+             outIterations:&itA
+              outConverged:&convA];
+    Eigen::VectorXs afterA = _skeleton->getPositions();
+    double loss = [self runLMWithMarkers:markerList
+                         targetPositions:targetPositions
+                           markerWeights:markerWeights
+                                seedPose:afterA
+                             seedDamping:0.0
+                           outIterations:&itB
+                            outConverged:&convB];
+    if (outIterations) *outIterations = itA + itB;
+    if (outConverged) *outConverged = (convA && convB);
+    return loss;
 }
 
 - (nullable NimbleIKResult *)solveIKWithMarkerPositions:(NSArray<NSNumber *> *)markerPositions
@@ -835,6 +1238,7 @@ static double markerReliabilityWeight(const std::string& name) {
     std::vector<std::pair<dynamics::BodyNode*, Eigen::Vector3s>> markerList;
     std::vector<Eigen::Vector3s> targetList;
     std::vector<double> weightList;
+    NSMutableArray<NSString *> *resolvedNames = [NSMutableArray array];
 
     for (NSUInteger i = 0; i < markerNames.count; i++) {
         std::string name = std::string([markerNames[i] UTF8String]);
@@ -844,6 +1248,7 @@ static double markerReliabilityWeight(const std::string& name) {
             continue;  // Skip unknown markers entirely — don't pass nullptr to Nimble
         }
 
+        [resolvedNames addObject:markerNames[i]];
         markerList.push_back(it->second);
         targetList.push_back(Eigen::Vector3s(
             [markerPositions[i * 3 + 0] doubleValue],
@@ -865,15 +1270,15 @@ static double markerReliabilityWeight(const std::string& name) {
 
     // Reliability weights, renormalised to RMS 1. Only the ratios between
     // weights affect the solution; the common factor is fixed so that the loss
-    // Nimble returns (a weighted sum of squared marker residuals) keeps the
-    // same magnitude as the previous all-ones weighting, and so the loss bound
-    // computed below stays valid.
+    // keeps the same magnitude as an all-ones weighting, and so the loss bounds
+    // computed below stay valid.
     //
-    // Nimble scales the residual by these weights but not the Jacobian, so the
-    // damped-least-squares step is only approximately the weighted Gauss-Newton
-    // direction. That is why the spread is kept mild (0.4-1.0): the solver's
-    // line search reverts any step that increases the loss, but a wide spread
-    // would make it revert often and converge slowly.
+    // The solver scales the Jacobian by these same weights, so the step really
+    // is the weighted Gauss-Newton direction. (Nimble scaled only the residual,
+    // Skeleton.cpp:7979-7986, which is why the previous implementation had to
+    // keep the spread mild — a wide spread produced steps that were not descent
+    // directions for anything it was measuring, and its line search reverted
+    // them.)
     Eigen::VectorXs weights(markerList.size());
     for (size_t i = 0; i < weightList.size(); i++) {
         weights((int)i) = (s_t)weightList[i];
@@ -883,52 +1288,48 @@ static double markerReliabilityWeight(const std::string& name) {
         weights *= sqrt((s_t)markerList.size() / weightSumSq);
     }
 
-    // Nimble's loss is the squared norm of the weighted residual stack, so a
+    // The loss is the squared norm of the weighted residual stack, so a
     // per-marker tolerance `t` corresponds to a loss of sum_i(w_i^2 * t^2),
     // which after the RMS-1 renormalisation is exactly numMarkers * t^2.
-    auto lossBoundForResidual = [&](double residualMeters) -> s_t {
-        return (s_t)((double)markerList.size() * residualMeters * residualMeters);
+    auto lossBoundForResidual = [&](double residualMeters) -> double {
+        return (double)markerList.size() * residualMeters * residualMeters;
     };
 
     try {
-        math::IKConfig config;
-        config.setLossLowerBound(lossBoundForResidual(kIKMarkerToleranceMeters));
+        // Seed: the previous frame's pose when there is one, so the solve
+        // refines it and joint angles stay temporally continuous; otherwise the
+        // model's neutral pose. Both are written explicitly — never inherited
+        // from the shared skeleton, which ID and the moment-arm computer also
+        // write to.
+        const BOOL warmStarted =
+            _hasLastIKPose && _lastIKPose.size() == (int)_skeleton->getNumDofs();
+        Eigen::VectorXs seed = warmStarted ? _lastIKPose : [self neutralSeedPose];
 
-        // Warm start: seed the solve with the previous frame's pose so the
-        // solver refines it instead of re-searching from a random pose. This is
-        // what keeps joint angles temporally continuous frame-to-frame; the
-        // pose is written explicitly because the shared skeleton may have been
-        // moved by ID or the moment-arm computer since the last IK.
-        BOOL warmStarted = NO;
-        if (_hasLastIKPose && _lastIKPose.size() == (int)_skeleton->getNumDofs()) {
-            _skeleton->setPositions(_lastIKPose);
-            config.setMaxRestarts(kIKWarmRestarts);
-            warmStarted = YES;
-        } else {
-            config.setMaxRestarts(kIKColdRestarts);
-        }
-
-        double error = _dofMaskActive
-            ? [self solveMaskedIKWithMarkers:markerList
+        int iterations = 0;
+        BOOL converged = NO;
+        double error = [self solveIKFromSeed:seed
+                                     markers:markerList
                              targetPositions:targetPositions
                                markerWeights:weights
-                                      config:config]
-            : _skeleton->fitMarkersToWorldPositions(
-                  markerList, targetPositions, weights, false, config);
+                               outIterations:&iterations
+                                outConverged:&converged];
 
         if (warmStarted && error > lossBoundForResidual(kIKWarmStartRejectMeters)) {
-            // The previous pose was not a usable seed — fall back to a cold
-            // search for this one frame.
-            math::IKConfig coldConfig;
-            coldConfig.setLossLowerBound(lossBoundForResidual(kIKMarkerToleranceMeters));
-            coldConfig.setMaxRestarts(kIKColdRestarts);
-            error = _dofMaskActive
-                ? [self solveMaskedIKWithMarkers:markerList
-                                 targetPositions:targetPositions
-                                   markerWeights:weights
-                                          config:coldConfig]
-                : _skeleton->fitMarkersToWorldPositions(
-                      markerList, targetPositions, weights, false, coldConfig);
+            // The previous pose was not a usable seed at all — the subject left
+            // and re-entered frame, or came back from a long occlusion. Redo it
+            // from the neutral pose, once. This is a genuine re-search, not a
+            // lottery: the seed is deterministic, so the recovery pose is too.
+            int coldIterations = 0;
+            BOOL coldConverged = NO;
+            double coldError = [self solveIKFromSeed:[self neutralSeedPose]
+                                             markers:markerList
+                                     targetPositions:targetPositions
+                                       markerWeights:weights
+                                       outIterations:&coldIterations
+                                        outConverged:&coldConverged];
+            error = coldError;
+            iterations += coldIterations;
+            converged = coldConverged;
         }
 
         // Extract joint angles
@@ -940,10 +1341,30 @@ static double markerReliabilityWeight(const std::string& name) {
             [angles addObject:@(positions(i))];
         }
 
-        return [[NimbleIKResult alloc] initWithAngles:angles
-                                                error:error
-                                              numDOFs:positions.size()
-                                             dofNames:self.dofNames];
+        NimbleIKResult *result =
+            [[NimbleIKResult alloc] initWithAngles:angles
+                                             error:error
+                                           numDOFs:positions.size()
+                                          dofNames:self.dofNames];
+        // Accuracy readback, unweighted, from the pose actually returned.
+        Eigen::VectorXs residual =
+            _skeleton->getMarkerWorldPositions(markerList) - targetPositions;
+        double sumSq = 0.0, maxSq = 0.0;
+        NSMutableDictionary<NSString *, NSNumber *> *perMarker =
+            [NSMutableDictionary dictionaryWithCapacity:markerList.size()];
+        for (size_t i = 0; i < markerList.size(); i++) {
+            const double d2 = (double)residual.segment<3>((int)i * 3).squaredNorm();
+            sumSq += d2;
+            maxSq = std::max(maxSq, d2);
+            perMarker[resolvedNames[i]] = @(std::sqrt(d2));
+        }
+        [result setMarkerRMSMeters:std::sqrt(sumSq / (double)markerList.size())
+              markerMaxErrorMeters:std::sqrt(maxSq)
+                markerErrorsMeters:perMarker
+                       markerCount:(NSInteger)markerList.size()
+                        iterations:(NSInteger)iterations
+                         converged:converged];
+        return result;
     } catch (const std::exception& e) {
         NSLog(@"NimbleBridge: IK exception: %s", e.what());
         return nil;

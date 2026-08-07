@@ -100,7 +100,7 @@ struct SessionChartsView: View {
             SummaryStat(label: "Frames", value: "\(recorder.recordedFrameCount)")
             SummaryStat(label: "FPS", value: String(format: "%.0f", recorder.averageFPS))
             if !nimble.ikHistory.isEmpty {
-                let avgError = nimble.ikHistory.map(\.error).reduce(0, +) / Double(nimble.ikHistory.count)
+                let avgError = nimble.ikHistory.map(\.markerRMSMeters).reduce(0, +) / Double(nimble.ikHistory.count)
                 SummaryStat(label: "Avg IK Err", value: String(format: "%.1f mm", avgError * 1000))
             }
         }
@@ -184,7 +184,7 @@ struct SessionChartsView: View {
             let errorData = nimble.ikHistory.map { entry in
                 ChartPoint(
                     time: entry.timestamp - startTime,
-                    value: entry.error * 1000  // Convert to mm
+                    value: entry.markerRMSMeters * 1000  // metres -> mm
                 )
             }
 

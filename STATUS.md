@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-06.
+Last updated: 2026-08-07.
 
 ---
 
@@ -13,16 +13,24 @@ biggest links were **not** where the effort had been going.
 - Five implementation defects were found, fixed, and pinned with tests. The test target
   **did not even compile** before this work, so the project had no regression net at all.
 - The dominant remaining error source is **not** the muscle solver: it is that IK solves
-  **163 degrees of freedom from ~40 scalar observations**. ~127 of those DOFs are spine and rib
-  coordinates that ARKit cannot see.
+  **169 degrees of freedom from ~60 scalar observations** (20 markers × 3). ~127 of those DOFs are
+  spine and rib coordinates no single-camera pose source can see.
 - ~~The shipped model's **shoulders are welded** (zero shoulder DOFs), so upper-limb muscle output
   is currently meaningless regardless of anything else.~~ **Fixed 2026-08-06** — see
   [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
 - A **commercial licence blocker** was found on the upper limb (MoBL-ARMS is non-commercial).
   A BSD-3 alternative exists.
+- **IK is now a fixed point** (2026-08-07). Repeated solves on identical markers move exactly 0 rad,
+  the answer no longer depends on how many solves preceded it, and the dancer fixture's true marker
+  RMS went 5.4913 → 2.1224 cm. See
+  [IK convergence](#ik-convergence-the-solver-is-now-a-fixed-point-2026-08-07).
+- A **kinematics-only findings layer** ships (forward head, rounded shoulders, trunk lean, …). It
+  carries **no clinical threshold and no verdict** and suppresses any finding whose measurement axis
+  points into depth. See [Posture findings](#posture-findings-a-kinematics-only-layer-2026-08-07).
 
-Current build: **87 / 88 tests pass** on the iOS simulator. One test is deliberately left red —
-it surfaces a real defect (see [Known-red test](#known-red-test)).
+There is **no known-red test any more**. `testRepeatedIKOnIdenticalMarkersIsStable` passes as
+written; the tripwire that replaced its role is described under
+[Known-red test](#known-red-test).
 
 ---
 
@@ -46,9 +54,11 @@ Do not re-litigate these; they are settled inputs.
 Three symptoms that looked unrelated — IK drifting frame to frame, ~200 ms/frame solve time, and
 jittery muscle activations — are one root cause.
 
-1. **Observability.** ARKit gives ~19 joints; the app registers ~12–14 virtual markers ≈ 36–42
-   scalar observations. `FullBody.osim` parses to **163 DOFs**. At least ~121 DOFs sit in the exact
-   null space of the marker Jacobian. Solutions there are artifacts of the warm start, not
+1. **Observability.** 20 virtual markers = 60 scalar observations against **169 DOFs**
+   (was "163 DOFs / ~12–14 markers" when this was written). The marker Jacobian is 60×169 with rank
+   ≤ 60; **72 of its columns are identically zero**
+   (`FullBodyDOFFixture.structurallyUnreachableCoordinates`), and the rest of the null space is
+   near-singular rather than exact. Solutions there are artifacts of the warm start, not
    measurements.
 2. **Amplification.** Those unconstrained DOFs wander; the wander is differentiated twice by the
    Savitzky–Golay filter (gain ≈ 1/dt² ≈ 3600 at 60 fps) to produce `ddq`.
@@ -58,6 +68,19 @@ jittery muscle activations — are one root cause.
    bilinearly rather than additively.
 
 **Implication:** fixing things downstream of IK has limited headroom. The leverage is at IK and above.
+
+**2026-08-07 — link 1 is now bounded, and the chain is broken at link 2.** The rank deficiency has
+not gone anywhere: 72 columns are still exactly zero. What changed is that the solver no longer
+*moves* in that null space. Phase A damps toward the seed and phase B's steps lie in the row space
+of `J`, so all 72 unreachable coordinates come back at exactly their seed value and repeated solves
+on identical markers move exactly 0 rad. With no wander there is nothing for the filter to
+differentiate — measured on the dancer fixture, per-solve drift 0.0 and the static-vs-dynamic peak
+torque identical to 16 significant figures.
+
+⚠️ **This is a stability result, not an accuracy result.** E1 already established that shrinking the
+null space buys smoothness, not spinal truth, and that no marker set beats the null model on
+per-intervertebral angles. Do not read "IK is a fixed point" as "the spine coordinates mean
+something". See [the spine-claim constraint](#the-constraint-this-puts-on-product-claims).
 
 ---
 
@@ -80,20 +103,52 @@ optimizer bound by colormap appearance; dead `maxMuscleForceAtState` and the leg
 
 ### Test suite
 
-| | Before | After |
-|---|---|---|
-| Test target | **did not compile** (`MomentArmTests.swift:124` used a stale signature) | builds |
-| Tests | 0 runnable | 88 total, **87 pass** |
+| | 2026-08-06 start | after Phase 0 | 2026-08-07 |
+|---|---|---|---|
+| Test target | **did not compile** (`MomentArmTests.swift:124` used a stale signature) | builds | builds |
+| Tests | 0 runnable | 88 total, 87 pass | **197 total, 197 pass, 0 crash-restarts** |
+
+`E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
+fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
+coordinates against a 169-coordinate model, a leftover from the 2026-08-06 osim edit. See
+next-step 14.
 
 Run with:
 ```bash
 # XcodeBuildMCP session defaults: project BioMotion.xcodeproj, scheme BioMotion,
 # simulator "iPhone 17" (F85FB2DA-66AD-428D-A4EC-1390A42D9FCB), Debug
 xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
-  -destination 'platform=iOS Simulator,name=iPhone 17' test
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -skip-testing:BioMotionTests/E1MarkerSetComparisonTests test
 ```
 
+Per class (2026-08-07): NimbleBridgeTests 22 · PostureFindingsTests 26 · IKConvergenceTests 13 ·
+TRCExporterTests 14 · StaticHoldTests 13 · MomentArmTests / CalibrationTests / MuscleSolverTests 11 ·
+BodyPlausibilityTests 11 · MotionRecorderTests 10 · BodyJointTests / DOFMaskTests 9 ·
+StaticEquilibriumBenchmarkTests 7 · IKDriftDiagnosticsTests / MuscleQPUnitsTests 6 ·
+ShoulderRotMaskTests 5 · ShoulderRotObservabilityTests 3 · OfflineMuscleChainTests /
+OfflineOrchestrationTests 1.
+
 ### Known-red test
+
+**RESOLVED 2026-08-07 — there is no known-red test.** `testRepeatedIKOnIdenticalMarkersIsStable`
+passes against its ORIGINAL 1e-3 rad bound, unedited, at 0.0 measured drift. Do not re-add a
+"leave it red" instruction. The entire section below is kept because its *diagnosis* is what the
+fix was built from, and because two of its warnings are still live: this test must never be used as
+a score (reasons 1–3), and its 31× run-to-run swing is what "not a stable measurement" looks like.
+
+One assertion elsewhere flipped as a consequence, and it was a **pre-registered tripwire doing its
+job**: `StaticHoldTests` asserted `maxConsecutive > 0` with the message *"if IK became reproducible
+on identical markers, the artifact this feature removes is gone and the numbers below must be
+re-derived"*. IK did become reproducible. The assertion is now inverted (`== 0`, exactly), the
+numbers are re-derived in that method's header, and the consequence is recorded rather than hidden:
+**static-hold gating is a measurable no-op on a hold** — `dynamicA = dynamicB = static =
+84.10433817558118 Nm`, control delta 0, treatment delta 0. Its remaining justification is entirely
+the other branch, refusing to publish muscle magnitudes for a MOVING frame.
+
+---
+
+The original diagnosis, kept for its reasoning:
 
 `NimbleBridgeTests.testRepeatedIKOnIdenticalMarkersIsStable` — **leave it red.** It is not a stale
 test; it surfaces a real defect: **IK has no null-space damping toward the seed pose.**
@@ -170,7 +225,11 @@ verified stock MIT** and is not affected.
 
 `BioMotion/Resources/FullBody.osim` (production, `cyclistFullBodyMuscleActuated`):
 
-- 171 XML coordinates → **163 DOFs parsed**; ~127 are spine + rib.
+- **169 XML coordinates → 169 DOFs parsed**; ~127 are spine + rib. It was 171 → 163 before the
+  2026-08-06 `tools/osim_fixes` edit: the patellofemoral weld removed the two `knee_angle_*_beta`
+  coordinates from the XML, and the shoulder axis unit-snap stopped nimble dropping 8 (2
+  patellofemoral + 6 shoulder). Nothing is dropped any more.
+  ⚠️ `CLAUDE.md` said 171 until 2026-08-07; anything quoting 171 or 163 predates the osim edit.
 - 520 muscles = 422 `Thelen2003Muscle` + 98 `Millard2012EquilibriumMuscle`.
 - `PathPoint` 1444 · `ConditionalPathPoint` 418 · `MovingPathPoint` 4 · `PathWrap` 76 ·
   `WrapCylinder` 60 · `WrapEllipsoid` 9 · 15 `WeldJoint` · 53 `CustomJoint`.
@@ -702,18 +761,28 @@ moves them and ID hands their demand to muscle. The moment-arm cut went 1e-10 �
 behavioural change: the per-coordinate maximum is bimodal with a **nine-decade gap**, so any cut in
 `[1e-11, 1e-4]` selects the same 159 — structural, not a tuned threshold.
 
-| pose | relative torque residual |
-|---|---|
-| neutral standing | **0.2008** |
-| 4° forward lean | **0.1526** |
-| dancer fixture | 0.6406 |
+| pose | relative torque residual, 2026-08-07 | as of 2026-08-06 |
+|---|---|---|
+| neutral standing | **0.2008** | 0.2008 |
+| 4° forward lean | **0.1526** | 0.1526 |
+| dancer fixture | **0.3545** | 0.6406 |
 
-Standing is under the 0.3 line `MuscleSolver.h` documents. **The dancer is not, and no row cut moves
-it below ~0.60 — because that pose is wrong before the muscle solver sees it.** Its IK misses its own
-markers by 3.5 cm RMS (the standing poses fit to 0.1 mm) and it lands on two different solutions run
-to run, which is the defect `testRepeatedIKOnIdenticalMarkersIsStable` is already red for. The
-muscle solver is faithfully reporting that it cannot balance a pose that is itself wrong.
-**The dancer fixture is not a usable benchmark for the muscle stage until IK is fixed.**
+Standing is under the 0.3 line `MuscleSolver.h` documents; the two standing figures did not move
+because their IK was already fitting to 0.1 mm.
+
+**The dancer's 0.6406 → 0.3545 is the IK fix, not a muscle-side change.** The 2026-08-06 text said
+"no row cut moves it below ~0.60 — because that pose is wrong before the muscle solver sees it", and
+that diagnosis was right: the same fixture now solves to 2.1224 cm true marker RMS instead of
+5.4913, reproducibly, and the muscle residual almost halved with the muscle solver untouched. Nothing
+in `MuscleSolver` or `MomentArmComputer` changed between those two columns.
+
+⚠️ The dancer still does not clear 0.3, and the sentence **"the dancer fixture is not a usable
+benchmark for the muscle stage until IK is fixed"** is only half retired. IK is fixed as a solver —
+it is a fixed point, order-independent, and lands on the same answer every run — but the fixture's
+remaining 2.12 cm is a marker DEFINITION error (PELVIS is registered at the `pelvis` body origin,
+≈ 9.7 cm from the pose source's mid-hip point; per-marker PELVIS 5.76 cm, LSJC 3.73, RHJC 3.47).
+Until that is resolved the pose handed to ID is still not the subject's pose, and 0.3545 is a
+faithful report of that. The two standing poses remain the muscle stage's only clean benchmarks.
 
 ⚠️ **Saturated-muscle count is not a valid metric — stop using it.** Across a λ sweep at *fixed*
 inputs it reads 19, 11, 22, 18, 20 with no trend, and at-floor reads 219, 189, 344, 170, 282. OSQP
@@ -789,7 +858,205 @@ T-pose calibration **is** skippable, but only via `segmentScaleMarkers`, which r
 straight-limb marker set from pose-invariant chain sums. Handing the bridge raw posed markers fails
 the `[0.7, 1.4]` clamp on 6 of 6 test predictions (a seated yoga pose gives lower 0.351).
 The method cannot rescue a bad prediction: a small, heavily occluded subject produced a degenerate
-0.070 m hip width. A plausibility gate on hip width and stature is recommended and **not yet built**.
+0.070 m hip width. ~~A plausibility gate on hip width and stature is recommended and **not yet
+built**.~~ **Built 2026-08-07** — see [Body-size gate](#body-size-gate-2026-08-07).
+
+---
+
+## IK convergence: the solver is now a fixed point (2026-08-07)
+
+App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
+`math::solveIK` / `math::refineIK`; it runs its own bound-projected Levenberg-Marquardt at the call
+site. **The vendored nimble tree is byte-identical** (`git status nimblephysics/ osqp/` = 0 lines).
+
+Six distinct defects, each with its own mechanism:
+
+| | Defect | Fix |
+|---|---|---|
+| 1 | `refineIK` stops on error-CHANGE, never on stationarity, then the next call resets `lr` to 1.0 and resumes | bound-projected-gradient test + step-norm test. The pose returned IS a stationary point, so the next call on the same markers passes its FIRST test having moved nothing — the fixed point is a property of the termination rule, not of a tolerance |
+| 2 | `leastSquaresDamping` is a fixed 0.01 | trust-region λ adapted from the observed decrease, expressed as a multiple of `max(diag(JᵀJ))` so it is scale-free, plus a `1e-6·max(diag)` conditioning floor. `JᵀJ` is 169×169 with rank ≤ 60; below that floor, double-precision round-off in the gradient is amplified into ~1e-7 rad of null-space noise per step. At a 1e-9 floor the dancer burned all 120 iterations of BOTH phases and still reported converged=NO |
+| 3 | `clampPositionsToLimits` inside the objective means a coordinate on its limit keeps generating steps the clamp undoes, so the unprojected gradient never reaches zero | active set — a coordinate at a bound whose gradient pushes it further out leaves both the step and the convergence test. This is what turned the dancer from converged=NO/240 iterations into converged=YES/177 |
+| 4 | no null-space damping toward the seed | two phases. A: `‖W(f(q)−x*)‖²/2 + μ‖q−q_seed‖²/2`, μ = 1e-3 — chooses WHICH of the equally-good poses comes back. B: re-run with μ = 0 — drives `Jᵀr` to 0 so a fixed point exists at all. B's steps lie in the row space of `J`, so they cannot undo A where `J` has a zero column. Verified: all 72 coordinates in `FullBodyDOFFixture.structurallyUnreachableCoordinates` return at EXACTLY their seed value, across two poses |
+| 5 | random restarts drew from process-global `std::rand()`, and `fitMarkersToWorldPositions` seeded from the skeleton's CURRENT positions (`Skeleton.cpp:8001`) — which the shared skeleton meant was whatever ID or `MomentArmComputer` last wrote | restarts removed; the cold seed is an explicit `neutralSeedPose` |
+| 6 | nimble scaled the residual by the marker reliability weights but NOT the Jacobian (`Skeleton.cpp:7979-7986`), so its step minimised `‖J·d − W·r‖` — a descent direction for no objective it was measuring | both are scaled |
+
+Measured before/after, same fixture, same machine:
+
+| | before | after |
+|---|---|---|
+| dancer marker RMS (true, unweighted) | 5.4913 cm (max 19.46) | **2.1224 cm** (max 5.76), converged=YES in 177 iters |
+| dancer, on the old weighted `sqrt(loss/N)` convention | 2.6224 cm | 2.3951 cm |
+| dancer drift over 8 identical warm solves | 0.117–0.267 rad, no decay | **exactly 0.0** for 7 consecutive |
+| order dependence (same markers, unequal preceding work) | 1.689 rad apart, RMS 5.49 vs 42.17 cm | **exactly 0.0**, identical `‖q‖` 5.746453 |
+| continuity under a 2 mm rigid marker shift | 7.43e-2 rad | exactly 2.000e-3 — a pure root translation, the correct answer |
+| standing benchmark poses | 0.10–0.14 mm | **0.032 mm** |
+| Rajagopal2016 planar, 400 solves | ~6e-3 rad/solve, never stopping | 2.69e-9 rad cumulative, 0.0 per solve |
+| dancer muscle relative torque residual | 0.6406 | **0.3545** |
+
+The unweighted RMS improved 2.6× because the old solver parked its error on the down-weighted
+markers.
+
+⚠️ **Cost regression on MOVING input, measured and not resolved.** A warm solve on identical
+markers went 409.6 → 49.0 ms (it exits on its first convergence test), but a moving subject
+(~6 mm/frame) costs **1567 ms/frame at 77.8 iterations** versus the old solver's ~410 ms — the old
+one ran a fixed budget and never terminated on convergence, which was the defect. Caveats: Debug
+simulator build, where the 169×169 `JᵀJ` and its LDLT are compiled at `-O0` while nimble's
+equivalent sits in a Release static library, so the ratio is pessimistic for the new code. The
+obvious hypothesis was tested and is FALSE: relaxing `kIKStepTolerance` 100× moved iterations by 6%
+and the RMS not at all, so the iterations are real convergence work. The untried lever: the normal
+equations are 169×169 while the residual is only 60 rows, so a Woodbury/dual form would cut the
+per-iteration cubic term by ~8×. **On-device Release timing has not been measured.**
+
+⚠️ **Seed sensitivity is real and is not a bug.** The dancer solved from the neutral seed and from a
+solved standing pose lands 2.32 rad away at essentially the same fit quality (loss 0.011473 vs
+0.011638, RMS 2.1224 vs 2.1526 cm). The problem is non-convex and rank-deficient, so the warm start
+is a genuine input. Determinism holds per session state; it is not basin-uniqueness.
+
+⚠️ **The 2.12 cm that remains is a marker DEFINITION error, not solver error.** Per-marker: PELVIS
+5.76, LSJC 3.73, RHJC 3.47, RSJC 3.27, LHJC 2.70 cm; everything else ≤ 2.02. The model's rigid
+PELVIS-to-hip distance is 0.1237 m and the fixture's is 0.0792 m (4.46 cm on each side) while the
+hip WIDTH agrees to 0.8 mm — that pattern is placement, not body scale. The pose source's
+`hips_joint` is the MID-HIP point; `NimbleBridge.mm` registers PELVIS at the OpenSim `pelvis` body
+ORIGIN, ≈ 9.7 cm away. Dropping PELVIS takes the fit to 1.5541 cm over the remaining 19. The marker
+table was deliberately NOT changed: it would silently redefine the marker for the live ARKit path
+too and invalidate the hand-built fixtures in `StaticEquilibriumBenchmarkTests`.
+
+---
+
+## Posture findings: a kinematics-only layer (2026-08-07)
+
+`BioMotion/Findings/` computes nine measurements from `BodyFrame.joints` alone — forward head,
+rounded shoulders, shoulder-height asymmetry, lateral head tilt, sagittal and lateral trunk lean,
+a kyphosis proxy, transverse trunk rotation, lateral weight shift. It reads **no** `ikResult`,
+`idResult` or `muscleResult`, so it is independent of every open defect downstream of the pose
+model, and it is what the product can defend today with zero licence exposure.
+
+**No clinical or normal range is applied anywhere.** No finding carries a verdict, a colour or a
+red/green line; a permanently-visible line says so, and a unit test asserts both that the line
+exists and that no row's text contains verdict vocabulary. Three non-clinical constants exist and
+are disclosed in code and UI: a 0.5 depth-fraction crossover (45° of subject yaw — the point where a
+measurement axis stops being mostly image-plane), a 0.5 cm / 1.0° DISPLAY floor that groups
+near-zero findings instead of headlining them, and cos 45° for "is the subject standing over their
+feet".
+
+**View gating is the mechanism, not a heuristic.** Each finding declares the body axis it is
+measured along and is gated on `depthFraction = |axis · camera optical axis|`, which is exactly
+`∂(reported value)/∂(depth error on a contributing landmark)`. Above 0.5 the finding is listed under
+"Not measurable from this view" **with the reason and the number**, never silently dropped. The
+offline camera axis is known exactly (`MHRRetarget` documents and verifies X=image-right, Y=up,
+Z=toward camera); the live ARKit path is a different frame and must supply its own — passing nil
+suppresses everything.
+
+⚠️ **The one real-data sample in the repo produces ZERO findings**, and that is correct: the dancer
+fixture is a ~45°-oblique twisted pose (anteriorDepth 0.6217, lateralDepth 0.7989), so all nine are
+withheld. The consequence is that the value path — "a real photo in a supported view yields a number
+the user can check against their photo" — is exercised only by synthetic subjects. **That is the
+biggest untested gap in this layer.** The panel has also never been seen in a running app; what was
+verified is an off-screen `ImageRenderer` pass proving it lays out and draws.
+
+⚠️ **A real defect in a file this layer does not own:** `MuscleOverlay.computeBodyFrame`'s `forward`
+is `pelvisRight × up`, which by the right-hand rule is POSTERIOR. The muscle defs clearly intend
++z = anterior (rectus femoris "FRONT of thigh" at z = +0.04, semimembranosus "BACK" at z = −0.04,
+erector spinae at z = −0.06), so every anterior/posterior capsule offset in `MuscleOverlay` is drawn
+on the wrong side of the limb. The findings layer derives its own sign and pins it with two tests.
+`MuscleOverlay.swift` is untouched — **this is still open.**
+
+---
+
+## Body-size gate (2026-08-07)
+
+`MHRRetarget.plausibility(jointCoords:)` runs on **every** offline frame, ahead of
+`nimble.scaleModel`. Bounds: inter-hip-joint-centre distance in `[0.10, 0.28] m`, chain-sum stature
+in `[1.30, 2.10] m`.
+
+The failure it exists for: `sample2`, a small heavily-occluded rider, produced a **0.070 m** hip
+width, 0.116 m shoulder width and a 0.178 m humerus — a person at roughly half scale — and nothing
+flagged it. `scaleModelWithHeight` clamps its per-segment factors into `[0.7, 1.4]`, so the collapse
+did not FAIL there, it was **truncated into a model scaled to nobody** and every muscle number
+computed on it looked ordinary.
+
+- Both quantities are **pose-invariant** (a rigid inter-joint-centre distance and a chain sum), which
+  is what licenses running the gate on every frame rather than only on the calibration frame. A bent
+  knee or a raised arm cannot trip it — unlike the straight-line distances `scaleModelWithHeight`
+  itself reads, where a raised knee collapses `|LHJC-LAJC|` from 0.816 m to 0.291 m. A test pins
+  this by folding both knees fully and asserting the verdict is bit-identical.
+- The frame is **kept** with its image, its retargeted skeleton and the measured numbers, and the
+  playback badge reads e.g. *"Body size not measurable — hip width came out 7 cm (expected
+  10–28 cm) … (hips 7 cm apart, height 0.84 m)"*. Dropping it silently is what made the original
+  case invisible.
+- Posture findings are suppressed for a rejected frame: every one of them is a distance or an angle
+  on that skeleton, so a half-scale prediction would report half-scale centimetres.
+- Margins: the four recorded PASSING statures are 1.602–1.715 m, so the 1.30 m floor sits ~19% below
+  the smallest and the 2.10 m ceiling ~22% above the largest; `sample2`'s 0.070 m is 30% below the
+  hip floor.
+
+⚠️ These are a **gross-implausibility** gate, not an anthropometric norm and not a statement about
+a body. A real person outside them would be rejected; the alternative is a muscle number computed on
+a skeleton scaled to somebody who does not exist.
+
+---
+
+## Masking `shoulder_rot_{r,l}` was tested and REJECTED (2026-08-07)
+
+Next-step 8 asked for the two axial-humeral-rotation coordinates to enter the runtime DOF mask,
+because they are "structurally unobservable from one marker per shoulder plus one at the elbow".
+**The premise is false and the change is a regression.** Nothing in the app installs a DOF mask, and
+a test now asserts that.
+
+The argument assumed the forearm markers lie on the humeral long axis when the elbow is straight. In
+`FullBody.osim` they do not — the `ulna_*` and `hand_*` body origins are offset from that axis — so
+axial rotation swings them even at zero elbow flexion. Marker-Jacobian columns
+(`ShoulderRotObservabilityTests.mm`, at the model's neutral pose):
+
+| column | ‖J[:,j]‖, m of marker motion per rad |
+|---|---|
+| `shoulder_elv_r` | 0.6077 |
+| `elbow_flex_r` | 0.2507 |
+| **`shoulder_rot_r`** | **0.0343** — small, 0.77% of the largest column, but **not null** |
+| `shoulder_rot_r` at 90° elbow flexion | 0.266 (7.8× more observable) |
+
+Per-marker at 0° elbow flexion: `d REJC/d shoulder_rot_r` = 16.3 mm/rad, `d RWJC` = 30.2 mm/rad. It
+is **not** one of the 72 identically-zero columns in
+`FullBodyDOFFixture.structurallyUnreachableCoordinates`.
+
+Behaviour, A/B on the same bridge (`ShoulderRotMaskTests`):
+
+| | unmasked | masked |
+|---|---|---|
+| dancer marker RMS | 2.1224 cm | **2.6874 cm** (+0.565) |
+| dancer relative torque residual | 0.3545 | **0.3991** |
+| dancer `shoulder_rot_r` | 0.6235 rad (35.7°) | pinned 0 |
+| standing marker RMS | 0.0031813 cm | 0.0032228 cm (Δ 4.1e-5 — nothing to remove; the unmasked solver puts **0.04°** into the coordinate) |
+| standing iterations / converged | **0 / YES** | **123 / NO** |
+| standing per-solve drift | **0.0 rad** | **9.27e-5 rad** |
+
+Root cause of the standing non-convergence, traced with `kIKTraceSolve`: unmasked, both LM phases
+exit on the gradient test at `iters=0`, loss 2.0390e-8 — a genuine interior stationary point. Masked,
+phase A still exits at 6 iterations but phase B (μ=0) hits the 120-iteration cap with the loss
+creeping 2.07421885e-8 → 2.07421803e-8 → 2.07421721e-8. Removing the coordinate that was absorbing
+the fixture's fourth-decimal rounding leaves a descent direction whose curvature is far below the
+`1e-6·max(diag JᵀJ)` conditioning floor, so the damped Newton step degenerates into a gradient step
+and the solver creeps. It is genuinely still moving, so neither tolerance should fire — **the
+tolerances are not the problem, the extra pin is.**
+
+The pre-registered gate ("adopt only if Δ RMS < 0.05 cm on both poses") failed at 0.565 cm. The test
+now asserts the failure in both directions, so it fires if masking ever becomes free.
+
+### A real order-dependence bug found on the way, and fixed
+
+`applyDOFMaskWithNames:` took the pin from `_skeleton->getPositions()` — "wherever the coordinate
+currently sits". The skeleton is shared process-wide (`sharedSkeleton`), so that meant *whatever
+pose the last stage in the process wrote*. Measured: masking `shoulder_rot_{r,l}` straight after a
+dancer solve pinned them at **0.6235 / 0.2877 rad** (the dancer's own answer), while the same call
+on a freshly loaded model pinned them at 0. The pin is now the model's neutral pose (all-zero
+clamped into the limits), which reproduces the old behaviour exactly for the 54 `<locked>true</locked>`
+coordinates (nimble gives them a degenerate `[lo, lo]` range, so the clamp lands on `lo`) and turns
+an inherited accident into a declared prior for the unlocked ones. The 57-name `runtimeMask` is
+unaffected: drift 0.0, marker RMS identical to 1e-17, `Abs_*` were already 0.
+
+⚠️ The test that pinned this was tautological in its first revision — it ran a dancer solve before
+BOTH arms, so both inherited the same pose and it passed against the broken implementation. The two
+arms must differ in the work that PRECEDES the mask.
 
 ---
 
@@ -805,24 +1072,34 @@ The method cannot rescue a bad prediction: a small, heavily occluded subject pro
    These 48 muscles are MIT-clear. Their scapular action is dead (spans a weld), but their thoracic
    action may be live. If it is, *"upper trapezius overworking from forward head"* is a
    commercially-clear, muscle-level, upper-body finding available today. Half a day.
-3. **Build the kinematics-only findings layer.** Zero model dependency, zero licence exposure, and
-   it is what the product can actually defend: forward head, rounded shoulders, shoulder-height
-   asymmetry, lateral head tilt, trunk plumb-line, thoracic-kyphosis proxy
-   (`hips→spine_1→spine_4→spine_7` chain angle), transverse trunk rotation, humeral-elevation
-   asymmetry, lateral weight shift. All from joints already in `BodyJoint.primary`.
-   `MuscleOverlay.computeBodyFrame` already builds the trunk-stable basis needed — lift it into a
-   shared helper.
+3. ~~**Build the kinematics-only findings layer.**~~ **DONE 2026-08-07** — see
+   [Posture findings](#posture-findings-a-kinematics-only-layer-2026-08-07). Nine findings, no
+   clinical thresholds, view-gated. Note the basis was NOT lifted from
+   `MuscleOverlay.computeBodyFrame`: that function's `forward` points posteriorly (see the same
+   section), so the findings layer derives its own sign.
+   **What remains on this line:** it has never run on a real photo in a supported view. The one
+   real-data fixture in the repo is ~45° oblique, so every finding is correctly withheld and the
+   value path is exercised only by synthetic subjects. The next step is three deliberate photos of
+   the same person — straight-on, side-on, 45° — checking that the first two produce findings and
+   the third produces none. That also tests whether the 0.5 depth gate is right in practice.
 
 ### High-value engineering — independent of the licence question
 
-4. **IK null-space damping / runtime DOF masking.** ~~Use the existing `math::IKConfig` at
-   `NimbleBridge.mm:690` to lock unobservable coordinates at runtime~~ — **corrected 2026-08-06:
-   `math::IKConfig` cannot express a DOF mask.** It has 11 fields and none of them selects DOFs, and
-   `refineIK` explicitly discards the bounds it is given (`(void)upperBound; (void)lowerBound;`).
-   Masking has to be done by reparameterising the solve instead; that was implemented and measured
-   (163 → 106 DOFs, marker fit unchanged).
+4. ~~**IK null-space damping / runtime DOF masking.**~~ **DONE 2026-08-07** — see
+   [IK convergence](#ik-convergence-the-solver-is-now-a-fixed-point-2026-08-07). Damping toward the
+   seed shipped as phase A (μ=1e-3) of a two-phase solve, together with five other fixes; the
+   headline is that IK is now a fixed point and order-independent. **What remains on this line is
+   the cost regression on moving input (1567 ms/frame in a Debug simulator build) and the fact that
+   on-device Release timing has never been measured.**
 
-   **Damping is now the highest-value change in this file, on measured evidence — do it first.**
+   The DOF-mask half is built and reversible but **is not switched on anywhere** — see
+   [Masking shoulder_rot](#masking-shoulder_rotrl-was-tested-and-rejected-2026-08-07) for why the
+   one mask that was proposed measured as a regression. Historical corrections kept:
+   `math::IKConfig` cannot express a DOF mask (11 fields, none selects DOFs; `refineIK` discards the
+   bounds it is handed), so masking is a reparameterisation of the solve. The 57-name `runtimeMask`
+   measures 169 → 112 free DOFs at identical marker RMS and 2.24× the speed.
+
+   The rest of the 2026-08-06 rationale, kept because it is what motivated the work:
    E1 (below) measured a ~40-line solver change (gradient/step-based convergence in `refineIK`
    plus null-space damping toward the seed, μ=1e-3) as beating an entire pose-source replacement by
    **3.1–5.1×** on every axis: spurious spine motion 3.08×, SG-filtered `ddq` 3.55×, spine error
@@ -838,10 +1115,12 @@ The method cannot rescue a bad prediction: a small, heavily occluded subject pro
    already welded, those are the shoulder girdle's *only* articulation; welding them kills all 24
    trapezius and all 20 serratus slips — the scapular stabilisers, i.e. exactly the muscles behind
    the rounded-shoulder findings the product would sell.
-5. **Static-equilibrium inverse dynamics.** Add a hold detector (marker speeds < ~2 cm/s for ≥ 0.5 s),
-   average the pose over the hold, and run ID with `q̇ = q̈ = 0`. This deletes the 1/dt²
-   amplification chain entirely on the static path, and it matches the product's own framing
-   ("current posture"). Largest single accuracy lever available.
+5. ~~**Static-equilibrium inverse dynamics.**~~ **DONE 2026-08-07** — see
+   [Static-hold gating](#static-hold-gating-2026-08-07). ⚠️ Re-scoped by measurement: now that IK is
+   a fixed point there is no drift left for the filter to differentiate, so on a HOLD the gate is a
+   measurable no-op (peak torque identical to 16 significant figures). Its justification is now
+   entirely the other branch — withholding muscle magnitudes on a MOVING frame, which the pelvis-
+   pinned pose source cannot supply accelerations for.
 6. ~~**Patella rename + weld** (with the `groupScale()` patch). Ship blocker for squat analysis.~~
    **DONE 2026-08-06** — see [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
 7. ~~**Shoulder axis orthogonalisation** (6 lines).~~ **DONE 2026-08-06**, same section. Note it was
@@ -850,15 +1129,37 @@ The method cannot rescue a bad prediction: a small, heavily occluded subject pro
 
 ### Newly opened by the 2026-08-06 work
 
-8. **Mask `shoulder_rot_{r,l}`.** The shoulder unweld added 6 DOFs, of which the two axial-rotation
-   coordinates are structurally unobservable from one point per shoulder plus one at the elbow.
-   By this file's own E1 finding, unobservable DOFs get excited by the solver. Do this before
-   trusting any shoulder muscle number.
-9. **Plausibility gate on the offline path.** Reject predictions whose hip width falls outside
-   ~0.10–0.28 m or whose chain-sum stature falls outside ~1.3–2.1 m, before they reach
-   `scaleModelWithHeight`. One occluded test subject produced a 0.070 m hip width.
-10. **Static-hold detection** (this is next-step 5 above, now load-bearing). The offline path's
-    pelvis pinning means dynamic ID is not sound; static-equilibrium ID is the honest reading.
+8. ~~**Mask `shoulder_rot_{r,l}`.**~~ **TESTED AND REJECTED 2026-08-07** — see
+   [Masking shoulder_rot](#masking-shoulder_rotrl-was-tested-and-rejected-2026-08-07). The premise
+   was wrong: the marker-Jacobian column is 0.0343 m/rad, not zero, because the ulna and hand body
+   origins sit off the humeral long axis. Masking costs the dancer 0.565 cm of marker RMS and breaks
+   convergence at standing. **Do not re-open without re-measuring that column norm first.**
+9. ~~**Plausibility gate on the offline path.**~~ **DONE 2026-08-07** — see
+   [Body-size gate](#body-size-gate-2026-08-07).
+10. ~~**Static-hold detection**~~ — same item as next-step 5, now done and re-scoped; see there.
+
+### Newly opened by the 2026-08-07 work
+
+11. **`MuscleOverlay.computeBodyFrame`'s `forward` points posteriorly.** `simd_cross(pelvisRight, up)`
+    is −anterior, so every anterior/posterior capsule offset is drawn on the wrong side of the limb:
+    quadriceps behind the thigh, hamstrings in front, erector spinae in front of the spine. Rendering
+    only — it does not touch any solved number — but it is visibly wrong and it is cheap.
+12. **Validate the findings layer on real photos** (see next-step 3's remainder). Currently the
+    highest-value open item, because it is the only part of the product a user can check against
+    their own photo.
+13. **Measure IK cost in a Release build on device.** The 1567 ms/frame moving-input figure is a
+    Debug simulator number and the app's live path depends on it. If it is real, the untried lever is
+    the Woodbury/dual form of the normal equations (169×169 vs a 60-row residual, ~8× on the cubic
+    term).
+14. **`E1MarkerSetComparisonTests` no longer compiles its own premise.** It fails at
+    `E1MarkerSetComparisonTests.mm:475` asserting its coordinate blocks cover the model: 163 != 169.
+    The model gained 6 shoulder DOFs and lost 2 `knee_angle_*_beta` in the 2026-08-06 osim edit; E1's
+    fixture still enumerates 163. Pre-existing, not caused by any 2026-08-07 change (the failing
+    assertion is inside `buildCoordinateSets`, pure name bookkeeping, and never calls a solver).
+    Separately, E1's V4 "does the harness reproduce production" probe is now structurally stale — it
+    compares the bridge against a reimplementation of `refineIK` that production no longer uses. V4
+    carries no assertion, so nothing fails, but its number is meaningless. **E1's STOP verdict is
+    unaffected**: every arm uses E1's own internal solvers.
 
 ### Owner decisions still open
 
@@ -889,3 +1190,17 @@ The method cannot rescue a bad prediction: a small, heavily occluded subject pro
   thrashes). Build and verify serially afterwards.
 - A **new** test file requires `xcodegen generate` to enter the target even when `project.yml` is
   unchanged — otherwise it sits on disk silently not running.
+- **A test that would have passed against the broken implementation proves nothing.** Two examples
+  from 2026-08-07, both caught only by deliberately re-reading the harness: the DOF-mask
+  order-independence test ran the same prelude before BOTH arms, so both inherited the same shared
+  skeleton pose and it passed against the very bug it was written for; and `StaticHoldTests`'
+  attribution control exists precisely because the shared skeleton could have produced the measured
+  gap on its own. Ask what the arms actually differ in.
+- **Pre-register the gate, then let it fail.** The `shoulder_rot` mask was written, measured against
+  a bound chosen before the numbers existed, and rejected. The durable artifact is the rejection
+  plus its mechanism, not the code. Two of this file's own next-steps have now been closed by
+  measurement showing the premise was wrong (next-step 8 here, the DINOv3 matrix in a sibling
+  project) — a next-step is a hypothesis, not an instruction.
+- **Instrument before theorising about a solver.** `kIKTraceSolve` (a compile-time flag in
+  `NimbleBridge.mm`) turned "why does masking break standing?" from three plausible stories into one
+  measured stop-reason trace in a single run.

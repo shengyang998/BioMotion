@@ -23,7 +23,62 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// Result from inverse kinematics solve.
 @interface NimbleIKResult : NSObject
 @property (nonatomic, readonly) NSArray<NSNumber *> *jointAngles;  // DOF values in radians
-@property (nonatomic, readonly) double error;  // RMS marker error in meters
+
+/// The IK LOSS: the squared norm of the *weighted* marker residual stack,
+/// `Σ_i w_i² · ‖p_model,i − p_target,i‖²`, in m². It is NOT an RMS and it is
+/// NOT in meters. (Same definition `math::solveIK` returned, kept so the
+/// loss-domain bounds at the call site stay meaningful.)
+///
+/// This header used to document the field as "RMS marker error in meters". On
+/// the dancer fixture that one sentence supports three different answers, all
+/// wrong except the last:
+///   loss                = 0.0138      read as meters -> "1.4 cm"
+///   sqrt(loss / N)      = 0.0262      the WEIGHTED per-marker RMS, 2.6 cm
+///   markerRMSMeters     = 0.0549      the true per-marker RMS, 5.5 cm
+/// The weights are below 1 on exactly the markers that fit worst, so both of
+/// the first two flatter the fit. The comment is corrected rather than the
+/// field renamed, because callers do compare `error` against loss-domain
+/// bounds (`kIKWarmStartRejectMeters` is converted into a loss before use).
+/// Read `markerRMSMeters` for accuracy.
+///
+/// The same confusion existed one layer up until 2026-08-07: `NimbleEngine`
+/// assigned this field to `IKOutput.error` and to `ikMarkerResidualMeters`,
+/// which `ContentView` printed as `"%.3f m"` with a green cut at 0.05 — a
+/// squared quantity shown as a length. Both now read `markerRMSMeters`, and
+/// the loss is carried as `IKOutput.ikLossSquaredMeters`.
+@property (nonatomic, readonly) double error;
+
+/// True per-marker RMS position error in METERS:
+/// `sqrt( (1/N) · Σ_i ‖p_model,i − p_target,i‖² )`, computed from the solved
+/// skeleton's own marker world positions with NO reliability weighting, over
+/// the N markers that actually resolved to a body in the model.
+///
+/// This is the number to quote as "how well did IK fit". It differs from
+/// `sqrt(error / N)` whenever the reliability weights are not all 1, because
+/// `error` down-weights exactly the markers that are most likely to be missed.
+@property (nonatomic, readonly) double markerRMSMeters;
+
+/// Largest single-marker position error in meters, same convention as
+/// `markerRMSMeters`. An RMS can hide one badly-placed limb; this cannot.
+@property (nonatomic, readonly) double markerMaxErrorMeters;
+
+/// How many of the supplied markers resolved to a body in the loaded model and
+/// therefore constrained the solve. Markers with no matching body are skipped
+/// silently, so this is the denominator behind `markerRMSMeters`.
+@property (nonatomic, readonly) NSInteger markerCount;
+
+/// Per-marker position error in meters, keyed by the marker name that was
+/// supplied. Only the markers that resolved to a body appear. An RMS says how
+/// badly the pose fits; this says WHERE, which is what separates "the solver
+/// stopped early" from "this subject's limb lengths are not the model's".
+@property (nonatomic, readonly) NSDictionary<NSString *, NSNumber *> *markerErrorsMeters;
+
+/// Iterations the app-side solver actually ran, and whether it stopped because
+/// it reached a stationary point (YES) or because it ran out of budget (NO).
+/// Diagnostics only — no pipeline stage branches on these.
+@property (nonatomic, readonly) NSInteger iterations;
+@property (nonatomic, readonly) BOOL converged;
+
 @property (nonatomic, readonly) NSInteger numDOFs;
 @property (nonatomic, readonly) NSArray<NSString *> *dofNames;
 @end

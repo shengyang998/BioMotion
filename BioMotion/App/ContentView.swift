@@ -107,8 +107,15 @@ struct ContentView: View {
                         HStack(spacing: 6) {
                             AccuracyBadge(
                                 label: "residual",
-                                value: String(format: "%.3f m", nimble.ikMarkerResidualMeters),
-                                good: nimble.ikMarkerResidualMeters < 0.05
+                                // Millimetres, because this is a length. It used
+                                // to print the solver's m² LOSS as "%.3f m" with
+                                // a green cut at 0.05 — a squared quantity shown
+                                // as a distance. `ikMarkerResidualMeters` is now
+                                // the true per-marker RMS. The 20 mm line is the
+                                // measured standing fit (0.03 mm) versus the
+                                // dancer's model mismatch (21 mm), not a target.
+                                value: String(format: "%.0f mm", nimble.ikMarkerResidualMeters * 1000),
+                                good: nimble.ikMarkerResidualMeters < 0.020
                             )
                             AccuracyBadge(
                                 label: "max |τ|/m",
@@ -391,7 +398,7 @@ struct IKReadoutPanel: View {
                 Text("IK Joint Angles")
                     .font(.caption2.bold())
                 Spacer()
-                Text(String(format: "err: %.1f mm", ikResult.error * 1000))
+                Text(String(format: "marker RMS: %.1f mm", ikResult.markerRMSMeters * 1000))
                     .font(.system(.caption2, design: .monospaced))
             }
             ScrollView(.horizontal, showsIndicators: false) {

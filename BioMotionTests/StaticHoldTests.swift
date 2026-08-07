@@ -438,26 +438,43 @@ final class StaticHoldTests: XCTestCase {
     /// that already worked? This is a CONTROLLED comparison, because a naive
     /// one is confounded.
     ///
-    /// First attempt at this test asserted the two solves agree exactly, on
-    /// the reasoning that the offline padding replays one pose so `ddq` is
-    /// ~1e-16 and zeroing it is a no-op. It failed: peak torque read 75.196 Nm
-    /// dynamic vs 75.249 Nm static, a 0.052 Nm gap.
+    /// ─────────────────────────────────────────────────────────────────────
+    /// THE TRIPWIRE BELOW FIRED, AS DESIGNED. Re-derived 2026-08-07.
+    /// ─────────────────────────────────────────────────────────────────────
+    /// The original reasoning: the offline padding replays one pose, so `ddq`
+    /// should be ~1e-16 and zeroing it a no-op — yet peak torque read 75.196 Nm
+    /// dynamic vs 75.249 Nm static, a 0.052 Nm gap. The explanation was that
+    /// the ENGINE re-solves IK on every push and IK on identical markers did
+    /// not return the same answer, so the filter differentiated that drift into
+    /// an acceleration the subject never had. Removing that artifact was the
+    /// stated point of the feature, and this test asserted the artifact existed
+    /// (`maxConsecutive > 0`) so that its disappearance could not go unnoticed.
     ///
-    /// That reasoning is wrong, and the reason matters. STATUS.md's 1.7e-16
-    /// `max_ddq` figure comes from pushing ONE raw IK solution through the
-    /// filter nine times (`OfflineMuscleChainTests` does exactly that). The
-    /// ENGINE re-solves IK on every push, and IK on identical markers does not
-    /// return the same answer — `NimbleBridgeTests.testRepeatedIKOnIdenticalMarkersIsStable`
-    /// is red for precisely this. The filter then differentiates that drift, so
-    /// the offline path has always been feeding inverse dynamics an
-    /// acceleration that the subject did not have. That is a small term here,
-    /// but it is 100% artifact, and removing it is the point of the feature.
+    /// It has disappeared. The 2026-08-07 IK work replaced nimble's
+    /// error-change termination with a stationarity test, so a repeated solve
+    /// on identical markers is now a fixed point. Measured here, same fixture,
+    /// same harness:
     ///
-    /// Attribution needs a control, because `NimbleBridge.mm:296` documents the
-    /// skeleton as SHARED across instances and IK warm-starts from wherever the
-    /// last run left it, which could have produced the gap on its own. So the
-    /// gate-OFF configuration is run TWICE. It comes back bit-identical, which
-    /// is what licenses attributing the gap to the gate rather than to noise.
+    ///   max_from_first_rad        0.0    (was ~0.17)
+    ///   max_consecutive_warm_rad  0.0    (was > 0, the artifact)
+    ///   dynamicA / dynamicB / static peak torque
+    ///                             84.10433817558118 Nm, all three IDENTICAL
+    ///   control_delta 0.0 · treatment_delta 0.0 · budget 0.00815
+    ///
+    /// **Consequence, recorded rather than hidden: static-hold gating is now a
+    /// measurable no-op on a hold.** Its remaining value is entirely on the
+    /// other branch — refusing to publish muscle magnitudes for a frame where
+    /// the subject was MOVING, which the pose source cannot supply the
+    /// accelerations for. That is `testMovingSequenceIsMarkedPoseOnly`, and it
+    /// is where this feature's justification now lives.
+    ///
+    /// The assertion is inverted rather than deleted, so a solver regression
+    /// that reintroduces the drift fails here and re-opens the question.
+    ///
+    /// Attribution still needs a control, because `NimbleBridge.mm:296`
+    /// documents the skeleton as SHARED across instances and IK warm-starts
+    /// from wherever the last run left it. The gate-OFF configuration is run
+    /// TWICE and comes back bit-identical.
     @MainActor
     func testStaticSolveEffectOnAStillPoseIsBelowRunToRunVariation() async throws {
         let markers = Self.dancerMarkers
@@ -494,9 +511,19 @@ final class StaticHoldTests: XCTestCase {
         print("HOLD-METRIC ik-drift samples=\(raw.count) "
             + "max_from_first_rad=\(maxDriftFromFirst) max_consecutive_warm_rad=\(maxConsecutive) "
             + "implied_ddq_rad_s2=\(maxConsecutive / (dt * dt))")
-        XCTAssertGreaterThan(maxConsecutive, 0,
-                             "if IK became reproducible on identical markers, the artifact this "
-                             + "feature removes is gone and the numbers below must be re-derived")
+        // INVERTED 2026-08-07 — see this method's header. IK is now a fixed
+        // point on identical markers, so there is no drift for the filter to
+        // differentiate and no artifact for this feature to remove on a hold.
+        // Asserting EXACT zero keeps the tripwire live in the other direction:
+        // any solver change that reintroduces per-solve drift fails here.
+        XCTAssertEqual(maxConsecutive, 0, accuracy: 0,
+                       "IK started drifting again on identical markers "
+                       + "(\(maxConsecutive) rad). The Savitzky-Golay filter differentiates "
+                       + "that into an acceleration the subject never had, and the numbers in "
+                       + "this method's header were derived assuming it was gone.")
+        XCTAssertEqual(maxDriftFromFirst, 0, accuracy: 0,
+                       "even the COLD solve used to differ from the warm ones; it no longer "
+                       + "does (\(maxDriftFromFirst) rad)")
 
         func run(gating: Bool) async throws -> (maxTorque: Double, muscles: Int) {
             let engine = try await loadedEngine()

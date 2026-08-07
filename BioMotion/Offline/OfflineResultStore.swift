@@ -14,6 +14,12 @@ final class OfflineResultStore: ObservableObject {
     enum FrameStatus: Equatable {
         case success
         case poseEstimationFailed(String)
+        /// The pose model returned a full skeleton, but one whose BODY SIZE is
+        /// not a person's — see `MHRRetarget.plausibility`. Rejected before it
+        /// could scale the musculoskeletal model, and reported with the measured
+        /// number rather than dropped, because a frame that vanishes without a
+        /// reason is indistinguishable from a crash.
+        case implausibleBody(reason: String, hipWidthMeters: Double, statureMeters: Double)
         /// `NimbleEngine` never published a result within the wait budget. This
         /// covers two indistinguishable-from-the-outside cases: the solve is
         /// still slow/running, and the solve silently failed (`solveIK` returned
@@ -21,6 +27,21 @@ final class OfflineResultStore: ObservableObject {
         /// `OfflineSessionRunner`'s waiter doc comment). Either way, the frame
         /// has no usable result.
         case nimbleTimeout
+
+        /// The sentence shown for `.implausibleBody`, nil for every other case.
+        ///
+        /// It lives on the model rather than inside `OfflinePlaybackView`'s
+        /// private `statusText` so it can be tested: this string is the ONLY
+        /// thing the user gets when a frame is rejected, and a frame that
+        /// disappears without a number is indistinguishable from a crash.
+        var implausibleBodyDescription: String? {
+            guard case .implausibleBody(let reason, let hip, let stature) = self else { return nil }
+            // BOTH measurements are shown whichever bound tripped, so the user
+            // can see the whole prediction rather than the one number that
+            // happened to fail first.
+            return String(format: "Body size not measurable — %@. Measured: hips %.0f cm apart, height %.2f m.",
+                          reason, hip * 100, stature)
+        }
     }
 
     /// What the static-hold detector concluded about this frame — the reason a
@@ -149,6 +170,13 @@ final class OfflineResultStore: ObservableObject {
 
     var successCount: Int {
         frames.filter { if case .success = $0.status { return true } else { return false } }.count
+    }
+
+    /// Frames rejected by the body-size gate. Surfaced separately from
+    /// `poseEstimationFailed` because the fix is different: the model DID find a
+    /// person, they were just too small or too occluded in frame to measure.
+    var implausibleBodyCount: Int {
+        frames.filter { if case .implausibleBody = $0.status { return true } else { return false } }.count
     }
 
     var biomechanicsCount: Int { frames.filter(\.hasFullBiomechanics).count }

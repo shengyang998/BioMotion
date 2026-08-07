@@ -21,6 +21,30 @@ struct OfflinePlaybackView: View {
     @State private var showMuscles = true
     @State private var showSourceImage = true
 
+    /// Posture findings for the frame currently on screen.
+    ///
+    /// Computed from `bodyFrame.joints` — the retargeted marker positions —
+    /// and NOT from `ikResult` / `idResult` / `muscleResult`. That is
+    /// deliberate and load-bearing: it makes this panel independent of every
+    /// open defect downstream of the pose model (STATUS.md records IK landing
+    /// on two different solutions from identical markers, and the muscle
+    /// solve's redundancy caveats), and it means the numbers describe exactly
+    /// the points `PhotoOverlayView` draws on the photo beside them.
+    private var findings: PostureReport? {
+        guard let frame = resultStore.selectedFrame, let body = frame.bodyFrame else { return nil }
+        // A frame rejected by the body-size gate still carries its retargeted
+        // skeleton, so the user can see WHAT was wrong on the photo. It must
+        // NOT produce findings: every one of them is a distance or an angle on
+        // that skeleton, so a half-scale prediction would report half-scale
+        // centimetres with no indication they are meaningless.
+        if case .implausibleBody = frame.status { return nil }
+        // The offline path's joints are in MHRRetarget's camera-aligned frame,
+        // so the camera's optical axis is known exactly. The live ARKit path is
+        // NOT this frame and must not inherit this constant.
+        return PostureFindings.report(joints: body.joints,
+                                      cameraDepthAxis: PostureFindings.offlineCameraDepthAxis)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
@@ -46,6 +70,16 @@ struct OfflinePlaybackView: View {
                     .padding(8)
                     Spacer()
                 }
+            }
+
+            // Findings sit between the image and the transport controls, with
+            // no tap needed: for a single imported photo — the common case —
+            // this is the whole reason the user opened the app, so it must be
+            // on screen the moment the frame resolves. Capped so the photo
+            // above it stays visible; the panel scrolls inside its own bounds.
+            if let findings {
+                PostureFindingsPanel(report: findings)
+                    .frame(maxHeight: 300)
             }
 
             controls
@@ -99,6 +133,12 @@ struct OfflinePlaybackView: View {
             return "Pose only (warming up)"
         case .poseEstimationFailed(let reason):
             return "Pose failed: \(reason)"
+        case .implausibleBody:
+            // The measured numbers go on screen, not just the verdict: this is
+            // the whole difference between "we rejected your photo" and a
+            // silent drop the user cannot act on. Built on the model side so it
+            // is covered by `BodyPlausibilityTests`.
+            return frame.status.implausibleBodyDescription ?? "Body size not measurable"
         case .nimbleTimeout:
             return "Solver timed out on this frame"
         }
@@ -110,7 +150,7 @@ struct OfflinePlaybackView: View {
             if frame.hasFullBiomechanics { return .green }
             if frame.isPoseOnlyBecauseMoving { return .orange }
             return .white
-        case .poseEstimationFailed, .nimbleTimeout:
+        case .poseEstimationFailed, .nimbleTimeout, .implausibleBody:
             return .red
         }
     }
@@ -173,6 +213,11 @@ struct OfflinePlaybackView: View {
         // data" and looks like the solver failed 40 times.
         let moving = resultStore.poseOnlyMovingCount
         if moving > 0 { label += ", \(moving) pose-only (moving)" }
+        // Same reasoning one step earlier in the chain: a clip where the person
+        // is too small in frame otherwise reads as "0 with muscle data" and
+        // looks like a solver failure rather than a framing problem.
+        let rejected = resultStore.implausibleBodyCount
+        if rejected > 0 { label += ", \(rejected) rejected (body size)" }
         return label
     }
 }
