@@ -153,8 +153,13 @@ struct OfflineImportView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if runner.wasFrameCountCapped {
-                    Text("The clip is longer than the analysis window, so only \(FrameSource.maxFramesPerRun) frames from the middle were used.")
+                if let notice = runner.frameBudgetNotice {
+                    // Names which of the two causes fired and how many frames
+                    // were really used. The single sentence this replaced said
+                    // "longer than the analysis window" and "120 frames" for
+                    // every case, including the short-clip case where both
+                    // halves are false. See `FrameBudgetNotice`.
+                    Text(notice.message)
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }

@@ -136,8 +136,8 @@ final class GaitContactAgreementTests: XCTestCase {
         XCTAssertEqual(cleanSummary.contactDetectorDisagreements, 0)
         XCTAssertEqual(cleanSummary.stanceFrameCount, 6)
         let load = try XCTUnwrap(cleanSummary.ranked.first)
-        XCTAssertEqual(load.leftPeak, 0.60, accuracy: 1e-12)
-        XCTAssertEqual(load.rightPeak, 0.60, accuracy: 1e-12)
+        XCTAssertEqual(load.leftLoad, 0.60, accuracy: 1e-12)
+        XCTAssertEqual(load.rightLoad, 0.60, accuracy: 1e-12)
         XCTAssertEqual(load.differencePercent, 0, accuracy: 1e-9,
                        "a symmetric runner reads symmetric once the double contacts are gone")
 
@@ -147,7 +147,7 @@ final class GaitContactAgreementTests: XCTestCase {
         // −50%: the artefact is larger than the naive halving suggests.
         let fabricated = GaitLoadSummary.MuscleLoad(
             id: "glmax1", displayName: "Glute max (upper)",
-            leftPeak: 0.30, rightPeak: 0.60, leftFrames: 6, rightFrames: 6,
+            leftLoad: 0.30, rightLoad: 0.60, leftContacts: 6, rightContacts: 6,
             isSaturated: false)
         print("GAIT-METRIC double_contact_fabricated_asymmetry_percent="
               + "\(fabricated.differencePercent) "

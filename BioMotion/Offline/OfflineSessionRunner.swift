@@ -64,10 +64,11 @@ final class OfflineSessionRunner: ObservableObject {
     }
 
     @Published private(set) var phase: RunPhase = .idle
-    /// True if the video's requested sampling would have exceeded
-    /// `FrameSource.maxFramesPerRun` and was capped — surfaced so the UI can say
-    /// so rather than silently processing fewer frames than the user asked for.
-    @Published private(set) var wasFrameCountCapped = false
+    /// Non-nil when the run analysed fewer frames than the sampling mode asked
+    /// for — carrying WHICH of the two causes it was and how many frames were
+    /// really used, because the single boolean this replaced let the UI state
+    /// both wrongly. See `FrameBudgetNotice`.
+    @Published private(set) var frameBudgetNotice: FrameBudgetNotice?
     /// The frame rate the analysis window was sampled at, i.e. the video's own.
     /// Published because every duration this app measures is expressed in
     /// frames, so a wrong rate would rescale all of them silently.
@@ -127,7 +128,7 @@ final class OfflineSessionRunner: ObservableObject {
     func run(source: RunSource, samplingMode: FrameSource.SamplingMode) {
         runTask?.cancel()
         phase = .idle
-        wasFrameCountCapped = false
+        frameBudgetNotice = nil
         runTask = Task { [weak self] in
             await self?.runInternal(source: source, samplingMode: samplingMode)
         }
@@ -638,7 +639,11 @@ final class OfflineSessionRunner: ObservableObject {
             let (timestamps, truncated) = FrameSource.sampleTimestamps(duration: duration,
                                                                       mode: samplingMode,
                                                                       nominalFrameRate: rate)
-            wasFrameCountCapped = truncated
+            frameBudgetNotice = FrameBudgetNotice.make(mode: samplingMode,
+                                                       duration: duration,
+                                                       nominalFrameRate: rate,
+                                                       timestamps: timestamps,
+                                                       wasTruncated: truncated)
 
             var frames: [FrameSource.DecodedFrame] = []
             frames.reserveCapacity(timestamps.count)

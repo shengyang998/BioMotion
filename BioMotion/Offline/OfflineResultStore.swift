@@ -158,6 +158,55 @@ final class OfflineResultStore: ObservableObject {
         /// True on a running clip's stance frames — the ones whose muscle
         /// numbers came from the gait cycle rather than from a static hold.
         var isGaitStance: Bool { motionState.verdict == .gaitStance }
+
+        /// **Whether THIS frame's muscle numbers may be drawn.**
+        ///
+        /// `GaitLoadSummary.make` already discards individual frames that fail
+        /// `isUsableForLoadComparison` — a derivative window fitted across a
+        /// touchdown, or two contact detectors that disagree about which foot is
+        /// down — but the 3-D overlay and the per-frame caption were gated only
+        /// CLIP-wide, by `summary.arePublishable`. Measured on the pinned
+        /// fixtures: 52 of 64 stance frames on `video_012` and 44 of 68 on
+        /// `video_015` have a derivative window crossing a contact edge, so a
+        /// user scrubbing a clip that passed every clip-level gate saw coloured
+        /// muscle capsules on 65-81 % of stance frames whose ddq was fitted
+        /// across a discontinuity — the exact defect `WindowedDerivativeFilter`
+        /// exists to prevent — with no marker of any kind, while the panel's
+        /// ranked list had silently discarded them. The overlay reads as more
+        /// authoritative than the list.
+        ///
+        /// Off the running path this is always true: a still-pose clip carries
+        /// no gait outcome and is governed by the static-hold gate as before.
+        var gaitLoadsAreComparable: Bool {
+            guard let outcome = motionState.gaitOutcome else { return true }
+            return outcome.isUsableForLoadComparison
+        }
+
+        /// Why this frame's loads are not comparable, in the user's terms. Nil
+        /// when they are. Each case names a different lever, which is why they
+        /// are not collapsed into one sentence.
+        var gaitExclusionReason: String? {
+            guard let outcome = motionState.gaitOutcome, !outcome.isUsableForLoadComparison else {
+                return nil
+            }
+            // Defensive, and deliberately so. `NimbleEngine` routes a flight
+            // frame through `publishPoseOnly`, so today a flight frame carries
+            // NO outcome and never reaches here — but that is a policy in a file
+            // this type does not own, and if it ever publishes one, "too close
+            // to a touchdown" would be the wrong sentence for it.
+            if outcome.contactSide == 0 {
+                return "both feet off the ground — no contact load here"
+            }
+            if outcome.solverSawDoubleContact {
+                return "the solver put ground force under BOTH feet, so this frame's load is "
+                     + "split between them"
+            }
+            if !outcome.contactDetectorsAgree {
+                return "the foot's height above the ground disagrees that it was planted — "
+                     + "solved with no ground force"
+            }
+            return "too close to a touchdown or toe-off to differentiate"
+        }
     }
 
     @Published private(set) var frames: [FrameResult] = []

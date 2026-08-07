@@ -96,4 +96,60 @@ struct GaitForceModel: Equatable {
         guard contactSeconds > 0 else { return .nan }
         return (Double.pi / 2) * (1 + flightSeconds / contactSeconds)
     }
+
+    /// The two legs' peaks — **per leg only where the clip can resolve the
+    /// contact-time difference they are built from.**
+    ///
+    /// # The circularity this closes
+    ///
+    /// `Fmax_side = (π/2)(1 + tf/tc_side)` turns the measured left/right contact
+    /// difference into a per-leg FORCE SCALE, and the muscle QP is linear in the
+    /// external load while unsaturated — so that scale lands inside every one of
+    /// the 520 muscles' left/right comparisons. On `video_012` the contact
+    /// difference is 2.899 % against a resolution floor of 10.145 %: the panel
+    /// says, correctly, "left and right contact times are even to within what
+    /// this clip resolves", and then the same screen showed muscle bars carrying
+    /// that same unresolvable 2.9 % re-expressed as a −1.31 % force asymmetry.
+    /// A difference that is not trustworthy enough to display cannot be
+    /// trustworthy enough to silently scale the comparison either.
+    ///
+    /// Worst case for keeping it: a clip with 9 % of contact asymmetry (just
+    /// under a 10 % floor, correctly refused as a timing finding) injects ≈4 %
+    /// of force scale, so a muscle whose true difference is 6.5 % — below the
+    /// gate, and so due to be refused — reads 10.5 % and gets published as
+    /// "11 % harder on the left".
+    ///
+    /// So ONE gate governs both uses. Above the clip's resolution the difference
+    /// is a finding, it is displayed, and each leg carries its own peak. Below
+    /// it the difference is noise, it is refused on screen, and both legs carry
+    /// the peak closed on the MEAN contact — which is the minimum-variance
+    /// choice when the difference cannot be resolved, not a claim that the legs
+    /// are identical.
+    ///
+    /// The stride impulse closes exactly in BOTH regimes. Shared:
+    /// `Σ Fᵢ·2·tcᵢ/π = (π/2)(1 + tf/t̄c)·(2/π)(tcL + tcR) = (1 + tf/t̄c)·2·t̄c
+    /// = 2(t̄c + tf) = T`.
+    ///
+    /// - Returns: the peaks, and whether they were shared. The flag is published
+    ///   rather than inferred, because "the two legs read the same" and "this
+    ///   clip refused to distinguish them" are different statements.
+    static func perLegPeaksInBodyWeights(contactSeconds: Bilateral<Double>,
+                                         flightSeconds: Double,
+                                         resolvableAsymmetryPercent: Double)
+        -> (peaks: Bilateral<Double>, sharedBetweenLegs: Bool) {
+        let l = contactSeconds.left, r = contactSeconds.right
+        let perLeg = contactSeconds.map { peakInBodyWeights(contactSeconds: $0,
+                                                            flightSeconds: flightSeconds) }
+        // A side with no contacts has no contact time; there is nothing to share
+        // and the degenerate answer is the per-leg one (NaN where unknown).
+        guard l.isFinite, r.isFinite, l > 0, r > 0 else { return (perLeg, false) }
+        let mean = 0.5 * (l + r)
+        let asymmetryPercent = 100 * (l - r) / mean
+        if resolvableAsymmetryPercent.isFinite,
+           abs(asymmetryPercent) >= resolvableAsymmetryPercent {
+            return (perLeg, false)
+        }
+        let shared = peakInBodyWeights(contactSeconds: mean, flightSeconds: flightSeconds)
+        return (Bilateral(left: shared, right: shared), true)
+    }
 }

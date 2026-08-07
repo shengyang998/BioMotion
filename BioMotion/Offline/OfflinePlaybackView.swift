@@ -55,7 +55,7 @@ struct OfflinePlaybackView: View {
                                     filterTaps: plan.filterTaps)
     }
 
-    /// Whether the 3-D muscle overlay may be drawn at all.
+    /// Whether the 3-D muscle overlay may be drawn at all, for the CLIP.
     ///
     /// The overlay renders `frame.muscleResult` directly — the same activations
     /// `GaitReportPanel` withholds when a gate fails — so drawing it
@@ -68,6 +68,17 @@ struct OfflinePlaybackView: View {
     private var muscleMagnitudesArePublishable: Bool {
         guard case .analysed? = resultStore.gait else { return true }
         return loadSummary?.arePublishable ?? false
+    }
+
+    /// **And whether THIS frame's may.** The clip-level gate was the only one:
+    /// the per-frame exclusions `GaitLoadSummary.make` applies to the ranked
+    /// list — contact detectors disagreeing, a derivative window crossing a
+    /// contact edge — reached the panel and never reached the overlay. See
+    /// `OfflineResultStore.FrameResult.gaitLoadsAreComparable` for the measured
+    /// share of frames that means.
+    private var selectedFrameLoadsAreDrawable: Bool {
+        muscleMagnitudesArePublishable
+            && (resultStore.selectedFrame?.gaitLoadsAreComparable ?? true)
     }
 
     var body: some View {
@@ -84,7 +95,7 @@ struct OfflinePlaybackView: View {
                         .ignoresSafeArea(edges: .top)
                 } else {
                     OfflineSceneView(frame: resultStore.selectedFrame,
-                                     showMuscles: showMuscles && muscleMagnitudesArePublishable)
+                                     showMuscles: showMuscles && selectedFrameLoadsAreDrawable)
                         .ignoresSafeArea(edges: .top)
                 }
 
@@ -166,6 +177,12 @@ struct OfflinePlaybackView: View {
             if case .gait(let verdict, _) = frame.motionState {
                 switch verdict {
                 case .gaitStance:
+                    // A frame excluded from the load comparison must not be
+                    // captioned "relative loads" — the ranked list has already
+                    // discarded it, and the overlay is hidden for it too.
+                    guard frame.gaitLoadsAreComparable else {
+                        return "Pose only — foot down, outside the load comparison"
+                    }
                     return frame.hasFullBiomechanics
                         ? "Pose + muscle (foot down — relative loads)"
                         : "Pose only — foot down, no solve"
@@ -236,16 +253,23 @@ struct OfflinePlaybackView: View {
             }
             // Deliberately shows the RATIO to body weight and the disagreement,
             // not a newton figure. The modelled force is a timing estimate; the
-            // number worth putting on screen is how far the body's own inertia
-            // is from agreeing with it.
+            // number worth putting on screen is how far inverse dynamics is from
+            // agreeing with it — on the VERTICAL axis, which is the only one
+            // `residualInBodyWeights` is built from. Naming it "the body's own
+            // inertia" claimed the whole vector on the axis it never examined.
             let side = outcome.contactSide < 0 ? "left" : "right"
+            // The exclusion reason, whatever it is — not only the detector
+            // disagreement. The derivative-window exclusion used to get no
+            // disclosure at all, and it is the one that fires on 65-81 % of
+            // stance frames.
+            let excluded = frame.gaitExclusionReason.map { " · \($0)" } ?? ""
             return String(format: "%@ foot down · modelled %.2f BW · inverse dynamics %.2f BW "
-                          + "· disagreement %.2f BW%@",
+                          + "· vertical disagreement %.2f BW%@",
                           side,
                           outcome.modelledVerticalForceInBodyWeights,
                           outcome.solvedVerticalForceInBodyWeights,
                           outcome.residualInBodyWeights,
-                          outcome.contactDetectorsAgree ? "" : " · contact detectors disagree")
+                          excluded)
 
         case .measured(let verdict, let speed, let window, let floor):
             switch verdict {

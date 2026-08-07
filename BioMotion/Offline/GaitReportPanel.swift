@@ -120,8 +120,8 @@ struct GaitReportPanel: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             } else {
-                Text("Each bar is that muscle's peak effort as a fraction of what it can produce, "
-                     + "measured during its own leg's contact.")
+                Text("Each bar is that muscle's effort at mid-contact as a fraction of what it "
+                     + "can produce, averaged over its own leg's contacts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ForEach(s.ranked.prefix(8)) { load in
@@ -129,14 +129,14 @@ struct GaitReportPanel: View {
                         HStack {
                             Text(load.displayName).font(.caption).bold()
                             Spacer()
-                            Text(String(format: "L %.2f · R %.2f", load.leftPeak, load.rightPeak))
+                            Text(String(format: "L %.2f · R %.2f", load.leftLoad, load.rightLoad))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
                         HStack(spacing: 4) {
-                            bar(load.leftPeak, tint: .blue)
-                            bar(load.rightPeak, tint: .red)
+                            bar(load.leftLoad, tint: .blue)
+                            bar(load.rightLoad, tint: .red)
                         }
                         Text(s.claim(for: load))
                             .font(.caption2)
@@ -144,9 +144,14 @@ struct GaitReportPanel: View {
                                              && !load.isSaturated ? .orange : .secondary)
                     }
                 }
-                Text(String(format: "From %d of %d claimed stance frames (%d left, %d right).",
+                Text(String(format: "From %d of %d claimed stance frames (%d left, %d right), "
+                            + "one sample per contact — %d left contacts, %d right.",
                             s.stanceFrameCount, s.claimedStanceFrameCount,
-                            s.leftStanceFrameCount, s.rightStanceFrameCount))
+                            s.leftStanceFrameCount, s.rightStanceFrameCount,
+                            s.leftContactCount, s.rightContactCount))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(s.peakForceRegimeSentence)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -173,16 +178,12 @@ struct GaitReportPanel: View {
             Text(s.unmodelledTermSentence).font(.caption)
             Text("Peak ground force is not measured — it is implied by contact and flight "
                  + "timing, and nothing here can contradict its size. Ratios are shown "
-                 + "because a size error cancels out of them; that cancellation is what "
-                 + "the two checks below test.")
+                 + "because a size error cancels out of them; the two checks below test that "
+                 + "cancellation ON THE VERTICAL AXIS ONLY. The fore-aft term named above is "
+                 + "not modelled and neither check can see it.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            Text(String(format: "Limb inertia the timing model omits: %.2f BW typical, "
-                        + "%.2f BW worst (gate %.2f) — %@.",
-                        s.medianForceResidualInBodyWeights,
-                        s.maxForceResidualInBodyWeights,
-                        NimbleEngine.maxGaitForceResidualInBodyWeights,
-                        s.residualGatePassed ? "passed" : "FAILED"))
+            Text(s.verticalFalsifierSentence)
                 .font(.caption)
                 .foregroundStyle(s.residualGatePassed ? Color.secondary : Color.red)
             Text(String(format: "Foot height agreed with the measured contact on %.0f%% of "

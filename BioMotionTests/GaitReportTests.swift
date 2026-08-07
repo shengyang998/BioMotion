@@ -59,28 +59,43 @@ final class GaitReportTests: XCTestCase {
     ///   shortening its contacts.
     /// * `video_012` unchanged at 10.145 %: its floor already dominated.
     func testG4ResolutionAgainstThePinnedColumn() throws {
-        let measured: [String: (framesPerContact: Double, floor: Double,
-                                repeatability: Double, resolvable: Double)] = [
-            "video_012": (4.9286, 10.145, 0.000, 10.145),
-            "video_013": (4.7024, 10.633, 18.909, 18.909),
-            "video_015": (6.1833, 8.086, 2.564, 8.086),
+        // `repeatability` is the RAW CV of the touchdown gaps; `published` is it
+        // floored at what the clip could have distinguished
+        // (`100/stridePeriodFrames`). `resolvable` is unchanged by that floor on
+        // all three clips — see the assertion below, which is the point.
+        let measured: [String: (framesPerContact: Double, floor: Double, repeatability: Double,
+                                published: Double, resolvable: Double)] = [
+            "video_012": (4.9286, 10.145, 0.000, 100.0 / 18.0, 10.145),
+            "video_013": (4.7024, 10.633, 18.909, 18.909, 18.909),
+            "video_015": (6.1833, 8.086, 2.564, 100.0 / 19.0, 8.086),
         ]
         for (clip, e) in measured {
             let r = try report(clip)
             XCTAssertEqual(r.resolution.framesPerContact, e.framesPerContact, accuracy: 0.01, clip)
             XCTAssertEqual(r.resolution.quantisationFloorPercent, e.floor, accuracy: 0.05, clip)
-            XCTAssertEqual(r.resolution.strideRepeatabilityPercent, e.repeatability, accuracy: 0.05, clip)
+            XCTAssertEqual(r.resolution.measuredStrideRepeatabilityPercent, e.repeatability,
+                           accuracy: 0.05, clip)
+            XCTAssertEqual(r.resolution.strideRepeatabilityPercent, e.published,
+                           accuracy: 0.05, clip)
             XCTAssertEqual(r.resolution.resolvableAsymmetryPercent, e.resolvable, accuracy: 0.05, clip)
             // The published number is never finer than the sampling grid allows.
             XCTAssertGreaterThanOrEqual(r.resolution.resolvableAsymmetryPercent,
                                         r.resolution.quantisationFloorPercent, clip)
-            // And the repeatability input IS the stride period's scatter, not
+            // And the repeatability INPUT is the stride period's scatter, not
             // the contact duration's — the two are measured separately and on
             // `video_015` they differ by 4.3×.
-            XCTAssertEqual(r.resolution.strideRepeatabilityPercent,
+            XCTAssertEqual(r.resolution.measuredStrideRepeatabilityPercent,
                            largerFinite(r.strideVariationPercent.left,
                                         r.strideVariationPercent.right),
                            accuracy: 1e-9, clip)
+            // The floor IS the steadiness bound, not a second constant that
+            // could drift away from it.
+            XCTAssertEqual(r.resolution.strideRepeatabilityBoundPercent,
+                           r.steadiness.boundPercent, accuracy: 1e-12, clip)
+            XCTAssertEqual(r.resolution.strideRepeatabilityPercent,
+                           Swift.max(r.resolution.measuredStrideRepeatabilityPercent,
+                                     r.resolution.strideRepeatabilityBoundPercent),
+                           accuracy: 1e-12, clip)
         }
         let fifteen = try report("video_015")
         XCTAssertEqual(largerFinite(fifteen.contactVariationPercent.left,
@@ -101,14 +116,14 @@ final class GaitReportTests: XCTestCase {
         // The floor is arithmetic, not a fit: half a frame of edge uncertainty
         // spread over N frames of contact.
         for n in [4.0, 5.0, 6.0, 7.0, 8.3, 12.0] {
-            let r = GaitResolution(framesPerContact: n, strideRepeatabilityPercent: 0)
+            let r = GaitResolution(framesPerContact: n, strideRepeatabilityPercent: 0, stridePeriodFrames: 0)
             XCTAssertEqual(r.quantisationFloorPercent, 100 * 0.5 / n, accuracy: 1e-9)
         }
         // The published figures for a 200 ms contact at the four capture rates,
         // which is the sentence the UI will show when it refuses a claim.
         for (fps, expected) in [(30.0, 8.3), (60.0, 4.2), (120.0, 2.1), (240.0, 1.0)] {
             let framesPerContact = 0.200 * fps
-            let r = GaitResolution(framesPerContact: framesPerContact, strideRepeatabilityPercent: 0)
+            let r = GaitResolution(framesPerContact: framesPerContact, strideRepeatabilityPercent: 0, stridePeriodFrames: 0)
             XCTAssertEqual(r.quantisationFloorPercent, expected, accuracy: 0.06, "\(fps) fps")
         }
     }
@@ -122,7 +137,8 @@ final class GaitReportTests: XCTestCase {
         // Self-consistency: at that rate the floor is the claim.
         let scaled = GaitResolution(framesPerContact: r.resolution.framesPerContact
                                         * needed / r.framesPerSecond,
-                                    strideRepeatabilityPercent: 0)
+                                    strideRepeatabilityPercent: 0,
+                                    stridePeriodFrames: 0)
         XCTAssertEqual(scaled.quantisationFloorPercent, wanted, accuracy: 1e-6)
     }
 
@@ -588,47 +604,100 @@ final class GaitReportTests: XCTestCase {
                        "at a rate that resolves the contact there is no noise penalty at all")
     }
 
-    /// The per-leg peak, and the impulse it has to close.
+    /// **The per-leg peak is gated on the SAME resolution as the timing claim,
+    /// and the impulse closes in both regimes.**
     ///
-    /// One clip-wide `Fmax` applied to both feet sets the timing model's own
-    /// left/right peak asymmetry to zero by construction — the product exists to
-    /// find that asymmetry — and it runs the wrong way round, since a shorter
-    /// contact must carry a HIGHER peak.
-    func testEachLegCarriesItsOwnPeakAndTheStrideStillCloses() throws {
-        let expected: [String: (left: Double, right: Double)] = [
-            "video_012": (2.8499, 2.8875),
-            "video_015": (2.4602, 2.4554),
-        ]
-        for (clip, e) in expected {
+    /// One clip-wide `Fmax` applied to both feet unconditionally sets the timing
+    /// model's own left/right peak asymmetry to zero by construction — the
+    /// product exists to find that asymmetry — and it runs the wrong way round,
+    /// since a shorter contact must carry a HIGHER peak.
+    ///
+    /// But a per-leg `Fmax` applied unconditionally is circular: the QP is linear
+    /// in the external load, so each leg's peak lands inside every muscle's
+    /// left/right comparison as a force scale. On `video_012` the contact
+    /// difference is 2.899 % against a 10.145 % floor — the panel refuses it as
+    /// unresolvable in one block and used to re-express it as −1.31 % of muscle
+    /// asymmetry in the next. A number too noisy to display cannot be trusted to
+    /// scale the comparison.
+    ///
+    /// So the previously pinned per-leg column (`video_012` 2.8499/2.8875,
+    /// `video_015` 2.4602/2.4554) is DELIBERATELY replaced: both clips'
+    /// asymmetries are below their own resolution, so both now read a single
+    /// shared peak. The per-leg path is still exercised — by the resolvable
+    /// schedule below, where it must survive.
+    func testThePerLegPeakIsGatedOnTheSameResolutionAsTheTimingClaim() throws {
+        // Both usable clips measure a contact asymmetry FAR below their own
+        // resolution, so both collapse to one peak — and the value is the one
+        // closed on the mean contact.
+        let expectedShared: [String: Double] = ["video_012": 2.8686, "video_015": 2.4578]
+        for (clip, shared) in expectedShared {
             let r = try report(clip)
-            XCTAssertEqual(r.peakVerticalForceInBodyWeights.left, e.left, accuracy: 0.005, clip)
-            XCTAssertEqual(r.peakVerticalForceInBodyWeights.right, e.right, accuracy: 0.005, clip)
-            // The shorter contact carries the higher peak. Always.
-            if r.contactSeconds.left < r.contactSeconds.right {
-                XCTAssertGreaterThan(r.peakVerticalForceInBodyWeights.left,
-                                     r.peakVerticalForceInBodyWeights.right, clip)
-            } else if r.contactSeconds.left > r.contactSeconds.right {
-                XCTAssertLessThan(r.peakVerticalForceInBodyWeights.left,
-                                  r.peakVerticalForceInBodyWeights.right, clip)
-            }
+            XCTAssertLessThan(abs(r.contactAsymmetryPercent),
+                              r.resolution.resolvableAsymmetryPercent, clip)
+            XCTAssertTrue(r.peakVerticalForceIsSharedBetweenLegs, clip)
+            XCTAssertEqual(r.peakVerticalForceInBodyWeights.left,
+                           r.peakVerticalForceInBodyWeights.right, accuracy: 0, clip)
+            XCTAssertEqual(r.peakVerticalForceInBodyWeights.left, shared, accuracy: 0.005, clip)
+            XCTAssertEqual(r.peakVerticalForceInBodyWeights.left,
+                           GaitForceModel.peakInBodyWeights(
+                               contactSeconds: 0.5 * (r.contactSeconds.left + r.contactSeconds.right),
+                               flightSeconds: r.modelledFlightSeconds),
+                           accuracy: 1e-12, clip)
             // And the stride's vertical impulse still closes exactly:
-            // Σ Fᵢ·2·tcᵢ/π = T.
+            // Σ Fᵢ·2·tcᵢ/π = T. This is the property the shared peak could have
+            // broken and does not.
             let impulse = r.peakVerticalForceInBodyWeights.left * 2 * r.contactSeconds.left / .pi
                 + r.peakVerticalForceInBodyWeights.right * 2 * r.contactSeconds.right / .pi
             let stride = r.contactSeconds.left + r.contactSeconds.right
                 + 2 * r.modelledFlightSeconds
             XCTAssertEqual(impulse, stride, accuracy: 1e-9, "\(clip): m·g·T of impulse")
+            print("GAIT-METRIC shared_peak clip=\(clip) "
+                  + "contact_asymmetry_percent=\(r.contactAsymmetryPercent) "
+                  + "resolvable_percent=\(r.resolution.resolvableAsymmetryPercent) "
+                  + "peak_bw=\(r.peakVerticalForceInBodyWeights.left)")
         }
-        // The size of what the shared peak used to discard, on an asymmetric
-        // runner: 200 / 160 ms contacts and 130 ms of flight.
-        let shared = GaitForceModel(contactSeconds: 0.180, flightSeconds: 0.130)
-        let l = GaitForceModel.peakInBodyWeights(contactSeconds: 0.200, flightSeconds: 0.130)
-        let rr = GaitForceModel.peakInBodyWeights(contactSeconds: 0.160, flightSeconds: 0.130)
-        XCTAssertEqual(shared.peakVerticalForceInBodyWeights, 2.7053, accuracy: 0.001)
-        XCTAssertEqual(l, 2.5918, accuracy: 0.001)
-        XCTAssertEqual(rr, 2.8471, accuracy: 0.001)
-        XCTAssertEqual(100 * (l - rr) / (0.5 * (l + rr)), -9.39, accuracy: 0.02,
-                       "a 9.4 % peak asymmetry the shared model set to zero")
+
+        // **The control the gate must not swallow.** 200 / 160 ms contacts with
+        // 130 ms of flight is a 22 % contact asymmetry: resolvable at any
+        // sensible floor, so each leg keeps its own peak and the shorter contact
+        // carries the higher one.
+        let asymmetric = GaitForceModel.perLegPeaksInBodyWeights(
+            contactSeconds: Bilateral(left: 0.200, right: 0.160),
+            flightSeconds: 0.130,
+            resolvableAsymmetryPercent: 10.0)
+        XCTAssertFalse(asymmetric.sharedBetweenLegs)
+        XCTAssertEqual(asymmetric.peaks.left, 2.5918, accuracy: 0.001)
+        XCTAssertEqual(asymmetric.peaks.right, 2.8471, accuracy: 0.001)
+        XCTAssertLessThan(asymmetric.peaks.left, asymmetric.peaks.right,
+                          "the shorter contact carries the higher peak")
+        XCTAssertEqual(100 * (asymmetric.peaks.left - asymmetric.peaks.right)
+                       / (0.5 * (asymmetric.peaks.left + asymmetric.peaks.right)),
+                       -9.39, accuracy: 0.02,
+                       "a 9.4 % peak asymmetry an unconditional shared model would discard")
+        // The same contacts under a floor that refuses them: one peak, and the
+        // impulse still closes.
+        let refused = GaitForceModel.perLegPeaksInBodyWeights(
+            contactSeconds: Bilateral(left: 0.200, right: 0.160),
+            flightSeconds: 0.130,
+            resolvableAsymmetryPercent: 30.0)
+        XCTAssertTrue(refused.sharedBetweenLegs)
+        XCTAssertEqual(refused.peaks.left, refused.peaks.right, accuracy: 0)
+        XCTAssertEqual(refused.peaks.left,
+                       GaitForceModel(contactSeconds: 0.180, flightSeconds: 0.130)
+                           .peakVerticalForceInBodyWeights,
+                       accuracy: 1e-12)
+        XCTAssertEqual(refused.peaks.left * 2 * 0.200 / .pi + refused.peaks.right * 2 * 0.160 / .pi,
+                       0.200 + 0.160 + 2 * 0.130, accuracy: 1e-12,
+                       "the shared peak closes the stride impulse exactly too")
+        XCTAssertEqual(refused.peaks.left, 2.7053, accuracy: 0.001)
+
+        // Exactly at the boundary the difference IS claimable, so it is used.
+        let boundary = GaitForceModel.perLegPeaksInBodyWeights(
+            contactSeconds: Bilateral(left: 0.200, right: 0.160),
+            flightSeconds: 0.130,
+            resolvableAsymmetryPercent: 100 * 0.040 / 0.180)
+        XCTAssertFalse(boundary.sharedBetweenLegs,
+                       "the same inclusive boundary the asymmetry claim uses")
     }
 
     // MARK: - Input validation

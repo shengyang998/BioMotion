@@ -39,19 +39,69 @@ import Foundation
 /// The published resolution changes accordingly: `video_015` 11.14 % → 8.09 %
 /// (its floor), `video_013` 43.28 % → 18.91 %, `video_012` unchanged at
 /// 10.15 % because its floor already dominated.
+///
+/// # `strideRepeatabilityPercent` is FLOORED at what the clip could have seen
+///
+/// The scatter is a coefficient of variation over touchdown GAPS, and those gaps
+/// are whole numbers of frames. On `video_012` every gap is exactly 18 samples,
+/// so the CV is exactly 0 — and 0.000 was published to the user as "this runner's
+/// own stride-to-stride variation ±0%", a statement about the runner that the
+/// clip cannot support. A 30 fps clip with an 18-frame stride cannot distinguish
+/// a perfectly steady runner from one varying by up to one sampling interval,
+/// i.e. `100/18 = 5.56%` — the same number `GaitSteadiness.boundPercent` already
+/// publishes as "the coarsest variation this clip could not have distinguished
+/// from a steady runner".
+///
+/// So the published repeatability is `max(measured, bound)` and the raw
+/// measurement is kept beside it as `measuredStrideRepeatabilityPercent`. The
+/// consequence that matters is the PROMISE: `bestAchievablePercentAtAnyFrameRate`
+/// was returning 0.000 on `video_012`, which let `resolutionSentence` promise
+/// "filming at 61 fps would resolve ±5%" on a clip whose own stride scatter could
+/// be 5.6% — a promise the faster camera could not keep.
+///
+/// Measured blast radius, all three pinned clips: the published resolution
+/// `max(floor, repeatability)` does not move on any of them (10.145 / 18.909 /
+/// 8.086), because the quantisation floor `50/framesPerContact` sits at
+/// `stridePeriodFrames / (2·framesPerContact)` times the stride bound
+/// `100/stridePeriodFrames` — 1.83, 1.91 and 1.54 on the three clips — and that
+/// ratio does not move with capture rate, since both terms scale together. Only
+/// the displayed breakdown and the frame-rate promise change.
 struct GaitResolution: Equatable {
     let framesPerContact: Double
     let quantisationFloorPercent: Double
+    /// What the touchdown gaps actually scattered by — quantised to whole
+    /// frames, so it can read exactly 0.
+    let measuredStrideRepeatabilityPercent: Double
+    /// One sampling interval as a fraction of the stride period: the finest
+    /// stride-to-stride variation this clip could have distinguished from a
+    /// perfectly steady runner. 0 when the stride period is unknown.
+    let strideRepeatabilityBoundPercent: Double
+    /// `max(measured, bound)` — what the runner's own strides allow, never finer
+    /// than the clip could have seen.
     let strideRepeatabilityPercent: Double
-    /// `max` of the two. The finest left/right difference this clip may assert.
+    /// `max` of the grid floor and the repeatability. The finest left/right
+    /// difference this clip may assert.
     let resolvableAsymmetryPercent: Double
 
-    init(framesPerContact: Double, strideRepeatabilityPercent: Double) {
+    /// - Parameter stridePeriodFrames: the detector's stride period in samples.
+    ///   Pass 0 only where there is no stride period to speak of — the floor is
+    ///   then disabled and the measured scatter is published raw.
+    init(framesPerContact: Double,
+         strideRepeatabilityPercent measured: Double,
+         stridePeriodFrames: Int) {
         self.framesPerContact = framesPerContact
         let floor = framesPerContact > 0 ? 100 * 0.5 / framesPerContact : .infinity
         quantisationFloorPercent = floor
-        self.strideRepeatabilityPercent = strideRepeatabilityPercent
-        resolvableAsymmetryPercent = Swift.max(floor, strideRepeatabilityPercent)
+        measuredStrideRepeatabilityPercent = measured
+        let bound = stridePeriodFrames > 0 ? 100.0 / Double(stridePeriodFrames) : 0
+        strideRepeatabilityBoundPercent = bound
+        // A NON-finite measurement means no leg had a stride period at all, and
+        // that has to keep poisoning the resolution — the bound must not rescue
+        // it into a claimable number. `largerFinite` would have done exactly
+        // that.
+        let repeatability = measured.isFinite ? Swift.max(measured, bound) : measured
+        self.strideRepeatabilityPercent = repeatability
+        resolvableAsymmetryPercent = Swift.max(floor, repeatability)
     }
 
     /// The gate every asymmetry claim has to pass. A difference finer than the
@@ -77,6 +127,10 @@ struct GaitResolution: Equatable {
     /// runner. As the rate rises the quantisation floor goes to zero and the
     /// runner's own stride-to-stride variation is what is left, so promising
     /// anything finer than this is promising something the camera cannot buy.
+    ///
+    /// Reads the FLOORED repeatability, not the raw measurement — a CV over
+    /// frame-quantised gaps that happens to land on 0.000 is not evidence that a
+    /// faster camera would find nothing there.
     var bestAchievablePercentAtAnyFrameRate: Double {
         strideRepeatabilityPercent.isFinite ? strideRepeatabilityPercent : .infinity
     }
@@ -252,25 +306,40 @@ struct GaitReport {
     /// The whole-clip force model. `dutyFactor` and `describesRunning` are
     /// clip-level questions and read from here.
     let force: GaitForceModel
-    /// Peak vertical GRF **per leg**, body weights, each closed on its OWN
-    /// contact time: `Fmax_side = (π/2)(1 + tf/tc_side)`.
+    /// Peak vertical GRF per leg, body weights — each closed on its own contact
+    /// time `Fmax_side = (π/2)(1 + tf/tc_side)` **where this clip can resolve the
+    /// difference between the two contact times**, and on the MEAN contact time
+    /// where it cannot. `peakVerticalForceIsSharedBetweenLegs` says which
+    /// happened. See `GaitForceModel.perLegPeaksInBodyWeights` for why one gate
+    /// has to govern both the displayed timing claim and this force scale.
     ///
-    /// One clip-wide peak applied to both feet sets the timing model's own
-    /// left/right peak-force asymmetry to zero by construction, and the product
-    /// exists to find that asymmetry. It also runs the wrong way round: at a
-    /// fixed step frequency a SHORTER contact must carry a HIGHER peak, because
-    /// it has less time to deliver the same impulse.
+    /// One clip-wide peak applied to both feet unconditionally would set the
+    /// timing model's own left/right peak-force asymmetry to zero by
+    /// construction, and the product exists to find that asymmetry. It also runs
+    /// the wrong way round: at a fixed step frequency a SHORTER contact must
+    /// carry a HIGHER peak, because it has less time to deliver the same
+    /// impulse.
     ///
-    /// Cost of getting it wrong, measured: `tcL = 200 ms`, `tcR = 160 ms`,
-    /// `tf = 130 ms` gives 2.7053 BW on both feet under the shared model against
-    /// 2.5918 / 2.8471 per leg — a 9.4 % peak asymmetry discarded, above the
-    /// 8.3 % floor a 6-frame contact allows. On the owner's own clips the
-    /// difference is small (`video_012` −1.31 %, `video_015` +0.20 %), which is
-    /// why no existing test noticed.
+    /// Cost of getting it wrong in that direction, measured: `tcL = 200 ms`,
+    /// `tcR = 160 ms`, `tf = 130 ms` gives 2.7053 BW on both feet under the
+    /// shared model against 2.5918 / 2.8471 per leg — a 9.4 % peak asymmetry
+    /// discarded, above the 8.3 % floor a 6-frame contact allows. That schedule
+    /// is resolvable, so it still gets per-leg peaks.
     ///
-    /// The stride impulse still closes exactly: `Σ F_i·2tc_i/π = (tcL + tf) +
-    /// (tcR + tf) = T`, verified numerically in `GaitReportTests`.
+    /// Cost of getting it wrong in the OTHER direction, also measured: on
+    /// `video_012` the contact difference is 2.899 % against a 10.145 % floor,
+    /// and per-leg peaks were injecting −1.31 % of force scale into all 520
+    /// muscles' left/right comparisons on a screen that had just refused the
+    /// 2.899 % as unresolvable.
+    ///
+    /// The stride impulse closes exactly either way: `Σ F_i·2tc_i/π = T`,
+    /// verified numerically in `GaitReportTests` for both regimes.
     let peakVerticalForceInBodyWeights: Bilateral<Double>
+    /// True when the two legs' peaks were closed on the MEAN contact time
+    /// because the clip could not resolve the difference between them. Published
+    /// rather than inferred from equality: "the legs measured the same" and
+    /// "this clip refused to distinguish them" are different statements.
+    let peakVerticalForceIsSharedBetweenLegs: Bool
     let resolution: GaitResolution
     let steadiness: GaitSteadiness
 
@@ -400,11 +469,6 @@ enum GaitAnalysis {
         let modelledFlight = 0.5 * (meanStride - contactSeconds.left - contactSeconds.right)
         let meanContact = 0.5 * (contactSeconds.left + contactSeconds.right)
         let force = GaitForceModel(contactSeconds: meanContact, flightSeconds: modelledFlight)
-        // Each leg's peak is closed on ITS OWN contact time. See
-        // `GaitReport.peakVerticalForceInBodyWeights`.
-        let perLegPeak = contactSeconds.map {
-            GaitForceModel.peakInBodyWeights(contactSeconds: $0, flightSeconds: modelledFlight)
-        }
 
         let framesPerContact = 0.5 * (contactFrames.left + contactFrames.right)
         // The RUNNER's own repeatability is the scatter of the STRIDE PERIOD.
@@ -412,9 +476,17 @@ enum GaitAnalysis {
         // quantisation floor already counts — see `GaitResolution`.
         let repeatability = largerFinite(strideVariation.left, strideVariation.right)
         let resolution = GaitResolution(framesPerContact: framesPerContact,
-                                        strideRepeatabilityPercent: repeatability)
+                                        strideRepeatabilityPercent: repeatability,
+                                        stridePeriodFrames: detected.stridePeriodFrames)
         let steadiness = GaitSteadiness(strideVariationPercent: strideVariation,
                                         stridePeriodFrames: detected.stridePeriodFrames)
+        // Each leg's peak is closed on ITS OWN contact time — but only where
+        // this clip can resolve the contact difference that separates them. See
+        // `GaitForceModel.perLegPeaksInBodyWeights`.
+        let peaks = GaitForceModel.perLegPeaksInBodyWeights(
+            contactSeconds: contactSeconds,
+            flightSeconds: modelledFlight,
+            resolvableAsymmetryPercent: resolution.resolvableAsymmetryPercent)
 
         let measuredStanceFrames = allStanceFrames.isEmpty ? 0 : Int(median(allStanceFrames).rounded())
         let shortestContact = allStanceFrames.min().map { Int($0) } ?? 0
@@ -510,7 +582,8 @@ enum GaitAnalysis {
                           measuredFlightScatterSeconds: flightScatter,
                           modelledFlightSeconds: modelledFlight,
                           force: force,
-                          peakVerticalForceInBodyWeights: perLegPeak,
+                          peakVerticalForceInBodyWeights: peaks.peaks,
+                          peakVerticalForceIsSharedBetweenLegs: peaks.sharedBetweenLegs,
                           resolution: resolution,
                           steadiness: steadiness,
                           refusals: refusals,

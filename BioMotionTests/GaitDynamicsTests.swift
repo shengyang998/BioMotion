@@ -655,7 +655,7 @@ final class GaitDynamicsTests: XCTestCase {
 
     private static func load(left: Double, right: Double) -> GaitLoadSummary.MuscleLoad {
         .init(id: "glmax1", displayName: "Glute max (upper)",
-              leftPeak: left, rightPeak: right, leftFrames: 5, rightFrames: 5,
+              leftLoad: left, rightLoad: right, leftContacts: 5, rightContacts: 5,
               isSaturated: false)
     }
 
@@ -664,18 +664,24 @@ final class GaitDynamicsTests: XCTestCase {
                         resolvableAsymmetryPercent: 10,
                         quantisationFloorPercent: 10,
                         strideRepeatabilityPercent: 7,
+                        measuredStrideRepeatabilityPercent: 7,
+                        strideRepeatabilityBoundPercent: 5.56,
+                        peakForceIsSharedBetweenLegs: true,
                         framesPerContact: 5,
                         framesPerSecond: 30,
                         stanceFrameCount: 10,
                         claimedStanceFrameCount: 10,
                         saturatedMuscleCount: 0,
-                        maxForceResidualInBodyWeights: maxResidual,
-                        medianForceResidualInBodyWeights: maxResidual,
+                        maxVerticalForceResidualInBodyWeights: maxResidual,
+                        medianVerticalForceResidualInBodyWeights: maxResidual,
+                        residualFrameCount: 10,
                         residualGatePassed: maxResidual <= NimbleEngine.maxGaitForceResidualInBodyWeights,
                         contactDetectorDisagreements: 0,
                         framesWithoutACleanDerivativeWindow: 0,
                         leftStanceFrameCount: 5,
                         rightStanceFrameCount: 5,
+                        leftContactCount: 5,
+                        rightContactCount: 5,
                         horizontalRootAccelerationModelled: false,
                         derivativeFilterTaps: 5,
                         derivativeFilterSpanMilliseconds: 133,
