@@ -27,6 +27,10 @@ biggest links were **not** where the effort had been going.
 - A **kinematics-only findings layer** ships (forward head, rounded shoulders, trunk lean, …). It
   carries **no clinical threshold and no verdict** and suppresses any finding whose measurement axis
   points into depth. See [Posture findings](#posture-findings-a-kinematics-only-layer-2026-08-07).
+- **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
+  defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
+  torso and the legs were never in frame. Leg error 9.2% → 3.0% of subject height, torso unchanged.
+  See [Device vs Mac](#device-vs-mac-solved--vision-was-returning-an-upper-body-box-2026-08-07).
 
 There is **no known-red test any more**. `testRepeatedIKOnIdenticalMarkersIsStable` passes as
 written; the tripwire that replaced its role is described under
@@ -847,14 +851,52 @@ one genuinely new constant (0.08 m/s²) is exactly `2 × 0.02 / 0.5` — chosen 
 gate itself is sound and was not fitted to any fixture (a 0.9×–1.1× sweep flips exactly at 0.020),
 but "0.82% of g" is a post-hoc description, not a budget set first.
 
-### Device vs Mac: the same model gives a different pose (open, 2026-08-07)
+### Device vs Mac: SOLVED — Vision was returning an upper-body box (2026-08-07)
 
-On a real frame the phone and this Mac disagree about the pose. A sprinter's recovery leg — folded,
-heel raised behind — is drawn by the app **down onto the track**. The same frame through the same
-`.mlpackage` here puts that foot raised, which is what the photograph shows. The front leg is
-correct in both.
+**Root cause: `VNDetectHumanRectanglesRequest.upperBodyOnly` defaults to `true`.**
+`SAM3DPoseEstimator.detectPersonBBox` constructed the request bare and never set it, so the offline
+path cropped SAM 3D Body's 512×512 input to the **torso**. The legs were outside the square the
+model could see, so it emitted a near-standing mean pose for them while the torso kept tracking.
+Fixed by `makePersonRectangleRequest()`, which sets the flag and exists so a test can assert it
+(`BioMotionTests/PersonBoxTests.swift`).
 
-**Everything upstream is ruled out, measured rather than argued:**
+Measured on `video_015.mov` (576×768 running clip), same model, same frames, only the box differing:
+
+| box | height as % of image | leg error | torso error |
+|---|---|---|---|
+| `upperBodyOnly = true` (was) | 20–26%, ends above the hips | **9.2%** | 2.1% |
+| `upperBodyOnly = false` (fix) | 46–60%, reaches the feet | **3.0%** | 2.0% |
+
+Error is mean joint distance as a percentage of the subject's own pixel height, refereed by
+**Vision's own 2-D body pose** — an estimator sharing no code with SAM 3D Body, so neither crop
+judges itself. All 9 sampled frames improved (9.2% worst case 12.7% → 3.0% worst case 4.2%); the
+torso did not move. That "legs transform, torso unchanged" signature is what separates the fix from
+a number that drifted. Harness: `labs/sam-3d-body/export/{vision_box_probe.swift,box_ablation.py}`.
+
+**Asking for the whole body does not cost detection rate** — the obvious way this fix could have
+backfired, since a whole-body box is the harder detection and a miss falls back to the whole image.
+Over 60 frames from all three reference clips the two settings detect **identically**: 18/20, 20/20,
+20/20. Box height as a fraction of image height, upper versus full: 19%/46%, 21%/47%, 24%/55%.
+
+**Why this took so long, recorded so the same trap is cheaper next time.** The Mac reproduction was
+fed a full-body box (`96,214,367,667` — 59% of image height) while the phone detected its own
+torso box. Every comparison therefore differed in the one input nobody was printing. That produced
+three confident wrong turns:
+
+- **"The two Core ML backends diverge."** Wrong. It explained the facts — including why the Mac was
+  invariant to twelve input perturbations — because the Mac never had the defect. Backend
+  fingerprints (builds 27–28) were built to test a hypothesis that was false.
+- **"The inputs differ, so the divergence is upstream."** Right conclusion, worthless evidence: the
+  Mac reference pixels were extracted from a *screen recording* — re-encoded, rescaled, with the
+  overlay burnt in. Those checksums could never have matched whatever the cause.
+- **A visible, well-formed skeleton on the torso read as "mostly working."** It was the diagnostic
+  signal: a monocular model that cannot see a limb does not fail loudly, it returns the mean pose.
+
+The lesson that generalises: when two environments disagree, print **every** input each one derived
+for itself before comparing anything downstream. The framework default nobody wrote down is a
+better suspect than the numerics nobody can see.
+
+**Ruled out earlier, and still true — this was all sound work on the wrong stage:**
 
 | checked | result |
 |---|---|
@@ -865,29 +907,13 @@ correct in both.
 | bone connectivity table | identical |
 | vs an independent estimator (Vision body pose) | agree to ~13 px on a body ~450 px tall (≈3%) |
 
-**And the Mac's prediction is invariant to twelve perturbations**: six person-box variants including
-the whole-image fallback, ±1 and ±2 LSB pixel noise, and an RGB/BGR channel swap. All twelve give
-the raised foot with the toe-height difference unchanged at 169 px. The input side has nothing left
-in it that flips the answer.
+**The Mac's prediction was invariant to twelve perturbations**: six person-box variants including
+the whole-image fallback, ±1 and ±2 LSB pixel noise, and an RGB/BGR channel swap. Read correctly,
+this was the clue rather than the mystery — all six box variants were generous ones, so the model
+could see the legs in every case and nothing moved. A torso box was never among them.
 
-**Plausible mechanism.** The decoder is not a single forward pass: six iterations, each projecting
-the current pose to 2-D, `grid_sample`-ing image features at those predicted points, and feeding
-them back. That is a positive feedback loop, and it can amplify a small backend difference into a
-different *mode* on a pose where the monocular depth is genuinely ambiguous — shin up versus shin
-down. It also explains why input perturbations do nothing: on this machine that mode is stable.
-
-**How to settle it.** Two fingerprints ship in builds 27–28, order-sensitive FNV-1a over raw bit
-patterns so one flipped mantissa bit changes them:
-
-- **Per-frame** (build 27): checksums the `image` tensor handed to Core ML and the returned
-  `joint_coords`+`cam_t`. Confounded — the app decodes the video itself, so two machines can
-  legitimately produce different pixels for "the same frame".
-- **Backend self-test** (build 28, import screen): runs the model on tensors from a fixed integer
-  formula. No decode, no Vision, no warp, no intrinsics. Every value is an exact multiple of 1/256
-  in `[-0.5, 0.5)`, which Float16 holds without rounding, so the input checksum is a property of the
-  formula. Same input checksum + different output checksum leaves only the two Core ML backends.
-
-Reference on this Mac (M2 Pro, `CPU_AND_GPU`):
+The FNV-1a fingerprints from builds 27–28 remain in the code and stay useful, now as a
+backend-parity check rather than a bug hunt. Reference on this Mac (M2 Pro, `CPU_AND_GPU`):
 
 ```
 self-test        in 0a6dd7e25b3013e8   out 24f80e92616dbaf7
@@ -902,8 +928,9 @@ ops (2898 `mul`, 1809 `slice_by_index`, 1441 `cast`, 566 `logical_and`, 162 `sel
 work ANE is built for. The `grid_sample` feedback loop stays on GPU either way, so ANE would add a
 *third* numeric implementation rather than remove a divergence.
 
-**Also observed and not yet explained:** the app reported 76 sampled frames but only 57 pose-only
-results, i.e. **19 frames produced no pose at all**, while Vision found a person in 76/76 here.
+**"19 frames produced no pose" was a misreading and is closed.** The 57 was a partial count read off
+a recording while the batch was still running. Build 28 reports **76 pose-only of 76 sampled** on
+the same clip.
 
 ### The limitation that shapes the product claim
 

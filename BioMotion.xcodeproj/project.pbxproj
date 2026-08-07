@@ -56,6 +56,7 @@
 		DE75B8575F912B5A02976E0B /* MHRRetarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2A4C75E6AA932E8711E81C0 /* MHRRetarget.swift */; };
 		E1C04472A89C653399F92677 /* BioMotionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61281090913631B0CE9A7C73 /* BioMotionApp.swift */; };
 		E57576912BED5701F5109480 /* StaticHoldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B85FE37CE702C7D8D14A08 /* StaticHoldTests.swift */; };
+		E8CAC2BA9966EE9ED2E33E86 /* PersonBoxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 635955A3754AEA4532DD5F11 /* PersonBoxTests.swift */; };
 		EA0D96BEE590A8EC44964245 /* SessionChartsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB61194FADC588D790C9D483 /* SessionChartsView.swift */; };
 		ED327C5D32C21DB76E6D959B /* DOFMaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */; };
 		EDA3373BCD3746A22F7CD272 /* NimbleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BCF8A0B85EADE0EACE2E91D /* NimbleEngine.swift */; };
@@ -125,6 +126,7 @@
 		61281090913631B0CE9A7C73 /* BioMotionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BioMotionApp.swift; sourceTree = "<group>"; };
 		61F7A23E87AFC3190713C1D6 /* osqp_interrupt_stub.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = osqp_interrupt_stub.c; sourceTree = "<group>"; };
 		622F2E1A346D02B435A0299C /* CalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationView.swift; sourceTree = "<group>"; };
+		635955A3754AEA4532DD5F11 /* PersonBoxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonBoxTests.swift; sourceTree = "<group>"; };
 		63E261BAC88A15FDC743D492 /* AssetPackDownloader.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = AssetPackDownloader.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		640BA97ED28345730C5FFFB8 /* BioMotionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BioMotionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		675A6A481192DE8527711A02 /* BodyTrackingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyTrackingSession.swift; sourceTree = "<group>"; };
@@ -222,6 +224,7 @@
 				AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */,
 				FF0F23C51614668A2D0002E4 /* OfflineMuscleChainTests.swift */,
 				421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */,
+				635955A3754AEA4532DD5F11 /* PersonBoxTests.swift */,
 				8CA8EDF03A71660632ECC367 /* PostureFindingsRealPoseTests.swift */,
 				08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */,
 				59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */,
@@ -542,6 +545,7 @@
 				59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */,
 				FAFDAE32C4C82F3339D97B8C /* OfflineMuscleChainTests.swift in Sources */,
 				A1255E337CF95E0639A20E10 /* OfflineOrchestrationTests.swift in Sources */,
+				E8CAC2BA9966EE9ED2E33E86 /* PersonBoxTests.swift in Sources */,
 				1D0C2C290242C2C96F04CF93 /* PostureFindingsRealPoseTests.swift in Sources */,
 				68975B28DCF3CD55E9EB1746 /* PostureFindingsTests.swift in Sources */,
 				D5042C5568E0CC26BBB00D03 /* ShoulderRotMaskTests.swift in Sources */,
@@ -617,7 +621,7 @@
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/BioMotion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
@@ -825,7 +829,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/AssetPackDownloader.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				INFOPLIST_FILE = "BioMotion/AssetPack/Support/AssetPackDownloader-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -848,7 +852,7 @@
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/BioMotion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
@@ -896,7 +900,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/AssetPackDownloader.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				INFOPLIST_FILE = "BioMotion/AssetPack/Support/AssetPackDownloader-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (

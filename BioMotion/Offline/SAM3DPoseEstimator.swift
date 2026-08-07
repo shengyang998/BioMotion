@@ -70,6 +70,12 @@ final class SAM3DPoseEstimator {
         /// single flipped mantissa bit changes them.
         let inputChecksum: UInt64
         let outputChecksum: UInt64
+        /// Stage fingerprints upstream of the model, so a divergence localises
+        /// without a round trip per stage: decoded source pixels, the person box
+        /// (centre + square side), and the warped crop before normalisation.
+        let sourceHash: UInt64
+        let bboxHash: UInt64
+        let warpHash: UInt64
     }
 
     /// FNV-1a over the bit patterns of a Float sequence. Order-sensitive and
@@ -85,6 +91,30 @@ final class SAM3DPoseEstimator {
             }
         }
         return h
+    }
+
+    /// FNV-1a over raw bytes — for image buffers, where the question is whether
+    /// two machines produced literally the same pixels.
+    static func checksumBytes(_ bytes: [UInt8]) -> UInt64 {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in bytes { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        return h
+    }
+
+    /// The decoded source frame's pixels, in a layout independent of row
+    /// padding, so the hash reflects the image rather than the allocation.
+    static func sourcePixels(_ image: UIImage) -> [UInt8] {
+        guard let cg = image.cgImage else { return [] }
+        let w = cg.width, h = cg.height
+        var buf = [UInt8](repeating: 0, count: w * h * 4)
+        buf.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h,
+                                      bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        return buf
     }
 
     enum EstimatorError: LocalizedError {
@@ -238,6 +268,16 @@ final class SAM3DPoseEstimator {
             throw EstimatorError.preprocessingFailed("could not render the affine-warped square crop")
         }
 
+        // Stage fingerprints, so a divergence localises in ONE reading instead of
+        // a round trip per stage. The per-frame input checksum alone cannot say
+        // whether two machines decoded the video differently, detected a
+        // different person box, or warped differently — only that something
+        // upstream of the model differs.
+        let sourceHash = Self.checksumBytes(Self.sourcePixels(uiImage))
+        let bboxHash = Self.checksum([Float(geometry.bboxCenter.x), Float(geometry.bboxCenter.y),
+                                      Float(geometry.side)])
+        let warpHash = Self.checksumBytes(rgba)
+
         let imageArray = try Self.makeImageTensor(rgba: rgba)
         let rayArray = try Self.makeRayMapTensor(geometry: geometry, focalLength: focalLength,
                                                   camIntCx: camIntCx, camIntCy: camIntCy)
@@ -260,7 +300,8 @@ final class SAM3DPoseEstimator {
 
         let outputProvider = try await Self.runPrediction(model: model, input: provider)
         return try Self.parseOutput(outputProvider, usedFallbackBBox: usedFallback,
-                                    inputChecksum: inputChecksum)
+                                    inputChecksum: inputChecksum,
+                                    sourceHash: sourceHash, bboxHash: bboxHash, warpHash: warpHash)
     }
 
     private func ensureModelLoaded() async throws -> MLModel {
@@ -360,11 +401,30 @@ final class SAM3DPoseEstimator {
     /// (`sam_3d_body_estimator.py:125`: `boxes = [0, 0, width, height]`).
     /// Returns the bbox in UPRIGHT pixel coordinates (top-left origin), i.e. the
     /// same space as `uiImage.size` (which already accounts for EXIF orientation).
+    /// `upperBodyOnly` MUST be set false, and it is not the default.
+    ///
+    /// A torso-only box crops the legs out of the square the model sees. Measured
+    /// on a 576x768 running clip: the default box spans 20-26% of the image
+    /// height and ends above the hips, versus 46-60% reaching the feet. SAM 3D
+    /// Body then has no leg pixels to read and emits a near-standing mean pose
+    /// for the legs while the torso still tracks — which is what "the skeleton
+    /// doesn't match" looked like. Scored against Vision's own 2-D body pose over
+    /// 9 frames, leg error was 9.2% of subject height with the default box and
+    /// 3.0% with the full-body box, while torso error was unchanged (2.1% vs
+    /// 2.0%). Harness: `labs/sam-3d-body/export/box_ablation.py`.
+    ///
+    /// Exposed as a factory so a test can assert the flag without a Vision run.
+    static func makePersonRectangleRequest() -> VNDetectHumanRectanglesRequest {
+        let request = VNDetectHumanRectanglesRequest()
+        request.upperBodyOnly = false
+        return request
+    }
+
     private static func detectPersonBBox(uiImage: UIImage) throws -> (CGRect, usedFallback: Bool) {
         let fallback = (CGRect(origin: .zero, size: uiImage.size), true)
         guard let cgImage = uiImage.cgImage else { throw EstimatorError.imageDecodeFailed }
 
-        let request = VNDetectHumanRectanglesRequest()
+        let request = makePersonRectangleRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage,
                                              orientation: cgOrientation(for: uiImage.imageOrientation),
                                              options: [:])
@@ -586,7 +646,9 @@ final class SAM3DPoseEstimator {
     // MARK: - Output parsing
 
     private static func parseOutput(_ provider: MLFeatureProvider, usedFallbackBBox: Bool,
-                                    inputChecksum: UInt64) throws -> Output {
+                                    inputChecksum: UInt64,
+                                    sourceHash: UInt64, bboxHash: UInt64,
+                                    warpHash: UInt64) throws -> Output {
         guard let jointCoordsArray = provider.featureValue(for: "joint_coords")?.multiArrayValue else {
             throw EstimatorError.missingOutputFeature("joint_coords")
         }
@@ -615,7 +677,8 @@ final class SAM3DPoseEstimator {
         return Output(jointCoords: jointCoords, globalRots: globalRots, camT: camT,
                       keypoints2D: keypoints2D, usedFallbackBBox: usedFallbackBBox,
                       inputChecksum: inputChecksum,
-                      outputChecksum: Self.checksum(flat))
+                      outputChecksum: Self.checksum(flat),
+                      sourceHash: sourceHash, bboxHash: bboxHash, warpHash: warpHash)
     }
 
     @inline(__always)

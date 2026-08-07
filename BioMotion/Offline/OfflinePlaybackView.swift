@@ -190,7 +190,8 @@ struct OfflinePlaybackView: View {
                     // only place the divergence appears and console logs are not
                     // reachable from a TestFlight install.
                     if let c = resultStore.selectedFrame?.modelChecksums {
-                        Text(String(format: "model in %016llx  out %016llx", c.input, c.output))
+                        Text(String(format: "src %016llx\nbox %016llx  warp %016llx\nin  %016llx  out %016llx",
+                                    c.source, c.bbox, c.warp, c.input, c.output))
                             .font(.system(size: 9, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)

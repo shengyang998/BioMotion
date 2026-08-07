@@ -94,7 +94,8 @@ final class OfflineResultStore: ObservableObject {
         let camT: SIMD3<Float>?
         /// Model input/output checksums for the on-device vs Mac comparison.
         /// See `SAM3DPoseEstimator.Output.inputChecksum`.
-        let modelChecksums: (input: UInt64, output: UInt64)?
+        let modelChecksums: (input: UInt64, output: UInt64,
+                             source: UInt64, bbox: UInt64, warp: UInt64)?
         let bodyFrame: BodyFrame?
         let ikResult: NimbleEngine.IKOutput?
         let idResult: NimbleEngine.IDOutput?

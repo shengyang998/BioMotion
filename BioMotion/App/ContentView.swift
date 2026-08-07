@@ -39,7 +39,11 @@ struct ContentView: View {
         }
         .onChange(of: bodyTracking.currentFrame?.frameNumber) { _, _ in
             guard let frame = bodyTracking.currentFrame else { return }
-            guard !showCalibration && !showCharts else { return }
+            // Offline analysis drives the SAME NimbleEngine — its SG filters and
+            // the process-wide skeleton. A live frame arriving mid-session does
+            // not just waste power, it interleaves a second motion into the
+            // filters the offline run is reading.
+            guard !showCalibration && !showCharts && !showOfflineImport else { return }
             recorder.recordFrame(frame)
             nimble.processFrame(frame)
         }
@@ -51,6 +55,16 @@ struct ContentView: View {
         // Charts shown via export button, not auto-transition
         .sheet(isPresented: $showExportSheet) {
             ShareSheet(items: exportURLs)
+        }
+        .onChange(of: showOfflineImport) { _, presenting in
+            if presenting {
+                bodyTracking.pause()
+                // Drop the live filter warm-up so the offline session starts from
+                // an empty window rather than inheriting live samples.
+                nimble.resetRealtimeState()
+            } else {
+                bodyTracking.start()
+            }
         }
         .sheet(isPresented: $showOfflineImport) {
             OfflineImportView(nimble: nimble, onDismiss: { showOfflineImport = false })
