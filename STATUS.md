@@ -33,6 +33,13 @@ biggest links were **not** where the effort had been going.
   It is necessary and **not sufficient**: the depth channel carries 3.1 g of pure acceleration noise
   at 30 fps, and all three of the owner's clips are tracking shots with no inertial frame at all. See
   [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
+- **Muscle force on running footage is achievable after all** (2026-08-07). The earlier
+  "impossible on a tracking shot" verdict was wrong at the framing: root acceleration does not have
+  to be measured, because the gait cycle supplies it (flight = free fall, stance closed by the
+  stride's vertical impulse). Contact/flight timing IS robustly legible at 30 fps on the user's own
+  clips — contact 200 ms with zero spread across a 2.5× threshold span — giving peak vertical GRF
+  2.07–2.47 BW. Mac-validated, not yet implemented. See
+  [Gait-cycle dynamics](#gait-cycle-dynamics-model-the-forces-instead-of-differentiating-the-measurement-2026-08-07).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -1113,6 +1120,15 @@ reached by the app without seam 1, and its correctness turns on an unresolved de
 the owner decision below. Shipping an unreachable branch whose depth handling has never been
 validated end-to-end is exactly the "silent wrong number" this file warns about.
 
+#### SUPERSEDED 2026-08-07 — the question was wrongly framed
+
+Both options below assume the root's acceleration is something we must MEASURE. For running it is
+not: the gait cycle supplies it. See
+[Gait-cycle dynamics](#gait-cycle-dynamics-model-the-forces-instead-of-differentiating-the-measurement-2026-08-07),
+which measures the required signals on the user's own clips and passes. The depth-hold gate below
+was not built. The (a)/(b) framing is kept because the reasoning inside it is still correct for
+NON-periodic motion, where there is no gait cycle to close the system.
+
 #### Owner decision this raised — DECIDED 2026-08-07: (b), as a checked precondition
 
 Given Finding 2 — in-plane root motion is measurable, depth is not — there were two defensible
@@ -1149,6 +1165,76 @@ while the rigid-pair floor stays put — a motionless subject would be told to h
 channel needs its own floor before the `camT` line in `OfflineSessionRunner` is wired.
 
 ---
+
+### Gait-cycle dynamics: model the forces instead of differentiating the measurement (2026-08-07)
+
+The "muscle force is unobtainable on a tracking shot" conclusion was WRONG, and it was wrong at the
+framing, not at any of its measurements. Every number in the section above still holds. What does
+not hold is the assumption underneath them: that the root's acceleration has to be **measured**.
+
+**Where the chain broke.** We had: muscle needs ID → ID needs q̈ → root q̈ needs world root
+translation → `cam_t` depth is too noisy to differentiate twice → no dynamics. Two facts break it:
+
+1. **Joint angles are invariant to camera motion.** Camera translation shifts every reconstructed
+   point together, so inter-joint vectors are unchanged; camera rotation preserves lengths and
+   included angles. The 163 actuated DOFs are untouched by a tracking shot. Only the 6 root DOFs are
+   affected — exactly the channel we were trying to differentiate.
+2. **Root acceleration enters as a uniform pseudo-gravity.** Every segment picks up `m·a_root`,
+   indistinguishable from changing g. So the question is not whether we can differentiate the root
+   position, but whether we know `a_root` by another route.
+
+For running we do, without differentiating anything. In flight `a_root = g` exactly — physics gives
+it. In stance `m·a_CoM = F_GRF − m·g`, so GRF and CoM acceleration are ONE unknown; the gait cycle
+closes it, because CoM velocity is periodic over a stride and the whole stride's vertical impulse
+`m·g·T` must be delivered during stance alone. Assuming a half-sine stance force, that is exactly
+`Fmax = m·g·(π/2)(1 + tf/tc)` (Morin et al. 2005) — impulse-momentum plus one shape assumption, not
+a black box.
+
+So the only thing that has to be read off the video is **contact and flight timing**.
+
+**Measured on the user's own clips**, 4 s windows at native 30 fps (120 frames — already inside
+`FrameSource.maxFramesPerRun`, so the compute budget is unchanged), using image-plane
+pelvis-relative ankle height only, never `cam_t` depth. Harness:
+`labs/sam-3d-body/export/{gait_events.py,gait_summary.py}`.
+
+| clip | contact | stride | cadence | flight/step | peak vertical GRF |
+|---|---|---|---|---|---|
+| video_012 | 200 ms | 0.600 s | 200 spm | 100 ms | **2.36 BW** |
+| video_013 | 167 ms | ~0.60 s | 229 spm | 95 ms | **2.47 BW** |
+| video_015 | 244 ms | 0.64 s | 187 spm | 77 ms | **2.07 BW** |
+
+- **The detection is not tuned.** On `video_012`, contact time was IDENTICAL (200 ms, zero spread,
+  13/13 contacts exactly 6 frames) for every threshold from 0.08 to 0.20 of the ankle's vertical
+  range — a 2.5× span — and only smeared at 0.25 where the threshold reaches into swing.
+- **It is not a pipeline artefact.** The three clips give three DIFFERENT signatures, ordered as
+  physics requires: `video_015` has the longest contact and lowest cadence and therefore the lowest
+  force; `video_013` the shortest contact and the highest.
+- Duty factor 0.33 (contact / stride) with a real flight phase — a genuine running gait.
+
+**Honest precision.** One frame at 30 fps is 33 ms, i.e. 17% of a 200 ms contact, so peak GRF is
+good to roughly **±17%** (`video_012`: 2.02–2.83 BW at ±1 frame). The muscle QP already carries a
+0.20–0.35 relative torque residual, so this does not make the chain categorically worse.
+
+**Why q̈ noise matters less than feared.** Knee angular acceleration splits sharply by phase
+(fc = 6 Hz): stance mean 3,630–5,180 °/s² against swing mean 7,042–7,517 °/s². For an illustrative
+70 kg runner the shank+foot inertial knee moment during stance is **15–21% of the GRF moment**
+(peak 36–43%), so a 30% error in q̈ reaches the joint moment as roughly 6%. Stance-phase moments are
+GRF-dominated, which is the regime this route is good at.
+
+**What is genuinely unresolved.** The knee-angle spectrum has NO clean signal/noise separation — a
+Winter residual analysis declines steadily from 2 to 14 Hz with no knee, and peak angular
+acceleration reads 14,000 °/s² at fc = 6 and 25,000 at fc = 8. 4.5–4.7% of the power sits above
+10 Hz, which the ω² weighting makes dominant in a raw second derivative (SNR 0.2–0.3 unfiltered).
+The cutoff is therefore a judgement call, and this must not be quietly resolved in the flattering
+direction. Also not yet addressed: horizontal GRF, CoP location, and non-steady running (the
+periodicity argument needs a steady stride; walking has no flight phase, so the free-fall
+calibration does not apply though the impulse argument survives).
+
+**Nothing here is implemented in the app.** This is Mac-side validation of the route. What it needs:
+a 4 s @ 30 fps sampling window in place of the whole clip at ~2 fps, contact detection, GRF from
+timing feeding the EXISTING near-CoP ID path, and `a_root` taken from the gait model instead of from
+differentiating `cam_t`.
+
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 

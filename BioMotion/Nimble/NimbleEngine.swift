@@ -312,6 +312,11 @@ final class NimbleEngine: ObservableObject {
     // samples" means the same nine frames in both. solverQueue-only state.
     private var holdDetector = StaticHoldDetector()
 
+    // Holds the root's depth at one per-clip value on the gated (offline) path.
+    // A bit-exact no-op until `cam_t` is composed in — see `RootDepthHold`.
+    // solverQueue-only state, cleared with the filters.
+    private var depthHold = RootDepthHold()
+
     // Timestamp of the last successful muscle solve, used to derive dt for
     // musculotendon length finite differencing inside the muscle Hill model.
     private var lastMuscleSolveTimestamp: TimeInterval?
@@ -468,6 +473,7 @@ final class NimbleEngine: ObservableObject {
         // Build marker arrays from the frame
         var positions: [NSNumber] = []
         var names: [String] = []
+        var rawRootDepth: Double?
 
         for joint in frame.joints where joint.isTracked {
             // Map ARKit joint to OpenSim marker name
@@ -476,6 +482,9 @@ final class NimbleEngine: ObservableObject {
                 positions.append(NSNumber(value: Double(joint.worldPosition.x)))
                 positions.append(NSNumber(value: Double(joint.worldPosition.y)))
                 positions.append(NSNumber(value: Double(joint.worldPosition.z)))
+                if mapping.opensimName == StaticHoldDetector.rootMarkerName {
+                    rawRootDepth = Double(joint.worldPosition.z)
+                }
             }
         }
 
@@ -493,6 +502,32 @@ final class NimbleEngine: ObservableObject {
                 DispatchQueue.main.async { [weak self] in
                     self?.isFrameInFlight = false
                 }
+            }
+
+            // --- Hold the root's depth (gated path only) ---
+            // Monocular depth is the one channel of the recovered root
+            // translation that cannot be differentiated: its error saturates at
+            // 12-15 cm by τ ≈ 0.15 s and no rolling window separates it from
+            // motion (measurements in `RootDepthHold`). So it is held at one
+            // per-clip value and the assumption behind that — "the subject's
+            // distance from the camera does not change" — is CHECKED below via
+            // `depthDriftMetersPerSecond`, not merely declared.
+            //
+            // The shift is common-mode, so relative geometry is untouched and,
+            // under uniform gravity, no joint torque changes. On a pelvis-pinned
+            // stream the root's z is the model constant every frame, so this is
+            // a bit-exact no-op until `cam_t` is composed in.
+            var depthDrift = Double.nan
+            if gateOnHolds, let rootZ = rawRootDepth {
+                self.depthHold.ingest(rootDepth: rootZ, timestamp: frame.timestamp)
+                let offset = self.depthHold.offset(forRootDepth: rootZ)
+                if offset != 0 {
+                    for i in stride(from: 2, to: positions.count, by: 3) {
+                        positions[i] = NSNumber(value: positions[i].doubleValue - offset)
+                    }
+                }
+                depthDrift = self.depthHold.driftMetersPerSecond(
+                    overLast: SavitzkyGolayFilter.windowSize)
             }
 
             // --- IK (runs on every frame, on 1€-filtered markers) ---
@@ -607,7 +642,8 @@ final class NimbleEngine: ObservableObject {
             // Classified at `centerTimestamp`, not at the newest push: that is
             // the instant ID and the muscle solve are dated at, and the centred
             // window means we already hold 4 samples of "future" around it.
-            let motion = self.holdDetector.classify(centeredAt: centerTimestamp)
+            let motion = self.holdDetector.classify(centeredAt: centerTimestamp,
+                                                    depthDriftMetersPerSecond: depthDrift)
 
             // An IK solve that exited on the iteration cap has NOT reached a
             // fixed point, and the next solve on identical markers will still be
@@ -900,6 +936,10 @@ final class NimbleEngine: ObservableObject {
             // pushed in lockstep and the classifier reads "the last 9 samples"
             // as "the samples that produced this ddq".
             self.holdDetector.reset()
+            // Pushed in lockstep with the filters and the hold detector: the
+            // depth reference is a per-CLIP constant, so carrying it across a
+            // clip boundary would hold the new subject at the old one's depth.
+            self.depthHold.reset()
             self.lastMuscleSolveTimestamp = nil
         }
 
