@@ -196,6 +196,49 @@ final class MuscleSolverTests: XCTestCase {
                        "With no torque to produce, activation rests on the optimizer's floor")
     }
 
+    // MARK: - Session state
+
+    /// **The reproducibility mechanism, at the solver, in milliseconds.**
+    ///
+    /// The engine-level proof of this (`GaitDynamicsTests`) needs the 520-muscle
+    /// model and takes three minutes; this is the same property on a
+    /// single-muscle rig, so a regression is caught before anything that slow
+    /// runs.
+    ///
+    /// The sequence is the one the app performs at a clip boundary: solve a
+    /// clip, reset, solve a different clip. The second clip's FIRST solve must
+    /// land where it would have landed with no history at all — which it cannot
+    /// do while the warm start (or OSQP's own dual iterate) survives the reset.
+    func testResettingSessionStateReturnsTheSolverToItsFreshAnswer() throws {
+        // A fresh solver's answer to one problem, with nothing before it.
+        let fresh = try XCTUnwrap(solveSingleMuscle(torque: 10.0, jointVelocity: 0.0,
+                                                    using: MuscleSolver()))
+
+        // The same problem on a solver that has already worked on a different
+        // one — a saturating torque, so it leaves a very different state behind.
+        _ = try XCTUnwrap(solveSingleMuscle(torque: 500.0, jointVelocity: 0.0))
+        solver.resetSessionState()
+        let afterReset = try XCTUnwrap(solveSingleMuscle(torque: 10.0, jointVelocity: 0.0))
+
+        XCTAssertEqual(afterReset.activations[0].doubleValue,
+                       fresh.activations[0].doubleValue,
+                       "a reset solver must answer exactly as a new one does")
+        XCTAssertEqual(afterReset.forces[0].doubleValue, fresh.forces[0].doubleValue)
+        XCTAssertEqual(afterReset.torqueResidualNm, fresh.torqueResidualNm)
+    }
+
+    /// The reset is called from `NimbleEngine.resetSessionState()`, which a
+    /// caller may reach before any model has finished loading. It must be inert
+    /// there rather than a crash, and it must not leave the solver unusable.
+    func testResettingBeforeAModelIsLoadedIsSafe() throws {
+        XCTAssertEqual(solver.numMuscles, 0)
+        solver.resetSessionState()
+        solver.resetSessionState()
+        XCTAssertEqual(solver.numMuscles, 0)
+        // Still solves afterwards — the synthetic rig needs no loaded model.
+        XCTAssertNotNil(solveSingleMuscle(torque: 10.0, jointVelocity: 0.0))
+    }
+
     // MARK: - Helpers
 
     /// Single-muscle / single-DOF rig. With these numbers the muscle sits at

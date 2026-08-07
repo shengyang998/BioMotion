@@ -1417,7 +1417,7 @@ clean derivative window, agreeing residual 0.008-0.183 BW against the 0.5 gate.
 
 Three lenses re-read the shipped gait layer and returned 2 blockers and 10 majors. The three closed
 here are the ones that corrupt a RATIO or terminate the app; the rest are the next stage's. Test
-count 325 → **334**, all green.
+count 325 → **336**, all green.
 
 **B1 — a double contact was invisible to the contact gate.** `contactDetectorsAgree` asked only
 whether the ID solver also saw the CLAIMED foot down; it never asked about the other one. When
@@ -1482,6 +1482,12 @@ pose). The assertion is inverted rather than deleted, and that inversion is the 
 The one quantity NOT held to bit-equality is the SUM of 520 forces (1432 N → 9.1e-12 N), because
 `forces.values.reduce(0, +)` adds in Dictionary iteration order and can reassociate; 5e-15 relative
 is the last bit of a double. The per-muscle assertions are the meaningful ones.
+
+The engine-level proof needs the 520-muscle model and takes 3 minutes, so the same property is also
+pinned on the single-muscle rig in `MuscleSolverTests` — solve, reset, solve again, and land where a
+brand-new solver lands. Even on a one-variable QP the warm start matters: without the reset the
+activation reads 0.20012 against 0.20000 and the torque residual 6.2e-3 Nm against 4.0e-7, a factor
+of 15,500. It is not a null space, it is where OSQP stopped.
 
 **M-mem — following the app's own advice OOMs the phone.** Every sampled frame is decoded to a
 `UIImage` before any is processed and then retained by its `FrameResult` for the whole playback
