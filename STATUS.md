@@ -1520,6 +1520,111 @@ calls for — but it is a trade, and `decodedWindowBudgetBytes` is one line if t
 elsewhere.
 
 
+### Third round: the statistic that manufactured the finding, and what the screen claims (2026-08-08)
+
+The seven remaining majors from the same review. Test count 336 → **353**, all green. Every fix below
+was observed FAILING before it landed (each was temporarily reverted and re-run).
+
+**M1 — the left/right comparison was a MAX over an unequal number of frames per side.** This is the
+worst of the seven, because the inequality is produced by the very asymmetry being measured: with
+`taps = 5` a contact of `n` samples yields exactly `n − 4` frames with a clean derivative window, so
+a leg whose contacts run ONE frame longer contributes TWICE as many frames — and `E[max of n]` grows
+with `n`. A symmetric runner therefore reads as asymmetric for a purely statistical reason.
+
+MEASURED on the shipping path, 400 seeded synthetic clips, both legs drawn from the SAME
+distribution (Normal(0.50, 0.12)), left contacts holding 6 usable frames and right 2:
+
+| statistic | mean asymmetry | clips reading left-high |
+|---|---|---|
+| old: `max` over the side's frames | **+8.07 %** | 297 / 400 |
+| new: mean over contacts of each contact's middle sample | **−0.19 %** (SE 0.47) | 192 / 400 |
+
++8.07 % is 80 % of `video_012`'s own publication floor (10.14 %). It does not have to clear the floor
+on its own to do damage — it rides on the real effect, so a true 3 % difference publishes as 11 %
+and a true 8 % right-high difference reads even and is refused.
+
+The replacement is **one sample per contact — the middle of its usable frames — averaged over that
+side's contacts**. Within a contact the count is fixed at one, so no extreme-value bias can enter;
+across contacts the statistic is a mean, whose expectation equals the population mean for any
+distribution and any sample count. The middle of the contact is where the modelled half-sine peaks,
+so it is still "where the load concentrates" — the usable set is already the mid-stance core, because
+`derivativeWindowInsideContact` keeps `k ∈ [taps/2, n−1−taps/2]`, symmetric about mid-stance.
+
+⚠️ **The residual count-dependence, stated rather than hidden.** The middle sample sits at
+`sin(π·φ)` of that contact's peak: 1.000 for an odd number of usable frames, 0.966 for an even one.
+A leg with consistently even-length contacts and one with odd differ by **3.4 %** of force scale from
+that parity alone. Bounded, deterministic, does not grow with the frame count, and asserted.
+`leftPeak`/`rightPeak` are renamed `leftLoad`/`rightLoad` and `leftFrames`/`rightFrames` become
+`leftContacts`/`rightContacts`, so no reader can mistake the new number for a maximum.
+
+**M2 — per-leg `Fmax` re-injected the contact-time difference the same screen calls unresolvable.**
+`Fmax_side = (π/2)(1 + tf/tc_side)` is a per-leg FORCE SCALE, and the QP is linear in the external
+load while unsaturated, so it lands inside all 520 muscles' left/right comparisons. On `video_012`
+the contact difference is 2.899 % against a 10.145 % floor: the panel says "left and right contact
+times are even to within what this clip resolves" in one block and used to re-express that same
+2.899 % as −1.31 % of muscle asymmetry in the next. Worst case is larger — 9 % of contact asymmetry
+(just under a 10 % floor, correctly refused) injects ≈4 % of force scale, enough to publish a true
+6.5 % muscle difference as "11 % harder on the left".
+
+**Resolved in one direction: ONE gate governs both uses.** Above the clip's resolution the difference
+is a finding, it is displayed, and each leg keeps its own peak (the 200/160 ms control still gives
+2.5918 / 2.8471 and the shorter contact still carries the higher peak). Below it the difference is
+noise, it is refused on screen, and both legs are closed on the MEAN contact — the minimum-variance
+choice, not a claim that the legs are identical, and `peakVerticalForceIsSharedBetweenLegs` says
+which regime is in force on the same screen as the bars. The stride impulse `Σ Fᵢ·2·tcᵢ/π = T` closes
+exactly in both, asserted to 1e-12. **This deliberately replaces a registered expectation**: both
+usable clips now read a single peak (`video_012` 2.8684, `video_015` 2.4578) where the pinned column
+was 2.8499/2.8875 and 2.4602/2.4554.
+
+**M3 — an empty residual set reported "gate passed" having measured nothing.** `sortedResiduals.last
+?? 0` made max 0, median 0 and `residualGatePassed = true`, and the honesty block renders on every
+`.analysed` clip — so a clip where no stance frame ever agreed printed "0.00 BW typical, 0.00 BW
+worst (gate 0.50) — passed." in the calm secondary tint. `residualFrameCount` is published, the gate
+is false when it is zero, and the line reads NOT MEASURED.
+
+**M4 — the falsifier was labelled as the whole vector and measures one axis.**
+`residualInBodyWeights` is `|ΣF_y − F_gait|/(m·g)`; `leftFootForce.x/.z` exist in the bridge's output
+and are discarded. It was captioned "Limb inertia the timing model omits", i.e. `‖a_artic‖/g`, one
+line below "braking and push-off are not modelled" — certifying a cancellation on the one axis it
+never examined, where STATUS sizes the error at 0.2-0.35 BW against a measured 0.008-0.183. Renamed
+`maxVerticalForceResidualInBodyWeights` throughout; the line now names the axis and says the fore-aft
+term is not modelled and not seen. **No fix in `BioMotion/Nimble/**` — that path was not this
+stage's to touch, and computing the horizontal residual remains open.**
+
+**M5 — `strideRepeatabilityPercent` read exactly 0.000 and was published as a property of the
+runner.** It is a CV over touchdown gaps quantised to whole frames; every gap on `video_012` is
+exactly 18 samples. The panel printed "this runner's own stride-to-stride variation ±0%" on a clip
+that cannot distinguish anything below `100/18 = 5.56 %` — a number the SAME report already carries
+as `GaitSteadiness.boundPercent`. It is now floored at that bound, with the raw CV kept beside it.
+Blast radius, measured: the published resolution moves on NONE of the three clips (10.145 / 18.909 /
+8.086), because `50/framesPerContact` is 1.5-1.9× `100/stridePeriodFrames` on all three clips (18/(2·4.93), 19/(2·6.18), 18/(2·4.70)) and the ratio `stridePeriodFrames/(2·framesPerContact)` does not move with capture rate. What
+changes is the sentence and the promise: "filming at 61 fps would resolve ±5%" becomes "filming at
+55 fps would resolve ±6%", which is deliverable.
+
+**M6 — per-frame exclusions reached the ranked list and not the overlay.** `GaitLoadSummary.make`
+discards frames failing `isUsableForLoadComparison`; `OfflineSceneView` drew `frame.muscleResult`
+gated only clip-wide. On the pinned fixtures that is 52 of 64 stance frames (`video_012`) and 44 of
+68 (`video_015`) — the user scrubbed a clip that passed every gate and saw coloured capsules on
+65-81 % of stance frames whose ddq was fitted across a touchdown, with no marker of any kind, while
+the panel's list had silently dropped them. `FrameResult.gaitLoadsAreComparable` now gates the
+overlay per frame, the caption reads "outside the load comparison", and
+`gaitExclusionReason` names WHICH exclusion — the double contact, the ground-height disagreement and
+the derivative window point at different levers. The still-pose path carries no gait outcome and is
+untouched.
+
+**M7 — the truncation banner was wrong in both halves for the case it most often fires on.** A 2 s
+clip at 30 fps in the 4 s window: the sampler wants 120 frames, the clip has 60, `wasTruncated` is
+true — and the banner said the clip was too LONG and that 120 frames were used, so the advice was
+the opposite of the one that works. It also quoted `maxFramesPerRun` at 240 fps, where 601 frames
+were used and 120 is not that mode's budget. `FrameBudgetNotice` decides the cause from the RESULT
+rather than re-deriving the sampler's rules — if the run used every frame the clip has, the clip was
+the limit — and states the real count and span either way.
+
+**What this stage did NOT do.** No device run; everything is the iPhone 17 simulator. The horizontal
+residual is still not computed (it needs `BioMotion/Nimble/**`). The double-contact and warm-start
+blockers were closed in the previous round and re-verified here only by their existing tests.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /

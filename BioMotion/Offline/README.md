@@ -125,7 +125,10 @@ scope creep).
 Default 2fps, user-adjustable 0.5–10fps, plus an explicit single-frame mode
 (auto-forced for photos). `FrameSource.maxFramesPerRun = 120` caps a
 pathological long-clip × high-fps selection; `OfflineSessionRunner` surfaces
-`wasFrameCountCapped` rather than truncating silently. Progress ETA
+`frameBudgetNotice` rather than truncating silently — a `FrameBudgetNotice`
+that names WHICH of the two causes fired (the clip is shorter than the window,
+or a budget capped it) and how many frames were really used. It replaced a
+single boolean whose one sentence stated both wrongly on a short clip. Progress ETA
 (`OfflineSessionRunner.eta`) is derived from the running average of measured
 per-frame wall time (`perFrameDurations`), shown as "estimating time…" (not a
 fabricated number) until at least one frame has completed.
