@@ -358,7 +358,7 @@ final class MuscleOverlay {
     /// Orthonormal basis centered on the pelvis.
     /// `right` = body-lateral (user's right side), `up` = spine axis,
     /// `forward` = anterior. Falls back to world axes when joints are missing.
-    private struct BodyFrame {
+    struct BodyFrame {
         let right: SIMD3<Float>
         let up: SIMD3<Float>
         let forward: SIMD3<Float>
@@ -372,6 +372,15 @@ final class MuscleOverlay {
             up:      SIMD3(0, 1, 0),
             forward: SIMD3(0, 0, 1)
         )
+    }
+
+    /// Test hook. The orientation of this basis decides which side of the body
+    /// every muscle capsule lands on, and a cross-product sign error there is
+    /// invisible in review — see `BodyFrameOrientationTests`.
+    static func bodyFrameForTesting(_ joints: [TrackedJoint]) -> BodyFrame? {
+        var dict: [String: SIMD3<Float>] = [:]
+        for j in joints where j.isTracked { dict[j.id] = j.worldPosition }
+        return computeBodyFrame(dict)
     }
 
     private static func computeBodyFrame(_ joints: [String: SIMD3<Float>]) -> BodyFrame {
@@ -400,17 +409,29 @@ final class MuscleOverlay {
             pelvisRight = SIMD3(1, 0, 0)
         }
 
-        // forward = up × right, then re-orthogonalize right = forward × up
-        // so the basis is truly orthonormal even if pelvis and spine aren't
-        // perpendicular in the captured pose.
-        var forward = simd_cross(pelvisRight, up)
+        // forward = up × right (ANTERIOR), then re-orthogonalise
+        // right = forward × up so the basis stays orthonormal even when pelvis
+        // and spine are not perpendicular in the captured pose.
+        //
+        // The operand order matters and was previously inverted: `right × up`
+        // is POSTERIOR, not anterior. Concretely, for a subject facing the
+        // camera in ARKit world axes (X image-right, Y up, Z toward camera),
+        // their anterior is +Z and their own right hand is at −X, so
+        // right × up = (−1,0,0) × (0,1,0) = (0,0,−1) — behind them.
+        //
+        // That was not cosmetic. `muscleDefs` places capsules with +Z meaning
+        // anterior — the quadriceps (recfem, vasmed, vaslat) all carry positive
+        // Z offsets and the hamstrings (semimem, bflh) all carry negative ones —
+        // so with a posterior third axis the quadriceps were drawn on the BACK
+        // of the thigh and the hamstrings on the front.
+        var forward = simd_cross(up, pelvisRight)
         let fwdNorm = simd_length(forward)
         if fwdNorm < 1e-3 {
             // Body axis and pelvis axis collinear — degenerate. Use world Z.
             return .identity
         }
         forward /= fwdNorm
-        let right = simd_normalize(simd_cross(up, forward))
+        let right = simd_normalize(simd_cross(forward, up))
 
         return BodyFrame(right: right, up: up, forward: forward)
     }
