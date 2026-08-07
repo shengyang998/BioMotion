@@ -1113,20 +1113,40 @@ reached by the app without seam 1, and its correctness turns on an unresolved de
 the owner decision below. Shipping an unreachable branch whose depth handling has never been
 validated end-to-end is exactly the "silent wrong number" this file warns about.
 
-#### Owner decision this raises
+#### Owner decision this raised — DECIDED 2026-08-07: (b), as a checked precondition
 
-Given Finding 2 — in-plane root motion is measurable, depth is not — there are two defensible
-products and they behave differently:
+Given Finding 2 — in-plane root motion is measurable, depth is not — there were two defensible
+products:
 
 * **(a) Refuse.** If the measured depth acceleration exceeds the budget, withhold. Honest, but on
   real footage it withholds at every usable rate, so dynamics never ships.
 * **(b) Declare depth constant.** Treat the root's depth as unobservable above some bandwidth, run
   dynamics on the in-plane channels, and tell the user the assumption plus the measured slow depth
-  drift so they can check it. Valid for side-on filming — which is how squats and running form are
-  filmed anyway — and wrong for anyone walking toward the camera.
+  drift so they can check it.
 
-(b) is the one that makes dynamic muscle output exist at all. It also puts a modelling assumption
-inside a number the product sells. **Not picked here.**
+**Decision: (b), with the assumption implemented as a gate rather than a disclaimer.** Hold the
+root's depth at its low-passed value, let in-plane root motion through, and refuse the frame when
+the low-passed depth drift itself exceeds a pre-registered budget. The drift is already computed, so
+this adds no mechanism — it converts a modelling assumption into a precondition the data has to
+satisfy, and a subject walking toward the camera gets refused with the reason.
+
+Three reasons (a) was rejected:
+
+1. It is not the conservative option, it is abandoning the requirement. The product is posture **and
+   muscle-force** analysis; an option under which dynamic muscle output never exists fails outright.
+2. For the case (b) serves — in-place exercise filmed from a stand — the subject's depth is
+   approximately constant **as physical fact**, not convenience. The assumption is nearly true for
+   exactly the footage it applies to, which is a different thing from assuming it because the
+   measurement is inconvenient.
+3. Sagittal-plane 2-D analysis is a recognised biomechanics method. Naming it as such is honest.
+
+**A gap found while reviewing, still open at the time of writing:** `poseNoiseFloorMetersPerSecond`
+is derived from `rigidPairs`, i.e. inter-joint distances — which are **invariant to root
+translation**, since both endpoints shift together. So the floor measures articulation noise and is
+structurally blind to `cam_t` depth jitter. Once `camT` is composed in, ~12.7 cm of depth residual
+at the 0.5 s offline cadence is ~0.36 m/s of root-speed noise, above the 0.20 m/s hold threshold,
+while the rigid-pair floor stays put — a motionless subject would be told to hold still. The root
+channel needs its own floor before the `camT` line in `OfflineSessionRunner` is wired.
 
 ---
 

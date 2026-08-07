@@ -1546,13 +1546,39 @@ struct StaticHoldDetector {
         let withinBudget = peak <= Self.holdSpeedThresholdMetersPerSecond
             && impliedAccel <= Self.maxDiscardedMeanAccelMetersPerSecondSquared
 
+        // The depth assumption, checked rather than declared. `RootDepthHold`
+        // pins the root's depth at one per-clip value, which is exact for
+        // motion in the image plane and wrong for motion along the optical
+        // axis. The discarded term is the depth inertia, so it takes the SAME
+        // two constants as everything else — no new knobs: the depth speed must
+        // be inside the speed cap, and `2·v_z/T` inside the acceleration budget.
+        //
+        // Tested on the RAW depth trend, not on the held value, because the
+        // held value is zero by construction and would always pass.
+        let depthWithinBudget: Bool
+        if depthDrift.isNaN {
+            depthWithinBudget = true      // no depth information: nothing to fail
+        } else {
+            let dz = abs(depthDrift)
+            depthWithinBudget = dz <= Self.holdSpeedThresholdMetersPerSecond
+                && (span <= 0 || 2 * dz / span <= Self.maxDiscardedMeanAccelMetersPerSecondSquared)
+        }
+
         // Order matters. A hold is a hold regardless of the noise floor — the
         // floor can only ever make `peak` look BIGGER, so a peak that is
         // already inside the budget is inside it a fortiori. The floor is only
         // consulted to explain a FAILURE, where it decides between "the subject
         // moved" and "this footage cannot tell us".
+        //
+        // The depth check comes FIRST among the failures because it is the only
+        // one that names something the user can fix by turning ninety degrees,
+        // and because a subject walking at the camera also trips the speed cap —
+        // reporting that as "you moved" would hide the actionable reason behind
+        // a generic one.
         let verdict: NimbleEngine.MotionVerdict
-        if withinBudget {
+        if !depthWithinBudget {
+            verdict = .depthMotionNotResolvable
+        } else if withinBudget {
             verdict = .hold
         } else if noiseFloor >= Self.holdSpeedThresholdMetersPerSecond {
             verdict = .indistinguishableFromNoise
@@ -1570,14 +1596,47 @@ struct StaticHoldDetector {
             impliedMeanAccelMetersPerSecondSquared: impliedAccel,
             verdict: verdict,
             poseNoiseFloorMetersPerSecond: noiseFloor,
+            articulationNoiseFloorMetersPerSecond: articulationFloor,
+            rootNoiseFloorMetersPerSecond: rootFloor,
+            depthDriftMetersPerSecond: depthDrift,
             rootTranslationObservable: rootObservable)
+    }
+
+    /// σ of the per-sample noise on `points`, as a SPEED, from the 4th
+    /// difference — which is identically zero for anything locally cubic, i.e.
+    /// for anything the 9-tap Savitzky-Golay filter can represent. Whatever it
+    /// leaves is what that filter will differentiate into acceleration.
+    ///
+    /// ⚠️ Blind, by construction, to error that is SMOOTH at the window scale.
+    /// The `cam_t` depth error is exactly that — it saturates at 12-15 cm by
+    /// τ ≈ 0.15 s and then plateaus — which is why depth is HELD by
+    /// `RootDepthHold` rather than merely floored here. This estimator is for
+    /// the in-plane channels, where the error is small and fast.
+    static func fourthDifferenceFloor(_ points: [SIMD3<Double>],
+                                      sampleInterval: Double) -> Double {
+        guard points.count >= 5, sampleInterval > 0 else { return 0 }
+        var mags: [Double] = []
+        mags.reserveCapacity(points.count - 4)
+        for i in 4..<points.count {
+            // Δ⁴ = p[i] − 4p[i−1] + 6p[i−2] − 4p[i−3] + p[i−4]
+            let d4 = points[i] - 4 * points[i - 1] + 6 * points[i - 2]
+                - 4 * points[i - 3] + points[i - 4]
+            mags.append(simd_length(d4))
+        }
+        guard !mags.isEmpty else { return 0 }
+        mags.sort()
+        let med = mags[mags.count / 2]
+        return med / fourthDifferenceToSigma / sampleInterval
     }
 
     private static func empty(at center: TimeInterval,
                               windowSeconds: Double,
                               sampleCount: Int,
                               noiseFloor: Double = 0,
-                              rootObservable: Bool = false) -> NimbleEngine.MotionClassification {
+                              rootObservable: Bool = false,
+                              articulationFloor: Double = 0,
+                              rootFloor: Double = 0,
+                              depthDrift: Double = .nan) -> NimbleEngine.MotionClassification {
         NimbleEngine.MotionClassification(
             timestamp: center, isHold: false,
             peakMarkerSpeedMetersPerSecond: 0, medianMarkerSpeedMetersPerSecond: 0,
@@ -1585,6 +1644,9 @@ struct StaticHoldDetector {
             impliedMeanAccelMetersPerSecondSquared: .infinity,
             verdict: .noMeasurement,
             poseNoiseFloorMetersPerSecond: noiseFloor,
+            articulationNoiseFloorMetersPerSecond: articulationFloor,
+            rootNoiseFloorMetersPerSecond: rootFloor,
+            depthDriftMetersPerSecond: depthDrift,
             rootTranslationObservable: rootObservable)
     }
 
