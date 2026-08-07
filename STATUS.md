@@ -1264,6 +1264,61 @@ working tree, so what was committed was not what had been tested. Restored by re
 `NimbleEngine.swift` to `2dba6a7`, its last state that actually passed the suite.
 **Do not edit or commit files while a resumed agent may still hold them.**
 
+### Gait consistency re-measured for RELATIVE use — the limit is frames per contact (2026-08-07)
+
+The owner set the bar: the product is posture and force CORRECTION, so relative values suffice and
+absolute newtons are not the deliverable. That is a materially weaker requirement, because a
+peak-GRF error is a COMMON SCALE over every muscle in a contact and the muscle QP is linear while
+unsaturated — muscle-to-muscle ratios survive it exactly. (Ratio preservation degrades where
+muscles hit `a <= 1`, which running peaks do reach.)
+
+So the gates were re-registered around invariance rather than accuracy, and run on the CORRECTLY
+extracted trajectories. Harness: `labs/sam-3d-body/export/gait_consistency.py`.
+
+| clip | W: window shift | T: L/R ratio vs threshold | S: resolvable asymmetry |
+|---|---|---|---|
+| video_012 | left **FAIL** (1.40 frames), right pass | **FAIL** (0.307) | ~16% |
+| video_013 | pass | **FAIL** (0.401) | ~44% |
+| video_015 | pass | **FAIL** (0.261) | **~6%** |
+
+**T failed on all three as registered, and that is recorded as a failure, not argued away.** The
+post-hoc structure — every clip's outlier is `frac = 0.08`, and the ratio is stable to 0.05-0.10
+over 0.12-0.25 — is a HYPOTHESIS formed on the same data, so it cannot also be its own
+confirmation. What it does establish is that "a percentage of the ankle's vertical range" has no
+physical meaning and is therefore bound to depend on an arbitrary constant: at 0.08 `video_012`
+reads the left contact 24% SHORTER, at 0.25 it reads 7% LONGER. The sign of the asymmetry flips
+with the constant.
+
+A physically-defined replacement was tried — stance as the interval where the pelvis-relative
+horizontal foot velocity sits at its most-negative plateau, which physically IS the running speed,
+with the plateau level measured from the signal rather than assumed. It improved W (6/6 legs pass)
+but not T (only `video_015` passes, 0.067) and made S worse on the two fast clips.
+
+**Neither criterion is the problem. Frames per contact is.**
+
+| | frames/contact | measured resolution | quantisation floor `0.5/N` |
+|---|---|---|---|
+| video_015 | 7 | 6% | 7% |
+| video_012 | 5 | 16% | 10% |
+| video_013 | 5 | 44% | 10% |
+
+`corr = 0.73`, mean absolute error 15 pp — so quantisation is a FLOOR that explains the best case,
+and the two fast clips are worse than the floor for reasons not yet isolated (`video_013` also has
+dropped frames and is refused by the input gate anyway). `video_015` sits ON the floor: it has the
+longest contact (233-247 ms) and the lowest cadence of the three.
+
+**What this makes quantitative.** For a 200 ms contact, resolvable asymmetry is about
+8.3% at 30 fps, 4.2% at 60, 2.1% at 120, 1.0% at 240. Clinically discussed running asymmetries are
+often 5-15%, so 30 fps imported footage sits right at the edge of usefulness and a faster capture
+path is the only lever that moves it — not a better detector, not a better model.
+
+**Design consequence, decided:** ship the imported-footage path and have the app COMPUTE and DISPLAY
+its own per-clip resolution from the measured frames-per-contact ("this clip resolves left/right to
+about +/-8%"), refusing asymmetry claims finer than that. That turns the limit into a per-clip,
+honest, actionable number instead of a global disclaimer, and it tells the user exactly when
+filming at a higher frame rate would help. An in-app high-frame-rate capture path is deferred, not
+rejected: it is the known lever if the displayed resolution proves too coarse in use.
+
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
