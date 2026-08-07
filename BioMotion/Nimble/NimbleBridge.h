@@ -202,6 +202,17 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// Current ground height used for contact detection.
 @property (nonatomic, readonly) double groundHeightY;
 
+/// Vertical clearance, in metres, under which `solveIDGRFWithJointAngles:...`
+/// calls a foot planted: `calcn_y − groundHeightY < this`.
+///
+/// Exposed so that "how often would this detector see BOTH feet down?" can be
+/// measured against the shipped number rather than against a copy of it. That
+/// question is not cosmetic: a double contact makes the near-CoP solver split
+/// bodyweight between the feet, which halves the stance leg's torques while
+/// leaving the SUM — and therefore the residual falsifier — untouched. See
+/// `NimbleEngine.GaitFrameOutcome.contactDetectorsAgree`.
+@property (class, nonatomic, readonly) double contactDetectionThresholdMeters;
+
 /// Whether a ground height has been explicitly set or auto-calibrated.
 /// YES as soon as any estimate exists, including an untrustworthy one.
 @property (nonatomic, readonly) BOOL groundHeightCalibrated;

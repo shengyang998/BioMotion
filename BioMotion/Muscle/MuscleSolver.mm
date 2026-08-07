@@ -393,6 +393,25 @@ static const double kMomentArmFloor = 1e-6;
     return !_muscles.empty();
 }
 
+- (void)resetSessionState {
+    // Back to the exact vector `loadMusclesFromOsimPath:` leaves behind. When
+    // no model is loaded this is empty, and the solve path then fills it with
+    // its own `0.05` default — which is also what a never-used solver does, so
+    // "reset" and "fresh" are the same state either way.
+    _prevActivations.assign(_muscles.size(), 0.01);
+    _prevMuscleLengths.clear();
+    _loggedVelocityFallback = NO;
+
+    // The workspace holds the dual iterate too, and nothing else can clear it:
+    // `osqp_warm_start(solver, x, OSQP_NULL)` leaves `y` alone by design. Tear
+    // it down so the next solve does a full `osqp_setup`, which zeroes both.
+    if (_realSolver) {
+        osqp_cleanup(_realSolver);
+        _realSolver = nullptr;
+    }
+    _realSolverNMuscles = 0;
+}
+
 - (NSArray<NSString *> *)lockedCoordinateNames {
     NSMutableArray *out = [NSMutableArray arrayWithCapacity:_lockedCoordinates.size()];
     for (const auto& n : _lockedCoordinates) {

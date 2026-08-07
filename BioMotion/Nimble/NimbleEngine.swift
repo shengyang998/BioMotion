@@ -330,10 +330,31 @@ final class NimbleEngine: ObservableObject {
         /// not enter the load summary. See `GaitPlan.Frame`.
         let derivativeWindowInsideContact: Bool
 
-        /// True when the two contact detectors agree about this frame.
+        /// True when the two contact detectors agree about this frame — which
+        /// means agreeing about BOTH feet, not just the claimed one.
         ///
-        /// ⚠️ When they DISAGREE the residual above is not `‖a_artic‖/g` at all:
-        /// `solveIDGRF` returns zero ground force when its own geometric
+        /// ⚠️ Asking only "did the solver also see the claimed foot down?" lets
+        /// a DOUBLE contact through, and a double contact is the one error mode
+        /// this product cannot absorb. `NimbleBridge.solveIDGRF` splits the
+        /// Newton-Euler wrench guess `weightUp / contactCount` between the feet
+        /// it thinks are down, and
+        /// `Skeleton::getMultipleContactInverseDynamicsNearCoP` is a
+        /// least-squares solve *around that guess* whose steps live in the
+        /// constraint null space — so a spurious second contact leaves the
+        /// stance foot carrying roughly HALF its real ground force and hands the
+        /// swing leg a ground reaction that does not exist. Every activation the
+        /// QP derives from those torques is halved on one side only, which
+        /// fabricates precisely the left/right asymmetry the product exists to
+        /// report.
+        ///
+        /// The residual cannot catch it. `residualInBodyWeights` is built from
+        /// `leftFootForce.y + rightFootForce.y` — the SUM over both feet — and
+        /// the near-CoP constraint fixes that sum exactly, so a 50/50 split and
+        /// a 100/0 split produce the identical number. This flag is the only
+        /// place the split is visible, so it has to be the place that checks it.
+        ///
+        /// ⚠️ When the detectors DISAGREE the residual above is not `‖a_artic‖/g`
+        /// at all: `solveIDGRF` returns zero ground force when its own geometric
         /// detector sees no foot down, so the residual becomes the ENTIRE
         /// modelled force (~2-3 BW) and says nothing about limb inertia. The two
         /// regimes are therefore separated by `GaitLoadSummary`, which computes
@@ -341,10 +362,21 @@ final class NimbleEngine: ObservableObject {
         /// disagreements as their own, separately-named failure.
         var contactDetectorsAgree: Bool {
             switch contactSide {
-            case -1: return solverSawLeftContact
-            case 1: return solverSawRightContact
+            case -1: return solverSawLeftContact && !solverSawRightContact
+            case 1: return solverSawRightContact && !solverSawLeftContact
             default: return !solverSawLeftContact && !solverSawRightContact
             }
+        }
+
+        /// The solver put ground force under BOTH feet on a frame the kinematic
+        /// detector called single stance. Published separately from
+        /// `contactDetectorsAgree` because it is a different failure with a
+        /// different lever: "no foot down" points at the ground-height estimate,
+        /// "both feet down" points at the 6 cm contact threshold against the
+        /// swing foot's clearance. Diagnostic only — the gate is
+        /// `contactDetectorsAgree`, which already covers this case.
+        var solverSawDoubleContact: Bool {
+            solverSawLeftContact && solverSawRightContact
         }
 
         /// Every condition this frame's muscle numbers need in order to enter a
@@ -1288,10 +1320,21 @@ final class NimbleEngine: ObservableObject {
     /// (`NimbleBridge.h` `resetSessionState`). Without it a new clip warm-starts
     /// from the previous clip's unrelated pose and GRF contact detection reads a
     /// stale floor.
+    ///
+    /// It also drops `MuscleSolver`'s warm start. That is the same class of bug
+    /// one stage further down and it was live until 2026-08-08: the QP's landing
+    /// point in its own null space depends on where it started, so without this
+    /// the same clip imported twice in one session published different
+    /// activations — measured at 0.836 on the worst muscle and 1432 N of total
+    /// muscle force between two byte-identical runs. Everything this engine
+    /// ships is a COMPARISON, so an answer that depends on what was analysed
+    /// before it is not an answer. After this call two identical inputs produce
+    /// identical output (`testTwoIdenticalRunsProduceIdenticalActivations`).
     func resetSessionState() {
         resetRealtimeState()
         solverQueue.async { [weak self] in
             self?.bridge.resetSessionState()
+            self?.muscleSolver.resetSessionState()
         }
     }
 

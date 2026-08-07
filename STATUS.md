@@ -1413,6 +1413,106 @@ gate's real pass rate on `video_012`/`video_015` is **unmeasured**, and it may w
 end-to-end number is synthetic: 9 stance frames, 5 contact-detector disagreements, 3 frames with a
 clean derivative window, agreeing residual 0.008-0.183 BW against the 0.5 gate.
 
+### Second review round: the two comparison-corrupting blockers, and the phone's memory (2026-08-08)
+
+Three lenses re-read the shipped gait layer and returned 2 blockers and 10 majors. The three closed
+here are the ones that corrupt a RATIO or terminate the app; the rest are the next stage's. Test
+count 325 → **334**, all green.
+
+**B1 — a double contact was invisible to the contact gate.** `contactDetectorsAgree` asked only
+whether the ID solver also saw the CLAIMED foot down; it never asked about the other one. When
+`solveIDGRF`'s geometric detector sees BOTH feet, it hands
+`getMultipleContactInverseDynamicsNearCoP` two wrench guesses of `weightUp / 2`, and that solver is
+a least-squares fit around the guess whose steps lie in the constraint null space — so the split
+survives and the stance leg is solved with **half** its real ground force while the swing leg gets a
+ground reaction that does not exist. Nothing downstream could see it: `residualInBodyWeights` is
+built from `leftFootForce.y + rightFootForce.y`, the SUM, and the near-CoP constraint fixes the sum
+exactly, so 50/50 and 100/0 produce the identical residual. The error lives entirely in the ratio.
+Measured through the shipping `GaitLoadSummary`: six left-stance frames of a symmetric runner
+(0.60/0.60) solved as double contact publish −66.7% (`differencePercent` normalises by the MEAN of
+the two peaks, so halving one leg is worse than −50%) against a resolution the same screen states as
+10.1%. The gate now requires the other foot to be UP, those frames count as disagreements, and
+nothing publishes.
+
+*Was the 6 cm threshold also wrong? Measured, and it is left alone.* The reviewer's hypothesis was
+that `calcn_y − groundHeightY < 0.06` sits inside the pelvis's own bounce on a pelvis-pinned stream.
+`GaitContactAgreementTests` drives the SHIPPED estimator (`observeLowestFootHeightY` →
+`groundHeightY`) and the shipped threshold (now exposed as
+`NimbleBridge.contactDetectionThresholdMeters`) over all three pinned clips:
+
+| clip | ankle proxy (double/single/none) | min(ankle,toe) proxy | min swing clearance |
+|---|---|---|---|
+| video_012 | 0 / 58 / 64 | **1** / 59 / 62 | 0.106 m / 0.193 m |
+| video_013 | 0 / 56 / 63 | 0 / 48 / 71 | 0.150 m / 0.094 m |
+| video_015 | 0 / 67 / 55 | 0 / 86 / 36 | 0.326 m / 0.125 m |
+
+So the gate is **load-bearing, not theoretical** — one frame of `video_012` does double up, which the
+earlier ankle-only read had missed. But the swing foot's clearance on genuine single-stance frames is
+0.094-0.326 m, 1.6-5.4× the threshold, so there is no margin problem: one frame in 122 is the gate's
+job, not the constant's, and moving it on this evidence would be tuning it. ⚠️ The fixture carries 5
+joints and cannot drive IK, so `calcn` is proxied by the ankle joint centre; both proxies are
+reported and neither changes the conclusion.
+
+**B2 — the published activations were not reproducible, and a test PINNED that.**
+`MuscleSolver._prevActivations` warm-starts OSQP and was re-initialised only when the muscle COUNT
+changed; `NimbleEngine.resetSessionState()` reset the bridge, the filters and the hold detector but
+never the muscle solver. Two byte-identical static-hold runs measured **0.836** apart on the worst
+muscle, **181.5 N** on the worst muscle's force and **1432 N** of total muscle force — and
+`testAMotionlessSubject…` asserted `XCTAssertGreaterThan(controlActivation, 0.01)`, i.e. it required
+the non-reproducibility to be there and documented it as QP null-space behaviour. It is not: the ID
+torques were bit-identical (0.0 Nm) on the same runs, so the QP was starting from a different place,
+not landing in a different place. Inside a gait pass it is worse than random — stance frames
+alternate left, right, left, right, so every solve warm-started from the OPPOSITE leg's answer, which
+is exactly the comparison being published.
+
+`MuscleSolver.resetSessionState` now drops three things, and the third is the one that is easy to
+miss: the primal warm start, **the OSQP workspace itself** (`warm_starting = true` and the caller
+passes `OSQP_NULL` for `y`, so the DUAL iterate carried across clips and nothing else could clear
+it — the workspace is torn down and rebuilt, one KKT factorization per clip), and `_prevMuscleLengths`
+(the fiber-velocity fallback would otherwise difference clip B's first frame against clip A's last
+pose). The assertion is inverted rather than deleted, and that inversion is the proof:
+
+| | before | after |
+|---|---|---|
+| worst activation, two identical runs | 0.8365 | **0.0** |
+| worst per-muscle force | 181.54 N | **0.0 N** |
+| same clip, with/without another clip first | 0.9562 (DELT2) | **0.0** |
+| ID torque | 0.0 Nm | 0.0 Nm |
+
+The one quantity NOT held to bit-equality is the SUM of 520 forces (1432 N → 9.1e-12 N), because
+`forces.values.reduce(0, +)` adds in Dictionary iteration order and can reassociate; 5e-15 relative
+is the last bit of a double. The per-muscle assertions are the meaningful ones.
+
+**M-mem — following the app's own advice OOMs the phone.** Every sampled frame is decoded to a
+`UIImage` before any is processed and then retained by its `FrameResult` for the whole playback
+session, so the peak is `frames × width × height × 4` paid in full alongside the 1.31 GiB model.
+`resolutionSentence` says "film at 61 fps"; the user films at 60 and the native window grows 120 →
+240 frames. Measured end to end on a synthetic 1080p 60 fps clip through the shipping decoder:
+**1990.7 MB** before, **994.9 MB** after. `AVAssetImageGenerator.maximumSize` was never set, so there
+was no downscale anywhere.
+
+The budget is `maxFramesPerRun × 1920 × 1080 × 4` = 995,328,000 B — derived rather than chosen: it is
+the decoded cost of the configuration that already ships, so the validated 30 fps path (and every
+clip the product was built on: 576×1024 and 576×768, measured from the export caches) is decoded at
+its natural size and **unchanged**, while 60/120/240 fps and 4K — which were 1.99/3.98/4.98/3.98 GB —
+are all held to that same peak by scaling. 1080p decodes to 1356×762 at 60 fps, 960×540 at 120,
+853×479 at 240. A phone jetsam limit is not measurable from this repo and is NOT what this number
+came from.
+
+Two things the measurement itself taught. The byte cost is **not** `pixels × 4`: a 1357×763 decode
+reports `bytesPerRow = 5440` (1360 px), so rows pad to a 64-byte boundary and a "budget-sized" window
+came out 0.08% over. The model now includes alignment (`FrameSource.decodedFrameBytes`), which also
+costs portrait 1080p at 30 fps 8 px of long side (1080×4 = 4320 pads to 4352). And the accounting is
+real, not notional: holding 60 frames moves the process's own `phys_footprint` by 253.7 MB against
+248.7 MB predicted (ratio 1.02), and 503.0 vs 497.7 MB uncapped (1.01).
+
+⚠️ **The cost, stated.** Above 30 fps the subject's pixel height falls, and the pose model warps the
+padded person box to a fixed 512 px square. Measured on the owner's clips the box side is 360-711 px,
+so the pipeline already both up- and downsamples there; at 120/240 fps it will always upsample. This
+trades spatial resolution for temporal resolution, which is the trade this product's binding limit
+calls for — but it is a trade, and `decodedWindowBudgetBytes` is one line if the owner wants it
+elsewhere.
+
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 

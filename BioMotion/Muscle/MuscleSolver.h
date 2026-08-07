@@ -97,6 +97,35 @@ NS_ASSUME_NONNULL_BEGIN
 /// @return YES if muscles were parsed successfully.
 - (BOOL)loadMusclesFromOsimPath:(NSString *)path;
 
+/// Drops every piece of state that carries from one solve to the next, so the
+/// next solve is identical to the first solve after `loadMusclesFromOsimPath:`.
+///
+/// # Why a muscle solver has session state at all, and why it must be droppable
+///
+/// The QP is warm-started from the previous frame's activations, and 520
+/// muscles over ~169 coordinates leave a wide null space of equally optimal
+/// answers — so *where OSQP stops* depends on where it started. Within one clip
+/// that is exactly what a warm start is for. ACROSS clips it means the same
+/// video, imported twice in one app session, publishes different per-muscle
+/// numbers and therefore a different "N% harder on the left". The product's
+/// whole deliverable is a comparison, so an answer that depends on what was
+/// analysed before it is not an answer.
+///
+/// Three things carry, and all three are dropped here:
+///   1. `_prevActivations`, the primal warm start;
+///   2. the OSQP workspace itself, which keeps its own primal AND DUAL iterate
+///      across `osqp_solve` calls (`warm_starting = true`, and the caller only
+///      ever overrides the primal) — so resetting the activation vector alone
+///      would leave `y` from the previous clip. The workspace is torn down and
+///      rebuilt on the next solve, which costs one KKT factorization per clip.
+///   3. `_prevMuscleLengths`, the finite-difference history behind the
+///      wall-clock fiber-velocity fallback, which would otherwise difference
+///      the new clip's first frame against the old clip's last pose.
+///
+/// Called by `NimbleEngine.resetSessionState()` at a clip boundary. Safe to
+/// call before any model is loaded.
+- (void)resetSessionState;
+
 /// Number of muscles loaded.
 @property (nonatomic, readonly) NSInteger numMuscles;
 

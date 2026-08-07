@@ -391,6 +391,13 @@ final class GaitDynamicsTests: XCTestCase {
             XCTAssertEqual(Set(x.keys), Set(y.keys))
             return x.reduce(0.0) { max($0, abs($1.value - (y[$1.key] ?? .nan))) }
         }
+        func worstForceDelta(_ a: NimbleEngine.SolveRecord,
+                             _ b: NimbleEngine.SolveRecord) throws -> Double {
+            let x = try XCTUnwrap(a.muscle).forces
+            let y = try XCTUnwrap(b.muscle).forces
+            XCTAssertEqual(Set(x.keys), Set(y.keys))
+            return x.reduce(0.0) { max($0, abs($1.value - (y[$1.key] ?? .nan))) }
+        }
         func worstTorqueDelta(_ a: NimbleEngine.SolveRecord,
                               _ b: NimbleEngine.SolveRecord) throws -> Double {
             let x = try XCTUnwrap(a.id).jointTorques
@@ -409,18 +416,18 @@ final class GaitDynamicsTests: XCTestCase {
             XCTAssertEqual(s.centerTimestamp, 0.0, accuracy: 1e-6, label)
         }
 
-        // A, then A again: the CONTROL. `MuscleSolver` warm-starts OSQP from
-        // the previous solve's activations (`_prevActivations`), and 520
-        // muscles over ~169 coordinates leave a wide null space, so two
-        // identical hold sequences do NOT have to land on the same point in it.
-        // Without this control an activation difference after the gait pass
-        // would be misread as a regression when it is the documented
-        // "saturated-muscle count is not a metric" behaviour.
+        // A, then A again: the CONTROL, and since 2026-08-08 also the
+        // REPRODUCIBILITY assertion. `holdSolve` resets the session first, so
+        // these two runs differ in nothing at all — same markers, same
+        // timestamps, same order — and must therefore agree exactly. They did
+        // not until `resetSessionState()` learned to drop `MuscleSolver`'s warm
+        // start: see the inverted assertion below.
         let a = try await holdSolve()
         try assertIsAProperStaticHold(a, "first hold")
         let b = try await holdSolve()
         try assertIsAProperStaticHold(b, "repeat hold")
         let controlActivation = try worstActivationDelta(a, b)
+        let controlForce = try worstForceDelta(a, b)
         let controlTorque = try worstTorqueDelta(a, b)
 
         // Now the TREATMENT: a full gait pass on the SAME engine, then hold.
@@ -438,6 +445,7 @@ final class GaitDynamicsTests: XCTestCase {
         let c = try await holdSolve()
         try assertIsAProperStaticHold(c, "hold after a gait pass")
         let treatmentActivation = try worstActivationDelta(b, c)
+        let treatmentForce = try worstForceDelta(b, c)
         let treatmentTorque = try worstTorqueDelta(b, c)
 
         func totalForce(_ s: NimbleEngine.SolveRecord) throws -> Double {
@@ -450,6 +458,8 @@ final class GaitDynamicsTests: XCTestCase {
               + "muscles=\(try XCTUnwrap(a.muscle).activations.count) "
               + "control_activation_delta=\(controlActivation) "
               + "treatment_activation_delta=\(treatmentActivation) "
+              + "control_muscle_force_delta_N=\(controlForce) "
+              + "treatment_muscle_force_delta_N=\(treatmentForce) "
               + "control_torque_delta_Nm=\(controlTorque) "
               + "treatment_torque_delta_Nm=\(treatmentTorque) "
               + "control_total_force_delta_N=\(controlForceSum) "
@@ -463,23 +473,112 @@ final class GaitDynamicsTests: XCTestCase {
         XCTAssertLessThan(treatmentTorque, 1e-6,
                           "a gait pass must not change the static hold's joint torques")
 
-        // The QP's own landing point is NOT deterministic and never was: it
-        // warm-starts from the previous solve, and 520 muscles over 169
-        // coordinates leave a wide null space of equally optimal answers. The
-        // CONTROL measures how far two identical hold runs already move
-        // (0.836 activation on the worst muscle, with no gait pass anywhere),
-        // so the only thing the treatment can be held to is "no more than
-        // that". The band is a factor of two — generous by construction,
-        // because the measurement it is wrapped around is a null result:
-        // control 0.836 against treatment 0.858, 2.5 % apart.
-        XCTAssertGreaterThan(controlActivation, 0.01,
-                             "if the control were ~0 this tolerance would be hiding something; "
-                             + "it is not, and that is the documented QP null-space behaviour")
-        XCTAssertLessThanOrEqual(treatmentActivation, max(2 * controlActivation, 1e-9),
-                                 "the gait path perturbs a static hold beyond its own run-to-run "
-                                 + "variation")
-        XCTAssertLessThanOrEqual(treatmentForceSum, max(2 * controlForceSum, 1.0),
-                                 "nor may it move the total muscle force")
+        // ⚠️ **This assertion was inverted on 2026-08-08, and the inversion is
+        // the proof of the fix.** It used to read
+        // `XCTAssertGreaterThan(controlActivation, 0.01)` — i.e. it REQUIRED
+        // two byte-identical runs to disagree, and documented the disagreement
+        // as acceptable QP null-space behaviour. Measured, it was 0.836 of
+        // activation on the worst muscle and 1432 N of total muscle force.
+        //
+        // That is not a null space finding a different corner; it is the OSQP
+        // warm start surviving `resetSessionState()`, so the answer depended on
+        // what had been analysed before it. Everything this product publishes is
+        // a comparison — this muscle against that one, left against right — so
+        // an irreproducible activation is not a weaker number, it is not a
+        // number. `MuscleSolver.resetSessionState` now drops the primal warm
+        // start, the OSQP workspace (which carries the DUAL iterate, and which
+        // nothing else could clear) and the fiber-length history.
+        //
+        // Exact equality, not a tolerance: identical input on identical
+        // hardware through a deterministic chain has no reason to differ in the
+        // last bit, and a tolerance here would be a place for the old behaviour
+        // to come back and hide.
+        XCTAssertEqual(controlActivation, 0.0,
+                       "two byte-identical runs must produce byte-identical activations")
+        XCTAssertEqual(controlForce, 0.0,
+                       "and byte-identical per-muscle forces")
+        XCTAssertEqual(treatmentActivation, 0.0,
+                       "a gait pass must leave no residue a later static hold can see")
+        XCTAssertEqual(treatmentForce, 0.0,
+                       "nor may it move any muscle's force")
+
+        // The SUM over 520 forces is the one quantity that is not held to
+        // bit-equality, and the reason is arithmetic rather than physics:
+        // `forces.values.reduce(0, +)` adds in Dictionary iteration order, so
+        // two dictionaries holding bit-identical values can still reassociate
+        // the sum differently. Measured at 7.3e-12 N against a ~1.4e3 N total,
+        // i.e. 5e-15 relative — the last bit of a double. The per-muscle
+        // assertions above are the meaningful ones; this is here so that a real
+        // regression (which would be many orders larger) still fails.
+        XCTAssertLessThan(controlForceSum, 1e-6)
+        XCTAssertLessThan(treatmentForceSum, 1e-6)
+    }
+
+    // MARK: - Reproducibility across a clip boundary
+
+    /// **The product's actual sequence, and the assertion the blocker asked
+    /// for.** Import clip B; then in a fresh session import clip A and clip B.
+    /// B's published activations must be the same both times.
+    ///
+    /// This is the scenario that made the warm-start leak matter. Inside one
+    /// gait pass the leak is worse than random rather than merely random:
+    /// stance frames alternate left, right, left, right, so every solve
+    /// warm-starts from the OPPOSITE leg's answer — which is precisely the
+    /// comparison the panel prints. Nothing else in the pipeline could catch it:
+    /// `residualGatePassed`, `contactGatePassed`, `isSaturated` and
+    /// `resolvableAsymmetryPercent` are all computed from contact timing and the
+    /// force SUM, and none of them knows where OSQP stopped.
+    ///
+    /// Two different synthetic clips, not two copies of one, so the preceding
+    /// run genuinely leaves a different state behind.
+    @MainActor
+    func testTwoIdenticalRunsProduceIdenticalActivations() async throws {
+        let engine = try await loadedEngine()
+        let dt = 1.0 / 30.0
+        let clipA = Self.syntheticRunSequence(dt: dt, frames: 20, swingAmplitude: 0.14)
+        let clipB = Self.syntheticRunSequence(dt: dt, frames: 20, swingAmplitude: 0.03)
+
+        /// One whole clip through the shipping path, from a clip boundary.
+        func run(_ sequence: [[(String, SIMD3<Double>)]]) async -> [(Double, [String: Double])] {
+            engine.resetSessionState()
+            engine.staticHoldGating = false
+            engine.gaitPlan = Self.plan(for: sequence, dt: dt, taps: 5, peakBW: 2.5)
+            var out: [(Double, [String: Double])] = []
+            for (i, markers) in sequence.enumerated() {
+                let ok = await submitAndWait(engine, bodyFrame(markers, timestamp: Double(i) * dt,
+                                                               frameNumber: i))
+                guard ok, let solve = engine.lastSolve, let muscle = solve.muscle else { continue }
+                out.append((solve.centerTimestamp, muscle.activations))
+            }
+            engine.gaitPlan = nil
+            return out
+        }
+
+        let alone = await run(clipB)
+        _ = await run(clipA)
+        let afterA = await run(clipB)
+
+        XCTAssertFalse(alone.isEmpty, "clip B must produce muscle output at all")
+        XCTAssertEqual(alone.count, afterA.count,
+                       "same clip, same number of solved frames (a mismatch here is the test "
+                       + "harness dropping a submission, not the solver)")
+
+        var worst = 0.0
+        var worstMuscle = ""
+        for (x, y) in zip(alone, afterA) {
+            XCTAssertEqual(x.0, y.0, accuracy: 1e-12, "frames must line up in time")
+            XCTAssertEqual(Set(x.1.keys), Set(y.1.keys))
+            for (name, v) in x.1 {
+                let d = abs(v - (y.1[name] ?? .nan))
+                if d > worst { worst = d; worstMuscle = name }
+            }
+        }
+        print("GAIT-METRIC clip_order_independence frames=\(alone.count) "
+              + "worst_activation_delta=\(worst) worst_muscle=\(worstMuscle)")
+
+        XCTAssertEqual(worst, 0.0,
+                       "the same clip must publish the same activations whether or not another "
+                       + "clip was analysed first")
     }
 
     /// With no plan the engine uses the window that shipped, so the live camera

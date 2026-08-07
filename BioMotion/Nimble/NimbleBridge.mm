@@ -440,6 +440,12 @@ static double markerReliabilityWeight(const std::string& name) {
         : NimbleGroundHeightSourceProvisional;
 }
 
+// 6 cm. Unchanged from the value that has always shipped, and deliberately so:
+// see `GaitContactAgreementTests` for the measurement that says the owner's
+// three clips produce ZERO double contacts under it, which is the only evidence
+// available about whether it is right and it does not support moving it.
++ (double)contactDetectionThresholdMeters { return 0.06; }
+
 - (double)groundHeightY { return _groundHeightY; }
 
 - (NimbleGroundHeightSource)groundHeightSource { return _groundHeightSource; }
@@ -1484,7 +1490,7 @@ static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
         // of the ground and it's moving slowly (we gate on velocity too via
         // getCOMLinearVelocity later if needed — for baseline we go by
         // position alone and let the near-CoP solver absorb the rest).
-        const double CONTACT_THRESHOLD = 0.06;  // 6 cm
+        const double CONTACT_THRESHOLD = [NimbleBridge contactDetectionThresholdMeters];
         BOOL leftContact  = (calcnLY - _groundHeightY) < CONTACT_THRESHOLD;
         BOOL rightContact = (calcnRY - _groundHeightY) < CONTACT_THRESHOLD;
 
