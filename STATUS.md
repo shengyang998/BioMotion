@@ -730,11 +730,17 @@ newtons** (72.5 N, the largest single entry in both standing poses), and `FullBo
 sternum + 72 rib coordinates like it. `MuscleSolver`'s `‖A·a − τ‖` sums newtons and newton-metres in
 one norm. Whether those coordinates belong in the muscle QP at all is the next question.
 
-**Not re-run, and now stale:** `E1MarkerSetComparisonTests` calls `getInverseDynamics` on the shared
-skeleton, so its archived torque statistics were computed under the wrong gravity. The E1 STOP
-verdict rests on kinematic gates (spine error, spurious intervertebral motion, `ddq`) which are
-gravity-independent, so it is very likely safe — but nobody has confirmed it, and one E1 run costs
-over an hour.
+**E1 re-run and CONFIRMED (2026-08-07).** `E1MarkerSetComparisonTests` calls `getInverseDynamics` on
+the shared skeleton, so its archived torque statistics were computed under the wrong gravity and the
+STOP verdict was left unconfirmed. It has now been re-run end to end against the corrected gravity,
+the 169-coordinate model and the rewritten IK: **`testE1RunAll` passed in 5706.9 s, 0 failures.**
+Every pre-registered gate still holds, so the STOP verdict and the spine-claim constraint stand.
+
+That run also needed a partition fix unrelated to E1's physics: the test asserts that eight
+hard-coded DOF-name blocks cover every coordinate, and they summed to 163 — correct when the
+experiment ran, wrong once the shoulder axis unit-snap turned six glenohumeral coordinates into real
+DOFs and the patellofemoral weld removed the two `knee_angle_*_beta`. A `SHOULDER6` block was added
+with its own size assertion so a misspelled name fails loudly instead of silently shrinking the cover.
 
 ### Muscle QP: what the residual actually is (2026-08-07)
 
