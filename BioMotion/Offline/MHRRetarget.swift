@@ -45,13 +45,42 @@ import simd
 ///     (c) mirroring the input image swaps the labels as physics requires (mean residual
 ///         0.017 m swapped vs 0.628 m unswapped).
 ///
+/// # The root translation: `cam_t` is the quantity `joint_coords` is missing
+/// `joint_coords` has `global_trans` zeroed (sam3d_body.py:1600), so the pelvis is pinned at
+/// exactly (0, 0.924, 0) in EVERY prediction — that 0.924 is a model constant, not the
+/// subject's pelvis height, and y = 0 is NOT the floor. The model does not throw the
+/// translation away though: it emits it separately as `cam_t`, which this app already
+/// exports, already stores on `FrameResult`, and already consumes in `projectToImage`.
+///
+/// `makeBodyFrame(jointCoords:camT:…)` composes it back in. **VERIFIED, 2026-08-07**, by
+/// running the shipped Core ML model over 309 frames of a real clip
+/// (`labs/sam-3d-body/export/camt_probe.py`):
+///
+///  * `cam_t` is the CLIFF/CameraHMR full-frame root translation
+///    (`sam_3d_body/models/heads/camera_head.py:84-96`):
+///    `tz = 2·f/(bbox_side·s)`, `cx = 2(bbox_cx − w/2)/bs`, `cam_t = [tx+cx, ty+cy, tz]`.
+///  * The numbers are physically right: subject at 4.34 m depth, 1.10 m below the optical
+///    axis, ±0.37 m lateral, and `corr(1/bbox_side, depth) = +0.74` exactly as that formula
+///    requires.
+///
+/// ⚠️ **It is a POSITION, not an acceleration.** Its depth channel is derived from apparent
+/// size and carries 12.7 cm (std) / 68 cm (max) of high-frequency residual about its own
+/// 0.5 s mean. Pushed through the app's 9-tap Savitzky-Golay filter that is **3.1 g of pure
+/// noise at 30 fps**, 0.56 g at 15, 0.23 g at 10, 0.02 g at 2. The in-plane channels are
+/// 8-25× cleaner (1% person-box jitter moves `cam_t` by x 2.2 mm / y 2.6 mm / **z 18.9 mm**).
+/// Temporally smoothing the person box cut the box's own wobble 12× and the depth residual
+/// only 28%, so the noise is the model's monocular depth, not preprocessing. See STATUS.md,
+/// "cam_t recovers the root translation; its depth cannot be differentiated twice".
+///
 /// # What this file deliberately does NOT do
-///  * It does not translate or floor-align. `joint_coords` has `global_trans` zeroed
-///    (sam3d_body.py:1600), so the pelvis is pinned at exactly (0, 0.924, 0) in EVERY
-///    prediction regardless of subject or pose — that 0.924 is a model constant, not the
-///    subject's pelvis height, and y = 0 is NOT the floor. Nimble's pelvis free joint absorbs
-///    the offset for IK, but any future ground-contact / GRF stage must not read y = 0 as ground.
+///  * It does not floor-align. Even with `camT` composed in, y = 0 is the camera's optical
+///    axis, not the ground; the ground-contact / GRF stage must keep estimating the floor.
 ///  * It does not smooth. Filtering is `NimbleEngine`'s job.
+///  * It does not compensate camera motion. `cam_t` is camera-relative, so a camera that
+///    ROTATES makes the reconstructed frame non-inertial (measured on the user's own clips:
+///    13.5 °/s on `video_012`, which displaces a point 1 m from the subject by 6.4 cm over a
+///    single 0.27 s filter window). Constant-velocity camera translation is Galilean and
+///    harmless; camera acceleration is not, and is not measured here.
 enum MHRRetarget {
 
     // MARK: - MHR joint indices
@@ -228,28 +257,58 @@ enum MHRRetarget {
 
     // MARK: - Frame construction
 
+    /// The root translation `joint_coords` is missing, in the Y-up frame this file emits.
+    ///
+    /// `cam_t` is expressed in the OpenCV-style camera frame (X right, Y DOWN, Z AWAY from
+    /// the camera) because that is the frame the model's own projection uses:
+    /// `cam = [p.x, −p.y, −p.z] + cam_t` (see `projectToImage`, and `overlay_check.py` /
+    /// `projection_selfcheck.py`, which measure the projected 3-D joints against the model's
+    /// own `keypoints_2d` at 1.0 px mean). Undoing that axis flip gives the translation in
+    /// the Y-up frame `joint_coords` and every marker in this file live in.
+    ///
+    /// The resulting frame has the CAMERA at the origin looking along −Z. It is metric and
+    /// (for a non-rotating camera) inertial. It is NOT floor-aligned and its Y axis is the
+    /// camera's up, not gravity — a tilted phone tilts the whole reconstruction.
+    static func rootTranslation(camT: SIMD3<Float>) -> SIMD3<Float> {
+        mhrToARKit(SIMD3<Float>(camT.x, -camT.y, -camT.z))
+    }
+
     /// Build a `BodyFrame` that `NimbleEngine.processFrame` can consume directly.
     ///
-    /// - Parameter jointCoords: 127 MHR joint positions, meters, MHR-native (un-flipped) frame.
+    /// - Parameters:
+    ///   - jointCoords: 127 MHR joint positions, meters, MHR-native (un-flipped) frame.
+    ///   - camT: the model's `cam_t` output for the same frame. When supplied, the root
+    ///     translation is composed back in and the emitted markers are camera-frame world
+    ///     positions — so the pelvis descends in a squat instead of the feet appearing to
+    ///     rise, and `q̈` describes motion that actually happened. When nil (the default),
+    ///     the markers stay pelvis-pinned, which is bit-for-bit the behaviour every caller
+    ///     had before this parameter existed.
     /// - Returns: a frame with the twenty joints of `JointMapping.primary`, or a frame with an
     ///   empty joint list if `jointCoords` is the wrong length (`processFrame` already guards
     ///   `names.isEmpty` and returns without touching the solver).
+    ///
+    /// ⚠️ Supplying `camT` is necessary for dynamics but NOT sufficient — read
+    /// `rootTranslation` and this type's header for the measured depth noise, and
+    /// `NimbleEngine.StaticHoldDetector` for the conditions the engine then checks.
     static func makeBodyFrame(jointCoords: [SIMD3<Float>],
+                              camT: SIMD3<Float>? = nil,
                               timestamp: TimeInterval,
                               frameNumber: Int) -> BodyFrame {
         guard jointCoords.count >= MHR.jointCount else {
             return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: [])
         }
+        let offset = camT.map(rootTranslation(camT:)) ?? .zero
         let joints = table.map { src -> TrackedJoint in
             TrackedJoint(id: src.arkitJointId,
                          name: src.displayName,
-                         worldPosition: markerPosition(src, in: jointCoords),
+                         worldPosition: markerPosition(src, in: jointCoords) + offset,
                          isTracked: true)
         }
         return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
     }
 
-    /// Resolve one table row into a world position, in the ARKit-facing frame.
+    /// Resolve one table row into a position, in the ARKit-facing frame, RELATIVE to the
+    /// pelvis-pinned origin. Add `rootTranslation(camT:)` for a camera-frame world position.
     static func markerPosition(_ src: JointSource, in jointCoords: [SIMD3<Float>]) -> SIMD3<Float> {
         let a = jointCoords[src.mhrJointIndex]
         let b = jointCoords[src.blendJointIndex]

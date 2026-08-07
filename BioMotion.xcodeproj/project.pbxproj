@@ -65,6 +65,7 @@
 		F6208E01FDB4179EEF721B39 /* OfflineSessionRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B380AE0D8895B17AF002FC4 /* OfflineSessionRunner.swift */; };
 		F879356CA878DC33DEF470D4 /* TRCExporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */; };
 		FAFDAE32C4C82F3339D97B8C /* OfflineMuscleChainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF0F23C51614668A2D0002E4 /* OfflineMuscleChainTests.swift */; };
+		FCF85FDD27BCE3D45741E313 /* RootTranslationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2B9AAD0354C5643CD4E31D /* RootTranslationTests.swift */; };
 		FD1FE9596B21A15A5811F83C /* OfflineResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A01F5A8E43E144EF7C64ED03 /* OfflineResultStore.swift */; };
 		FD38E7F1B9C09FAC1FE3C10A /* Rajagopal2016.osim in Resources */ = {isa = PBXBuildFile; fileRef = 44D59B2D4FBCD3D020D9136A /* Rajagopal2016.osim */; };
 /* End PBXBuildFile section */
@@ -165,6 +166,7 @@
 		DD8D8EE2FB43D7D0467DA761 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Resources; path = BioMotion/Resources; sourceTree = SOURCE_ROOT; };
 		DE061204EBCA562182A0C976 /* NimbleBridge+Internal.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "NimbleBridge+Internal.h"; sourceTree = "<group>"; };
 		EB4E89539823D96EB49C208D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		EE2B9AAD0354C5643CD4E31D /* RootTranslationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTranslationTests.swift; sourceTree = "<group>"; };
 		F2A4C75E6AA932E8711E81C0 /* MHRRetarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MHRRetarget.swift; sourceTree = "<group>"; };
 		F450A13A5F81381FF86F4B39 /* MuscleQPUnitsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuscleQPUnitsTests.swift; sourceTree = "<group>"; };
 		FD7D9E43807A790AC61DE000 /* AssetPackDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetPackDownloader.swift; sourceTree = "<group>"; };
@@ -227,6 +229,7 @@
 				635955A3754AEA4532DD5F11 /* PersonBoxTests.swift */,
 				8CA8EDF03A71660632ECC367 /* PostureFindingsRealPoseTests.swift */,
 				08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */,
+				EE2B9AAD0354C5643CD4E31D /* RootTranslationTests.swift */,
 				59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */,
 				1F460BBF2CEB2DE7A1735390 /* ShoulderRotObservabilityTests.mm */,
 				C18C6B5EE39B4A7DCDF41DE4 /* StaticEquilibriumBenchmarkTests.swift */,
@@ -548,6 +551,7 @@
 				E8CAC2BA9966EE9ED2E33E86 /* PersonBoxTests.swift in Sources */,
 				1D0C2C290242C2C96F04CF93 /* PostureFindingsRealPoseTests.swift in Sources */,
 				68975B28DCF3CD55E9EB1746 /* PostureFindingsTests.swift in Sources */,
+				FCF85FDD27BCE3D45741E313 /* RootTranslationTests.swift in Sources */,
 				D5042C5568E0CC26BBB00D03 /* ShoulderRotMaskTests.swift in Sources */,
 				39898570C7128B9A2770FC21 /* ShoulderRotObservabilityTests.mm in Sources */,
 				1D59AE434199F406B1B6F502 /* StaticEquilibriumBenchmarkTests.swift in Sources */,

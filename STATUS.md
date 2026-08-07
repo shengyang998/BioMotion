@@ -27,6 +27,12 @@ biggest links were **not** where the effort had been going.
 - A **kinematics-only findings layer** ships (forward head, rounded shoulders, trunk lean, …). It
   carries **no clinical threshold and no verdict** and suppresses any finding whose measurement axis
   points into depth. See [Posture findings](#posture-findings-a-kinematics-only-layer-2026-08-07).
+- **`cam_t` is the root translation the offline path was throwing away** — it is exported, stored and
+  already used for the overlay, and the "needs SLAM" line in this file was wrong. Composing it back
+  in is shipped and default-off; activating it is one argument at a call site another task owns.
+  It is necessary and **not sufficient**: the depth channel carries 3.1 g of pure acceleration noise
+  at 30 fps, and all three of the owner's clips are tracking shots with no inertial frame at all. See
+  [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -110,7 +116,7 @@ optimizer bound by colormap appearance; dead `maxMuscleForceAtState` and the leg
 | | 2026-08-06 start | after Phase 0 | 2026-08-07 |
 |---|---|---|---|
 | Test target | **did not compile** (`MomentArmTests.swift:124` used a stale signature) | builds | builds |
-| Tests | 0 runnable | 88 total, 87 pass | **197 total, 197 pass, 0 crash-restarts** |
+| Tests | 0 runnable | 88 total, 87 pass | **219 total, 219 pass, 0 crash-restarts** |
 
 `E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
 fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
@@ -840,16 +846,24 @@ computed from motion that did not happen. Frames are now classified as hold or m
 **measured marker speed**, and only holds are solved — as statics.
 
 The criterion is deliberately *not* built on the SG-filtered `q̈`: that quantity is derived from the
-very data whose global component is missing, so gating on it would be circular. Threshold: peak
-marker speed ≤ 0.02 m/s (from next-step 5 below, which predates this work) with an implied
-acceleration budget of 0.08 m/s². Moving frames keep pose, skeleton and `.mot` export and lose only
-the muscle magnitudes; the badge shows which, with the measured number behind it.
+very data whose global component is missing, so gating on it would be circular. Moving frames keep
+pose, skeleton and `.mot` export and lose only the muscle magnitudes; the badge shows which, with the
+measured number behind it.
 
-⚠️ **Honest note on the framing:** the claim that the 0.5 s duration is *derived* from the two
-constants rather than being a third knob is circular. 0.5 s also pre-exists in next-step 5, and the
-one genuinely new constant (0.08 m/s²) is exactly `2 × 0.02 / 0.5` — chosen to reproduce it. The
-gate itself is sound and was not fitted to any fixture (a 0.9×–1.1× sweep flips exactly at 0.020),
-but "0.82% of g" is a post-hoc description, not a budget set first.
+⚠️ **Honest note on the framing:** the claim that the 0.5 s duration was *derived* from the two
+constants rather than being a third knob was circular. 0.5 s pre-exists in next-step 5, and the one
+genuinely new constant (0.08 m/s²) was exactly `2 × 0.02 / 0.5` — chosen to reproduce it. The gate
+itself was not fitted to any fixture (a 0.9×–1.1× sweep flipped exactly at 0.020), but "0.82% of g"
+was a post-hoc description, not a budget set first.
+
+**Both constants were replaced 2026-08-07, and the noise floor is now measured rather than assumed.**
+Thresholds are `0.20 m/s` (where `v²/(g·r)` reaches 1% on a 0.4 m segment) and `0.05·g = 0.4905 m/s²`
+(an order of magnitude below the muscle QP's own 0.20-0.35 relative torque residual), implied minimum
+window span `2v/a` = 0.8155 s. At the 2 fps offline cadence the admissible peak marker speed goes
+2 cm/s → 20 cm/s. The measured pose noise floor is 4.69 cm/s at 30 fps — **above the old 2 cm/s cap**,
+so the old gate could not have returned a hold on real 10-30 fps footage even for a motionless
+subject. Full derivation, the measurement, and the new `MotionVerdict` reasons:
+[cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
 
 ### Device vs Mac: SOLVED — Vision was returning an upper-body box (2026-08-07)
 
@@ -948,10 +962,16 @@ not the floor.
 
 Joint *angles* are frame-invariant and therefore correct. But the body has no global vertical
 motion, so **dynamic** inverse dynamics is not sound on this path — in a squat the pelvis does not
-descend, the feet appear to rise instead. This points the same way as next-step 5 below:
-static-equilibrium ID (`q̇ = q̈ = 0` over a detected hold) is both the honest reading of this input
-and the largest accuracy lever available. Recovering true global motion from monocular video needs
-camera-pose/SLAM, which is a different project.
+descend, the feet appear to rise instead.
+
+⚠️ **The last sentence of this section used to read "recovering true global motion from monocular
+video needs camera-pose/SLAM, which is a different project." That was wrong, and it is the reason
+the offline path spent a build refusing every moving frame.** The model emits the root translation
+separately, as `cam_t`, which this app already exports, already stores on `FrameResult` and already
+uses to project the overlay. Measured and corrected 2026-08-07 — see
+[cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
+Static-equilibrium ID over a detected hold remains the honest reading, but for a *narrower* reason
+than "the translation is unavailable".
 
 T-pose calibration **is** skippable, but only via `segmentScaleMarkers`, which rebuilds a synthetic
 straight-limb marker set from pose-invariant chain sums. Handing the bridge raw posed markers fails
@@ -959,6 +979,154 @@ the `[0.7, 1.4]` clamp on 6 of 6 test predictions (a seated yoga pose gives lowe
 The method cannot rescue a bad prediction: a small, heavily occluded subject produced a degenerate
 0.070 m hip width. ~~A plausibility gate on hip width and stature is recommended and **not yet
 built**.~~ **Built 2026-08-07** — see [Body-size gate](#body-size-gate-2026-08-07).
+
+### cam_t recovers the root translation; its depth cannot be differentiated twice (2026-08-07)
+
+Owner objection that started this: *"why muscle loads need a still pose? dynamic pose also needs the
+muscle."* Correct, and the gate was standing on a false premise. Gates were pre-registered before any
+result existed (`/tmp/camt/PREREGISTRATION.md`, reproduced below), harness
+`labs/sam-3d-body/export/camt_probe.py` + a Swift decoder that mirrors `FrameSource.VideoDecoder`
+and `SAM3DPoseEstimator.detectPersonBBox` so the person boxes are the ones the app would get.
+309 frames of `video_012.mov` at native 30 fps through the shipping Core ML model.
+
+**Finding 1 — `cam_t` IS the missing quantity, and the pinning is a bug in what we consume.**
+It is the CLIFF/CameraHMR full-frame root translation
+(`sam_3d_body/models/heads/camera_head.py:84-96`): `tz = 2f/(bbox_side·s)`,
+`cx = 2(bbox_cx − w/2)/bs`, `cam_t = [tx+cx, ty+cy, tz]`. Measured on the 287 Vision-detected frames:
+depth **−4.34 m**, **1.10 m** below the optical axis, ±0.37 m lateral — all physically right — and
+`corr(1/bbox_side, depth) = +0.74`, exactly what that formula requires. In the Y-up frame the app
+uses, `T = (cam_t.x, −cam_t.y, −cam_t.z)`.
+
+**Finding 2 — necessary, not sufficient: the depth channel is noise.** `Tz`'s high-frequency residual
+about its own 0.5 s mean is **12.7 cm std / 68 cm max**. Through this project's own 9-tap centred
+Savitzky-Golay filter (`‖C₂‖ = 0.1140`, so `a_noise = σ·0.114/dt²`) that is:
+
+| sampling | root accel noise, depth | as a fraction of g | 9-tap window span |
+|---|---|---|---|
+| 30 fps | 30.5 m/s² | **3.11 g** | 0.27 s |
+| 15 fps | 5.46 | 0.56 g | 0.53 s |
+| 10 fps | 2.27 | 0.23 g | 0.80 s |
+| 6 fps | 1.38 | 0.14 g | 1.33 s |
+| 2 fps | 0.21 | 0.02 g | 4.00 s |
+
+The in-plane channels are 8-25× cleaner (`ax` 0.26 / `ay` 0.28 m/s² at 10 fps against `az` 2.27;
+1% person-box jitter moves `cam_t` by x 2.2 mm / y 2.6 mm / **z 18.9 mm**).
+
+**Finding 3 — the depth noise is intrinsic, not preprocessing.** Temporally smoothing the person box
+cut the box's own high-frequency wobble **12×** (9.78 px → 0.82 px, 4.37% → 0.37% of the side) and
+the depth residual only **28%** (6.75 → 4.83 cm). Re-running everything with full-body boxes after
+`327ca89` (`upperBodyOnly = false`) changed it not at all. It is the model's monocular
+depth-from-apparent-size, the classically ill-conditioned direction.
+
+**Finding 4 — the sampling-rate trade-off is a scissors, and for fast motion it closes.** The 9-tap
+window spans `8·dt`, so resolving a motion of period `T` wants `dt ≲ T/16`, while the noise grows as
+`1/dt²`. A running stride (T ≈ 0.7 s) wants ~22 fps, where the depth noise is ~1.8 g against a true
+peak CoM acceleration of 2-3 g: SNR ≈ 1. **Sampling faster makes this worse, not better**, as long as
+the filter is a fixed 9 taps. Cost, for completeness: a 10 s clip at 30 fps is 300 model calls at
+0.7-1 s each, and `FrameSource.maxFramesPerRun = 120` already caps a 10 s clip at 12 fps.
+
+**Finding 5 — the camera moves, and that is measurable.** Background phase correlation outside a
+dilated person box, chained at native rate, displacement over one 0.27 s filter window:
+
+| clip | drift over the whole segment | rotation | spurious displacement at 1 m |
+|---|---|---|---|
+| `video_012` | **1.79 image diagonals / 10.2 s** | 13.5 °/s | **6.4 cm** per filter window |
+| `video_015` | 0.08 diag / 6.6 s | 0.4-0.6 °/s | 0.2-0.3 cm |
+| `video_013` | 0.03 diag / 6.6 s | 0.2 °/s | 0.1 cm |
+
+A 20-60× separation, so a threshold fits between them. ⚠️ **It must be measured at the video's NATIVE
+rate**: at a 10 fps analysis sampling the same estimator aliased `video_012`'s pan down to ~0, which
+is the estimator's periodic ambiguity, not stillness. ⚠️ It detects camera ROTATION well and camera
+TRANSLATION poorly (a distant background dominates the correlation and does not move under
+translation). Physically that ordering is right — rotation tilts gravity and adds centripetal terms,
+while constant-velocity translation is Galilean and harmless — but camera *acceleration* is not
+measured and is the residual risk.
+
+**Finding 6 — Vision loses the person on 7% of frames** (22/309 at 30 fps) and falls back to the
+whole image, which makes `cam_t` wild (whole-clip depth range 4.47 m vs 2.57 m on detected frames)
+and the body scale wrong (hip-width range 112 mm vs 26 mm). Those frames must never enter a
+derivative.
+
+**Finding 7 — the old gate's constants were below the instrument's own resolution.** Measured
+per-frame drift of a rigid distance (hip width, 284 consecutive detected frames): median **3.13 mm**,
+p90 6.83, max 12.07. As a noise floor that is **4.69 cm/s at 30 fps, 4.12 at 10 fps, 0.59 at 2 fps** —
+so against the old **2 cm/s** cap the instrument's own noise exceeded the threshold at every rate
+above ~3 fps and a perfectly still subject could not have been classified still. That is what made
+the old gate self-defeating: getting under the noise floor required sampling slowly, and sampling
+slowly stretched the 9-tap window's stillness requirement to **four seconds**.
+
+#### Verdict against the pre-registered gates
+
+| gate | pre-registered bound | result |
+|---|---|---|
+| A — is `cam_t` a real root translation | physically plausible depth/height/lateral, correct bbox coupling | **PASS** |
+| B — root accel noise ≤ 0.98 m/s² (10% of g) | ≤ 0.98 pass, 0.98-2.94 marginal, > 2.94 fail | **FAIL at every rate that resolves motion** (30.5 at 30 fps, 2.27 at 10 fps) |
+| C — camera motion separable by ≥ 3× | ≥ 3× | **PASS, 20-60×** |
+| D — sampling rate | state the trade-off with numbers | see Finding 4: the scissors closes for stride-speed motion |
+
+**So: dynamic muscle output is not achievable on the owner's actual footage, and the reason is
+upstream of the sampling rate.** All three clips are tracking shots — the subject's range stays at
+4.34 ± 0.66 m over 10 s while a runner would traverse ~50 m — so the camera translates with the
+subject and `video_012` additionally rotates at 13.5 °/s. No filter, rate or budget recovers an
+inertial frame from that. The largest honest subset is: **static camera + in-plane motion + a rate
+that resolves it**, which is squat / lunge / sit-to-stand filmed side-on from a stand, not running
+filmed from a moving camera.
+
+#### What shipped, and what is blocked
+
+Shipped (files this change owned):
+* `MHRRetarget.makeBodyFrame(jointCoords:camT:…)` composes the root translation back in. `camT`
+  defaults to nil = bit-identical to the previous behaviour. Proven a pure rigid translation
+  (max pairwise distance change 2.4e-7 m) and tied to the already-validated projection: a composed
+  marker projected through a zero `cam_t` lands on the **same pixel, 0.0 px gap**, as the pinned
+  marker through the real `cam_t`.
+* The gate's constants are now derived from a stated error budget instead of being knobs:
+  `0.02 m/s → 0.20 m/s` (where `v²/(g·r)` reaches 1% on a 0.4 m segment) and
+  `0.08 m/s² → 0.05·g = 0.4905 m/s²` (an order of magnitude below the muscle QP's own 0.20-0.35
+  relative torque residual — a term held to 0.82% cannot improve an answer whose dominant error is
+  20-35%, it can only refuse frames). Net effect at the 2 fps offline cadence: the admissible peak
+  marker speed goes **2 cm/s → 20 cm/s**, exactly 10×.
+* `MotionVerdict` replaces the boolean: `.hold`, `.movingBeyondStaticBudget`,
+  `.indistinguishableFromNoise`, `.noMeasurement`, each with a sentence the user can act on. The
+  third case is new and is Finding 7 made operational — the pose noise floor is now **measured per
+  clip** from `rigidPairs`, distances that physically cannot change, as `median|Δd|/(2·dt)`
+  (a rigorous lower bound, since a distance change of `d` needs ≥ `d/2` on one marker).
+* `MotionClassification.rootTranslationObservable` reads the DATA, not a flag: a pinned stream
+  repeats the model constant bit-for-bit, so the engine cannot disagree with the stream about
+  whether it was handed a root translation.
+* Tests: 197 → **219, all passing**, including a new `RootTranslationTests` (6) and 5 new
+  noise-floor / budget tests.
+
+⚠️ **Blocked, and deliberately not worked around.** Two seams live in files another task owns:
+
+1. `OfflineSessionRunner.swift:242` calls `MHRRetarget.makeBodyFrame(jointCoords:timestamp:frameNumber:)`
+   and has `estimate.camT` in hand one line above. Adding `camT: estimate.camT` is the entire
+   activation. **Until that line changes, `rootTranslationObservable` is false on every real frame
+   and the composition is exercised only by tests.**
+2. The user-facing sentence comes from `OfflineResultStore.MotionState` (two cases: `.hold`,
+   `.moving`) rendered by `OfflinePlaybackView.motionDetail`, which hard-codes *"muscle loads need a
+   still pose"*. `MotionVerdict` carries the reason and the advice; surfacing it needs those two
+   files.
+
+⚠️ **No dynamic-ID branch was shipped**, and that is a decision, not an omission. It cannot be
+reached by the app without seam 1, and its correctness turns on an unresolved design question — see
+the owner decision below. Shipping an unreachable branch whose depth handling has never been
+validated end-to-end is exactly the "silent wrong number" this file warns about.
+
+#### Owner decision this raises
+
+Given Finding 2 — in-plane root motion is measurable, depth is not — there are two defensible
+products and they behave differently:
+
+* **(a) Refuse.** If the measured depth acceleration exceeds the budget, withhold. Honest, but on
+  real footage it withholds at every usable rate, so dynamics never ships.
+* **(b) Declare depth constant.** Treat the root's depth as unobservable above some bandwidth, run
+  dynamics on the in-plane channels, and tell the user the assumption plus the measured slow depth
+  drift so they can check it. Valid for side-on filming — which is how squats and running form are
+  filmed anyway — and wrong for anyone walking toward the camera.
+
+(b) is the one that makes dynamic muscle output exist at all. It also puts a modelling assumption
+inside a number the product sells. **Not picked here.**
 
 ---
 
@@ -1215,11 +1383,13 @@ arms must differ in the work that PRECEDES the mask.
    trapezius and all 20 serratus slips — the scapular stabilisers, i.e. exactly the muscles behind
    the rounded-shoulder findings the product would sell.
 5. ~~**Static-equilibrium inverse dynamics.**~~ **DONE 2026-08-07** — see
-   [Static-hold gating](#static-hold-gating-2026-08-07). ⚠️ Re-scoped by measurement: now that IK is
-   a fixed point there is no drift left for the filter to differentiate, so on a HOLD the gate is a
-   measurable no-op (peak torque identical to 16 significant figures). Its justification is now
-   entirely the other branch — withholding muscle magnitudes on a MOVING frame, which the pelvis-
-   pinned pose source cannot supply accelerations for.
+   [Static-hold gating](#static-hold-gating-2026-08-07). ⚠️ Re-scoped TWICE by measurement. First:
+   now that IK is a fixed point there is no drift left for the filter to differentiate, so on a HOLD
+   the gate is a measurable no-op (peak torque identical to 16 significant figures). Second: the
+   claim that "the pelvis-pinned pose source cannot supply accelerations" is **half wrong** — it can,
+   via `cam_t`, which the app already has. What it cannot supply is a usable *depth* acceleration,
+   and no clip filmed from a moving camera has an inertial frame regardless. Both constants were
+   re-derived from a stated error budget in the same pass.
 6. ~~**Patella rename + weld** (with the `groupScale()` patch). Ship blocker for squat analysis.~~
    **DONE 2026-08-06** — see [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
 7. ~~**Shoulder axis orthogonalisation** (6 lines).~~ **DONE 2026-08-06**, same section. Note it was
@@ -1260,8 +1430,34 @@ arms must differ in the work that PRECEDES the mask.
     carries no assertion, so nothing fails, but its number is meaningless. **E1's STOP verdict is
     unaffected**: every arm uses E1's own internal solvers.
 
+### Newly opened by the cam_t measurement (2026-08-07)
+
+15. **Pass `camT` at `OfflineSessionRunner.swift:242`.** One argument. Until it lands,
+    `MHRRetarget.makeBodyFrame(jointCoords:camT:…)` is exercised only by `RootTranslationTests` and
+    `rootTranslationObservable` is false on every real frame. It also fixes things that have nothing
+    to do with dynamics: the ground-height estimator, GRF contact detection and the CoP all currently
+    run on a body whose pelvis sits at a model constant.
+16. **Surface `MotionVerdict` in the UI.** `OfflineResultStore.MotionState` has two cases and
+    `OfflinePlaybackView.motionDetail` hard-codes *"muscle loads need a still pose"*. The engine now
+    reports four reasons with a sentence each (`MotionVerdict.advice`), including
+    `.indistinguishableFromNoise`, which is *not* the user's fault and has a different remedy.
+17. **Build the camera-static check, upstream where the frames are.** Measured to separate the
+    owner's clips by 20-60× (§ cam_t). Two constraints from the measurement: it must run at the
+    video's NATIVE rate (at 10 fps sampling the estimator aliased a 13.5 °/s pan down to ~0), and it
+    detects rotation well but translation poorly. On iOS the natural tool is
+    `VNTranslationalImageRegistrationRequest` on the region outside the person box. It is cheap —
+    no pose model — so it can run densely even when the pose sampling is sparse.
+18. **Decide (a) refuse vs (b) declare-depth-constant** — see the owner decision in the cam_t
+    section. This is what gates whether a dynamic branch exists at all.
+19. **Drop Vision-fallback frames out of any derivative.** 22/309 frames on `video_012`; they make
+    `cam_t` and the body scale wild, and today they are pushed into the SG filter like any other.
+
 ### Owner decisions still open
 
+- **Dynamic muscle output: refuse, or declare depth constant?** See
+  [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
+  Option (b) is the only one under which dynamics ships at all, and it puts a modelling assumption
+  ("you are not moving toward or away from the camera") inside a number the product sells.
 - **How to resolve the arm licence**: negotiate MoBL-ARMS commercially, adopt/convert the BSD-3
   Holzbaur model (SIMM → .osim conversion needed), or rely on step 1 showing the data is already
   BSD-3 lineage. **Needs actual legal counsel** — the verbatim quotes and URLs above are assembled

@@ -25,6 +25,14 @@ final class StaticHoldTests: XCTestCase {
         points.flatMap { [NSNumber(value: $0.x), NSNumber(value: $0.y), NSNumber(value: $0.z)] }
     }
 
+    /// `2v/a` — the minimum window span the two physical constants imply.
+    /// Derived here for the same reason it is derived in the detector: so an
+    /// edit to either constant cannot leave a stale literal behind.
+    private static var requiredSpan: Double {
+        2 * StaticHoldDetector.holdSpeedThresholdMetersPerSecond
+            / StaticHoldDetector.maxDiscardedMeanAccelMetersPerSecondSquared
+    }
+
     private static let threeNames = ["PELVIS", "LKJC", "RKJC"]
     private static let threeAtRest: [SIMD3<Double>] = [
         SIMD3(0, 0.92, 0), SIMD3(0.05, 0.50, -0.09), SIMD3(0.05, 0.50, 0.09),
@@ -57,17 +65,196 @@ final class StaticHoldTests: XCTestCase {
 
     // MARK: - Constants are derived, not tuned
 
-    /// The 0.5 s duration in STATUS.md next-step 5 is not an independent knob:
-    /// it is what the speed cap and the acceleration budget imply together.
-    /// If someone edits either constant, this fails and forces them to redo
-    /// the arithmetic in `StaticHoldDetector`'s doc comment.
+    /// The minimum window span is not an independent knob: it is what the speed
+    /// cap and the acceleration budget imply together. If someone edits either
+    /// constant, this fails and forces them to redo the arithmetic in
+    /// `StaticHoldDetector`'s doc comment.
+    ///
+    /// ⚠️ The values changed on 2026-08-07 (0.02 m/s / 0.08 m/s² → 0.20 / 0.4905)
+    /// and the reason is recorded in that doc comment: 0.08 m/s² is 0.82% of g,
+    /// while the muscle QP immediately downstream carries a 0.20-0.35 RELATIVE
+    /// torque residual. A term held to 0.8% cannot improve an answer whose
+    /// dominant error is 20-35%; it can only refuse frames. The replacement is
+    /// stated as a fraction of g so it stays tied to the thing it is being
+    /// compared against.
     func testHoldDurationIsImpliedByTheTwoPhysicalConstants() {
         let v = StaticHoldDetector.holdSpeedThresholdMetersPerSecond
         let a = StaticHoldDetector.maxDiscardedMeanAccelMetersPerSecondSquared
-        XCTAssertEqual(2 * v / a, 0.5, accuracy: 1e-9,
-                       "2·v/a is the minimum window span; it should still be the 0.5 s STATUS.md records")
-        XCTAssertEqual(a / 9.81, 0.00815, accuracy: 1e-4,
-                       "the acceleration budget should still be under 1% of g")
+        let g = StaticHoldDetector.gravityMetersPerSecondSquared
+
+        XCTAssertEqual(a, StaticHoldDetector.discardedAccelFractionOfG * g, accuracy: 1e-12,
+                       "the budget must stay DERIVED from a fraction of g, not typed in")
+        XCTAssertEqual(StaticHoldDetector.discardedAccelFractionOfG, 0.05, accuracy: 1e-12,
+                       "5% of g — an order of magnitude below the muscle QP's own 20-35% residual")
+        XCTAssertEqual(2 * v / a, 0.8154944, accuracy: 1e-6,
+                       "2·v/a is the minimum window span implied by the two constants")
+
+        // The speed cap's own derivation: the centrifugal/Coriolis term
+        // v²/(g·r) on a 0.4 m segment must stay ~1%, an order of magnitude
+        // inside the 5% acceleration budget.
+        let velocityTermFraction = v * v / (g * 0.4)
+        XCTAssertEqual(velocityTermFraction, 0.0102, accuracy: 5e-4,
+                       "the speed cap is set by where v²/(g·r) reaches 1% on a 0.4 m segment")
+        XCTAssertLessThan(velocityTermFraction, StaticHoldDetector.discardedAccelFractionOfG,
+                          "the velocity term must stay inside the acceleration budget")
+    }
+
+    /// The old constants refused frames the pipeline's own error budget had no
+    /// reason to refuse. Pin the size of that change so it is a measurement,
+    /// not a vibe: at the offline path's 2 fps cadence the admissible peak
+    /// marker speed went 2 cm/s → 20 cm/s, because the 4 s window the 9-tap
+    /// filter spans there leaves the acceleration bound slack.
+    func testBudgetChangeIsTenFoldAtTheOfflineCadence() {
+        let dt = 0.5
+        let span = Double(SavitzkyGolayFilter.windowSize - 1) * dt   // 4 s
+        let a = StaticHoldDetector.maxDiscardedMeanAccelMetersPerSecondSquared
+        let allowedBySpan = a * span / 2.0
+        let cap = StaticHoldDetector.holdSpeedThresholdMetersPerSecond
+
+        print(String(format: "HOLD-METRIC budget span=%.2fs allowed_by_accel=%.3f m/s cap=%.3f m/s "
+                     + "-> binding=%.3f m/s (was 0.020)", span, allowedBySpan, cap, min(allowedBySpan, cap)))
+
+        XCTAssertGreaterThan(allowedBySpan, cap,
+                             "at 2 fps the 4 s window makes the speed cap the binding constraint")
+        XCTAssertEqual(min(allowedBySpan, cap) / 0.02, 10.0, accuracy: 1e-9,
+                       "exactly 10x more permissive than the constant it replaced")
+    }
+
+    // MARK: - The measured noise floor, and why the old cap was unreachable
+
+    /// Marker set that contains rigid pairs, so the noise probe has something
+    /// to read. `LHJC-RHJC` is the pelvis width; `LHJC-LKJC` the femur.
+    private static let rigidNames = ["PELVIS", "LHJC", "RHJC", "LKJC", "RKJC"]
+    private static func rigidPose(hipHalf: Double = 0.085, femur: Double = 0.42)
+        -> [SIMD3<Double>] {
+        [SIMD3(0, 0.924, 0),
+         SIMD3(-hipHalf, 0.924, 0), SIMD3(hipHalf, 0.924, 0),
+         SIMD3(-hipHalf, 0.924 - femur, 0), SIMD3(hipHalf, 0.924 - femur, 0)]
+    }
+
+    /// The floor is MEASURED from distances that physically cannot change, not
+    /// assumed. Feed a body whose hip width breathes by a known amount and
+    /// assert the reported number is `median|Δd| / (2·dt)`.
+    ///
+    /// The halving is not cosmetic: a distance change of `d` needs at least
+    /// `d/2` of position error on one of the two markers, so this is a rigorous
+    /// LOWER bound on the marker speed attributable to noise, which is the only
+    /// direction that is safe to be wrong in.
+    func testNoiseFloorIsMeasuredFromDistancesThatCannotChange() {
+        let dt = 0.1
+        let breathe = 0.004     // 4 mm of hip-width wobble per frame
+        var detector = StaticHoldDetector()
+        for k in 0..<SavitzkyGolayFilter.windowSize {
+            let half = 0.085 + (k % 2 == 0 ? 0 : breathe / 2)
+            detector.ingest(flatMarkerPositions: Self.flat(Self.rigidPose(hipHalf: half)),
+                            markerNames: Self.rigidNames, timestamp: Double(k) * dt)
+        }
+        let v = detector.classify(centeredAt: 0.8)
+        print(String(format: "HOLD-METRIC floor measured=%.5f m/s expected=%.5f m/s peak=%.5f",
+                     v.poseNoiseFloorMetersPerSecond, breathe / (2 * dt),
+                     v.peakMarkerSpeedMetersPerSecond))
+        XCTAssertEqual(v.poseNoiseFloorMetersPerSecond, breathe / (2 * dt), accuracy: 1e-9)
+    }
+
+    /// A pose with perfect geometry reports a floor of zero, so real motion is
+    /// never excused as noise. Without this the `.indistinguishableFromNoise`
+    /// branch could swallow genuine movement.
+    func testCleanGeometryReportsZeroNoiseFloor() {
+        let dt = 0.1
+        let frames = (0..<SavitzkyGolayFilter.windowSize).map { k in
+            Self.rigidPose().map { $0 + SIMD3<Double>(0.5 * Double(k) * dt, 0, 0) }
+        }
+        let v = classifyAll(frames, names: Self.rigidNames, dt: dt).last!
+        print("HOLD-METRIC clean-motion floor=\(v.poseNoiseFloorMetersPerSecond) "
+            + "peak=\(v.peakMarkerSpeedMetersPerSecond) verdict=\(v.verdict)")
+        XCTAssertEqual(v.poseNoiseFloorMetersPerSecond, 0, accuracy: 1e-12,
+                       "a rigid translation changes no rigid distance, so it is not noise")
+        XCTAssertEqual(v.verdict, .movingBeyondStaticBudget,
+                       "50 cm/s with clean geometry is the subject moving, and must say so")
+    }
+
+    /// "The subject moved" and "this footage cannot tell us" are different
+    /// answers with different remedies, and the old gate collapsed them into
+    /// one. When the instrument's own floor is above the stillness bound, the
+    /// verdict must name that.
+    func testJitterAboveTheBoundReadsAsIndistinguishableNotAsMoving() {
+        let dt = 0.1
+        let cap = StaticHoldDetector.holdSpeedThresholdMetersPerSecond
+        // Hip width alternating by 6 cm per frame: at dt = 0.1 that is a floor
+        // of 0.30 m/s, above the 0.20 m/s cap. Deliberately far past anything
+        // real footage produces (measured: 3.1 mm median on video_012, i.e. a
+        // 4.7 cm/s floor at 30 fps) — the point is to exercise the branch, and
+        // the gap between 4.7 and 20 cm/s is the margin the new cap buys.
+        var detector = StaticHoldDetector()
+        for k in 0..<SavitzkyGolayFilter.windowSize {
+            let half = 0.085 + (k % 2 == 0 ? 0 : 0.03)
+            detector.ingest(flatMarkerPositions: Self.flat(Self.rigidPose(hipHalf: half)),
+                            markerNames: Self.rigidNames, timestamp: Double(k) * dt)
+        }
+        let v = detector.classify(centeredAt: 0.8)
+        print("HOLD-METRIC noisy floor=\(v.poseNoiseFloorMetersPerSecond) "
+            + "peak=\(v.peakMarkerSpeedMetersPerSecond) cap=\(cap) verdict=\(v.verdict)")
+
+        XCTAssertGreaterThan(v.poseNoiseFloorMetersPerSecond, cap)
+        XCTAssertFalse(v.isHold)
+        XCTAssertEqual(v.verdict, .indistinguishableFromNoise)
+        XCTAssertTrue(v.verdict.advice.contains("jitters"),
+                      "the advice must be about the footage, not about holding still")
+    }
+
+    /// A hold stays a hold no matter what the floor says. The floor can only
+    /// inflate `peak`, so a peak already inside the budget is inside it a
+    /// fortiori — the floor is consulted to EXPLAIN a failure, never to cause
+    /// one. Without this ordering, a noisy clip of a genuinely still subject
+    /// would lose its muscle output rather than gain an explanation.
+    func testNoiseFloorNeverTurnsAHoldIntoAFailure() {
+        let dt = 0.1
+        var detector = StaticHoldDetector()
+        for k in 0..<SavitzkyGolayFilter.windowSize {
+            // 2 mm of hip breathing: a real floor, but peak stays under the cap.
+            let half = 0.085 + (k % 2 == 0 ? 0 : 0.001)
+            detector.ingest(flatMarkerPositions: Self.flat(Self.rigidPose(hipHalf: half)),
+                            markerNames: Self.rigidNames, timestamp: Double(k) * dt)
+        }
+        let v = detector.classify(centeredAt: 0.8)
+        print("HOLD-METRIC hold-with-floor floor=\(v.poseNoiseFloorMetersPerSecond) "
+            + "peak=\(v.peakMarkerSpeedMetersPerSecond) verdict=\(v.verdict)")
+        XCTAssertGreaterThan(v.poseNoiseFloorMetersPerSecond, 0, "precondition: a floor was measured")
+        XCTAssertTrue(v.isHold)
+        XCTAssertEqual(v.verdict, .hold)
+    }
+
+    /// The measured reason the old constant had to go, stated as a comparison
+    /// rather than as an opinion.
+    ///
+    /// Real per-frame rigid-distance drift on `video_012.mov` through the
+    /// shipping Core ML model (284 consecutive Vision-detected frames, hip
+    /// width, `camt_probe.py` 2026-08-07): median 3.13 mm, p90 6.83 mm, max
+    /// 12.07 mm. As a noise floor that is 4.69 cm/s at 30 fps, 4.12 at 10 fps
+    /// and 0.59 at 2 fps — so against the OLD 2 cm/s cap the instrument's own
+    /// noise exceeded the threshold at every rate above ~3 fps, and a perfectly
+    /// still subject could not have been classified as still.
+    ///
+    /// That is what made the old gate self-defeating: to get under the noise
+    /// floor you had to sample slowly, and sampling slowly stretched the 9-tap
+    /// window's stillness requirement to four seconds.
+    func testMeasuredRealNoiseFloorClearsTheNewCapButNotTheOldOne() {
+        let measuredFloorAt30fps = 0.0469     // m/s, from the clip above
+        let measuredFloorAt10fps = 0.0412
+        let oldCap = 0.02
+        let newCap = StaticHoldDetector.holdSpeedThresholdMetersPerSecond
+
+        print(String(format: "HOLD-METRIC real-floor 30fps=%.4f 10fps=%.4f old_cap=%.4f new_cap=%.4f",
+                     measuredFloorAt30fps, measuredFloorAt10fps, oldCap, newCap))
+
+        XCTAssertGreaterThan(measuredFloorAt30fps, oldCap,
+                             "measured: the old cap sat BELOW the instrument's own noise at 30 fps")
+        XCTAssertGreaterThan(measuredFloorAt10fps, oldCap,
+                             "and at 10 fps too")
+        XCTAssertLessThan(measuredFloorAt30fps, newCap,
+                          "the new cap must sit above the measured floor at every usable rate")
+        XCTAssertGreaterThan(newCap / measuredFloorAt30fps, 4.0,
+                             "with at least 4x of margin, so the verdict is about the subject")
     }
 
     // MARK: - Detector: the single-photo case
@@ -78,7 +265,7 @@ final class StaticHoldTests: XCTestCase {
     /// degenerate case the whole offline photo path depends on.
     func testSinglePhotoIsAHold() {
         // The runner keeps `sampleInterval` at its 1/30 s default for a photo,
-        // so the padded window spans 8/30 = 0.267 s — SHORTER than the 0.5 s
+        // so the padded window spans 8/30 = 0.267 s — SHORTER than the 2v/a
         // the acceleration budget normally wants. It still passes because the
         // budget is enforced as 2·peak/span and peak is exactly 0.
         let dt = 1.0 / 30.0
@@ -92,7 +279,7 @@ final class StaticHoldTests: XCTestCase {
 
         XCTAssertTrue(last.isHold, "a replayed single photo must classify as a hold")
         XCTAssertEqual(last.peakMarkerSpeedMetersPerSecond, 0, accuracy: 1e-12)
-        XCTAssertLessThan(last.windowSeconds, 0.5,
+        XCTAssertLessThan(last.windowSeconds, Self.requiredSpan,
                           "this case is only interesting because the window is shorter than 2v/a")
         XCTAssertEqual(last.sampleCount, SavitzkyGolayFilter.windowSize)
     }
@@ -123,7 +310,7 @@ final class StaticHoldTests: XCTestCase {
     /// correctly called it moving. Chasing that would have been testing IEEE
     /// rounding, not the classifier.
     func testSpeedThresholdBoundary() {
-        let dt = 0.5   // offline default cadence; 9 samples span 4 s >> 0.5 s
+        let dt = 0.5   // offline default cadence; 9 samples span 4 s >> 2v/a
         let cap = StaticHoldDetector.holdSpeedThresholdMetersPerSecond
 
         func drift(speed: Double) -> NimbleEngine.MotionClassification {
@@ -157,7 +344,7 @@ final class StaticHoldTests: XCTestCase {
     /// speed. This is what makes a short clip degrade gracefully instead of
     /// either failing outright or silently claiming a bound it cannot support.
     func testShortWindowIsGovernedByTheAccelerationBudget() {
-        let dt = 1.0 / 30.0   // 9 samples span 0.267 s, well under 0.5 s
+        let dt = 1.0 / 30.0   // 9 samples span 0.267 s, well under 2v/a
         let span = Double(SavitzkyGolayFilter.windowSize - 1) * dt
         let cap = StaticHoldDetector.holdSpeedThresholdMetersPerSecond
         let a = StaticHoldDetector.maxDiscardedMeanAccelMetersPerSecondSquared
@@ -180,7 +367,7 @@ final class StaticHoldTests: XCTestCase {
 
         XCTAssertTrue(ok.isHold)
         XCTAssertFalse(bad.isHold,
-                       "speed under the 2 cm/s cap but over the acceleration budget must NOT be a hold")
+                       "speed under the speed cap but over the acceleration budget must NOT be a hold")
         XCTAssertLessThan(bad.peakMarkerSpeedMetersPerSecond, cap,
                           "and it must fail on the budget, not on the speed cap")
     }
@@ -190,11 +377,12 @@ final class StaticHoldTests: XCTestCase {
     /// it did not, a 60 fps clip would be judged on 0.13 s of evidence.
     func testWindowExtendsBackwardWhenTheFilterWindowIsTooShort() {
         let dt = 1.0 / 60.0
-        let frames = Array(repeating: Self.threeAtRest, count: 60)
+        // Enough history to reach 2v/a = 0.8155 s at 60 fps (49 samples).
+        let frames = Array(repeating: Self.threeAtRest, count: 90)
         let v = classifyAll(frames, names: Self.threeNames, dt: dt).last!
         print("HOLD-METRIC extended samples=\(v.sampleCount) window_s=\(v.windowSeconds)")
         XCTAssertGreaterThan(v.sampleCount, SavitzkyGolayFilter.windowSize)
-        XCTAssertGreaterThanOrEqual(v.windowSeconds, 0.5 - 1e-9,
+        XCTAssertGreaterThanOrEqual(v.windowSeconds, Self.requiredSpan - 1e-9,
                                     "must reach back to at least 2v/a of evidence")
     }
 
@@ -208,14 +396,14 @@ final class StaticHoldTests: XCTestCase {
         let dt = 0.5
         let frames = (0..<SavitzkyGolayFilter.windowSize).map { k -> [SIMD3<Double>] in
             var f = Self.threeAtRest
-            f[1] += SIMD3<Double>(0, 0.10 * Double(k), 0)   // 20 cm/s on one knee only
+            f[1] += SIMD3<Double>(0, 0.25 * Double(k), 0)   // 50 cm/s on one knee only
             return f
         }
         let v = classifyAll(frames, names: Self.threeNames, dt: dt).last!
         print("HOLD-METRIC one-marker isHold=\(v.isHold) peak=\(v.peakMarkerSpeedMetersPerSecond) "
             + "median=\(v.medianMarkerSpeedMetersPerSecond)")
         XCTAssertFalse(v.isHold)
-        XCTAssertEqual(v.peakMarkerSpeedMetersPerSecond, 0.20, accuracy: 1e-9)
+        XCTAssertEqual(v.peakMarkerSpeedMetersPerSecond, 0.50, accuracy: 1e-9)
         XCTAssertEqual(v.medianMarkerSpeedMetersPerSecond, 0.0, accuracy: 1e-9,
                        "median stays at zero — that is the signal that ONE marker moved, not the body")
     }
@@ -267,7 +455,7 @@ final class StaticHoldTests: XCTestCase {
     func testSyntheticMovingSequenceClassification() {
         let dt = 0.5
         let stillA = 12, moving = 8, stillB = 12
-        let stepPerFrame = 0.04   // 8 cm/s at this cadence — 4x the 2 cm/s cap
+        let stepPerFrame = 0.40   // 80 cm/s at this cadence — 4x the 20 cm/s cap
 
         var frames: [[SIMD3<Double>]] = []
         var pose = Self.threeAtRest
@@ -403,7 +591,7 @@ final class StaticHoldTests: XCTestCase {
         engine.staticHoldGating = true
 
         let dt = 0.5
-        let step = 0.05                     // 10 cm/s, 5x the cap
+        let step = 0.50                     // 100 cm/s, 5x the cap
         let base = Self.dancerMarkers
         var sawMuscle = false
         var lastMotion: NimbleEngine.MotionClassification?
@@ -425,7 +613,7 @@ final class StaticHoldTests: XCTestCase {
             + "window_s=\(motion.windowSeconds) sawMuscle=\(sawMuscle) "
             + "lastMuscleResult=\(engine.lastMuscleResult != nil)")
 
-        XCTAssertFalse(motion.isHold, "10 cm/s is not a hold")
+        XCTAssertFalse(motion.isHold, "100 cm/s is not a hold")
         XCTAssertEqual(motion.peakMarkerSpeedMetersPerSecond, step / dt, accuracy: 1e-6,
                        "a rigid translation gives every marker exactly step/dt")
         XCTAssertFalse(sawMuscle,
@@ -559,12 +747,12 @@ final class StaticHoldTests: XCTestCase {
 
         // The tripwire, derived rather than fitted. The detector's whole promise
         // is that on a hold the discarded mean acceleration is under
-        // `maxDiscardedMeanAccel` = 0.8% of g. If zeroing q̇/q̈ moved the peak
+        // `maxDiscardedMeanAccel` = 5% of g. If zeroing q̇/q̈ moved the peak
         // torque by MORE than that fraction, the removed term was never a small
         // correction and the static reading would be a different answer rather
         // than a cleaner one. Measured on this fixture: 0.052 Nm of 75.2 Nm =
         // 0.07%, an order of magnitude inside the budget.
-        let budget = StaticHoldDetector.maxDiscardedMeanAccelMetersPerSecondSquared / 9.81
+        let budget = StaticHoldDetector.discardedAccelFractionOfG
         print(String(format: "HOLD-METRIC parity treatment_fraction=%.5f budget_fraction=%.5f",
                      treatmentDelta / dynamicB.maxTorque, budget))
         XCTAssertLessThan(treatmentDelta / dynamicB.maxTorque, budget,

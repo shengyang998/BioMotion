@@ -56,13 +56,30 @@ final class NimbleEngine: ObservableObject {
     ///   (`sam3d_body.py:1600`). Joint ANGLES survive that, but the body has no
     ///   global translation, so `M·q̈` and the centre-of-mass acceleration are
     ///   computed from motion that did not happen — in a squat the pelvis never
-    ///   descends and the feet appear to rise instead. Dynamic ID is therefore
-    ///   not sound on that path at all, and static-equilibrium ID over a
-    ///   detected hold is the only honest reading (STATUS.md, "The limitation
-    ///   that shapes the product claim").
+    ///   descends and the feet appear to rise instead.
     /// * The live ARKit path supplies real world-space joint positions
     ///   including global translation, so its q̈ is observable and gating it
     ///   would remove working behaviour. Untouched by default.
+    ///
+    /// ⚠️ **The pinning is not a limitation of the pose model — it is a
+    /// quantity the app has and does not consume.** The model emits the root
+    /// translation separately as `cam_t`; it is exported, stored on
+    /// `FrameResult`, and already used to project the overlay.
+    /// `MHRRetarget.makeBodyFrame(jointCoords:camT:…)` composes it back in, and
+    /// `OfflineSessionRunner` has `estimate.camT` in hand at the call site.
+    /// Verified on 309 frames of real video: depth 4.34 m, 1.10 m below the
+    /// optical axis, `corr(1/bbox_side, depth) = +0.74`.
+    ///
+    /// Composing it in is NECESSARY for dynamics and NOT SUFFICIENT. Measured,
+    /// same clip: the depth channel carries 12.7 cm (std) of high-frequency
+    /// residual about its own 0.5 s mean, which through this engine's own
+    /// 9-tap Savitzky-Golay filter is 3.1 g of pure acceleration noise at
+    /// 30 fps, 0.23 g at 10 fps. The in-plane channels are 8-25× cleaner. And
+    /// `cam_t` is CAMERA-relative, so a rotating camera (13.5 °/s on the user's
+    /// `video_012`) makes the frame non-inertial regardless. See STATUS.md,
+    /// "cam_t recovers the root translation; its depth cannot be differentiated
+    /// twice", and `MotionClassification.rootTranslationObservable`, which
+    /// reports whether the stream this engine is being fed actually carries it.
     ///
     /// Read and captured on the MAIN thread inside `processFrame`, which is
     /// already a main-thread API (`isFrameInFlight`/`droppedFrameCount` are
@@ -135,6 +152,51 @@ final class NimbleEngine: ObservableObject {
         let end: SIMD3<Float>
     }
 
+    /// Why a frame does or does not carry muscle magnitudes.
+    ///
+    /// The point of splitting this out of a boolean: "no muscle numbers" had
+    /// exactly one user-facing explanation — *"muscle loads need a still pose"*
+    /// — and the user can do nothing with it except freeze. These cases have
+    /// different causes and different remedies, and two of them are not the
+    /// user's fault at all.
+    enum MotionVerdict: Equatable {
+        /// Measured still to within the budget. ID and the muscle QP run as a
+        /// static-equilibrium problem (q̇ = q̈ = 0).
+        case hold
+        /// Measurably moving, by more than the budget static equilibrium can
+        /// absorb AND by more than the instrument's own noise. Withhold: the
+        /// static reading would be a different answer, not a cleaner one.
+        ///
+        /// This build has no dynamic branch to fall through to, so a moving
+        /// frame is withheld whether or not `rootTranslationObservable` is
+        /// true. Read that field alongside this case — it says which of the two
+        /// things is missing.
+        case movingBeyondStaticBudget
+        /// The measured marker speed exceeds the stillness bound, but so does
+        /// this clip's own pose-estimation noise floor, so the two cannot be
+        /// told apart. NOT the same as "the subject moved": at a sparse
+        /// sampling rate a perfectly still subject lands here.
+        case indistinguishableFromNoise
+        /// Nothing measurable in the window (first sample of a clip, no marker
+        /// in common with the predecessor, non-increasing timestamps).
+        case noMeasurement
+
+        /// One sentence the user can act on. Lives here rather than in the view
+        /// so it is covered by unit tests and cannot drift from the numbers.
+        var advice: String {
+            switch self {
+            case .hold:
+                return ""
+            case .movingBeyondStaticBudget:
+                return "The subject moved too fast for a still-pose reading. Hold the position, or sample the clip at a higher rate so a shorter stretch of stillness is enough."
+            case .indistinguishableFromNoise:
+                return "The pose estimate jitters as much as the movement being measured, so stillness cannot be confirmed. Fill more of the frame, improve the lighting, or sample at a higher rate."
+            case .noMeasurement:
+                return "Not enough frames around this instant to measure motion."
+            }
+        }
+    }
+
     /// What the hold detector concluded about one instant.
     ///
     /// `timestamp` is the Savitzky-Golay window CENTRE — the same instant
@@ -144,6 +206,7 @@ final class NimbleEngine: ObservableObject {
         /// True iff every measured marker speed in the examined window stayed
         /// under `StaticHoldDetector.holdSpeedThresholdMetersPerSecond` AND the
         /// window was long enough to bound the discarded acceleration.
+        /// Exactly `verdict == .hold`.
         let isHold: Bool
         /// Largest per-marker speed seen anywhere in the window, m/s.
         let peakMarkerSpeedMetersPerSecond: Double
@@ -158,6 +221,17 @@ final class NimbleEngine: ObservableObject {
         /// `2 · peak / windowSeconds` — the bound this window puts on the mean
         /// acceleration that static-equilibrium ID throws away. m/s².
         let impliedMeanAccelMetersPerSecondSquared: Double
+        /// The reason behind `isHold`, and the sentence to show for it.
+        let verdict: MotionVerdict
+        /// A LOWER BOUND on how much of `peakMarkerSpeedMetersPerSecond` is
+        /// pose-estimation noise rather than the subject moving, in m/s,
+        /// measured on THIS clip from distances that physically cannot change.
+        /// See `StaticHoldDetector.rigidPairs`.
+        let poseNoiseFloorMetersPerSecond: Double
+        /// False when the pose source pins the pelvis, i.e. the body carries no
+        /// global translation and the root's contribution to `M·q̈` is missing.
+        /// See `MHRRetarget.rootTranslation(camT:)`.
+        let rootTranslationObservable: Bool
     }
 
     /// Everything one warm solve produced, all dated at the SAME Savitzky-Golay
@@ -1005,25 +1079,68 @@ final class NimbleEngine: ObservableObject {
 /// Static ID keeps gravity and discards `M·q̈ + C(q,q̇)q̇`. Both discarded
 /// terms have to be small next to the gravitational term that survives.
 ///
-/// 1. THE VELOCITY TERM is not what binds. Centrifugal/Coriolis torque on a
-///    segment scales as `m·v²/r` against a gravitational `m·g·r_g`; for
-///    comparable lever arms the ratio is `v²/(g·r)`. A 0.4 m thigh at
-///    v = 0.02 m/s gives 1.0e-4. Even at 0.2 m/s it is only ~1%. So the speed
-///    cap is not set by this term — it is set by what it buys us in (2).
+/// 1. THE VELOCITY TERM. Centrifugal/Coriolis torque on a segment scales as
+///    `m·v²/r` against a gravitational `m·g·r_g`; for comparable lever arms the
+///    ratio is `v²/(g·r)`. On a 0.4 m thigh that is 1.0e-4 at v = 0.02 m/s and
+///    **1.0% at v = 0.20 m/s**. So 0.20 m/s is where this term reaches one
+///    percent, and that is what sets the speed cap.
 ///
-/// 2. THE ACCELERATION TERM is what binds, and speed bounds it through
-///    duration. If no marker exceeds `v` anywhere in a window of span `T`,
-///    then no marker's velocity changed by more than `2v` across it, so the
-///    MEAN acceleration over the window is at most `2v/T`. Requiring that mean
-///    to stay under `maxDiscardedMeanAccel` = 0.08 m/s² — 0.8% of g, i.e. the
-///    discarded term is under 1% of the term it is being compared against —
-///    is the actual criterion. At v = 0.02 m/s it implies T ≥ 0.5 s.
+/// 2. THE ACCELERATION TERM, bounded through duration. If no marker exceeds
+///    `v` anywhere in a window of span `T`, then no marker's velocity changed
+///    by more than `2v` across it, so the MEAN acceleration over the window is
+///    at most `2v/T`. That mean must stay under `maxDiscardedMeanAccel`.
 ///
-/// `holdSpeedThresholdMetersPerSecond` = 0.02 and the 0.5 s duration in
-/// STATUS.md next-step 5 are therefore ONE statement, not two knobs: 0.5 s is
-/// `2 × 0.02 / 0.08`. The window-span term is enforced explicitly rather than
-/// as a fixed minimum duration so that a short clip degrades gracefully — a
-/// 0.27 s window simply has to be proportionally slower to pass.
+/// ⚠️ **Both constants were loosened 10× and 6.1× on 2026-08-07, and the
+/// reason is that the old ones were not an error budget.** They were 0.02 m/s
+/// and 0.08 m/s² — a discarded inertial term of **0.82% of g** — while the
+/// stage immediately downstream, the muscle QP, carries a documented
+/// **relative torque residual of 0.20 (neutral standing) to 0.35 (dancer)**,
+/// and the pose source carries ~4.7° of joint-angle error. Demanding 0.8% from
+/// one term while accepting 20-35% from the next one is a knob, not a budget:
+/// it cannot improve the answer, because the term it is protecting is already
+/// two orders of magnitude below the dominant error.
+///
+/// The replacement is stated as a fraction of g and chosen so the discarded
+/// term stays an order of magnitude BELOW the muscle stage's own residual, so
+/// it can never become the dominant error:
+///
+///     maxDiscardedMeanAccel = 0.05 · g = 0.49 m/s²      (5% of gravity)
+///     holdSpeedThreshold    = 0.20 m/s                  (1% velocity term)
+///
+/// The implied minimum window span is `2v/a` = **0.8155 s** (it was 0.5 s).
+/// Measured effect: at the offline path's 2 fps default the admissible peak
+/// marker speed goes 2 cm/s → 20 cm/s, because the 4 s window the 9-tap filter
+/// spans there makes the acceleration bound `2·0.2/4 = 0.1 m/s²`, far inside
+/// the budget, so the speed cap is what binds.
+///
+/// ⚠️ This does NOT make a squat or a run publishable, and it is not meant to.
+/// A runner's markers move at metres per second; no budget expressed as a
+/// fraction of g reaches that. Motions that fast need the ROOT TRANSLATION,
+/// which this input only carries when `cam_t` is composed in
+/// (`MHRRetarget.makeBodyFrame(jointCoords:camT:…)`) — see
+/// `rootTranslationObservable` below and STATUS.md.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+/// THE NOISE FLOOR — why "moving" and "cannot tell" are different answers
+/// ─────────────────────────────────────────────────────────────────────────
+/// `peakSpeed` is measured on marker positions that come from a pose model,
+/// so it contains that model's per-frame jitter as well as the subject's
+/// motion. At a sparse sampling rate the jitter alone can exceed the stillness
+/// bound: `labs/sam-3d-body/findings/stability.json` measured body-joint
+/// displacement of median 6.0 mm / max 24.7 mm under a 1% person-box
+/// perturbation, which at 2 fps is 1.2 / 4.9 cm/s.
+///
+/// So this type measures the floor instead of assuming it, from distances that
+/// physically CANNOT change: the rigid inter-joint-centre distances in
+/// `rigidPairs` (hip width, femur, shank, humerus, …). Both skeletons hold
+/// those fixed, so any frame-to-frame change in one is pure measurement noise.
+/// If two markers carry independent position noise, a distance change of `d`
+/// needs at least `d/2` on one of them, so `median|Δd| / (2·dt)` is a rigorous
+/// LOWER bound on the per-marker speed attributable to noise.
+///
+/// When the floor is itself above the stillness bound, the honest verdict is
+/// `.indistinguishableFromNoise` — the instrument cannot resolve the question —
+/// and the advice is about the footage, not about holding still.
 ///
 /// ─────────────────────────────────────────────────────────────────────────
 /// WHAT THIS CANNOT DO — the bound is on the MEAN, over observed samples
@@ -1040,30 +1157,75 @@ final class NimbleEngine: ObservableObject {
 ///   reading of "still", and it makes the detector fail toward "moving" —
 ///   refusing to report muscle numbers — which is the correct direction for
 ///   this product claim. It also means the detector inherits the pose
-///   estimator's per-frame noise floor: `labs/sam-3d-body/findings/stability.json`
-///   measured the model itself as bit-identical across repeats (0.0 mm) but
-///   body-joint displacement of median 2.4 mm / max 17.4 mm under a 0.1%
-///   bounding-box perturbation, and median 6.0 mm / max 24.7 mm at 1%. At the
-///   2 fps offline default those maxima are 3.5 and 4.9 cm/s — ABOVE the
-///   2 cm/s cap. So on real video a still subject can still be classified
-///   moving, purely from person-detector box wobble. Real per-frame jitter in
-///   the shipped pipeline has not been measured (the Core ML model lives in an
-///   asset pack and is not in the test bundle); see this file set's report.
+///   estimator's per-frame noise floor, which is why that floor is now
+///   MEASURED (see above) instead of being an unstated assumption:
+///   `labs/sam-3d-body/findings/stability.json` measured the model itself as
+///   bit-identical across repeats (0.0 mm) but body-joint displacement of
+///   median 2.4 mm / max 17.4 mm under a 0.1% bounding-box perturbation, and
+///   median 6.0 mm / max 24.7 mm at 1%. Against the OLD 2 cm/s cap those
+///   maxima (3.5 and 4.9 cm/s at 2 fps) were already above the threshold, so a
+///   perfectly still subject was reported as "moving" — with advice they could
+///   not act on. `.indistinguishableFromNoise` is that case, named.
+/// * It does NOT check that the CAMERA was still, because it never sees an
+///   image. `cam_t` and `joint_coords` are both camera-relative, so a rotating
+///   camera makes the reconstructed frame non-inertial. Measured on the user's
+///   own clips at native frame rate (background phase correlation outside a
+///   dilated person box, chained): `video_012` drifts 1.79 image diagonals in
+///   10.2 s — 13.5 °/s, which displaces a point 1 m from the subject by 6.4 cm
+///   within ONE 0.27 s filter window — against 0.2-0.6 °/s (0.1-0.3 cm) on
+///   `video_013`/`video_015`. That is a 20-60× separation, so the check is
+///   buildable; it belongs upstream, where the frames are. ⚠️ It must run at
+///   the video's NATIVE rate: at a 10 fps analysis sampling the same estimator
+///   aliased `video_012`'s pan down to ~0.
 struct StaticHoldDetector {
 
+    /// Standard gravity, the term static ID keeps. Both budgets below are
+    /// stated as fractions of it so they cannot drift into being knobs.
+    static let gravityMetersPerSecondSquared: Double = 9.81
+
+    /// Fraction of g the discarded inertial term is allowed to reach.
+    /// 5% — an order of magnitude below the muscle QP's own 20-35% relative
+    /// torque residual, so it cannot become the dominant error.
+    static let discardedAccelFractionOfG: Double = 0.05
+
     /// Per-marker speed at or below which a sample counts as still, m/s.
-    /// See the type comment: 2 cm/s, with the acceleration budget below, is
-    /// STATUS.md next-step 5's "< ~2 cm/s sustained for ≥ 0.5 s".
-    static let holdSpeedThresholdMetersPerSecond: Double = 0.02
+    /// 0.20 m/s is where the centrifugal/Coriolis term `v²/(g·r)` reaches 1%
+    /// on a 0.4 m segment — see the type comment, item 1.
+    static let holdSpeedThresholdMetersPerSecond: Double = 0.20
 
     /// Ceiling on `2·peakSpeed/windowSpan`, the bound this window puts on the
-    /// mean acceleration static ID throws away. 0.08 m/s² = 0.82% of g.
-    static let maxDiscardedMeanAccelMetersPerSecondSquared: Double = 0.08
+    /// mean acceleration static ID throws away. 0.49 m/s² = 5% of g.
+    static let maxDiscardedMeanAccelMetersPerSecondSquared: Double =
+        discardedAccelFractionOfG * gravityMetersPerSecondSquared
 
     /// Ring capacity. Only has to cover the Savitzky-Golay window plus enough
-    /// history to reach `2v/a` = 0.5 s; 600 samples is 10 s at 60 fps and
+    /// history to reach `2v/a` = 0.8155 s; 600 samples is 10 s at 60 fps and
     /// costs a few tens of kB.
     static let maxHistorySamples = 600
+
+    /// Inter-joint-centre distances that are RIGID in both the MHR skeleton and
+    /// `FullBody.osim`, so any frame-to-frame change in one is measurement
+    /// noise rather than motion. Only direct joint reads are used — the blended
+    /// spine markers (`SPINE_L`, `SPINE_M`, `NECK`, `HEAD`) interpolate between
+    /// two MHR joints and are not rigid to each other.
+    static let rigidPairs: [(String, String)] = [
+        ("LHJC", "RHJC"), ("LSJC", "RSJC"),
+        ("LHJC", "LKJC"), ("RHJC", "RKJC"),
+        ("LKJC", "LAJC"), ("RKJC", "RAJC"),
+        ("LSJC", "LEJC"), ("RSJC", "REJC"),
+        ("LEJC", "LWJC"), ("REJC", "RWJC"),
+    ]
+
+    /// Marker whose constancy reveals that the pose source pinned the root.
+    /// `MHRRetarget` emits `PELVIS` straight from MHR joint 1, which
+    /// `joint_coords` fixes at the model constant (0, 0.924, 0) to the last
+    /// bit whenever `cam_t` has not been composed in.
+    static let rootMarkerName = "PELVIS"
+
+    /// Below this, two `PELVIS` samples are treated as the same value. The
+    /// pinned constant repeats bit-exactly and any real translation is metres,
+    /// so this only has to be smaller than float noise.
+    static let rootPinnedToleranceMeters: Double = 1e-9
 
     /// One pushed frame's motion relative to its predecessor.
     struct Sample {
@@ -1074,6 +1236,13 @@ struct StaticHoldDetector {
         /// counted as zero.
         let peakSpeed: Double?
         let medianSpeed: Double?
+        /// Largest change, in metres, of any distance in `rigidPairs` since the
+        /// previous sample. Those distances cannot change, so this is pure
+        /// pose-estimation noise. nil when no pair was measurable.
+        let rigidDistanceDriftMeters: Double?
+        /// Distance the root marker moved since the previous sample, metres.
+        /// nil when it was absent from either frame.
+        let rootDisplacementMeters: Double?
     }
 
     private var history: [Sample] = []
@@ -1094,6 +1263,8 @@ struct StaticHoldDetector {
 
         var peak: Double?
         var median: Double?
+        var rigidDrift: Double?
+        var rootStep: Double?
         if let prev = previous {
             let dt = timestamp - prev.timestamp
             // Non-increasing timestamps mean the caller reset or replayed;
@@ -1111,10 +1282,25 @@ struct StaticHoldDetector {
                     peak = speeds[speeds.count - 1]
                     median = speeds[speeds.count / 2]
                 }
+
+                // Noise probe: distances that physically cannot change.
+                var drifts: [Double] = []
+                for (a, b) in Self.rigidPairs {
+                    guard let pa = markers[a], let pb = markers[b],
+                          let qa = prev.markers[a], let qb = prev.markers[b] else { continue }
+                    drifts.append(abs(simd_length(pa - pb) - simd_length(qa - qb)))
+                }
+                if !drifts.isEmpty { rigidDrift = drifts.max() }
+
+                if let p = markers[Self.rootMarkerName], let q = prev.markers[Self.rootMarkerName] {
+                    rootStep = simd_length(p - q)
+                }
             }
         }
 
-        history.append(Sample(timestamp: timestamp, peakSpeed: peak, medianSpeed: median))
+        history.append(Sample(timestamp: timestamp, peakSpeed: peak, medianSpeed: median,
+                              rigidDistanceDriftMeters: rigidDrift,
+                              rootDisplacementMeters: rootStep))
         if history.count > Self.maxHistorySamples {
             history.removeFirst(history.count - Self.maxHistorySamples)
         }
@@ -1137,10 +1323,12 @@ struct StaticHoldDetector {
     ///    window to be still protects the POSE, not just the acceleration.
     ///
     /// ⚠️ Consequence worth knowing before reading a clip: the effective
-    /// stillness requirement is therefore `8 × sampleInterval`, not 0.5 s. At
-    /// the offline path's 2 fps default that is FOUR SECONDS, so a two-second
-    /// hold mid-clip yields no muscle frames at all. That comes from the filter
-    /// width times the sampling rate, not from either constant here.
+    /// stillness requirement is therefore `max(8 × sampleInterval, 2v/a)`, not
+    /// `2v/a` alone. At the offline path's 2 fps default the filter width alone
+    /// makes it FOUR SECONDS, so a two-second hold mid-clip yields no muscle
+    /// frames at all. That comes from the filter width times the sampling rate,
+    /// not from either constant here — the actionable remedy is a higher
+    /// sampling rate, not a longer hold. At 10 fps the same window is 0.8 s.
     ///
     /// The extension is backward-only, because samples past `center + 4` have
     /// not been pushed yet. That asymmetry is harmless: the symmetric filter
@@ -1148,11 +1336,7 @@ struct StaticHoldDetector {
     /// only adds further evidence on the past side.
     func classify(centeredAt center: TimeInterval) -> NimbleEngine.MotionClassification {
         guard let newest = history.last else {
-            return NimbleEngine.MotionClassification(
-                timestamp: center, isHold: false,
-                peakMarkerSpeedMetersPerSecond: 0, medianMarkerSpeedMetersPerSecond: 0,
-                windowSeconds: 0, sampleCount: 0,
-                impliedMeanAccelMetersPerSecondSquared: .infinity)
+            return Self.empty(at: center, windowSeconds: 0, sampleCount: 0)
         }
 
         let requiredSpan = 2 * Self.holdSpeedThresholdMetersPerSecond
@@ -1167,13 +1351,31 @@ struct StaticHoldDetector {
         let measured = window.compactMap(\.peakSpeed)
         let medians = window.compactMap(\.medianSpeed).sorted()
 
+        // The root translation is observable iff the root marker moved AT ALL
+        // anywhere in the window. A pose source that pins the pelvis repeats
+        // one model constant bit-for-bit, so this separates a pinned stream
+        // from a `cam_t`-composed one with no flag to plumb and no way for the
+        // two to disagree. A held pose reads as pinned, which is harmless: the
+        // hold branch does not use the root acceleration.
+        let rootSteps = window.compactMap(\.rootDisplacementMeters)
+        let rootObservable = (rootSteps.max() ?? 0) > Self.rootPinnedToleranceMeters
+
+        // Lower bound on the part of `peak` that is instrument noise. Median
+        // over the window of the largest rigid-distance drift, halved (two
+        // markers share the drift) and divided by the sampling interval.
+        let drifts = window.compactMap(\.rigidDistanceDriftMeters).sorted()
+        let sampleInterval = window.count > 1 ? span / Double(window.count - 1) : 0
+        let noiseFloor: Double
+        if drifts.isEmpty || sampleInterval <= 0 {
+            noiseFloor = 0
+        } else {
+            noiseFloor = drifts[drifts.count / 2] / (2 * sampleInterval)
+        }
+
         // No measured sample at all means no motion information — not stillness.
         guard let peak = measured.max() else {
-            return NimbleEngine.MotionClassification(
-                timestamp: center, isHold: false,
-                peakMarkerSpeedMetersPerSecond: 0, medianMarkerSpeedMetersPerSecond: 0,
-                windowSeconds: span, sampleCount: window.count,
-                impliedMeanAccelMetersPerSecondSquared: .infinity)
+            return Self.empty(at: center, windowSeconds: span, sampleCount: window.count,
+                              noiseFloor: noiseFloor, rootObservable: rootObservable)
         }
 
         // 2·v/T. A zero-span window (every sample at one timestamp, i.e. a
@@ -1186,17 +1388,49 @@ struct StaticHoldDetector {
             impliedAccel = peak > 0 ? .infinity : 0
         }
 
-        let isHold = peak <= Self.holdSpeedThresholdMetersPerSecond
+        let withinBudget = peak <= Self.holdSpeedThresholdMetersPerSecond
             && impliedAccel <= Self.maxDiscardedMeanAccelMetersPerSecondSquared
+
+        // Order matters. A hold is a hold regardless of the noise floor — the
+        // floor can only ever make `peak` look BIGGER, so a peak that is
+        // already inside the budget is inside it a fortiori. The floor is only
+        // consulted to explain a FAILURE, where it decides between "the subject
+        // moved" and "this footage cannot tell us".
+        let verdict: NimbleEngine.MotionVerdict
+        if withinBudget {
+            verdict = .hold
+        } else if noiseFloor >= Self.holdSpeedThresholdMetersPerSecond {
+            verdict = .indistinguishableFromNoise
+        } else {
+            verdict = .movingBeyondStaticBudget
+        }
 
         return NimbleEngine.MotionClassification(
             timestamp: center,
-            isHold: isHold,
+            isHold: verdict == .hold,
             peakMarkerSpeedMetersPerSecond: peak,
             medianMarkerSpeedMetersPerSecond: medians.isEmpty ? 0 : medians[medians.count / 2],
             windowSeconds: span,
             sampleCount: window.count,
-            impliedMeanAccelMetersPerSecondSquared: impliedAccel)
+            impliedMeanAccelMetersPerSecondSquared: impliedAccel,
+            verdict: verdict,
+            poseNoiseFloorMetersPerSecond: noiseFloor,
+            rootTranslationObservable: rootObservable)
+    }
+
+    private static func empty(at center: TimeInterval,
+                              windowSeconds: Double,
+                              sampleCount: Int,
+                              noiseFloor: Double = 0,
+                              rootObservable: Bool = false) -> NimbleEngine.MotionClassification {
+        NimbleEngine.MotionClassification(
+            timestamp: center, isHold: false,
+            peakMarkerSpeedMetersPerSecond: 0, medianMarkerSpeedMetersPerSecond: 0,
+            windowSeconds: windowSeconds, sampleCount: sampleCount,
+            impliedMeanAccelMetersPerSecondSquared: .infinity,
+            verdict: .noMeasurement,
+            poseNoiseFloorMetersPerSecond: noiseFloor,
+            rootTranslationObservable: rootObservable)
     }
 
     mutating func reset() {
