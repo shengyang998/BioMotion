@@ -677,6 +677,101 @@ verdict rests on kinematic gates (spine error, spurious intervertebral motion, `
 gravity-independent, so it is very likely safe — but nobody has confirmed it, and one E1 run costs
 over an hour.
 
+### Muscle QP: what the residual actually is (2026-08-07)
+
+Three premises that drove this investigation were measured and found **false, all in the flattering
+direction**. Recorded so they are not rediscovered:
+
+1. **The QP was never running on all 169 coordinates.** It already selected columns with a non-zero
+   moment arm and was solving 159 rows. The 10 it drops are the 6 pelvis coordinates (nothing
+   outside the body can pull on a floating base) and the 4 wrist coordinates (FullBody.osim has no
+   wrist muscles), whose combined demand is under 0.2 Nm. That lever was already at its limit.
+2. **The model has six translational coordinates, not 78.** `pelvis_tx/ty/tz` and `SternumX/Y/Z`.
+   Every `T*_r*_{X,Y,Z}` rib coordinate is a rotation despite the name, and `knee_angle_*` drives
+   coupled translation splines but is itself a rotation, so its generalised force is a moment.
+3. **`SternumY`'s 72.7 N was flattering the residual, not inflating it.** It sat in the denominator:
+   neutral standing read 0.1245 only because a force was being summed with a 38.46 Nm moment demand;
+   on moment rows alone the same solve is 0.2662 — the unit error made the number look 2.1× better.
+   It is also not junk. 72.697 N = 9.81 × 7.4104 kg is exactly the shoulder girdle plus both arms,
+   whose only load path is the sternocostal joint because the clavicle and scapula are welded.
+
+**What changed:** `torqueResidualNm` (moment rows) and `forceResidualN` (translational rows) are now
+reported separately instead of summed into one norm with no nameable dimension. Coordinates the
+model declares `<locked>true</locked>` are excluded — nimble does not implement that flag, so IK
+moves them and ID hands their demand to muscle. The moment-arm cut went 1e-10 → 1e-6 with no
+behavioural change: the per-coordinate maximum is bimodal with a **nine-decade gap**, so any cut in
+`[1e-11, 1e-4]` selects the same 159 — structural, not a tuned threshold.
+
+| pose | relative torque residual |
+|---|---|
+| neutral standing | **0.2008** |
+| 4° forward lean | **0.1526** |
+| dancer fixture | 0.6406 |
+
+Standing is under the 0.3 line `MuscleSolver.h` documents. **The dancer is not, and no row cut moves
+it below ~0.60 — because that pose is wrong before the muscle solver sees it.** Its IK misses its own
+markers by 3.5 cm RMS (the standing poses fit to 0.1 mm) and it lands on two different solutions run
+to run, which is the defect `testRepeatedIKOnIdenticalMarkersIsStable` is already red for. The
+muscle solver is faithfully reporting that it cannot balance a pose that is itself wrong.
+**The dancer fixture is not a usable benchmark for the muscle stage until IK is fixed.**
+
+⚠️ **Saturated-muscle count is not a valid metric — stop using it.** Across a λ sweep at *fixed*
+inputs it reads 19, 11, 22, 18, 20 with no trend, and at-floor reads 219, 189, 344, 170, 282. OSQP
+runs `max_iter=200` at `eps 1e-3` on a badly conditioned P, so which vertex of a degenerate face it
+lands on is not stable. Counting saturated muscles measures the solver's stopping point.
+
+The residual that remains is **not** an objective-weighting artefact: sweeping λ from 1 to 1e8 moves
+it by at most 11%, and *upward*. In quiet standing ~87% of it is the `aMin = 0.02` activation floor
+projected onto costovertebral rows whose musculature is too one-sided to cancel it. `aMin` was
+deliberately not lowered — STATUS records it as chosen so the visualisation would not go
+"permanently blue", and moving a rendering parameter to improve a physics number is exactly the move
+to avoid.
+
+### Model delivery: the app binary is 8 MB (2026-08-07)
+
+The 1.3 GiB Core ML model no longer ships inside the app. It is delivered as an **Apple-Hosted
+Managed Background Asset** (iOS 26; ODR is deprecated as of iOS 27), carrying a **pre-compiled
+`.mlmodelc`** — byte-diffed against the artifact Xcode was previously embedding, with only the
+503-byte root `coremldata.bin` differing, and only in metadata key order.
+
+App bundle **1.3151 GiB → 0.0069 GiB**; archived payload 8 MB. Device-side `compileModel` was
+rejected because it would need the package and its output resident simultaneously (~2.6 GiB of user
+disk), in the app container where iOS cannot evict it, and would stall the first import.
+
+Resolution ladder, first hit wins: bundled `.mlmodelc` → bundled `.mlpackage` (compile + cache) →
+pack `.mlmodelc` → pack `.mlpackage` (compile + cache) → start the download and **throw immediately**.
+It never blocks on the transfer. The bundled branch exists so the Simulator and local iteration need
+no download (`tools/assetpack/dev_bundle_model.sh on|off`).
+
+⚠️ **The shipping load path has never been executed.** The Simulator is served no pack and the dev
+bundle is empty by default, so nothing in this checkout reaches `MLModel(contentsOf:)`.
+`AssetPackManager.url(for:)` against a *directory* entry is unproven. Packaging and upload are
+verified (`.aar` = 1.0210 GiB); the download-and-load is not. It can only be confirmed by a
+TestFlight install on a device. Build 23 remains installable with the model bundled, so a failure
+here has a fallback.
+
+Packaging and upload: `tools/assetpack/README.md`. The pack uploads **separately from the app** via
+`xcrun altool --upload-asset-pack` and **requires an ASC API key** — an app-specific password
+returns 401.
+
+### Static-hold gating (2026-08-07)
+
+The pose source zeroes global translation, so `M·q̈` and centre-of-mass acceleration would be
+computed from motion that did not happen. Frames are now classified as hold or moving from
+**measured marker speed**, and only holds are solved — as statics.
+
+The criterion is deliberately *not* built on the SG-filtered `q̈`: that quantity is derived from the
+very data whose global component is missing, so gating on it would be circular. Threshold: peak
+marker speed ≤ 0.02 m/s (from next-step 5 below, which predates this work) with an implied
+acceleration budget of 0.08 m/s². Moving frames keep pose, skeleton and `.mot` export and lose only
+the muscle magnitudes; the badge shows which, with the measured number behind it.
+
+⚠️ **Honest note on the framing:** the claim that the 0.5 s duration is *derived* from the two
+constants rather than being a third knob is circular. 0.5 s also pre-exists in next-step 5, and the
+one genuinely new constant (0.08 m/s²) is exactly `2 × 0.02 / 0.5` — chosen to reproduce it. The
+gate itself is sound and was not fitted to any fixture (a 0.9×–1.1× sweep flips exactly at 0.020),
+but "0.82% of g" is a post-hoc description, not a budget set first.
+
 ### The limitation that shapes the product claim
 
 **`joint_coords` pins the pelvis at a model constant `(0, 0.924, 0)` in every frame.** `global_trans`
