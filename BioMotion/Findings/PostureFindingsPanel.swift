@@ -113,11 +113,46 @@ struct PostureFindingsPanel: View {
     }
 
     private var emptyState: some View {
-        Text(report.hasAnything
-             ? "No deviation large enough to report from this frame."
-             : "No posture measurement was possible for this frame.")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(report.hasAnything
+                 ? "No deviation large enough to report from this frame."
+                 : "No posture measurement was possible for this frame.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            // Measured on a real prediction: an obliquely-viewed subject
+            // suppresses ALL NINE findings, at depth fractions of 62% and 80%.
+            // Listing nine "cannot measure" rows and stopping there tells the
+            // user nothing they can act on. Every suppression here is a property
+            // of the camera angle, and the camera angle is the one thing they
+            // can trivially change, so say so.
+            if !report.suppressed.isEmpty && report.findings.isEmpty {
+                Text(retakeAdvice)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+            }
+        }
+    }
+
+    /// What to change about the photo. Which findings are recoverable depends on
+    /// which way the subject was facing, so the advice names the view that would
+    /// unlock the most, rather than giving one generic instruction.
+    private var retakeAdvice: String {
+        switch report.view.orientation {
+        case .oblique, .undetermined:
+            return "The subject is at an angle to the camera, so nothing here can be "
+                 + "measured reliably. Retake square to the camera for shoulder and "
+                 + "weight-shift measurements, or square to the side for head and "
+                 + "trunk-lean measurements."
+        case .sagittal:
+            return "This is a side view. Head, trunk-lean and upper-back measurements "
+                 + "need the subject closer to fully side-on; shoulder asymmetry and "
+                 + "weight shift need a front-on photo instead."
+        case .frontal:
+            return "This is a front view. Shoulder and weight-shift measurements need "
+                 + "the subject closer to fully square on; head position and trunk lean "
+                 + "need a side-on photo instead."
+        }
     }
 
     private func secondarySection(title: String, lines: [String]) -> some View {
