@@ -617,7 +617,7 @@
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/BioMotion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
@@ -825,7 +825,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/AssetPackDownloader.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				INFOPLIST_FILE = "BioMotion/AssetPack/Support/AssetPackDownloader-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -848,7 +848,7 @@
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/BioMotion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
@@ -896,7 +896,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/AssetPackDownloader.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				INFOPLIST_FILE = "BioMotion/AssetPack/Support/AssetPackDownloader-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (

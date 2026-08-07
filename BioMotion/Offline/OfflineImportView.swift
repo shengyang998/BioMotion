@@ -25,6 +25,8 @@ struct OfflineImportView: View {
     @State private var fps: Double = OfflineImportView.defaultFPS
     @State private var showPlayback = false
     @State private var pickError: String?
+    @State private var selfTest: String?
+    @State private var selfTestRunning = false
 
     static let defaultFPS = 2.0
 
@@ -43,7 +45,42 @@ struct OfflineImportView: View {
                     runSection
                 }
                 if case .failed(let message) = runner.phase {
-                    Section("Error") {
+                    Section {
+                    // Runs the model on a synthetic tensor any machine can
+                    // reproduce bit-exactly. Matching input checksums with
+                    // differing output checksums proves the two Core ML backends
+                    // compute different things from identical bytes — with no
+                    // decode, Vision or warp left in the chain to blame.
+                    Button {
+                        selfTestRunning = true
+                        Task {
+                            do {
+                                let r = try await SAM3DPoseEstimator.backendSelfTest()
+                                selfTest = String(format: "in  %016llx\nout %016llx", r.input, r.output)
+                            } catch {
+                                selfTest = "failed: \(error.localizedDescription)"
+                            }
+                            selfTestRunning = false
+                        }
+                    } label: {
+                        HStack {
+                            Text(selfTestRunning ? "Running model self-test…" : "Run model self-test")
+                            if selfTestRunning { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(selfTestRunning)
+                    if let selfTest {
+                        Text(selfTest)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                } header: {
+                    Text("Diagnostics")
+                } footer: {
+                    Text("Compares this device's Core ML backend against the reference machine on a fixed synthetic input. Downloads the model if it isn't present yet.")
+                }
+
+                Section("Error") {
                         Text(message).foregroundStyle(.red)
                     }
                 }

@@ -273,6 +273,72 @@ final class SAM3DPoseEstimator {
         return model
     }
 
+    // MARK: - Backend self-test
+
+    /// Runs the model on a SYNTHETIC input that any machine can reproduce
+    /// bit-exactly, and returns `(inputChecksum, outputChecksum)`.
+    ///
+    /// The frame-based checksums have a confound: this app decodes the video
+    /// itself, so a Mac and a phone can legitimately hand the model different
+    /// pixels for "the same frame" and a mismatch would not localise. This has
+    /// no decode, no Vision, no warp and no camera intrinsics — just the tensors
+    /// and the model.
+    ///
+    /// Every value is an exact multiple of 1/256 in [-0.5, 0.5), which is
+    /// representable in Float16 without rounding, so the input checksum is a
+    /// property of the formula rather than of anyone's arithmetic. If two
+    /// machines report the same input checksum and different output checksums,
+    /// the two Core ML backends compute different things from identical bytes,
+    /// with nothing else left in the chain to blame.
+    static func backendSelfTest() async throws -> (input: UInt64, output: UInt64) {
+        let e = SAM3DPoseEstimator()
+        try await e.loadModelIfNeeded()
+        let model = try await e.ensureModelLoaded()
+
+        let H = PreprocessingConstants.inputHeight
+        let W = PreprocessingConstants.inputWidth
+        func synth(_ c: Int, _ y: Int, _ x: Int, _ salt: Int) -> Float16 {
+            let n = (x &* 7 &+ y &* 13 &+ c &* 29 &+ salt) & 255
+            return Float16(Float(n) / 256.0 - 0.5)
+        }
+
+        let image = try makeInputArray(shape: [1, 3, H, W], dataType: .float16)
+        let ip = image.dataPointer.bindMemory(to: Float16.self, capacity: image.count)
+        var i = 0
+        for c in 0..<3 { for y in 0..<H { for x in 0..<W { ip[i] = synth(c, y, x, 0); i += 1 } } }
+
+        let ray = try makeInputArray(shape: [1, 2, H, W], dataType: .float16)
+        let rp = ray.dataPointer.bindMemory(to: Float16.self, capacity: ray.count)
+        i = 0
+        for c in 0..<2 { for y in 0..<H { for x in 0..<W { rp[i] = synth(c, y, x, 91); i += 1 } } }
+
+        let cliff = try makeInputArray(shape: [1, 3], dataType: .float16)
+        let cp = cliff.dataPointer.bindMemory(to: Float16.self, capacity: 3)
+        cp[0] = Float16(0.03125); cp[1] = Float16(-0.0625); cp[2] = Float16(0.75)
+
+        var inputVals: [Float] = []
+        inputVals.reserveCapacity(image.count + ray.count + 3)
+        for k in 0..<image.count { inputVals.append(Float(ip[k])) }
+        for k in 0..<ray.count { inputVals.append(Float(rp[k])) }
+        for k in 0..<3 { inputVals.append(Float(cp[k])) }
+
+        let provider = try MLDictionaryFeatureProvider(dictionary: [
+            "image": MLFeatureValue(multiArray: image),
+            "ray_map": MLFeatureValue(multiArray: ray),
+            "cliff": MLFeatureValue(multiArray: cliff),
+        ])
+        let out = try await runPrediction(model: model, input: provider)
+        guard let jc = out.featureValue(for: "joint_coords")?.multiArrayValue,
+              let ct = out.featureValue(for: "cam_t")?.multiArrayValue else {
+            throw EstimatorError.missingOutputFeature("joint_coords/cam_t")
+        }
+        var flat: [Float] = []
+        flat.reserveCapacity(jc.count + ct.count)
+        for k in 0..<jc.count { flat.append(jc[k].floatValue) }
+        for k in 0..<ct.count { flat.append(ct[k].floatValue) }
+        return (checksum(inputVals), checksum(flat))
+    }
+
     private static func runPrediction(model: MLModel, input: MLFeatureProvider) async throws -> MLFeatureProvider {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<MLFeatureProvider, Error>) in
             workQueue.async {
