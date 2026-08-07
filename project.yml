@@ -134,7 +134,20 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - BioMotionTests
+      # `Fixtures/` holds generated plain-text clip data, not code. Excluded
+      # here and re-added below as a FOLDER reference, which is load-bearing:
+      # copied flat, a `.txt` at the root of the shallow .xctest bundle makes
+      # codesign treat it as an unsigned nested code object and the whole test
+      # run dies with "code object is not signed at all". Inside a directory it
+      # seals as a normal resource. Look it up with
+      # `Bundle.url(forResource:withExtension:subdirectory: "Fixtures")`.
+      - path: BioMotionTests
+        excludes:
+          - "Fixtures/**"
+          - "Fixtures"
+      - path: BioMotionTests/Fixtures
+        type: folder
+        buildPhase: resources
       - path: BioMotion/Resources
         type: folder
         buildPhase: resources
