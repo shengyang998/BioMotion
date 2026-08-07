@@ -10,30 +10,39 @@ import simd
 /// # Which falsifiability option was taken, and why
 ///
 /// The choice was between **(a)** overriding the root acceleration and keeping
-/// the near-CoP solver — under which the root equations close by construction
-/// and nothing can ever disagree — and **(b)** getting a genuine force residual
-/// that gates the output.
+/// the near-CoP solver, and **(b)** applying the gait GRF as an external wrench
+/// and running plain inverse dynamics so the ROOT residual becomes a genuine
+/// force/moment residual.
 ///
-/// **(b), with the residual computed against the timing model rather than
-/// against the solver's own bookkeeping.** The mechanism is the near-CoP solver
-/// — that part is (a)'s, deliberately, because supplying an external wrench
-/// would mean changing `NimbleBridge.mm`, which this stage does not own — but
-/// the residual is NOT the solver's internal one. It is
+/// **(a) for the mechanism, with three independent gates bolted on, because (b)
+/// is not available on this pose source.** The measured reason: `MHRRetarget`
+/// PINS the pelvis at the model constant, so `a_root` in the data is identically
+/// zero and a plain-ID root residual would be `‖m·a_artic − m·g − F_gait‖ ≈
+/// 3.9·m·g` on every stance frame of every clip, good and bad alike. A quantity
+/// that reports the same failure on all inputs is a constant, not a falsifier.
+/// (b) becomes available once `cam_t` is composed in AND its depth channel is
+/// usable; STATUS measures 3.11 g of pure noise there at 30 fps.
 ///
-///     ‖ΣF_contact − F_gait‖ / (m·g)
+/// So the falsification burden is carried by three quantities that CAN each
+/// disagree, and that gate the output together (`GaitLoadSummary.arePublishable`):
 ///
-/// where `ΣF_contact` comes out of inverse dynamics over the skeleton's mass
-/// distribution and the measured joint accelerations, and `F_gait` comes from
-/// contact and flight TIMING alone. Substituting the algebra, that difference
-/// is `‖a_artic‖/g` — the centre of mass accelerating relative to the root as
-/// the limbs swing, which the timing model has no access to and does not
-/// account for. It is a real disagreement, it is not closed by construction,
-/// and `testTheGateFiresWhenTheOmittedTermIsLarge` shows it firing.
+/// 1. `‖ΣF_contact − F_gait‖/(m·g)` = `‖a_artic‖/g`, over the frames where both
+///    contact detectors agree. `testTheGateFiresWhenTheOmittedTermIsLarge`
+///    shows it firing.
+/// 2. The ID solver's own GEOMETRIC contact detector against the KINEMATIC
+///    stance detector — two different signals, foot height versus pelvis-
+///    relative horizontal velocity.
+/// 3. Per-muscle saturation, which is exactly where the QP stops being linear
+///    in the external load and a peak-force error stops cancelling out of a
+///    ratio.
 ///
-/// ⚠️ Stated plainly because it bounds the claim: this residual is BLIND to the
-/// half-sine shape and to the peak magnitude, since both enter `a_root` and
-/// therefore cancel. Those are gated elsewhere and by different quantities —
-/// `GaitReport.flightDisagreementFrames` and `GaitReport.steadiness`.
+/// ⚠️ Stated plainly because it bounds the claim: **nothing here tests the peak
+/// magnitude or the half-sine shape.** Both enter `a_root` and cancel out of
+/// (1); `GaitReport.contactSequencePeriodicityErrorFrames` is an algebraic
+/// identity on any periodic alternating schedule and cannot see them either
+/// (proved in `GaitReportTests`). What licenses shipping anyway is (3): a
+/// peak-force error is a common scale, and gate (3) is the condition under
+/// which a common scale cancels.
 final class GaitDynamicsTests: XCTestCase {
 
     private static let g = StaticHoldDetector.gravityMetersPerSecondSquared
@@ -127,8 +136,16 @@ final class GaitDynamicsTests: XCTestCase {
             for f in flight {
                 XCTAssertEqual(f.verticalForceInBodyWeights, 0, "flight carries no ground force")
             }
+            // The plan's peak is the LARGER of the two legs' own peaks, not the
+            // clip mean: each contact is closed on its own contact time, so the
+            // shorter contact carries a higher peak than the mean model does.
             let peak = stance.map(\.verticalForceInBodyWeights).max() ?? 0
-            XCTAssertLessThanOrEqual(peak, report.force.peakVerticalForceInBodyWeights + 1e-9)
+            let perLegMax = Swift.max(report.peakVerticalForceInBodyWeights.left,
+                                      report.peakVerticalForceInBodyWeights.right)
+            XCTAssertEqual(peak, perLegMax, accuracy: 1e-9)
+            XCTAssertGreaterThanOrEqual(perLegMax,
+                                        report.force.peakVerticalForceInBodyWeights - 1e-9,
+                                        "\(id): the per-leg peak brackets the clip mean")
 
             // The closure. Mean force over the whole covered span, in BW.
             let mean = plan.frames.map(\.verticalForceInBodyWeights).reduce(0, +)
@@ -164,8 +181,8 @@ final class GaitDynamicsTests: XCTestCase {
         let interval = try XCTUnwrap(report.stance.left.first)
 
         var forces: [Double] = []
-        for k in 0..<interval.frames {
-            let t = interval.touchdown + Double(k) * report.sampleInterval
+        for (k, t) in interval.sampleTimestamps.enumerated() {
+            _ = k
             let entry = try XCTUnwrap(plan.entry(at: t), "no plan entry at stance sample \(k)")
             XCTAssertEqual(entry.contactSide, -1, "left contact")
             forces.append(entry.verticalForceInBodyWeights)
@@ -173,8 +190,10 @@ final class GaitDynamicsTests: XCTestCase {
         XCTAssertGreaterThan(forces.first!, 0, "a planted foot never carries exactly zero")
         XCTAssertEqual(forces.first!, forces.last!, accuracy: 1e-9, "symmetric about mid-stance")
         let peak = forces.max()!
-        XCTAssertEqual(peak, report.force.peakVerticalForceInBodyWeights,
-                       accuracy: 0.05 * report.force.peakVerticalForceInBodyWeights)
+        // The LEFT leg's own peak, not the clip mean — each contact is closed
+        // on its own contact time.
+        let leftPeak = report.peakVerticalForceInBodyWeights.left
+        XCTAssertEqual(peak, leftPeak, accuracy: 0.05 * leftPeak)
         print("GAIT-METRIC halfsine_profile=\(forces.map { String(format: "%.3f", $0) })")
     }
 
@@ -183,8 +202,10 @@ final class GaitDynamicsTests: XCTestCase {
     func testThePlanRefusesInstantsItDoesNotCover() {
         let dt = 1.0 / 30.0
         let plan = NimbleEngine.GaitPlan(
-            frames: [.init(timestamp: 1.0, verticalForceInBodyWeights: 2.0, contactSide: 1),
-                     .init(timestamp: 1.0 + dt, verticalForceInBodyWeights: 1.0, contactSide: 1)],
+            frames: [.init(timestamp: 1.0, verticalForceInBodyWeights: 2.0, contactSide: 1,
+                           derivativeWindowInsideContact: true),
+                     .init(timestamp: 1.0 + dt, verticalForceInBodyWeights: 1.0, contactSide: 1,
+                           derivativeWindowInsideContact: true)],
             filterTaps: 5, sampleInterval: dt)
         XCTAssertNotNil(plan.entry(at: 1.0))
         XCTAssertNotNil(plan.entry(at: 1.0 + dt * 0.4))
@@ -213,6 +234,7 @@ final class GaitDynamicsTests: XCTestCase {
         var agreeingResiduals: [Double] = []
         var stanceHadMuscle = 0
         var disagreements = 0
+        var cleanWindows = 0
 
         for (i, markers) in sequence.enumerated() {
             let ok = await submitAndWait(engine, bodyFrame(markers, timestamp: Double(i) * dt,
@@ -234,6 +256,16 @@ final class GaitDynamicsTests: XCTestCase {
                     XCTAssertEqual(g.rootVerticalAccelerationMetersPerSecondSquared,
                                    Self.g * (g.modelledVerticalForceInBodyWeights - 1),
                                    accuracy: 1e-9)
+                    // The plan's per-frame window verdict reaches the outcome,
+                    // and it is one of the two conditions a frame has to meet
+                    // before its muscle numbers may be compared.
+                    let planned = plan.entry(at: solve.centerTimestamp)
+                    XCTAssertEqual(g.derivativeWindowInsideContact,
+                                   planned?.derivativeWindowInsideContact ?? false,
+                                   "the window verdict must survive the seam")
+                    if g.derivativeWindowInsideContact { cleanWindows += 1 }
+                    XCTAssertEqual(g.isUsableForLoadComparison,
+                                   g.contactDetectorsAgree && g.derivativeWindowInsideContact)
                 }
             case .gaitFlight:
                 flight += 1
@@ -255,7 +287,7 @@ final class GaitDynamicsTests: XCTestCase {
 
         print("GAIT-METRIC engine stance=\(stance) flight=\(flight) outside=\(outside) "
               + "unconverged=\(unconverged) stance_with_muscle=\(stanceHadMuscle) "
-              + "contact_disagreements=\(disagreements)")
+              + "contact_disagreements=\(disagreements) clean_windows=\(cleanWindows)")
         print("GAIT-METRIC residual_bw all_min=\(residuals.min() ?? -1) "
               + "all_max=\(residuals.max() ?? -1) n=\(residuals.count) "
               + "agreeing_min=\(agreeingResiduals.min() ?? -1) "
@@ -278,6 +310,11 @@ final class GaitDynamicsTests: XCTestCase {
             XCTAssertLessThan(r, NimbleEngine.maxGaitForceResidualInBodyWeights,
                               "a calm body whose contact both detectors agree on must pass the gate")
         }
+        // With a 5-tap window inside 5-frame contacts only the middle sample of
+        // each contact keeps a clean window, so this is a minority of stance —
+        // which is the honest state of 30 fps footage, and it is counted.
+        XCTAssertGreaterThan(cleanWindows, 0, "some frame must survive, or nothing is measurable")
+        XCTAssertLessThan(cleanWindows, stance, "and most of them do not, which is the point")
     }
 
     /// **The falsifier firing.** A body whose segments accelerate hard has a
@@ -506,9 +543,12 @@ final class GaitDynamicsTests: XCTestCase {
                 let phase = (Double(k) + 0.5) / Double(contact)
                 entries.append(.init(timestamp: t,
                                      verticalForceInBodyWeights: peakBW * sin(.pi * phase),
-                                     contactSide: inFirst ? -1 : 1))
+                                     contactSide: inFirst ? -1 : 1,
+                                     derivativeWindowInsideContact:
+                                        k >= taps / 2 && k <= contact - 1 - taps / 2))
             } else {
-                entries.append(.init(timestamp: t, verticalForceInBodyWeights: 0, contactSide: 0))
+                entries.append(.init(timestamp: t, verticalForceInBodyWeights: 0, contactSide: 0,
+                                     derivativeWindowInsideContact: false))
             }
         }
         return NimbleEngine.GaitPlan(frames: entries, filterTaps: taps, sampleInterval: dt)
@@ -516,7 +556,8 @@ final class GaitDynamicsTests: XCTestCase {
 
     private static func load(left: Double, right: Double) -> GaitLoadSummary.MuscleLoad {
         .init(id: "glmax1", displayName: "Glute max (upper)",
-              leftPeak: left, rightPeak: right, leftFrames: 5, rightFrames: 5)
+              leftPeak: left, rightPeak: right, leftFrames: 5, rightFrames: 5,
+              isSaturated: false)
     }
 
     private static func summary(maxResidual: Double) -> GaitLoadSummary {
@@ -527,15 +568,20 @@ final class GaitDynamicsTests: XCTestCase {
                         framesPerContact: 5,
                         framesPerSecond: 30,
                         stanceFrameCount: 10,
+                        claimedStanceFrameCount: 10,
                         saturatedMuscleCount: 0,
                         maxForceResidualInBodyWeights: maxResidual,
                         medianForceResidualInBodyWeights: maxResidual,
                         residualGatePassed: maxResidual <= NimbleEngine.maxGaitForceResidualInBodyWeights,
                         contactDetectorDisagreements: 0,
+                        framesWithoutACleanDerivativeWindow: 0,
+                        leftStanceFrameCount: 5,
+                        rightStanceFrameCount: 5,
                         horizontalRootAccelerationModelled: false,
                         derivativeFilterTaps: 5,
                         derivativeFilterSpanMilliseconds: 133,
-                        shortestContactMilliseconds: 167)
+                        shortestContactMilliseconds: 167,
+                        derivativeNoiseAmplification: 4.69)
     }
 
     private func bodyFrame(_ markers: [(String, SIMD3<Double>)],

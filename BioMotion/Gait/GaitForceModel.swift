@@ -79,4 +79,21 @@ struct GaitForceModel: Equatable {
     var describesRunning: Bool {
         flightToContactRatio.isFinite && flightToContactRatio > 0 && dutyFactor < 0.5
     }
+
+    /// `Fmax/(m·g)` for ONE contact of `contactSeconds`, closed against the same
+    /// stride flight time.
+    ///
+    /// The derivation above never required the two feet to have equal contact
+    /// times — it required their two impulses to sum to `m·g·T`. Writing
+    /// `T = tcL + tcR + 2·tf` and giving each contact `Fᵢ·2·tcᵢ/π` of impulse,
+    ///
+    ///     Σ Fᵢ·2·tcᵢ/π = (tcL + tf) + (tcR + tf) = T
+    ///
+    /// when `Fᵢ = (π/2)(1 + tf/tcᵢ)`. So per-leg peaks close the stride exactly,
+    /// just as the symmetric form does, and they do not throw away the peak-force
+    /// asymmetry the shared form sets to zero.
+    static func peakInBodyWeights(contactSeconds: Double, flightSeconds: Double) -> Double {
+        guard contactSeconds > 0 else { return .nan }
+        return (Double.pi / 2) * (1 + flightSeconds / contactSeconds)
+    }
 }

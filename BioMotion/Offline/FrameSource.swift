@@ -70,6 +70,43 @@ enum FrameSource {
     /// at 30 fps it is exactly `maxFramesPerRun` frames.
     static let analysisWindowSeconds: Double = 4.0
 
+    /// Frame budget for `.nativeWindow` ONLY.
+    ///
+    /// # Why this is not `maxFramesPerRun`
+    ///
+    /// The product's one piece of advice is "film at a higher frame rate". A
+    /// FRAME budget turns that advice into a refusal: at 120 fps a 120-frame cap
+    /// is 1.0 s of footage, which holds one contact per side, and the analysis
+    /// then refuses as `.tooFewContacts` — from footage that is strictly better
+    /// than the 30 fps clip that worked. Measured spans under the old cap:
+    /// 30 fps 3.967 s, 60 fps 1.983 s, 120 fps 0.992 s, 240 fps 0.496 s.
+    ///
+    /// What actually has to be held constant is the analysed SPAN, because that
+    /// is what holds strides. This budget is DERIVED, not chosen: it is exactly
+    /// what `minimumAnalysisSeconds` costs at the fastest rate an iPhone
+    /// records at, `+1` because a window of `N` samples spans `N−1` intervals.
+    /// Resulting spans: 30 fps → 3.967 s, 60 → 3.983 s, 120 → 3.992 s,
+    /// 240 → 2.500 s.
+    ///
+    /// It is a real cost: at the ~0.7-1 s/frame the pose model takes on device,
+    /// 601 frames is 7-10 minutes. That is the user's own choice to film at
+    /// 240 fps, it is bounded, and `GaitLoadSummary.resolutionSentence` will not
+    /// recommend a rate this budget cannot cover — see
+    /// `highestAnalysableFrameRate`.
+    static let maxNativeWindowFrames = Int(minimumAnalysisSeconds * plausibleFrameRates.upperBound) + 1
+
+    /// Shortest analysed span that can still hold the minimum number of
+    /// complete contacts per side. ~4 strides at the 0.647 s cadence measured
+    /// on the owner's slowest clip, against a 3-contacts-per-side minimum.
+    static let minimumAnalysisSeconds: Double = 2.5
+
+    /// The highest capture rate at which the native window still spans
+    /// `minimumAnalysisSeconds` — i.e. the highest rate this pipeline can
+    /// honestly recommend. 240 fps at the current budget, by construction.
+    static var highestAnalysableFrameRate: Double {
+        Double(maxNativeWindowFrames - 1) / minimumAnalysisSeconds
+    }
+
     /// Used when a video reports no usable nominal frame rate. Every clip the
     /// owner supplied is 30 fps; this only has to be a sane fallback, and it is
     /// reported to the caller so a wrong guess is visible rather than silent.
@@ -122,7 +159,7 @@ enum FrameSource {
             // How many samples the WINDOW wants, and how many the CLIP has.
             // `floor` on both, because a sample at exactly `duration` is past
             // the last frame.
-            let wanted = min(maxFramesPerRun, max(1, Int(seconds / step)))
+            let wanted = min(maxNativeWindowFrames, max(1, Int(seconds / step)))
             let available = max(1, Int(duration / step))
             let count = min(wanted, available)
             // Centre the window. A running clip's usable stretch is far more

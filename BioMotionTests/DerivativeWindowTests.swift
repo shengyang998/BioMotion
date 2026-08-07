@@ -174,34 +174,60 @@ final class DerivativeWindowTests: XCTestCase {
 
     // MARK: - The fix, measured on the real clips
 
-    /// The chosen window must FIT inside the shortest contact of each clip —
-    /// that is the whole point — and the 9-tap one must not.
-    func testTheChosenWindowFitsInsideAContactOnEveryPinnedClip() throws {
+    /// The chosen window fits inside the MEDIAN contact of each clip, and the
+    /// 9-tap one does not fit inside any of them.
+    ///
+    /// It is sized from the median rather than the shortest because sizing from
+    /// the shortest picked 3 taps on `video_012`, which amplifies acceleration
+    /// noise 21.49× and does not smooth the position channel at all. The
+    /// contacts SHORTER than the window are then handled per frame — those
+    /// samples are marked `derivativeWindowInsideContact == false` and never
+    /// reach a load comparison.
+    func testTheChosenWindowFitsInsideTheMedianContactOnEveryPinnedClip() throws {
         for id in GaitClipFixture.allIds {
             let frames = try GaitClipFixture.load(id, bundle: Bundle(for: type(of: self))).frames
             let report = try GaitAnalysis.analyse(frames: frames)
-            let taps = WindowedDerivativeFilter.admissibleTaps(report.filterTapsThatFitOneContact)
+            let taps = WindowedDerivativeFilter.admissibleTaps(report.derivativeFilterTaps)
             let filter = WindowedDerivativeFilter(taps: taps)
             let span = filter.spanSeconds(sampleInterval: report.sampleInterval)
-            let shortestContact = Double(report.filterTapsThatFitOneContact) * report.sampleInterval
+            let medianContact = Double(report.medianContactSamples) * report.sampleInterval
+            let shortestContact = Double(report.shortestContactSamples) * report.sampleInterval
             let nineSpan = Double(9 - 1) * report.sampleInterval
 
-            print("FILTER-METRIC clip=\(id) reported_taps=\(report.filterTapsThatFitOneContact) "
-                  + "chosen_taps=\(taps) span_ms=\(span * 1000) "
-                  + "shortest_contact_ms=\(shortestContact * 1000) nine_span_ms=\(nineSpan * 1000)")
+            print("FILTER-METRIC clip=\(id) taps=\(taps) span_ms=\(span * 1000) "
+                  + "median_contact_ms=\(medianContact * 1000) "
+                  + "shortest_contact_ms=\(shortestContact * 1000) nine_span_ms=\(nineSpan * 1000) "
+                  + "noise_x=\(WindowedDerivativeFilter.accelerationNoiseAmplification(taps: taps))")
 
-            XCTAssertGreaterThan(nineSpan, shortestContact,
+            XCTAssertGreaterThan(nineSpan, medianContact,
                                  "\(id): the shipped window still overhangs, which is the problem")
-            if report.filterTapsThatFitOneContact >= 3 {
-                XCTAssertLessThanOrEqual(span, shortestContact + 1e-9,
-                                         "\(id): the chosen window must fit inside a contact")
-            } else {
-                // `video_013` reports 1 tap: even the 3-tap minimum overhangs a
-                // 2-frame contact. Recorded as a fact, not smoothed over — and
-                // that clip is refused by the gait model anyway.
-                XCTAssertGreaterThan(span, shortestContact,
-                                     "\(id): recorded as the case the minimum window cannot serve")
-            }
+            XCTAssertLessThanOrEqual(span, medianContact + 1e-9,
+                                     "\(id): the chosen window must fit inside the median contact")
+            XCTAssertGreaterThanOrEqual(taps, WindowedDerivativeFilter.minimumSmoothingTaps,
+                                        "\(id): never down to the unsmoothed 3-tap window")
         }
+    }
+
+    /// The price of each window length, exact. These are the numbers the
+    /// choice above was made on and the ones the UI prints.
+    func testTheAccelerationNoiseGainOfEveryWindowLength() {
+        let expected: [Int: Double] = [9: 0.113961, 7: 0.218218, 5: 0.534522, 3: 2.449490]
+        for (taps, gain) in expected {
+            XCTAssertEqual(WindowedDerivativeFilter.accelerationNoiseGain(taps: taps), gain,
+                           accuracy: 1e-6, "\(taps) taps")
+        }
+        for (taps, x) in [(9, 1.0), (7, 1.915), (5, 4.690), (3, 21.494)] {
+            XCTAssertEqual(WindowedDerivativeFilter.accelerationNoiseAmplification(taps: taps), x,
+                           accuracy: 0.005, "\(taps) taps")
+        }
+        // And the reason 3 taps is not merely noisier: it does not smooth.
+        let three = WindowedDerivativeFilter(taps: 3)
+        XCTAssertEqual(three.posCoefficients[0], 0, accuracy: 1e-12)
+        XCTAssertEqual(three.posCoefficients[1], 1, accuracy: 1e-12)
+        XCTAssertEqual(three.posCoefficients[2], 0, accuracy: 1e-12)
+        let five = WindowedDerivativeFilter(taps: 5)
+        XCTAssertNotEqual(five.posCoefficients[2], 1.0)
+        XCTAssertEqual(five.posCoefficients.reduce(0, +), 1.0, accuracy: 1e-12,
+                       "a smoothing window still preserves a constant")
     }
 }

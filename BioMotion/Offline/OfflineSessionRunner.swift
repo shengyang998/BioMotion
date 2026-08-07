@@ -312,10 +312,21 @@ final class OfflineSessionRunner: ObservableObject {
     /// The stance force is the half sine the impulse derivation implies:
     /// `F(t)/(m·g) = Fmax_bw · sin(π·φ)`, with `φ` the fraction through the
     /// contact. Samples are placed at the MIDPOINTS of their sampling
-    /// intervals (`φ = (k + ½)/N`), not at the edges — a sample is an average
-    /// over the interval it represents, and putting the first one at `φ = 0`
-    /// would claim the foot carries exactly zero force at the instant it is
-    /// already measurably planted.
+    /// intervals, not at the edges — a sample is an average over the interval it
+    /// represents, and putting the first one at `φ = 0` would claim the foot
+    /// carries exactly zero force at the instant it is already measurably
+    /// planted.
+    ///
+    /// # Two things this does NOT do, each because of a defect it caused
+    ///
+    /// 1. It does not lay entries at `touchdown + k·dt`. It lays them at the
+    ///    contact's OWN sample timestamps. With a dropped frame inside a
+    ///    contact the two differ, and every sample after the hole then fell
+    ///    outside `GaitPlan.entry(at:)`'s ±dt/2 match window and was solved as
+    ///    FLIGHT — force 0 and `a_root = −g` — while the foot was still planted.
+    /// 2. It does not apply one clip-wide peak to both feet. Each contact
+    ///    carries its OWN leg's peak, closed on its own contact time. See
+    ///    `GaitReport.peakVerticalForceInBodyWeights`.
     ///
     /// Frames between contacts get force 0 and side 0: flight. Frames outside
     /// the first touchdown or the last toe-off get NO entry at all, so the
@@ -326,24 +337,27 @@ final class OfflineSessionRunner: ObservableObject {
         let intervals = report.stance.left + report.stance.right
         guard !intervals.isEmpty else { return nil }
 
-        let fmax = report.force.peakVerticalForceInBodyWeights
-        guard fmax.isFinite, fmax > 0 else { return nil }
+        let taps = WindowedDerivativeFilter.admissibleTaps(report.derivativeFilterTaps)
+        let half = taps / 2
 
         var entries: [TimeInterval: NimbleEngine.GaitPlan.Frame] = [:]
         var earliest = Double.infinity
         var latest = -Double.infinity
 
         for interval in intervals {
-            let n = interval.frames
+            let stamps = interval.sampleTimestamps
+            let n = stamps.count
             guard n > 0 else { continue }
+            let fmax = report.peakVerticalForceInBodyWeights[interval.side]
+            guard fmax.isFinite, fmax > 0 else { continue }
             let side = interval.side == .left ? -1 : 1
-            for k in 0..<n {
-                let t = interval.touchdown + Double(k) * dt
+            for (k, t) in stamps.enumerated() {
                 let phase = (Double(k) + 0.5) / Double(n)
                 let force = fmax * sin(Double.pi * phase)
                 entries[t] = .init(timestamp: t,
                                    verticalForceInBodyWeights: force,
-                                   contactSide: side)
+                                   contactSide: side,
+                                   derivativeWindowInsideContact: k >= half && k <= n - 1 - half)
             }
             earliest = Swift.min(earliest, interval.touchdown)
             latest = Swift.max(latest, interval.lastStanceSample)
@@ -354,14 +368,15 @@ final class OfflineSessionRunner: ObservableObject {
         var t = earliest
         while t <= latest + dt / 2 {
             if entries[t] == nil, !entries.keys.contains(where: { abs($0 - t) < dt / 2 }) {
-                entries[t] = .init(timestamp: t, verticalForceInBodyWeights: 0, contactSide: 0)
+                entries[t] = .init(timestamp: t, verticalForceInBodyWeights: 0, contactSide: 0,
+                                   derivativeWindowInsideContact: false)
             }
             t += dt
         }
 
         return NimbleEngine.GaitPlan(
             frames: entries.values.sorted { $0.timestamp < $1.timestamp },
-            filterTaps: WindowedDerivativeFilter.admissibleTaps(report.filterTapsThatFitOneContact),
+            filterTaps: taps,
             sampleInterval: dt)
     }
 

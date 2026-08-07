@@ -136,19 +136,52 @@ final class NativeWindowSamplingTests: XCTestCase {
         }
     }
 
+    /// **Following the app's own advice must not make the app refuse.**
+    ///
     /// Higher capture rates are the product's only lever on resolution, so the
-    /// sampler must actually take them — up to the budget.
-    func testHigherCaptureRatesShortenTheWindowRatherThanSkippingFrames() {
+    /// sampler must actually take them — and the analysed SPAN, not the frame
+    /// count, is what has to be held, because the span is what holds strides.
+    /// Under the old 120-frame cap the window collapsed to 1.983 s at 60 fps,
+    /// 0.992 s at 120 and 0.496 s at 240 — below the 3-complete-contacts-per-
+    /// side minimum, so a user who re-shot at 120 fps as instructed got
+    /// "Running, but withheld" from strictly better footage.
+    func testHigherCaptureRatesKeepTheWindowLongEnoughToHoldStrides() {
         for fps in [30.0, 60.0, 120.0, 240.0] {
             let (ts, _) = native(20.0, fps: fps)
-            XCTAssertEqual(ts.count, FrameSource.maxFramesPerRun)
             let step = ts[1] - ts[0]
             XCTAssertEqual(step, 1 / fps, accuracy: 1e-12,
                            "every frame at \(fps) fps, never a resampled subset")
+            let span = ts.last! - ts.first!
+            XCTAssertGreaterThanOrEqual(span, FrameSource.minimumAnalysisSeconds,
+                                        "\(fps) fps: the window must still hold ~4 strides")
+            XCTAssertLessThanOrEqual(ts.count, FrameSource.maxNativeWindowFrames)
             let contactFrames = 0.20 / step
-            print("SAMPLING-METRIC fps=\(fps) window_s=\(ts.last! - ts.first!) "
+            print("SAMPLING-METRIC fps=\(fps) frames=\(ts.count) window_s=\(span) "
                   + "frames_per_200ms_contact=\(contactFrames) "
                   + "resolvable_asymmetry_pct=\(100 * 0.5 / contactFrames)")
+        }
+        // 30 fps is unchanged: the 4 s window is still exactly 120 frames.
+        let (thirty, _) = native(20.0, fps: 30)
+        XCTAssertEqual(thirty.count, 120)
+
+        // And the rate the pipeline is willing to RECOMMEND is one it can
+        // actually analyse a full window at.
+        let highest = FrameSource.highestAnalysableFrameRate
+        XCTAssertEqual(highest, 240, accuracy: 1e-9)
+        let (top, _) = native(20.0, fps: highest)
+        XCTAssertGreaterThanOrEqual(top.last! - top.first!, FrameSource.minimumAnalysisSeconds)
+    }
+
+    /// The window at every rate holds at least the minimum number of complete
+    /// contacts per side, checked against the cadence actually measured on the
+    /// owner's clips rather than against a round number.
+    func testTheWindowHoldsTheMinimumContactsAtEveryRate() {
+        let slowestStride = 0.647          // video_015, the slowest of the three
+        for fps in [30.0, 60.0, 120.0, 240.0] {
+            let (ts, _) = native(20.0, fps: fps)
+            let strides = (ts.last! - ts.first!) / slowestStride
+            XCTAssertGreaterThanOrEqual(strides, Double(GaitAnalysis.minimumContactsPerSide) + 0.5,
+                                        "\(fps) fps holds only \(strides) strides")
         }
     }
 

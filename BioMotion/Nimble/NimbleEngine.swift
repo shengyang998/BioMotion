@@ -273,13 +273,33 @@ final class NimbleEngine: ObservableObject {
     /// model's force is not a common rescaling of the contact any more — which
     /// is the assumption every ratio this product reports rests on.
     ///
-    /// ⚠️ **What it does NOT test.** The half-sine SHAPE and the peak magnitude
-    /// enter both sides (`a_root` was derived from them), so they cancel and
-    /// this residual is blind to them. Those are tested elsewhere and by
-    /// different quantities: `GaitReport.flightDisagreementFrames` compares
-    /// flight measured between contacts against flight implied by closing the
-    /// stride, and `GaitReport.steadiness` tests the periodicity the closure
-    /// assumes. This residual is one more independent check, not the only one.
+    /// ⚠️ **What it does NOT test, stated without a substitute that does.** The
+    /// half-sine SHAPE and the peak magnitude enter both sides (`a_root` was
+    /// derived from them), so they cancel exactly and this residual is blind to
+    /// them. **Nothing in this pipeline tests the peak magnitude**, and the
+    /// clip-level checks do not fill the gap:
+    /// `GaitReport.contactSequencePeriodicityErrorFrames` is an algebraic
+    /// identity on any periodic alternating schedule (proved in
+    /// `GaitReportTests`) and `GaitReport.steadiness` tests periodicity, not
+    /// force. That gap is admissible only because of what the product claims —
+    /// see `GaitLoadSummary`: a peak-force error is a COMMON SCALE over every
+    /// muscle in a contact and cancels out of every ratio, provided (i) it
+    /// really is common, which is what this residual tests, and (ii) the muscle
+    /// QP stays linear, which fails at `a ≤ 1` and is gated per muscle.
+    ///
+    /// # Why the root acceleration is overridden rather than left to residual
+    ///
+    /// The alternative design applies the gait GRF as an external wrench and
+    /// runs plain inverse dynamics, so the ROOT residual becomes a genuine
+    /// force/moment residual. It was rejected on a measured fact, not a
+    /// preference: this pose source PINS THE PELVIS (`MHRRetarget`, root
+    /// translation held at the model constant 0.92398697), so the measured
+    /// `a_root` is identically 0 and the root residual would be
+    /// `‖m·a_artic − m·g − F_gait‖ ≈ 3.9·m·g` on every stance frame of every
+    /// clip. A quantity that reports the same failure on good and bad footage
+    /// alike is a constant, not a falsifier. It becomes available if and when
+    /// `cam_t` is composed into the stream AND its depth channel is usable —
+    /// STATUS measures 3.11 g of pure noise there at 30 fps, so not yet.
     struct GaitFrameOutcome: Equatable {
         /// `F/(m·g)` from the gait model — timing only.
         let modelledVerticalForceInBodyWeights: Double
@@ -304,14 +324,33 @@ final class NimbleEngine: ObservableObject {
         /// UNMODELLED rather than silently set to zero, and this flag is what
         /// carries that fact to the user.
         let horizontalRootAccelerationModelled: Bool
+        /// True when this frame's centred derivative window lies entirely inside
+        /// its own contact, so `q̈` was not fitted across a touchdown or a
+        /// toe-off. False frames still publish a pose; their muscle numbers do
+        /// not enter the load summary. See `GaitPlan.Frame`.
+        let derivativeWindowInsideContact: Bool
 
         /// True when the two contact detectors agree about this frame.
+        ///
+        /// ⚠️ When they DISAGREE the residual above is not `‖a_artic‖/g` at all:
+        /// `solveIDGRF` returns zero ground force when its own geometric
+        /// detector sees no foot down, so the residual becomes the ENTIRE
+        /// modelled force (~2-3 BW) and says nothing about limb inertia. The two
+        /// regimes are therefore separated by `GaitLoadSummary`, which computes
+        /// its residual statistic over agreeing frames only and gates the
+        /// disagreements as their own, separately-named failure.
         var contactDetectorsAgree: Bool {
             switch contactSide {
             case -1: return solverSawLeftContact
             case 1: return solverSawRightContact
             default: return !solverSawLeftContact && !solverSawRightContact
             }
+        }
+
+        /// Every condition this frame's muscle numbers need in order to enter a
+        /// left/right or muscle-to-muscle comparison.
+        var isUsableForLoadComparison: Bool {
+            contactDetectorsAgree && derivativeWindowInsideContact
         }
     }
 
@@ -408,6 +447,19 @@ final class NimbleEngine: ObservableObject {
             let verticalForceInBodyWeights: Double
             /// −1 left foot down, +1 right foot down, 0 flight.
             let contactSide: Int
+            /// True when a centred `filterTaps`-wide window around this sample
+            /// lies entirely inside this contact.
+            ///
+            /// The window has to fit or the acceleration is a polynomial fitted
+            /// across a discontinuity in the very quantity being differentiated.
+            /// Sizing the window from the shortest contact made every window fit
+            /// at the price of a 21.5× noise amplification (see
+            /// `WindowedDerivativeFilter.minimumSmoothingTaps`); sizing it from
+            /// the MEDIAN contact costs 4.69× and leaves a minority of frames —
+            /// the first and last `taps/2` of each contact — without a clean
+            /// window. Those are marked here and excluded from the load summary
+            /// rather than being silently averaged in.
+            let derivativeWindowInsideContact: Bool
         }
 
         let frames: [Frame]
@@ -830,6 +882,7 @@ final class NimbleEngine: ObservableObject {
             var plannedForce: Double?          // body weights, from timing alone
             var plannedSide = 0
             var rootVerticalAccel = 0.0
+            var plannedWindowIsClean = false
 
             if let plan {
                 guard let entry = plan.entry(at: centerTimestamp) else {
@@ -889,6 +942,7 @@ final class NimbleEngine: ObservableObject {
                 // moment.
                 plannedForce = entry.verticalForceInBodyWeights
                 plannedSide = entry.contactSide
+                plannedWindowIsClean = entry.derivativeWindowInsideContact
                 publishedMotion = motion.replacingVerdict(.gaitStance)
             } else {
                 guard !gateOnHolds || motion.isHold else {
@@ -1093,7 +1147,8 @@ final class NimbleEngine: ObservableObject {
                     solverSawLeftContact: idOutput?.leftFootInContact ?? false,
                     solverSawRightContact: idOutput?.rightFootInContact ?? false,
                     rootVerticalAccelerationMetersPerSecondSquared: rootVerticalAccel,
-                    horizontalRootAccelerationModelled: false)
+                    horizontalRootAccelerationModelled: false,
+                    derivativeWindowInsideContact: plannedWindowIsClean)
             }
 
             // Record if enabled (history always uses the SG-centered timestamp
@@ -1442,8 +1497,38 @@ final class WindowedDerivativeFilter {
     /// Shortest usable centred window. Two taps cannot carry a second
     /// derivative at all; three is the plain second difference.
     static let minimumTaps = 3
+    /// Shortest window that actually SMOOTHS the position channel, and the floor
+    /// the gait path is allowed to size down to.
+    ///
+    /// At 3 taps the position coefficients are `[0, 1, 0]` — the "smoothed" pose
+    /// the moment-arm and muscle-length stage consumes is then the raw IK
+    /// output, unfiltered — and the second-derivative coefficients are
+    /// `[1, −2, 1]`, whose white-noise gain is **21.49× the 9-tap window's**.
+    /// That noise is independent per DOF, so it does NOT cancel out of a
+    /// muscle-to-muscle ratio the way a peak-force error does, and the ratio is
+    /// the product. 5 taps costs 4.69× instead, and smooths.
+    static let minimumSmoothingTaps = 5
     /// Longest window this app uses. Beyond 9 the span grows past a stride.
     static let maximumTaps = SavitzkyGolayFilter.windowSize
+
+    /// White-noise gain of the second-derivative coefficients, `‖c_acc‖`. For
+    /// input samples with standard deviation σ the returned acceleration has
+    /// standard deviation `σ·gain/dt²`.
+    ///
+    /// Exact values (asserted in `DerivativeWindowTests`): 9 taps 0.113961,
+    /// 7 taps 0.218218, 5 taps 0.534522, 3 taps 2.449490.
+    static func accelerationNoiseGain(taps: Int) -> Double {
+        let t = admissibleTaps(taps)
+        let c = coefficients(taps: t, order: order(forTaps: t), derivative: 2)
+        return c.reduce(0) { $0 + $1 * $1 }.squareRoot()
+    }
+
+    /// `accelerationNoiseGain(taps:)` relative to the 9-tap window the live
+    /// camera path uses — the number the gait screen shows, because it is the
+    /// price paid for a window that fits inside a contact.
+    static func accelerationNoiseAmplification(taps: Int) -> Double {
+        accelerationNoiseGain(taps: taps) / accelerationNoiseGain(taps: maximumTaps)
+    }
 
     /// Rounds any requested length into an odd, in-range tap count. A CENTRED
     /// window must be odd — an even one has no middle sample to date the

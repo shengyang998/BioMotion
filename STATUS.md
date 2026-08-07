@@ -1319,6 +1319,100 @@ honest, actionable number instead of a global disclaimer, and it tells the user 
 filming at a higher frame rate would help. An in-app high-frame-rate capture path is deferred, not
 rejected: it is the known lever if the displayed resolution proves too coarse in use.
 
+### Adversarial review of the shipped gait layer — 3 blockers, 11 majors, all addressed (2026-08-08)
+
+Three independent lenses read the gait implementation. Everything below is a defect they found and
+what was done about it; the numbers are re-measured on the pinned fixtures, and every fix is a test.
+
+**B1 — the declared falsifier could not disagree with the force model.** `measuredFlightSeconds` and
+`modelledFlightSeconds` are two linear combinations of the SAME touchdown indices: for touchdowns
+`L: nT`, `R: nT+s` with contacts `cL`, `cR` the observed gaps are `s−cL` and `T−s−cR`, whose mean is
+exactly `(T−cL−cR)/2` — the modelled flight, identically, for every `s`. So it is 0 by algebra on
+any periodic alternating schedule while `Fmax = (π/2)(1+tf/tc)` sweeps a factor of 6. The code
+nevertheless named it as the check covering the frame residual's admitted blindness to shape and
+peak, so **the peak — the common scale every muscle number rides on — had no falsifier at all**.
+Renamed to `contactSequencePeriodicityErrorFrames`, documented as what it is, and the identity is
+now asserted (`testThePeriodicityCheckIsAnIdentityAndCannotSeeTheForce`).
+
+The real answer to the falsifiability requirement, and the (a)/(b) choice: **(a) for the mechanism,
+because (b) is not available on this pose source.** `MHRRetarget` pins the pelvis, so measured
+`a_root ≡ 0` and a plain-ID root residual would read `‖m·a_artic − m·g − F_gait‖ ≈ 3.9·m·g` on every
+stance frame of every clip — the same failure on good and bad footage alike, i.e. a constant, not a
+falsifier. (b) unlocks when `cam_t` is composed in AND its depth is usable (3.11 g of noise at
+30 fps today). Three quantities carry the burden instead, and they gate together through
+`GaitLoadSummary.arePublishable`: **(1)** `‖a_artic‖/g` over frames both contact detectors agree on;
+**(2)** the ID solver's geometric contact detector against the kinematic one; **(3)** per-muscle
+saturation, which is exactly and only where a peak-force error stops cancelling out of a ratio. The
+peak's magnitude is still untested and that is now said on screen.
+
+**B2 — a dropped frame silently shortened a contact.** `StanceInterval.frames` was
+`lastIndex − firstIndex + 1`, a SAMPLE count, converted to a duration by `× dt`. Vision loses ~7.1%
+of frames (STATUS Finding 6). Measured on the fixture: `video_013`'s second left contact counts 4
+samples (133.3 ms) and spans 200.0 ms on the clock. Monte Carlo at 7.1%, 400 trials: sample counting
+fabricates up to **23.4%** (`video_012`, truth 2.9%) and **29.1%** (`video_015`, truth 0.5%) of
+left/right asymmetry. Duration now comes off the clock (`lastStanceSample − touchdown + dt`), which
+fixes interior holes exactly — `video_012` and `video_015` are byte-identical, `video_013` moves
+150.0 → 161.1 ms. That is NOT enough on its own: an EDGE hole moves the retained edge inward by a
+real sampling interval and the same Monte Carlo still reaches 19.4% / 17.0%. So a contact with a
+hole inside it or against either edge is now a REFUSAL (`.droppedSamplesInContact`), not a flag.
+`makePlan` also lays entries on the contact's own sample timestamps instead of `touchdown + k·dt`,
+so a hole can no longer push later samples out of the ±dt/2 match window and have them solved as
+flight with `a_root = −g` while the foot is planted.
+
+**B3 — the loads rendered outside their own gate.** `loadBlock` drew every muscle's L/R peak and
+bars unconditionally while `honestyBlock`, three lines below, printed "FAILED, loads withheld"; only
+the per-muscle sentence was gated. `OfflineSceneView` likewise drew the 3-D muscle overlay from
+`frame.muscleResult` with no gate. Both now ask `summary.arePublishable`, and the withheld case
+states the measurement and a lever.
+
+**Majors, each fixed:**
+
+* `strideRepeatabilityPercent` was fed the CV of CONTACT DURATIONS, not of stride periods, while
+  being named, documented and displayed as "this runner's own stride-to-stride variation" — and it
+  gated the camera advice. `video_015`: 11.14% published against a real stride CoV of 2.08%/2.56%;
+  most of that 11% was the quantisation counted twice, so the app told the user a faster camera
+  could not help on the best of the three clips. Now fed the stride CoV. Published resolution:
+  `video_015` 11.14 → **8.09%**, `video_013` 43.28 → **18.91%**, `video_012` unchanged at 10.15%.
+* One clip-wide `Fmax` was applied to both legs, setting the timing model's own left/right peak
+  asymmetry to zero by construction and running the wrong way round (a shorter contact must carry a
+  HIGHER peak). Now per leg, `Fmax_side = (π/2)(1 + tf/tc_side)`, and the stride impulse still
+  closes exactly (`Σ Fᵢ·2tcᵢ/π = T`, asserted). Cost of the old form on an asymmetric runner
+  (200/160 ms, tf 130 ms): 2.7053 BW on both feet against 2.5918 / 2.8471 — a **9.4%** peak
+  asymmetry discarded. On the owner's clips it is small (−1.31%, +0.20%), which is why nothing
+  caught it.
+* The residual gate conflated two failures. When the ID solver's geometric detector sees no foot
+  down, `solveIDGRF` returns ZERO ground force, so the residual is the entire modelled force
+  (~2-3 BW) and has nothing to do with limb inertia — one such frame withheld a whole clip under a
+  sentence about inertia. The residual statistic is now computed over agreeing frames only, the
+  disagreements are their own gate with their own number and lever, and those frames' activations no
+  longer enter the peaks (they were solved without the load they are supposed to describe).
+* The per-clip derivative window was sized from the SHORTEST contact, which picks 3 taps on
+  `video_012`. Exact white-noise gain of the second-derivative coefficients: 9 taps 0.113961,
+  7 taps 0.218218 (1.91×), 5 taps 0.534522 (4.69×), 3 taps 2.449490 (**21.49×**) — and at 3 taps the
+  POSITION coefficients are `[0,1,0]`, so the "smoothed" pose the moment-arm stage consumes is raw
+  IK. That noise is independent per DOF and therefore does NOT cancel out of a ratio, which is the
+  one error the product is allowed to tolerate. Now sized from the MEDIAN contact (5 taps on both
+  usable clips, 4.69×), with the frames whose window crosses a contact edge marked per frame and
+  excluded from the load summary — measured clean frames: `video_012` 12 of 64, `video_015` 24 of
+  68. A clip whose median contact is under 5 samples is refused rather than differentiated.
+* The one action the product recommends made the analysis refuse. `maxFramesPerRun = 120` is a FRAME
+  budget, so the native-rate window collapsed to 1.983 s at 60 fps, 0.992 s at 120 and 0.496 s at
+  240 — below three complete contacts per side. `.nativeWindow` now has its own budget, DERIVED as
+  `minimumAnalysisSeconds × 240 + 1 = 601`, holding ≥ 2.50 s at every rate up to 240 fps. 30 fps is
+  unchanged at 120 frames. Cost at 240 fps is 7-10 min of pose model at the ~1 s/frame the brief
+  quotes — estimated, not measured on device.
+* The advice also promised a resolution the model said it could not deliver: it printed
+  "filming at 61 fps would resolve ±5%" while `resolvableAsymmetryPercent = max(floor, repeatability)`
+  would have been 7.2%. The target is now never finer than `bestAchievablePercentAtAnyFrameRate`,
+  and the rate is never above `FrameSource.highestAnalysableFrameRate`.
+
+**What this did NOT establish.** The whole chain has never been run end to end on the owner's real
+clips: the 1.3 GiB pose model ships as a Background Asset and is not in the test bundle, and the
+pinned fixtures carry only 5 joints — enough for the gait module, not for IK. So the new contact
+gate's real pass rate on `video_012`/`video_015` is **unmeasured**, and it may withhold. The only
+end-to-end number is synthetic: 9 stance frames, 5 contact-detector disagreements, 3 frames with a
+clean derivative window, agreeing residual 0.008-0.183 BW against the 0.5 gate.
+
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 

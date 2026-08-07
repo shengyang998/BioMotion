@@ -8,6 +8,17 @@ import SwiftUI
 /// with an action attached ("film at a higher frame rate").
 ///
 /// There is no newton figure anywhere on this screen. See `GaitLoadSummary`.
+///
+/// # The loads are drawn INSIDE the gate, not beside it
+///
+/// `loadBlock` used to render every muscle's L/R peak and bars unconditionally
+/// while `honestyBlock`, three lines below, printed "FAILED, loads withheld".
+/// The user was looking at the loads while being told they had been withheld,
+/// and the numbers on screen were exactly the ones the failed gate said were
+/// not protected. Now `summary.arePublishable` decides the whole block, the
+/// withheld case states the measurement and the lever, and the 3-D muscle
+/// overlay in `OfflinePlaybackView` asks the same question.
+
 struct GaitReportPanel: View {
     let outcome: OfflineResultStore.GaitOutcome
     let summary: GaitLoadSummary?
@@ -99,33 +110,45 @@ struct GaitReportPanel: View {
     }
 
     /// The product: this muscle against that muscle, left against right, each
-    /// as a normalised 0-1 load.
+    /// as a normalised 0-1 load — or nothing at all, when the gates say so.
+    @ViewBuilder
     private func loadBlock(_ s: GaitLoadSummary) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             header("Load during stance — relative")
-            Text("Each bar is that muscle's peak effort as a fraction of what it can produce, "
-                 + "measured during its own leg's contact.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(s.ranked.prefix(8)) { load in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(load.displayName).font(.caption).bold()
-                        Spacer()
-                        Text(String(format: "L %.2f · R %.2f", load.leftPeak, load.rightPeak))
+            if let reason = s.withheldReason {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else {
+                Text("Each bar is that muscle's peak effort as a fraction of what it can produce, "
+                     + "measured during its own leg's contact.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(s.ranked.prefix(8)) { load in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(load.displayName).font(.caption).bold()
+                            Spacer()
+                            Text(String(format: "L %.2f · R %.2f", load.leftPeak, load.rightPeak))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        HStack(spacing: 4) {
+                            bar(load.leftPeak, tint: .blue)
+                            bar(load.rightPeak, tint: .red)
+                        }
+                        Text(s.claim(for: load))
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                            .foregroundStyle(s.permits(differencePercent: load.differencePercent)
+                                             && !load.isSaturated ? .orange : .secondary)
                     }
-                    HStack(spacing: 4) {
-                        bar(load.leftPeak, tint: .blue)
-                        bar(load.rightPeak, tint: .red)
-                    }
-                    Text(s.claim(for: load))
-                        .font(.caption2)
-                        .foregroundStyle(s.permits(differencePercent: load.differencePercent)
-                                         ? .orange : .secondary)
                 }
+                Text(String(format: "From %d of %d claimed stance frames (%d left, %d right).",
+                            s.stanceFrameCount, s.claimedStanceFrameCount,
+                            s.leftStanceFrameCount, s.rightStanceFrameCount))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -148,31 +171,46 @@ struct GaitReportPanel: View {
         VStack(alignment: .leading, spacing: 4) {
             header("What this does not measure")
             Text(s.unmodelledTermSentence).font(.caption)
-            Text(String(format: "Model force vs the body's own inertia: %.2f BW typical, "
+            Text("Peak ground force is not measured — it is implied by contact and flight "
+                 + "timing, and nothing here can contradict its size. Ratios are shown "
+                 + "because a size error cancels out of them; that cancellation is what "
+                 + "the two checks below test.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(String(format: "Limb inertia the timing model omits: %.2f BW typical, "
                         + "%.2f BW worst (gate %.2f) — %@.",
                         s.medianForceResidualInBodyWeights,
                         s.maxForceResidualInBodyWeights,
                         NimbleEngine.maxGaitForceResidualInBodyWeights,
-                        s.residualGatePassed ? "passed" : "FAILED, loads withheld"))
+                        s.residualGatePassed ? "passed" : "FAILED"))
                 .font(.caption)
                 .foregroundStyle(s.residualGatePassed ? Color.secondary : Color.red)
-            if s.contactDetectorDisagreements > 0 {
-                Text("\(s.contactDetectorDisagreements) frame(s) where the ground-contact "
-                     + "geometry disagreed with the stance detector.")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+            Text(String(format: "Foot height agreed with the measured contact on %.0f%% of "
+                        + "stance frames (need %.0f%%) — %@.",
+                        100 * s.agreementFraction,
+                        100 * GaitLoadSummary.minimumContactAgreementFraction,
+                        s.contactGatePassed ? "passed" : "FAILED"))
+                .font(.caption)
+                .foregroundStyle(s.contactGatePassed ? Color.secondary : Color.red)
+            if s.framesWithoutACleanDerivativeWindow > 0 {
+                Text("\(s.framesWithoutACleanDerivativeWindow) stance frame(s) sat too close to a "
+                     + "touchdown or toe-off to differentiate and were dropped.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             if s.saturatedMuscleCount > 0 {
-                Text("\(s.saturatedMuscleCount) muscle(s) reached full effort, where a "
-                     + "force error stops cancelling out of the ratios.")
+                Text("\(s.saturatedMuscleCount) muscle(s) reached full effort; their left/right "
+                     + "comparison is withheld, because a force error stops cancelling there.")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            Text(String(format: "Derivatives use a %d-tap window spanning %.0f ms, inside the "
-                        + "shortest contact (%.0f ms).",
+            Text(String(format: "Derivatives use a %d-tap window spanning %.0f ms against a "
+                        + "shortest contact of %.0f ms — %.1f× the noise of the 9-tap window "
+                        + "the still-pose path uses.",
                         s.derivativeFilterTaps,
                         s.derivativeFilterSpanMilliseconds,
-                        s.shortestContactMilliseconds))
+                        s.shortestContactMilliseconds,
+                        s.derivativeNoiseAmplification))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

@@ -22,6 +22,23 @@ import Foundation
 /// to about ±10 %"), which was chosen over a global disclaimer precisely because
 /// it tells them WHEN a faster capture would help. For a 200 ms contact the
 /// floor is 8.3 % at 30 fps, 4.2 % at 60, 2.1 % at 120 and 1.0 % at 240.
+///
+/// # `strideRepeatabilityPercent` is the STRIDE PERIOD's scatter, and only that
+///
+/// It used to be fed the coefficient of variation of CONTACT DURATIONS, which
+/// is a different quantity and is mostly the detector's own edge jitter — the
+/// thing a faster camera fixes. Measured on the fixtures: `video_015` reads
+/// 11.14 % of contact-duration scatter (contacts of 5,6,6,6,7,7 samples) while
+/// the SAME detector on the SAME clip measures its stride period at 2.08 % /
+/// 2.56 % (touchdown gaps 19,19,20,19,19). Feeding the first number in made the
+/// app tell a `video_015` user that the runner was the limit and a faster
+/// camera could not help — on the best of the three clips, and wrongly, because
+/// at 6.18 samples per contact one frame IS 16 % and most of that 11 % was the
+/// quantisation being counted a second time.
+///
+/// The published resolution changes accordingly: `video_015` 11.14 % → 8.09 %
+/// (its floor), `video_013` 43.28 % → 18.91 %, `video_012` unchanged at
+/// 10.15 % because its floor already dominated.
 struct GaitResolution: Equatable {
     let framesPerContact: Double
     let quantisationFloorPercent: Double
@@ -45,10 +62,23 @@ struct GaitResolution: Equatable {
 
     /// The lever, when a claim is refused. Contact duration is a property of the
     /// runner, so the only thing the user can change is the sampling rate.
+    ///
+    /// ⚠️ This answers "what rate puts the QUANTISATION FLOOR at `percent`", which
+    /// is not the same as "what rate lets me claim `percent`" — the published
+    /// resolution is `max(floor, strideRepeatability)` and no camera moves the
+    /// second term. Ask `bestAchievablePercentAtAnyFrameRate` first; the UI does.
     func framesPerSecondNeeded(for percent: Double, currentFPS: Double) -> Double {
         guard percent > 0, framesPerContact > 0 else { return .infinity }
         let neededFrames = 100 * 0.5 / percent
         return currentFPS * neededFrames / framesPerContact
+    }
+
+    /// The finest left/right difference ANY capture rate could support on this
+    /// runner. As the rate rises the quantisation floor goes to zero and the
+    /// runner's own stride-to-stride variation is what is left, so promising
+    /// anything finer than this is promising something the camera cannot buy.
+    var bestAchievablePercentAtAnyFrameRate: Double {
+        strideRepeatabilityPercent.isFinite ? strideRepeatabilityPercent : .infinity
     }
 }
 
@@ -92,11 +122,24 @@ struct GaitReport {
     enum Refusal: Equatable, CustomStringConvertible {
         case tooFewContacts(side: GaitSide, count: Int)
         case stridePeriodDisagreesBetweenLegs(frames: Double)
-        case flightTimeDisagreesWithStrideClosure(frames: Double)
+        /// ⚠️ **Not a force falsifier, and it must never be described as one.**
+        /// See `GaitReport.contactSequencePeriodicityErrorFrames`: for any
+        /// perfectly periodic alternating schedule the two flight estimates are
+        /// algebraically the SAME number, whatever the contact durations and
+        /// therefore whatever `Fmax` is. What this refusal catches is a contact
+        /// sequence that is not periodic and alternating.
+        case contactSequenceNotPeriodic(frames: Double)
         case strideNotSteady(side: GaitSide, percent: Double, boundPercent: Double)
         case notRunning(dutyFactor: Double, flightToContactRatio: Double)
         case stanceBudgetInconsistent(assumed: Int, measured: Int)
         case contactTooShortToResolve(framesPerContact: Double)
+        /// The decoder lost slots inside or against the edge of a contact, so
+        /// that contact's duration is not resolved to what this clip publishes.
+        case droppedSamplesInContact(side: GaitSide, inside: Int, atEdges: Int)
+        /// The median contact holds fewer samples than the shortest usable
+        /// centred derivative window, so no stance frame can carry an
+        /// acceleration that was not fitted across a touchdown or a toe-off.
+        case contactTooShortForACleanDerivative(medianSamples: Int, neededSamples: Int)
 
         var description: String {
             switch self {
@@ -105,9 +148,10 @@ struct GaitReport {
             case .stridePeriodDisagreesBetweenLegs(let frames):
                 return String(format: "the two legs report stride periods %.2f frames apart; "
                               + "in steady gait they alternate within one cycle and must agree", frames)
-            case .flightTimeDisagreesWithStrideClosure(let frames):
-                return String(format: "flight time measured between contacts and flight time implied "
-                              + "by closing the stride disagree by %.2f frames", frames)
+            case .contactSequenceNotPeriodic(let frames):
+                return String(format: "the contact sequence is not periodic and alternating: flight "
+                              + "measured between contacts and flight implied by closing the stride "
+                              + "differ by %.2f frames", frames)
             case .strideNotSteady(let side, let percent, let bound):
                 return String(format: "%@ stride period varies %.2f%% (bound %.2f%%); the periodic "
                               + "force model assumes one stride is like the next",
@@ -120,6 +164,14 @@ struct GaitReport {
                      + "contacts measure \(measured); the level's support is the wrong length"
             case .contactTooShortToResolve(let n):
                 return String(format: "%.2f frames per contact — too few to time an edge", n)
+            case .droppedSamplesInContact(let side, let inside, let atEdges):
+                return "the video lost \(inside) frame(s) inside and \(atEdges) against the edge of "
+                     + "a \(side.rawValue) contact; a contact with a hole is not timed to what this "
+                     + "clip resolves. Re-film in better light, or hold the subject in frame"
+            case .contactTooShortForACleanDerivative(let median, let needed):
+                return "the median contact holds \(median) frames and a derivative window needs "
+                     + "\(needed); every stance acceleration would be fitted across a touchdown. "
+                     + "Film at a higher frame rate"
             }
         }
     }
@@ -173,18 +225,52 @@ struct GaitReport {
     let measuredFlightSeconds: Double
     let measuredFlightScatterSeconds: Double
     /// Flight time as IMPLIED by closing the stride: `(T − tcL − tcR)/2`.
-    ///
-    /// These two are computed from different things — one from the ordering of
-    /// events, one from the stride period and the two contact durations — so
-    /// they can disagree, and their disagreement is this stage's falsifier.
-    /// Measured: 0.01 frames on `video_012`, 0.01 on `video_015`, 0.90 on
-    /// `video_013`.
     let modelledFlightSeconds: Double
-    var flightDisagreementFrames: Double {
+
+    /// How far the contact SEQUENCE is from being periodic and alternating, in
+    /// sampling intervals. Measured 0.0119 on `video_012`, 0.0083 on
+    /// `video_015`, 0.8994 on `video_013`.
+    ///
+    /// # ⚠️ This is NOT a falsifier of the force model, and here is the proof
+    ///
+    /// For touchdowns at `L: nT` and `R: nT + s` with contacts `cL`, `cR`, the
+    /// observed gaps are `s − cL` and `T − s − cR`, whose mean is exactly
+    /// `(T − cL − cR)/2` — which is the modelled flight, identically, for EVERY
+    /// `s`, `cL` and `cR`. So on a periodic alternating schedule the two
+    /// estimates are the same number and this quantity is 0 by algebra, while
+    /// `Fmax = (π/2)(1 + tf/tc)` sweeps 7.07 → 1.18 BW as the contacts vary.
+    /// `GaitReportTests.testThePeriodicityCheckIsAnIdentityAndCannotSeeTheForce`
+    /// asserts both halves of that.
+    ///
+    /// What it DOES test is that the detected events form a periodic,
+    /// alternating sequence — a real property that `video_013` fails. It is
+    /// kept, and named for what it measures.
+    var contactSequencePeriodicityErrorFrames: Double {
         abs(modelledFlightSeconds - measuredFlightSeconds) / sampleInterval
     }
 
+    /// The whole-clip force model. `dutyFactor` and `describesRunning` are
+    /// clip-level questions and read from here.
     let force: GaitForceModel
+    /// Peak vertical GRF **per leg**, body weights, each closed on its OWN
+    /// contact time: `Fmax_side = (π/2)(1 + tf/tc_side)`.
+    ///
+    /// One clip-wide peak applied to both feet sets the timing model's own
+    /// left/right peak-force asymmetry to zero by construction, and the product
+    /// exists to find that asymmetry. It also runs the wrong way round: at a
+    /// fixed step frequency a SHORTER contact must carry a HIGHER peak, because
+    /// it has less time to deliver the same impulse.
+    ///
+    /// Cost of getting it wrong, measured: `tcL = 200 ms`, `tcR = 160 ms`,
+    /// `tf = 130 ms` gives 2.7053 BW on both feet under the shared model against
+    /// 2.5918 / 2.8471 per leg — a 9.4 % peak asymmetry discarded, above the
+    /// 8.3 % floor a 6-frame contact allows. On the owner's own clips the
+    /// difference is small (`video_012` −1.31 %, `video_015` +0.20 %), which is
+    /// why no existing test noticed.
+    ///
+    /// The stride impulse still closes exactly: `Σ F_i·2tc_i/π = (tcL + tf) +
+    /// (tcR + tf) = T`, verified numerically in `GaitReportTests`.
+    let peakVerticalForceInBodyWeights: Bilateral<Double>
     let resolution: GaitResolution
     let steadiness: GaitSteadiness
 
@@ -211,22 +297,47 @@ struct GaitReport {
         return contactAsymmetryPercent
     }
 
-    /// The longest CENTRED, odd-tap filter window that fits inside the shortest
-    /// contact in this clip, so a filter using it never straddles a touchdown or
-    /// a toe-off. A `T`-tap centred window spans `(T−1)·dt`, and a contact of `N`
-    /// frames spans `(N−1)·dt`, so `T ≤ N`.
+    /// Samples in the shortest and the median contact of this clip. Measured:
+    /// `video_012` 4 / 5, `video_015` 5 / 6, `video_013` 1 / 5.
+    let shortestContactSamples: Int
+    let medianContactSamples: Int
+
+    /// The centred, odd-tap derivative window this clip gets, sized from the
+    /// MEDIAN contact rather than the shortest one.
     ///
-    /// This exists because the engine's Savitzky-Golay filter is 9 taps, which
-    /// spans `8·dt = 267 ms` at 30 fps — LONGER than every contact measured
-    /// here (100-233 ms). Under that window no stance frame has a neighbourhood
-    /// free of a discontinuity (0 of 114 interior frames on `video_012`), and
-    /// the same filter's second-derivative gain is 0.49 at the step fundamental
-    /// and inverts sign above 7 Hz. Measured answers: 3 taps on `video_012`,
-    /// 5 on `video_015`, 1 on `video_013`.
-    let filterTapsThatFitOneContact: Int
+    /// The engine's shipped Savitzky-Golay filter is 9 taps, spanning
+    /// `8·dt = 267 ms` at 30 fps — LONGER than every contact measured here
+    /// (133-233 ms), so no stance frame has a neighbourhood free of a
+    /// touchdown/toe-off discontinuity (0 of 114 interior frames on
+    /// `video_012`) and its second-derivative gain is 0.49 at the step
+    /// fundamental, inverting sign above 7 Hz. A shorter window fixes the bias
+    /// and pays in noise, and the exact price is arithmetic — the white-noise
+    /// gain of the second-derivative coefficients:
+    ///
+    ///     taps  order  ‖c_acc‖    vs 9-tap   position coefficients
+    ///       9     3    0.113961     1.00×    smoothing
+    ///       7     2    0.218218     1.91×    smoothing
+    ///       5     2    0.534522     4.69×    smoothing
+    ///       3     2    2.449490    21.49×    [0, 1, 0] — NO smoothing at all
+    ///
+    /// Sizing from the SHORTEST contact picks 3 taps on `video_012` — a 21.5×
+    /// amplification of acceleration noise that is INDEPENDENT PER DOF, so
+    /// unlike a peak-force error it does not cancel out of a muscle-to-muscle
+    /// ratio, which is the one error the product's whole ratio argument is
+    /// allowed to tolerate. And at 3 taps the "smoothed" pose the moment-arm
+    /// and muscle-length stage consumes is the raw IK output, unsmoothed.
+    ///
+    /// Sizing from the MEDIAN gives 5 taps on both usable clips (4.69× noise,
+    /// genuine smoothing) and leaves the contacts shorter than the window to be
+    /// handled where they belong — per frame, by refusing the stance frames
+    /// whose own window crosses an edge. See
+    /// `NimbleEngine.GaitPlan.Frame.derivativeWindowInsideContact`. Measured
+    /// stance frames that keep a clean window: `video_012` 12 of 64,
+    /// `video_015` 24 of 68.
+    let derivativeFilterTaps: Int
     /// `8·dt` — what the engine's 9-tap window actually spans on this clip.
     var nineTapFilterSpanSeconds: Double { 8 * sampleInterval }
-    var nineTapFilterFitsOneContact: Bool { filterTapsThatFitOneContact >= 9 }
+    var nineTapFilterFitsOneContact: Bool { medianContactSamples >= 9 }
 }
 
 /// The pure entry point. No solver, no Core ML, no UI, no I/O: an array of
@@ -255,11 +366,15 @@ enum GaitAnalysis {
 
         for side in GaitSide.allCases {
             let intervals = detected.stance[side]
-            let framesPer = intervals.map { Double($0.frames) }
-            allStanceFrames.append(contentsOf: framesPer)
-            contactFrames[side] = mean(framesPer)
-            contactSeconds[side] = mean(framesPer) * dt
-            contactVariation[side] = 100 * coefficientOfVariation(framesPer)
+            // Durations off the CLOCK. Counting surviving samples subtracts one
+            // sampling interval for every frame the decoder lost inside a
+            // contact and turns that into a left/right finding — see
+            // `StanceInterval`.
+            let seconds = intervals.map(\.seconds)
+            allStanceFrames.append(contentsOf: intervals.map { Double($0.samples) })
+            contactSeconds[side] = mean(seconds)
+            contactFrames[side] = mean(seconds) / dt
+            contactVariation[side] = 100 * coefficientOfVariation(seconds)
             let touchdowns = intervals.map(\.touchdown)
             if touchdowns.count > 1 {
                 let strides = (1..<touchdowns.count).map { touchdowns[$0] - touchdowns[$0 - 1] }
@@ -285,9 +400,17 @@ enum GaitAnalysis {
         let modelledFlight = 0.5 * (meanStride - contactSeconds.left - contactSeconds.right)
         let meanContact = 0.5 * (contactSeconds.left + contactSeconds.right)
         let force = GaitForceModel(contactSeconds: meanContact, flightSeconds: modelledFlight)
+        // Each leg's peak is closed on ITS OWN contact time. See
+        // `GaitReport.peakVerticalForceInBodyWeights`.
+        let perLegPeak = contactSeconds.map {
+            GaitForceModel.peakInBodyWeights(contactSeconds: $0, flightSeconds: modelledFlight)
+        }
 
         let framesPerContact = 0.5 * (contactFrames.left + contactFrames.right)
-        let repeatability = Swift.max(contactVariation.left, contactVariation.right)
+        // The RUNNER's own repeatability is the scatter of the STRIDE PERIOD.
+        // Contact-duration scatter is mostly detector edge jitter, which the
+        // quantisation floor already counts — see `GaitResolution`.
+        let repeatability = largerFinite(strideVariation.left, strideVariation.right)
         let resolution = GaitResolution(framesPerContact: framesPerContact,
                                         strideRepeatabilityPercent: repeatability)
         let steadiness = GaitSteadiness(strideVariationPercent: strideVariation,
@@ -295,7 +418,8 @@ enum GaitAnalysis {
 
         let measuredStanceFrames = allStanceFrames.isEmpty ? 0 : Int(median(allStanceFrames).rounded())
         let shortestContact = allStanceFrames.min().map { Int($0) } ?? 0
-        let taps = shortestContact >= 1 ? (shortestContact % 2 == 1 ? shortestContact : shortestContact - 1) : 0
+        let medianContact = measuredStanceFrames
+        let taps = WindowedDerivativeFilter.admissibleTaps(medianContact)
 
         // --- refusals -------------------------------------------------------
         var refusals: [GaitReport.Refusal] = []
@@ -309,7 +433,7 @@ enum GaitAnalysis {
             }
             let flightGapFrames = abs(modelledFlight - measuredFlight) / dt
             if !(flightGapFrames <= maximumDisagreementFrames) {
-                refusals.append(.flightTimeDisagreesWithStrideClosure(frames: flightGapFrames))
+                refusals.append(.contactSequenceNotPeriodic(frames: flightGapFrames))
             }
             for side in GaitSide.allCases {
                 let v = steadiness.strideVariationPercent[side]
@@ -328,6 +452,23 @@ enum GaitAnalysis {
             }
             if !(framesPerContact >= 3) {
                 refusals.append(.contactTooShortToResolve(framesPerContact: framesPerContact))
+            }
+            // A contact with a hole is not timed to ±½ a sampling interval, so
+            // its duration must not enter a left/right claim. Flagging it was
+            // not enough: Monte Carlo at the measured 7.1 % drop rate fabricates
+            // up to 19 % of asymmetry through the clock-based duration alone.
+            for side in GaitSide.allCases {
+                let inside = detected.stance[side].reduce(0) { $0 + $1.droppedSamplesInside }
+                let atEdges = detected.stance[side].reduce(0) { $0 + $1.droppedSamplesAtEdges }
+                if inside + atEdges > 0 {
+                    refusals.append(.droppedSamplesInContact(side: side, inside: inside,
+                                                             atEdges: atEdges))
+                }
+            }
+            if medianContact < WindowedDerivativeFilter.minimumSmoothingTaps {
+                refusals.append(.contactTooShortForACleanDerivative(
+                    medianSamples: medianContact,
+                    neededSamples: WindowedDerivativeFilter.minimumSmoothingTaps))
             }
         }
 
@@ -369,10 +510,27 @@ enum GaitAnalysis {
                           measuredFlightScatterSeconds: flightScatter,
                           modelledFlightSeconds: modelledFlight,
                           force: force,
+                          peakVerticalForceInBodyWeights: perLegPeak,
                           resolution: resolution,
                           steadiness: steadiness,
                           refusals: refusals,
                           flags: flags,
-                          filterTapsThatFitOneContact: taps)
+                          shortestContactSamples: shortestContact,
+                          medianContactSamples: medianContact,
+                          derivativeFilterTaps: taps)
+    }
+}
+
+/// The larger of two values, ignoring a non-finite one rather than propagating
+/// it. `Swift.max` compares with `<`, which is false for every comparison
+/// involving NaN, so `Swift.max(.nan, 5)` returns NaN and `Swift.max(5, .nan)`
+/// returns NaN too — either way a leg with too few contacts to have a stride
+/// period would poison the published resolution.
+func largerFinite(_ a: Double, _ b: Double) -> Double {
+    switch (a.isFinite, b.isFinite) {
+    case (true, true): return Swift.max(a, b)
+    case (true, false): return a
+    case (false, true): return b
+    case (false, false): return .infinity
     }
 }

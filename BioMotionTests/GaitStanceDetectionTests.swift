@@ -123,13 +123,19 @@ final class GaitStanceDetectionTests: XCTestCase {
     /// contact moving.
     ///
     /// **The gate against the pinned table is 4 of 6 legs.** Deviations, in
-    /// frames: 012 L 0.01, R 0.15; 013 L 1.50 ✗, R 0.80; 015 L 0.82, R 1.21 ✗.
+    /// frames: 012 L 0.01, R 0.15; 013 L 1.17 ✗, R 0.94; 015 L 0.82, R 1.21 ✗.
     /// Both misses are asserted below at their measured size, because a
     /// disagreement that is pinned cannot drift unnoticed.
+    ///
+    /// `video_013`'s row moved when contact duration stopped being a count of
+    /// surviving samples (150.000 → 161.111 ms left, 147.619 → 152.381 right):
+    /// it is the clip Vision dropped 3 frames on, and two of its contacts have a
+    /// hole. The other two clips are byte-identical, which is the property that
+    /// says the change fixed a defect rather than moved a number.
     func testG2ContactTimeAgainstThePinnedTable() throws {
         let measured: [String: (Double, Double)] = [
             "video_012": (166.667, 161.905),
-            "video_013": (150.000, 147.619),
+            "video_013": (161.111, 152.381),
             "video_015": (205.556, 206.667),
         ]
         var within = 0
@@ -148,8 +154,8 @@ final class GaitStanceDetectionTests: XCTestCase {
         // The two that do not, pinned at their measured size (frames).
         let thirteen = try report("video_013")
         XCTAssertEqual(abs(thirteen.contactSeconds.left * 1000 - 200) / Self.frameMs,
-                       1.50, accuracy: 0.05,
-                       "video_013 left is 1.5 frames short of the pinned 200 ms")
+                       1.17, accuracy: 0.05,
+                       "video_013 left is 1.17 frames short of the pinned 200 ms")
         let fifteen = try report("video_015")
         XCTAssertEqual(abs(fifteen.contactSeconds.right * 1000 - 247) / Self.frameMs,
                        1.21, accuracy: 0.05,
@@ -325,7 +331,7 @@ final class GaitStanceDetectionTests: XCTestCase {
                 for side in GaitSide.allCases {
                     for interval in detected.stance[side] {
                         seen.append((side, (interval.firstIndex + interval.lastIndex) / 2 + offset,
-                                     interval.frames))
+                                     interval.samples))
                     }
                 }
             }

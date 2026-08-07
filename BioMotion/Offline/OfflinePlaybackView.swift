@@ -55,6 +55,21 @@ struct OfflinePlaybackView: View {
                                     filterTaps: plan.filterTaps)
     }
 
+    /// Whether the 3-D muscle overlay may be drawn at all.
+    ///
+    /// The overlay renders `frame.muscleResult` directly — the same activations
+    /// `GaitReportPanel` withholds when a gate fails — so drawing it
+    /// unconditionally reinstated the exact numbers the panel had just refused,
+    /// in a form (coloured capsules on a skeleton) that reads as more
+    /// authoritative than the list. On a running clip the overlay follows the
+    /// panel's gate. Off the running path nothing changes: a still-pose clip has
+    /// no gait summary and the overlay is governed by the static-hold gate as
+    /// before.
+    private var muscleMagnitudesArePublishable: Bool {
+        guard case .analysed? = resultStore.gait else { return true }
+        return loadSummary?.arePublishable ?? false
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
@@ -68,7 +83,8 @@ struct OfflinePlaybackView: View {
                     PhotoOverlayView(frame: frame)
                         .ignoresSafeArea(edges: .top)
                 } else {
-                    OfflineSceneView(frame: resultStore.selectedFrame, showMuscles: showMuscles)
+                    OfflineSceneView(frame: resultStore.selectedFrame,
+                                     showMuscles: showMuscles && muscleMagnitudesArePublishable)
                         .ignoresSafeArea(edges: .top)
                 }
 

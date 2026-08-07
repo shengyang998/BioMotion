@@ -27,8 +27,9 @@ final class GaitConstantSensitivityTests: XCTestCase {
     private func contactMs(_ s: GaitSignal, band: Double, duty: Double = StanceDetector.assumedDutyFactor)
         -> (left: Double, right: Double) {
         let d = StanceDetector.detect(s, band: band, duty: duty)
+        // Off the CLOCK, not by counting surviving samples — see `StanceInterval`.
         func meanMs(_ side: GaitSide) -> Double {
-            mean(d.stance[side].map { Double($0.frames) }) * s.sampleInterval * 1000
+            mean(d.stance[side].map(\.seconds)) * 1000
         }
         return (meanMs(.left), meanMs(.right))
     }
@@ -44,9 +45,14 @@ final class GaitConstantSensitivityTests: XCTestCase {
             "video_012": [(1.5, 122.222, 133.333), (2.0, 166.667, 152.381),
                           (2.5, 166.667, 161.905), (3.0, 166.667, 171.429),
                           (3.5, 188.889, 190.476)],
-            "video_013": [(1.5, 116.667, 104.762), (2.0, 138.889, 109.524),
-                          (2.5, 150.000, 147.619), (3.0, 172.222, 161.905),
-                          (3.5, 194.444, 190.476)],
+            // `video_013` is the clip Vision dropped 3 frames on, so it is the
+            // only one whose row moved when contact duration stopped being a
+            // count of surviving samples: e.g. k=2.5 left 150.000 → 161.111 ms,
+            // because one of its contacts has a hole and really did last 6
+            // sampling intervals while only 5 samples came back.
+            "video_013": [(1.5, 116.667, 109.524), (2.0, 150.000, 114.286),
+                          (2.5, 161.111, 152.381), (3.0, 183.333, 166.667),
+                          (3.5, 205.556, 195.238)],
             "video_015": [(1.5, 155.556, 160.000), (2.0, 188.889, 186.667),
                           (2.5, 205.556, 206.667), (3.0, 222.222, 226.667),
                           (3.5, 244.444, 246.667)],
@@ -80,7 +86,7 @@ final class GaitConstantSensitivityTests: XCTestCase {
     /// survives is the resolution gate — which for `video_012` is 10.1 %, i.e.
     /// wider than the 2.9 % asymmetry it measures, so the claim is refused.
     func testTheLeftRightRatioIsTheStableQuantityAndStillNotStableToATenth() throws {
-        let expected: [String: Double] = ["video_012": 0.177, "video_013": 0.252, "video_015": 0.040]
+        let expected: [String: Double] = ["video_012": 0.177, "video_013": 0.260, "video_015": 0.040]
         for (clip, spread) in expected {
             let s = try signal(clip)
             let ratios = [1.5, 2.0, 2.5, 3.0, 3.5].map { k -> Double in
@@ -123,16 +129,16 @@ final class GaitConstantSensitivityTests: XCTestCase {
         for clip in GaitClipFixture.allIds {
             let s = try signal(clip)
             let d = StanceDetector.detect(s, duty: 0.30)
-            let measured = median((d.stance.left + d.stance.right).map { Double($0.frames) })
+            let measured = median((d.stance.left + d.stance.right).map { Double($0.samples) })
             XCTAssertEqual(Int(measured.rounded()), d.stanceFrameBudget,
                            "\(clip): 0.30 is a fixed point of assumed-vs-measured stance frames")
         }
         let twelve = try signal("video_012")
         func fixedPoint(_ duty: Double) -> (budget: Int, measured: Int, ms: Double) {
             let d = StanceDetector.detect(twelve, duty: duty)
-            let all = (d.stance.left + d.stance.right).map { Double($0.frames) }
+            let all = (d.stance.left + d.stance.right).map { Double($0.samples) }
             return (d.stanceFrameBudget, Int(median(all).rounded()),
-                    mean(d.stance.left.map { Double($0.frames) }) * twelve.sampleInterval * 1000)
+                    mean(d.stance.left.map(\.seconds)) * 1000)
         }
         // Four priors, four fixed points, three different answers.
         for (duty, budget, ms) in [(0.20, 4, 100.0), (0.25, 5, 166.7),

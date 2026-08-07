@@ -40,21 +40,30 @@ final class GaitReportTests: XCTestCase {
     /// Asserted at ±0.05 pp (these are exact functions of integer frame counts),
     /// with the pinned column checked separately.
     ///
-    /// **The gate against the pinned column is 1 of 3 clips.** `video_013`
-    /// reproduces (43.28 % vs 44 %); `video_012` measures 10.14 % against a
-    /// pinned 16 % and `video_015` 11.14 % against a pinned 6 %. Both are the
-    /// criterion change: the plateau criterion times the FLAT part of stance,
-    /// so it counts fewer frames per contact (4.93 and 6.18 rather than ~5 and
-    /// ~7.3), which raises the quantisation floor on `video_012` and lets one
-    /// 5-frame contact among six 6- and 7-frame ones raise the scatter on
-    /// `video_015`. The direction is not uniform, so it is not a bias that can
-    /// be divided out — it is reported, not corrected.
+    /// **The gate against the pinned column is 0 of 3 clips, and that is a
+    /// deliberate change from 1 of 3.** The pinned 16/44/6 column was measured
+    /// with the retired ankle-height criterion AND with contact-duration scatter
+    /// standing in for the runner's repeatability. Both inputs have since been
+    /// replaced, so agreement would now be a coincidence rather than evidence —
+    /// the control above (`testTheRetiredCriterionStillReproducesThePinned…`)
+    /// is what proves the fixture is the one the column came from, and it still
+    /// reproduces all three.
+    ///
+    /// What moved, and why:
+    /// * `video_015` 11.144 → 8.086 %. Its repeatability input changed from
+    ///   contact-duration CV (11.14 %) to STRIDE-PERIOD CV (2.56 %), so the
+    ///   quantisation floor now binds — which also un-suppresses the camera
+    ///   advice on the best of the three clips. See `GaitResolution`.
+    /// * `video_013` 43.279 → 18.909 %, same cause (43.28 % → 18.91 %), plus its
+    ///   frames-per-contact rose 4.4643 → 4.7024 once dropped frames stopped
+    ///   shortening its contacts.
+    /// * `video_012` unchanged at 10.145 %: its floor already dominated.
     func testG4ResolutionAgainstThePinnedColumn() throws {
         let measured: [String: (framesPerContact: Double, floor: Double,
                                 repeatability: Double, resolvable: Double)] = [
-            "video_012": (4.9286, 10.145, 7.204, 10.145),
-            "video_013": (4.4643, 11.200, 43.279, 43.279),
-            "video_015": (6.1833, 8.086, 11.144, 11.144),
+            "video_012": (4.9286, 10.145, 0.000, 10.145),
+            "video_013": (4.7024, 10.633, 18.909, 18.909),
+            "video_015": (6.1833, 8.086, 2.564, 8.086),
         ]
         for (clip, e) in measured {
             let r = try report(clip)
@@ -65,14 +74,27 @@ final class GaitReportTests: XCTestCase {
             // The published number is never finer than the sampling grid allows.
             XCTAssertGreaterThanOrEqual(r.resolution.resolvableAsymmetryPercent,
                                         r.resolution.quantisationFloorPercent, clip)
+            // And the repeatability input IS the stride period's scatter, not
+            // the contact duration's — the two are measured separately and on
+            // `video_015` they differ by 4.3×.
+            XCTAssertEqual(r.resolution.strideRepeatabilityPercent,
+                           largerFinite(r.strideVariationPercent.left,
+                                        r.strideVariationPercent.right),
+                           accuracy: 1e-9, clip)
         }
+        let fifteen = try report("video_015")
+        XCTAssertEqual(largerFinite(fifteen.contactVariationPercent.left,
+                                    fifteen.contactVariationPercent.right),
+                       11.144, accuracy: 0.05,
+                       "the contact-duration scatter that used to be published as the runner's own")
+
         let pinned: [String: Double] = ["video_012": 16, "video_013": 44, "video_015": 6]
         var reproduced = 0
         for (clip, p) in pinned {
             let r = try report(clip)
             if abs(r.resolution.resolvableAsymmetryPercent - p) <= 1.0 { reproduced += 1 }
         }
-        XCTAssertEqual(reproduced, 1, "1 of 3 clips reproduces the pinned resolution column")
+        XCTAssertEqual(reproduced, 0, "0 of 3 clips reproduces the pinned resolution column")
     }
 
     func testTheQuantisationFloorIsHalfAFrameOverTheContact() throws {
@@ -175,9 +197,19 @@ final class GaitReportTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(unsteady.first?.1), 18.909, accuracy: 0.05)
         XCTAssertEqual(try XCTUnwrap(unsteady.first?.2), 100.0 / 18.0, accuracy: 0.01)
 
-        // 4. Its resolution is the pinned 44 %, i.e. it could not have supported
-        //    an asymmetry claim even if nothing else had failed.
-        XCTAssertEqual(r.resolution.resolvableAsymmetryPercent, 43.279, accuracy: 0.05)
+        // 4. Its resolution is 18.9 %, i.e. it could not have supported an
+        //    asymmetry claim even if nothing else had failed.
+        XCTAssertEqual(r.resolution.resolvableAsymmetryPercent, 18.909, accuracy: 0.05)
+
+        // 5. And the dropped frames are now a REFUSAL, not just a flag: two of
+        //    its contacts have a hole, so their duration is not resolved to
+        //    ±½ a sampling interval and must not enter a left/right claim.
+        let holes = r.refusals.compactMap { refusal -> (GaitSide, Int, Int)? in
+            if case .droppedSamplesInContact(let s, let i, let e) = refusal { return (s, i, e) }
+            return nil
+        }
+        XCTAssertFalse(holes.isEmpty, "a clip with holes in its contacts must be refused, not flagged")
+        XCTAssertGreaterThan(holes.reduce(0) { $0 + $1.1 + $1.2 }, 0)
 
         // The two clips that pass are not refused, so this is a discriminating
         // test and not a blanket one.
@@ -253,33 +285,86 @@ final class GaitReportTests: XCTestCase {
         XCTAssertFalse(doubleSupport.describesRunning)
     }
 
-    // MARK: - The falsifier
+    // MARK: - What the periodicity check is, and what it is NOT
 
-    /// The requirement that something computed can DISAGREE with the model.
-    ///
-    /// Flight time is estimated twice from different things: once by OBSERVING
-    /// the gap between one foot's last stance sample and the other's touchdown,
-    /// and once by CLOSING the stride, `(T − tcL − tcR)/2`. Nothing forces them
-    /// to agree — the first uses the ordering of events, the second uses the
-    /// stride period and both contact durations — so their difference is a real
-    /// residual and it gates the report.
-    func testFlightTimeIsCrossCheckedAgainstStrideClosure() throws {
-        let expected: [String: (measuredMs: Double, modelledMs: Double, disagreementFrames: Double)] = [
+    /// The measured values, and the property they actually have.
+    func testTheContactSequencePeriodicityCheckOnTheOwnersClips() throws {
+        let expected: [String: (measuredMs: Double, modelledMs: Double, errorFrames: Double)] = [
             "video_012": (136.111, 135.714, 0.0119),
-            "video_013": (121.212, 151.190, 0.8994),
+            "video_013": (121.212, 143.254, 0.6613),
             "video_015": (116.667, 116.389, 0.0083),
         ]
         for (clip, e) in expected {
             let r = try report(clip)
             XCTAssertEqual(r.measuredFlightSeconds * 1000, e.measuredMs, accuracy: 0.5, clip)
             XCTAssertEqual(r.modelledFlightSeconds * 1000, e.modelledMs, accuracy: 0.5, clip)
-            XCTAssertEqual(r.flightDisagreementFrames, e.disagreementFrames, accuracy: 0.02, clip)
+            XCTAssertEqual(r.contactSequencePeriodicityErrorFrames, e.errorFrames,
+                           accuracy: 0.02, clip)
         }
-        // The two clips that agree do so to a hundredth of a frame — which is
-        // the evidence that the periodic model actually describes them, and it
-        // is evidence that could have come out otherwise.
-        XCTAssertLessThan(try report("video_012").flightDisagreementFrames, 0.05)
-        XCTAssertLessThan(try report("video_015").flightDisagreementFrames, 0.05)
+        XCTAssertLessThan(try report("video_012").contactSequencePeriodicityErrorFrames, 0.05)
+        XCTAssertLessThan(try report("video_015").contactSequencePeriodicityErrorFrames, 0.05)
+    }
+
+    /// **The claim this file used to make, disproved here so it cannot be made
+    /// again.**
+    ///
+    /// `NimbleEngine.GaitFrameOutcome` named this quantity as the check that
+    /// covers the frame-level residual's admitted blindness to "the half-sine
+    /// SHAPE and the peak magnitude". It cannot: on any perfectly periodic
+    /// alternating schedule the two flight estimates are algebraically the SAME
+    /// number, whatever the contact durations, and `Fmax` is a function of
+    /// exactly those durations.
+    ///
+    /// Shown two ways: the algebra, exactly; and the shipped code path, where
+    /// the quantity stays within 3 % of its gate while `Fmax` moves by a factor
+    /// of 3.
+    func testThePeriodicityCheckIsAnIdentityAndCannotSeeTheForce() throws {
+        // 1. The algebra, independent of any detector. Touchdowns L at `nT` and
+        //    R at `nT + s` give gaps `s − cL` and `T − s − cR`, whose mean is
+        //    exactly `(T − cL − cR)/2` — the modelled flight — for every `s`,
+        //    `cL` and `cR`. Nothing about the force enters either side.
+        let stride = 0.60
+        for s in [0.20, 0.30, 0.42] {
+            for (cL, cR) in [(0.10, 0.10), (0.18, 0.09), (0.05, 0.25)] {
+                let measured = 0.5 * ((s - cL) + (stride - s - cR))
+                XCTAssertEqual(measured, 0.5 * (stride - cL - cR), accuracy: 1e-12,
+                               "s=\(s) cL=\(cL) cR=\(cR)")
+            }
+        }
+
+        // 2. The shipped path. Contact durations swept over a factor of 3 at a
+        //    fixed stride, so `Fmax = (π/2)(1 + tf/tc)` sweeps with them.
+        var peaks: [Double] = []
+        var errors: [Double] = []
+        for contact in [0.0667, 0.100, 0.150, 0.200] {
+            let frames = Self.periodicSchedule(stride: stride, contact: contact, cycles: 6, fps: 300)
+            let r = try GaitAnalysis.analyse(frames: frames)
+            peaks.append(r.force.peakVerticalForceInBodyWeights)
+            errors.append(r.contactSequencePeriodicityErrorFrames)
+        }
+        print("GAIT-METRIC periodicity_vs_force peaks=\(peaks) errors=\(errors)")
+        // The NOMINAL schedules span a factor of 6 in Fmax; the detector's band
+        // widens the short contacts, so what actually reaches the report spans
+        // 1.63. Either way the force moves by tens of percent.
+        let nominal = [0.0667, 0.200].map {
+            GaitForceModel.peakInBodyWeights(contactSeconds: $0,
+                                             flightSeconds: (stride - 2 * $0) / 2)
+        }
+        XCTAssertGreaterThan(nominal[0] / nominal[1], 2.9)
+        XCTAssertGreaterThan(peaks.max()! / peaks.min()!, 1.5,
+                             "Fmax moves by a factor of \(peaks.max()! / peaks.min()!)")
+        XCTAssertLessThan(errors.max()!, 0.05 * GaitAnalysis.maximumDisagreementFrames,
+                          "while the check never gets within 5 % of its own gate: \(errors)")
+    }
+
+    /// A synthetic runner whose contacts are placed on an exactly periodic,
+    /// alternating schedule. Sampled fast enough (300 fps) that the detector
+    /// resolves every duration in the sweep, so the identity above is not an
+    /// artefact of quantisation.
+    static func periodicSchedule(stride: Double, contact: Double, cycles: Int,
+                                 fps: Double) -> [BodyFrame] {
+        syntheticRunner(fps: fps, contact: contact, flight: (stride - 2 * contact) / 2,
+                        speed: 4.0, strides: cycles, velocityNoise: 0.15)
     }
 
     func testTheFalsifierCanActuallyFire() throws {
@@ -304,6 +389,81 @@ final class GaitReportTests: XCTestCase {
         let r = try GaitAnalysis.analyse(frames: edited)
         XCTAssertFalse(r.isUsable, "a leg that misses a whole contact must not pass")
         XCTAssertFalse(r.refusals.isEmpty)
+    }
+
+    // MARK: - A dropped frame must not become a finding
+
+    /// **The scenario, reproduced exactly.** Delete ONE frame from the middle of
+    /// every LEFT contact of `video_015` — the decoder losing the person, which
+    /// STATUS measures at 7.1 % of frames — and ask what the module reports.
+    ///
+    /// Counting surviving samples read the left contacts 205.6 → 144.4 ms
+    /// against an unchanged right, i.e. −14.29 % of asymmetry against a 10.88 %
+    /// resolution: a publishable finding, pointing the wrong way, made entirely
+    /// of a decoder artefact. Timing off the clock reads the SAME duration it
+    /// read before, and the hole is refused on top.
+    func testAFrameLostInsideAContactChangesNoDurationAndRefusesTheClip() throws {
+        let original = try frames("video_015")
+        let clean = try GaitAnalysis.analyse(frames: original)
+        XCTAssertTrue(clean.isUsable)
+
+        // Which array positions sit in the middle of a left contact.
+        let holes = Set(clean.stance.left.map { ($0.firstIndex + $0.lastIndex) / 2 })
+        XCTAssertEqual(holes.count, clean.stance.left.count)
+        let punched = original.enumerated()
+            .filter { !holes.contains($0.offset) }
+            .map(\.element)
+        XCTAssertEqual(punched.count, original.count - holes.count)
+
+        let r = try GaitAnalysis.analyse(frames: punched)
+
+        // 1. Every left contact now has exactly one slot missing from inside
+        //    it, and the clock still spans the whole contact: 5 samples over
+        //    6 sampling intervals.
+        for interval in r.stance.left {
+            XCTAssertEqual(interval.droppedSamplesInside, 1)
+            XCTAssertEqual(interval.seconds,
+                           Double(interval.samples) * r.sampleInterval + r.sampleInterval,
+                           accuracy: 1e-9,
+                           "the clock covers the hole; counting samples does not")
+        }
+        for interval in r.stance.right {
+            XCTAssertEqual(interval.droppedSamplesInside, 0)
+        }
+
+        // 2. The two conventions on the SAME analysis. Counting samples reads
+        //    the left contact 14.29 % SHORTER than the right — above the 9.68 %
+        //    floor, and with the sign reversed against what the clock says.
+        let bySamples = Bilateral<Double>(
+            left: mean(r.stance.left.map { Double($0.samples) }) * r.sampleInterval,
+            right: mean(r.stance.right.map { Double($0.samples) }) * r.sampleInterval)
+        let fabricated = 100 * (bySamples.left - bySamples.right)
+            / (0.5 * (bySamples.left + bySamples.right))
+        XCTAssertEqual(fabricated, -14.2857, accuracy: 0.01,
+                       "the asymmetry the sample count manufactures")
+        XCTAssertEqual(r.contactAsymmetryPercent, 6.4516, accuracy: 0.01,
+                       "what the clock says instead — opposite sign")
+        XCTAssertGreaterThan(abs(fabricated), r.resolution.resolvableAsymmetryPercent,
+                             "and only the fabricated one clears the resolution gate")
+        XCTAssertLessThan(abs(r.contactAsymmetryPercent), r.resolution.resolvableAsymmetryPercent)
+
+        // 3. The clip is refused anyway, because a contact with a hole is not
+        //    timed to ±½ a sampling interval whatever the clock says: a hole at
+        //    an EDGE moves the retained edge inward by a real sampling interval
+        //    and the clock cannot see that. Monte Carlo at the measured 7.1 %
+        //    drop rate still reached 17-19 % of fabricated asymmetry with the
+        //    clock fix alone, which is why this is a refusal and not just a
+        //    corrected number.
+        XCTAssertFalse(r.isUsable)
+        XCTAssertNil(r.asymmetryClaim)
+        XCTAssertTrue(r.refusals.contains {
+            if case .droppedSamplesInContact(.left, _, _) = $0 { return true }; return false
+        }, "\(r.refusals)")
+
+        // And the clean clip has none of that, so the refusal discriminates.
+        XCTAssertFalse(clean.refusals.contains {
+            if case .droppedSamplesInContact = $0 { return true }; return false
+        })
     }
 
     // MARK: - Ground truth that is known, not pinned
@@ -394,20 +554,81 @@ final class GaitReportTests: XCTestCase {
         // Every contact in the owner's footage is shorter than that, so no
         // stance frame has a window free of a touchdown or a toe-off. This
         // publishes the largest window that WOULD fit, per clip.
-        let expected: [String: Int] = ["video_012": 3, "video_013": 1, "video_015": 5]
-        for (clip, taps) in expected {
+        // Sized from the MEDIAN contact, not the shortest. The shortest gives
+        // 3 taps on `video_012`, whose second-derivative coefficients [1,−2,1]
+        // amplify noise 21.5× against the 9-tap window and whose POSITION
+        // coefficients are [0,1,0] — no smoothing at all.
+        let expected: [String: (shortest: Int, median: Int, taps: Int)] = [
+            "video_012": (4, 5, 5),
+            "video_013": (1, 5, 5),
+            "video_015": (5, 6, 5),
+        ]
+        for (clip, e) in expected {
             let r = try report(clip)
-            XCTAssertEqual(r.filterTapsThatFitOneContact, taps, clip)
+            XCTAssertEqual(r.shortestContactSamples, e.shortest, clip)
+            XCTAssertEqual(r.medianContactSamples, e.median, clip)
+            XCTAssertEqual(r.derivativeFilterTaps, e.taps, clip)
             XCTAssertFalse(r.nineTapFilterFitsOneContact, clip)
             XCTAssertEqual(r.nineTapFilterSpanSeconds, 8.0 / 30.0, accuracy: 1e-6, clip)
+            // 4.69×, not 21.49×. The price is paid knowingly and published.
+            XCTAssertEqual(WindowedDerivativeFilter
+                .accelerationNoiseAmplification(taps: r.derivativeFilterTaps),
+                           4.690, accuracy: 0.005, clip)
         }
         // At 120 fps a 200 ms contact spans 24 frames, and the 9-tap window
         // fits with room to spare — the same lever as the resolution.
         let fast = try GaitAnalysis.analyse(frames: Self.syntheticRunner(
             fps: 120, contact: 0.200, flight: 0.120, speed: 4.0, strides: 7,
             velocityNoise: 0.15))
-        XCTAssertGreaterThanOrEqual(fast.filterTapsThatFitOneContact, 9)
+        XCTAssertGreaterThanOrEqual(fast.derivativeFilterTaps, 9)
         XCTAssertTrue(fast.nineTapFilterFitsOneContact)
+        XCTAssertEqual(WindowedDerivativeFilter
+            .accelerationNoiseAmplification(taps: fast.derivativeFilterTaps),
+                       1.0, accuracy: 1e-9,
+                       "at a rate that resolves the contact there is no noise penalty at all")
+    }
+
+    /// The per-leg peak, and the impulse it has to close.
+    ///
+    /// One clip-wide `Fmax` applied to both feet sets the timing model's own
+    /// left/right peak asymmetry to zero by construction — the product exists to
+    /// find that asymmetry — and it runs the wrong way round, since a shorter
+    /// contact must carry a HIGHER peak.
+    func testEachLegCarriesItsOwnPeakAndTheStrideStillCloses() throws {
+        let expected: [String: (left: Double, right: Double)] = [
+            "video_012": (2.8499, 2.8875),
+            "video_015": (2.4602, 2.4554),
+        ]
+        for (clip, e) in expected {
+            let r = try report(clip)
+            XCTAssertEqual(r.peakVerticalForceInBodyWeights.left, e.left, accuracy: 0.005, clip)
+            XCTAssertEqual(r.peakVerticalForceInBodyWeights.right, e.right, accuracy: 0.005, clip)
+            // The shorter contact carries the higher peak. Always.
+            if r.contactSeconds.left < r.contactSeconds.right {
+                XCTAssertGreaterThan(r.peakVerticalForceInBodyWeights.left,
+                                     r.peakVerticalForceInBodyWeights.right, clip)
+            } else if r.contactSeconds.left > r.contactSeconds.right {
+                XCTAssertLessThan(r.peakVerticalForceInBodyWeights.left,
+                                  r.peakVerticalForceInBodyWeights.right, clip)
+            }
+            // And the stride's vertical impulse still closes exactly:
+            // Σ Fᵢ·2·tcᵢ/π = T.
+            let impulse = r.peakVerticalForceInBodyWeights.left * 2 * r.contactSeconds.left / .pi
+                + r.peakVerticalForceInBodyWeights.right * 2 * r.contactSeconds.right / .pi
+            let stride = r.contactSeconds.left + r.contactSeconds.right
+                + 2 * r.modelledFlightSeconds
+            XCTAssertEqual(impulse, stride, accuracy: 1e-9, "\(clip): m·g·T of impulse")
+        }
+        // The size of what the shared peak used to discard, on an asymmetric
+        // runner: 200 / 160 ms contacts and 130 ms of flight.
+        let shared = GaitForceModel(contactSeconds: 0.180, flightSeconds: 0.130)
+        let l = GaitForceModel.peakInBodyWeights(contactSeconds: 0.200, flightSeconds: 0.130)
+        let rr = GaitForceModel.peakInBodyWeights(contactSeconds: 0.160, flightSeconds: 0.130)
+        XCTAssertEqual(shared.peakVerticalForceInBodyWeights, 2.7053, accuracy: 0.001)
+        XCTAssertEqual(l, 2.5918, accuracy: 0.001)
+        XCTAssertEqual(rr, 2.8471, accuracy: 0.001)
+        XCTAssertEqual(100 * (l - rr) / (0.5 * (l + rr)), -9.39, accuracy: 0.02,
+                       "a 9.4 % peak asymmetry the shared model set to zero")
     }
 
     // MARK: - Input validation

@@ -1,6 +1,28 @@
 import Foundation
 
 /// One detected foot-ground contact.
+///
+/// # Duration comes from the CLOCK, never from counting array slots
+///
+/// `lastIndex − firstIndex + 1` counts SURVIVING SAMPLES. Vision loses the
+/// person on about 7 % of frames (STATUS Finding 6: 22 of 309 at 30 fps), and
+/// every lost frame inside a contact removes one slot from that count — so a
+/// duration computed as `samples · dt` silently subtracts 33 ms from that leg's
+/// contact and manufactures a left/right asymmetry out of a decoder artefact.
+///
+/// Measured on the pinned fixtures: `video_013`'s second left contact counts 4
+/// samples (133.3 ms) and spans 200.0 ms on the clock — a whole frame is missing
+/// from inside it. Monte Carlo over the two clean clips at the measured 7.1 %
+/// drop rate, 400 trials: counting slots fabricates up to **23.4 %**
+/// (`video_012`, truth 2.9 %) and **29.1 %** (`video_015`, truth 0.5 %) of
+/// left/right asymmetry.
+///
+/// `seconds` is therefore `lastStanceSample − touchdown + dt`. That fixes every
+/// INTERIOR hole exactly. It does NOT fix a hole at an EDGE — losing the first
+/// or last sample of a contact moves the retained edge inward by a real
+/// sampling interval, and the same Monte Carlo still reaches 19.4 % / 17.0 %.
+/// Only refusing the contact does, which is why `droppedSamplesInside` and
+/// `droppedSamplesAtEdges` are recorded here and refused in `GaitAnalysis`.
 struct StanceInterval: Equatable {
     let side: GaitSide
     /// Indices into `GaitSignal.timestamps`, inclusive.
@@ -11,13 +33,27 @@ struct StanceInterval: Equatable {
     /// somewhere in the following sampling interval, which is why
     /// `GaitReport.measuredFlightTime` adds one `dt` before measuring the gap.
     let lastStanceSample: TimeInterval
+    /// The clock time of every sample in this contact, ascending. The plan is
+    /// laid on THESE instants rather than on `touchdown + k·dt`, so a hole in
+    /// the decode cannot push the frames after it out of the plan's ±dt/2 match
+    /// window and have them solved as flight while the foot is still planted.
+    let sampleTimestamps: [TimeInterval]
+    /// Contact duration, seconds, read off the clock. See the type's note.
+    let seconds: TimeInterval
+    /// Decoder slots the video lost strictly INSIDE this contact.
+    let droppedSamplesInside: Int
+    /// Decoder slots lost across either edge — between the sample before
+    /// touchdown and touchdown, or between the last stance sample and the one
+    /// after it. A contact with one of these has an edge located to ±(gap + ½)
+    /// sampling intervals rather than ±½, so its duration is not resolved to
+    /// what `GaitResolution` publishes.
+    let droppedSamplesAtEdges: Int
 
-    /// Whole sampled frames, inclusive of both ends. This is the quantity the
-    /// clip's resolution is set by, so it is deliberately an Int: a sub-frame
-    /// crossing estimate was measured and did NOT reduce stride-to-stride
-    /// scatter (`video_012` 0.0 % → 3.2 %, `video_015` 11.1 % → 13.5 %), so it
-    /// would only have blurred what the limit is.
-    var frames: Int { lastIndex - firstIndex + 1 }
+    /// Surviving samples, inclusive of both ends. This is what a filter window
+    /// has to fit inside; it is NOT a duration. See `seconds`.
+    var samples: Int { lastIndex - firstIndex + 1 }
+    /// True when the clip's decoder handed over every slot this contact spans.
+    var samplingIsComplete: Bool { droppedSamplesInside == 0 && droppedSamplesAtEdges == 0 }
 }
 
 /// Stance detection by the plateau criterion described in `GaitSignal`.
@@ -146,6 +182,7 @@ enum StanceDetector {
 
         var stance = Bilateral<[StanceInterval]>(left: [], right: [])
         var clipped = Bilateral<[StanceInterval]>(left: [], right: [])
+        let dt = signal.sampleInterval
         for side in GaitSide.allCases {
             let w = signal.plateauVelocity[side]
             for i in peaks[side] {
@@ -153,9 +190,21 @@ enum StanceDetector {
                 var a = i, b = i
                 while a - 1 >= 0, let v = w[a - 1], v >= level { a -= 1 }
                 while b + 1 < w.count, let v = w[b + 1], v >= level { b += 1 }
+                // Sampling integrity, from the DECODER SLOTS rather than from
+                // array positions: consecutive array entries whose slot numbers
+                // differ by more than one have a hole between them.
+                let slots = signal.frameNumbers
+                let inside = (slots[b] - slots[a]) - (b - a)
+                var atEdges = 0
+                if a > 0 { atEdges += (slots[a] - slots[a - 1]) - 1 }
+                if b + 1 < slots.count { atEdges += (slots[b + 1] - slots[b]) - 1 }
                 let interval = StanceInterval(side: side, firstIndex: a, lastIndex: b,
                                               touchdown: signal.timestamps[a],
-                                              lastStanceSample: signal.timestamps[b])
+                                              lastStanceSample: signal.timestamps[b],
+                                              sampleTimestamps: Array(signal.timestamps[a...b]),
+                                              seconds: signal.timestamps[b] - signal.timestamps[a] + dt,
+                                              droppedSamplesInside: max(0, inside),
+                                              droppedSamplesAtEdges: max(0, atEdges))
                 // `<= 1` and `>= count − 2`: index 0 and index count−1 carry no
                 // velocity at all (a centred difference has no neighbour there),
                 // so a run reaching index 1 or count−2 is already against the
