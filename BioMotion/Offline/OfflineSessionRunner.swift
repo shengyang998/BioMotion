@@ -234,6 +234,7 @@ final class OfflineSessionRunner: ObservableObject {
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed(error.localizedDescription), usedFallbackBBox: false,
                 camT: nil,
+                modelChecksums: nil,
                 bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
@@ -258,6 +259,7 @@ final class OfflineSessionRunner: ObservableObject {
                 status: .implausibleBody(reason: reason, hipWidthMeters: hip, statureMeters: stature),
                 usedFallbackBBox: estimate.usedFallbackBBox,
                 camT: estimate.camT,
+                modelChecksums: (estimate.inputChecksum, estimate.outputChecksum),
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil,
                 isStaticHoldEstimate: false, motionState: .undetermined))
             return false
@@ -268,6 +270,7 @@ final class OfflineSessionRunner: ObservableObject {
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed("retarget produced no usable joints"), usedFallbackBBox: estimate.usedFallbackBBox,
                 camT: estimate.camT,
+                modelChecksums: (estimate.inputChecksum, estimate.outputChecksum),
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
@@ -301,6 +304,7 @@ final class OfflineSessionRunner: ObservableObject {
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .nimbleTimeout, usedFallbackBBox: estimate.usedFallbackBBox,
                 camT: estimate.camT,
+                modelChecksums: (estimate.inputChecksum, estimate.outputChecksum),
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
@@ -312,6 +316,7 @@ final class OfflineSessionRunner: ObservableObject {
             id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
             status: .success, usedFallbackBBox: estimate.usedFallbackBBox,
             camT: estimate.camT,
+                modelChecksums: (estimate.inputChecksum, estimate.outputChecksum),
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil,
             muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
         routeSolveToOwningFrame()

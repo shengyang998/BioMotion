@@ -199,7 +199,7 @@ final class BodyPlausibilityTests: XCTestCase {
             id: 0, sourceImage: UIImage(), timestamp: 0,
             status: .implausibleBody(reason: v.reason ?? "", hipWidthMeters: v.hipWidthMeters,
                                      statureMeters: v.statureMeters),
-            usedFallbackBBox: false, camT: nil, bodyFrame: nil,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
             ikResult: nil, idResult: nil, muscleResult: nil,
             isStaticHoldEstimate: false, motionState: .undetermined))
 

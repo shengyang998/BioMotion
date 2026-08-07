@@ -183,7 +183,19 @@ struct OfflinePlaybackView: View {
                 .padding(.horizontal)
             }
             HStack {
-                Text(frameLabel).font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(frameLabel).font(.caption).foregroundStyle(.secondary)
+                    // Model input/output fingerprints for the on-device vs Mac
+                    // comparison. Screenshot-readable because the phone is the
+                    // only place the divergence appears and console logs are not
+                    // reachable from a TestFlight install.
+                    if let c = resultStore.selectedFrame?.modelChecksums {
+                        Text(String(format: "model in %016llx  out %016llx", c.input, c.output))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
                 Spacer()
                 // Muscles only exist in the 3-D scene, so the toggle is
                 // meaningless while the photo overlay is showing.

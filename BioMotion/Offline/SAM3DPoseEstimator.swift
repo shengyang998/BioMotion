@@ -50,6 +50,41 @@ final class SAM3DPoseEstimator {
         /// (`sam_3d_body_estimator.py:125`, `boxes = [0,0,width,height]` when no
         /// detector is configured). Informational only; the estimate still runs.
         let usedFallbackBBox: Bool
+
+        /// Checksum of the normalised `image` tensor actually handed to Core ML,
+        /// and of the returned `joint_coords`.
+        ///
+        /// These exist to settle one specific question. On a real frame the Mac
+        /// and the phone disagree about the pose — the Mac places a sprinter's
+        /// recovery foot raised behind, the phone places it on the ground —
+        /// while the Mac's own prediction is invariant to person-box changes,
+        /// ±2 LSB pixel noise and RGB/BGR swaps. So the divergence is not in the
+        /// input, unless the input differs in a way none of those probes model.
+        ///
+        /// Matching input checksums with differing output checksums proves the
+        /// two Core ML backends compute different things from identical bytes.
+        /// Differing input checksums instead point at preprocessing, and the
+        /// difference is then reproducible on this machine.
+        ///
+        /// Both are order-sensitive FNV-1a over the raw bit patterns, so a
+        /// single flipped mantissa bit changes them.
+        let inputChecksum: UInt64
+        let outputChecksum: UInt64
+    }
+
+    /// FNV-1a over the bit patterns of a Float sequence. Order-sensitive and
+    /// exact — no tolerance — because the question is whether two backends were
+    /// given, and produced, literally the same bits.
+    static func checksum<S: Sequence>(_ values: S) -> UInt64 where S.Element == Float {
+        var h: UInt64 = 0xcbf29ce484222325
+        for v in values {
+            var bits = UInt64(v.bitPattern)
+            for _ in 0..<4 {
+                h = (h ^ (bits & 0xff)) &* 0x100000001b3
+                bits >>= 8
+            }
+        }
+        return h
     }
 
     enum EstimatorError: LocalizedError {
@@ -215,8 +250,17 @@ final class SAM3DPoseEstimator {
             "cliff": MLFeatureValue(multiArray: cliffArray),
         ])
 
+        // Checksum the exact bytes handed to Core ML. Float16 is widened to
+        // Float first so the hash is comparable with a Mac-side reference that
+        // holds the same values in single precision.
+        let imgPtr = imageArray.dataPointer.bindMemory(to: Float16.self,
+                                                       capacity: imageArray.count)
+        let inputChecksum = Self.checksum(
+            (0..<imageArray.count).lazy.map { Float(imgPtr[$0]) })
+
         let outputProvider = try await Self.runPrediction(model: model, input: provider)
-        return try Self.parseOutput(outputProvider, usedFallbackBBox: usedFallback)
+        return try Self.parseOutput(outputProvider, usedFallbackBBox: usedFallback,
+                                    inputChecksum: inputChecksum)
     }
 
     private func ensureModelLoaded() async throws -> MLModel {
@@ -475,7 +519,8 @@ final class SAM3DPoseEstimator {
 
     // MARK: - Output parsing
 
-    private static func parseOutput(_ provider: MLFeatureProvider, usedFallbackBBox: Bool) throws -> Output {
+    private static func parseOutput(_ provider: MLFeatureProvider, usedFallbackBBox: Bool,
+                                    inputChecksum: UInt64) throws -> Output {
         guard let jointCoordsArray = provider.featureValue(for: "joint_coords")?.multiArrayValue else {
             throw EstimatorError.missingOutputFeature("joint_coords")
         }
@@ -494,8 +539,17 @@ final class SAM3DPoseEstimator {
         let camT = try readVec3(camTArray, name: "cam_t")
         let keypoints2D = try readVec2Array(keypoints2DArray, count: PreprocessingConstants.numOutputKeypoints2D, name: "keypoints_2d")
 
+        // Checksum the joints exactly as the model returned them, before any
+        // retarget or projection, so a mismatch localises to inference itself.
+        var flat: [Float] = []
+        flat.reserveCapacity(jointCoords.count * 3)
+        for j in jointCoords { flat.append(j.x); flat.append(j.y); flat.append(j.z) }
+        flat.append(camT.x); flat.append(camT.y); flat.append(camT.z)
+
         return Output(jointCoords: jointCoords, globalRots: globalRots, camT: camT,
-                      keypoints2D: keypoints2D, usedFallbackBBox: usedFallbackBBox)
+                      keypoints2D: keypoints2D, usedFallbackBBox: usedFallbackBBox,
+                      inputChecksum: inputChecksum,
+                      outputChecksum: Self.checksum(flat))
     }
 
     @inline(__always)

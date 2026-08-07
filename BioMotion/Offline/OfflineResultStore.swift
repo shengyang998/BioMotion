@@ -92,6 +92,9 @@ final class OfflineResultStore: ObservableObject {
         /// project the 3-D joints back onto `sourceImage` through the model's
         /// own camera — see `MHRRetarget.projectToImage`.
         let camT: SIMD3<Float>?
+        /// Model input/output checksums for the on-device vs Mac comparison.
+        /// See `SAM3DPoseEstimator.Output.inputChecksum`.
+        let modelChecksums: (input: UInt64, output: UInt64)?
         let bodyFrame: BodyFrame?
         let ikResult: NimbleEngine.IKOutput?
         let idResult: NimbleEngine.IDOutput?
@@ -155,6 +158,7 @@ final class OfflineResultStore: ObservableObject {
             status: muscleResult != nil ? .success : existing.status,
             usedFallbackBBox: existing.usedFallbackBBox,
             camT: existing.camT,
+            modelChecksums: existing.modelChecksums,
             bodyFrame: existing.bodyFrame,
             ikResult: ikResult ?? existing.ikResult,
             idResult: idResult ?? existing.idResult,
