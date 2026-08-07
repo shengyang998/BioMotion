@@ -435,6 +435,9 @@ static std::string jstrs(const std::vector<std::string>& v) {
   pelT3 = {"pelvis_tx", "pelvis_ty", "pelvis_tz"};
   locked6 = {"mtp_angle_l", "mtp_angle_r", "wrist_flex_l", "wrist_flex_r",
              "wrist_dev_l", "wrist_dev_r"};
+  std::vector<std::string> shoulder6 =
+      {"shoulder_elv_r", "shoulder_elv_l", "shoulder_rot_r", "shoulder_rot_l",
+       "elv_angle_r", "elv_angle_l"};
   movrot82 = ivd51;
   movrot82.insert(movrot82.end(), stern6.begin(), stern6.end());
   movrot82.push_back("T1_r1R_X");
@@ -453,6 +456,15 @@ static std::string jstrs(const std::vector<std::string>& v) {
   _sets["LIMB_ROT19"] = [self indicesFor:limb19];
   _sets["PELVIS_T3"] = [self indicesFor:pelT3];
   _sets["LOCKED6"] = [self indicesFor:locked6];
+  // The six glenohumeral coordinates. They did not exist as DOFs when this
+  // experiment ran: FullBody.osim's shoulder CustomJoints had non-orthogonal
+  // rotation axes, so nimble's crash-guard substituted a WeldJoint and the
+  // model parsed to 163 DOFs. The 2026-08-06 axis unit-snap made them real,
+  // and the patellofemoral weld removed the two knee_angle_*_beta coordinates,
+  // so the model is now 169. Without this block the partition below covers 163
+  // of 169 and the completeness assertion fails for a reason that has nothing
+  // to do with E1.
+  _sets["SHOULDER6"] = [self indicesFor:shoulder6];
   _sets["MOVROT82"] = [self indicesFor:movrot82];
 
   XCTAssertEqual((int)_sets["IVD_FE17"].size(), 17);
@@ -465,12 +477,13 @@ static std::string jstrs(const std::vector<std::string>& v) {
   XCTAssertEqual((int)_sets["LIMB_ROT19"].size(), 19);
   XCTAssertEqual((int)_sets["PELVIS_T3"].size(), 3);
   XCTAssertEqual((int)_sets["LOCKED6"].size(), 6);
+  XCTAssertEqual((int)_sets["SHOULDER6"].size(), 6);
   XCTAssertEqual((int)_sets["MOVROT82"].size(), 82);
 
   std::set<int> cover;
-  const char* blocks[8] = {"IVD51", "RIB72", "STERNUM6", "ABS3", "NECK3",
-                           "LIMB_ROT19", "PELVIS_T3", "LOCKED6"};
-  for (int i = 0; i < 8; i++)
+  const char* blocks[9] = {"IVD51", "RIB72", "STERNUM6", "ABS3", "NECK3",
+                           "LIMB_ROT19", "PELVIS_T3", "LOCKED6", "SHOULDER6"};
+  for (int i = 0; i < 9; i++)
     for (int idx : _sets[blocks[i]]) cover.insert(idx);
   XCTAssertEqual((int)cover.size(), _n);
 }
