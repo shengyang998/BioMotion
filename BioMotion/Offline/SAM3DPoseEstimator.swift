@@ -54,17 +54,20 @@ final class SAM3DPoseEstimator {
         /// Checksum of the normalised `image` tensor actually handed to Core ML,
         /// and of the returned `joint_coords`.
         ///
-        /// These exist to settle one specific question. On a real frame the Mac
-        /// and the phone disagree about the pose — the Mac places a sprinter's
-        /// recovery foot raised behind, the phone places it on the ground —
-        /// while the Mac's own prediction is invariant to person-box changes,
-        /// ±2 LSB pixel noise and RGB/BGR swaps. So the divergence is not in the
-        /// input, unless the input differs in a way none of those probes model.
+        /// These were built to test the hypothesis that the two Core ML backends
+        /// compute different things from identical bytes, after the Mac and the
+        /// phone disagreed about a sprinter's recovery leg. **That hypothesis
+        /// was wrong.** The cause was `upperBodyOnly` (see
+        /// `makePersonRectangleRequest`): the phone detected its own torso-only
+        /// person box while the Mac reproduction was handed a full-body one, so
+        /// the two were never given the same crop. The Mac's much-cited
+        /// invariance to person-box changes was the clue, not the mystery — all
+        /// the probed boxes were generous ones.
         ///
-        /// Matching input checksums with differing output checksums proves the
-        /// two Core ML backends compute different things from identical bytes.
-        /// Differing input checksums instead point at preprocessing, and the
-        /// difference is then reproducible on this machine.
+        /// They stay because the property they check is still worth checking:
+        /// matching input checksums with differing output checksums would mean
+        /// the backends genuinely diverge. Read them as a parity check, not as
+        /// evidence about any open bug.
         ///
         /// Both are order-sensitive FNV-1a over the raw bit patterns, so a
         /// single flipped mantissa bit changes them.
@@ -409,9 +412,9 @@ final class SAM3DPoseEstimator {
     /// Body then has no leg pixels to read and emits a near-standing mean pose
     /// for the legs while the torso still tracks — which is what "the skeleton
     /// doesn't match" looked like. Scored against Vision's own 2-D body pose over
-    /// 9 frames, leg error was 9.2% of subject height with the default box and
-    /// 3.0% with the full-body box, while torso error was unchanged (2.1% vs
-    /// 2.0%). Harness: `labs/sam-3d-body/export/box_ablation.py`.
+    /// 20 frames, leg error was 9.0% of subject height with the default box and
+    /// 4.6% with the full-body box, while torso error was unchanged (2.0% vs
+    /// 1.9%). Harness: `labs/sam-3d-body/export/box_ablation.py`.
     ///
     /// Exposed as a factory so a test can assert the flag without a Vision run.
     static func makePersonRectangleRequest() -> VNDetectHumanRectanglesRequest {

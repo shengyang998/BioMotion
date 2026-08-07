@@ -11,9 +11,9 @@ private typealias PreprocessingConstants = SAM3DPoseEstimator.PreprocessingConst
 /// hold a near-standing mean pose regardless of what the subject is doing.
 ///
 /// Measured on a 576x768 running clip against Vision's own 2-D body pose
-/// (`labs/sam-3d-body/export/box_ablation.py`, 9 frames): leg error 9.2% of
-/// subject height with the default box versus 3.0% with the full-body box, with
-/// torso error unchanged at 2.1% vs 2.0%.
+/// (`labs/sam-3d-body/export/box_ablation.py`, 20 frames): leg error 9.0% of
+/// subject height with the default box versus 4.6% with the full-body box, with
+/// torso error unchanged at 2.0% vs 1.9%.
 final class PersonBoxTests: XCTestCase {
 
     /// Pins the trap itself. If a future SDK flips this default, the production

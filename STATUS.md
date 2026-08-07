@@ -29,7 +29,7 @@ biggest links were **not** where the effort had been going.
   points into depth. See [Posture findings](#posture-findings-a-kinematics-only-layer-2026-08-07).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
-  torso and the legs were never in frame. Leg error 9.2% → 3.0% of subject height, torso unchanged.
+  torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
   See [Device vs Mac](#device-vs-mac-solved--vision-was-returning-an-upper-body-box-2026-08-07).
 
 There is **no known-red test any more**. `testRepeatedIKOnIdenticalMarkersIsStable` passes as
@@ -860,18 +860,26 @@ model could see, so it emitted a near-standing mean pose for them while the tors
 Fixed by `makePersonRectangleRequest()`, which sets the flag and exists so a test can assert it
 (`BioMotionTests/PersonBoxTests.swift`).
 
-Measured on `video_015.mov` (576×768 running clip), same model, same frames, only the box differing:
+Measured on `video_015.mov` (576×768 running clip), same model, same frames, only the box differing.
+Error is mean joint distance as a percentage of the subject's own pixel height, refereed by
+**Vision's own 2-D body pose** — an estimator sharing no code with SAM 3D Body, so neither crop
+judges itself.
 
 | box | height as % of image | leg error | torso error |
 |---|---|---|---|
-| `upperBodyOnly = true` (was) | 20–26%, ends above the hips | **9.2%** | 2.1% |
-| `upperBodyOnly = false` (fix) | 46–60%, reaches the feet | **3.0%** | 2.0% |
+| `upperBodyOnly = true` (was) | 20–26%, ends above the hips | **9.0%** | 2.0% |
+| `upperBodyOnly = false` (fix) | 46–60%, reaches the feet | **4.6%** | 1.9% |
+| whole-image fallback | 100% | 4.7% | 2.0% |
 
-Error is mean joint distance as a percentage of the subject's own pixel height, refereed by
-**Vision's own 2-D body pose** — an estimator sharing no code with SAM 3D Body, so neither crop
-judges itself. All 9 sampled frames improved (9.2% worst case 12.7% → 3.0% worst case 4.2%); the
-torso did not move. That "legs transform, torso unchanged" signature is what separates the fix from
-a number that drifted. Harness: `labs/sam-3d-body/export/{vision_box_probe.swift,box_ablation.py}`.
+20 frames spanning the clip. A sparser 9-frame sample taken first read 9.2% → 3.0%; the denser
+sample is the better-powered number and both are recorded rather than the flattering one. Every
+frame improved in both samples, and the torso did not move in either. That "legs transform, torso
+unchanged" signature is what separates the fix from a number that drifted. Harness:
+`labs/sam-3d-body/export/{vision_box_probe.swift,box_ablation.py}`.
+
+**The whole-image fallback needs no work** — it scores 4.7% against the real box's 4.6%, so the
+path taken when Vision finds nobody is not a quality cliff and does not need a
+carry-the-previous-frame's-box mechanism. Measured specifically to avoid building that.
 
 **Asking for the whole body does not cost detection rate** — the obvious way this fix could have
 backfired, since a whole-body box is the harder detection and a miss falls back to the whole image.
