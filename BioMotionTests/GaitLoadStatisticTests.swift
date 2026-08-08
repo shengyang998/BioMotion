@@ -265,8 +265,10 @@ final class GaitLoadStatisticTests: XCTestCase {
                                                    framesPerSecond: 30, filterTaps: 5))
         let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         XCTAssertEqual(load.differencePercent, 100 * 0.30 / 0.65, accuracy: 1e-9)
-        XCTAssertTrue(s.permits(load))
-        XCTAssertTrue(s.claim(for: load).contains("harder on the left"))
+        XCTAssertTrue(s.clearsStatisticalFloor(load),
+                      "a real 46 % difference with no contact-to-contact scatter clears every "
+                      + "statistical floor — the statistic is not a way of always saying 'even'")
+        XCTAssertFalse(s.permits(load), "and it is still not shown: see GaitLoadSummary")
     }
 
     /// The residual count-dependence, stated rather than hidden: the middle
@@ -315,12 +317,20 @@ final class GaitLoadStatisticTests: XCTestCase {
             return Double(state >> 11) / Double(UInt64(1) << 53)
         }
 
-        /// Normal(0.50, 0.12), clamped clear of the QP's saturation bound so
-        /// `isSaturated` never enters the comparison.
-        mutating func activation() -> Double {
+        /// Normal(`mean`, `sigma`), clamped clear of the QP's bounds so neither
+        /// `isSaturated` nor `isAtActivationFloor` enters the comparison.
+        ///
+        /// The defaults are the values every measurement in this repo was taken
+        /// at, and they are defaults rather than constants because
+        /// `GaitClaimSurvivalTests` sweeps the scatter — it is the input the
+        /// sampling interval is built from, and a survival count quoted at one
+        /// value of it would be quoting a choice.
+        mutating func activation(mean: Double = 0.50,
+                                 sigma: Double = 0.12,
+                                 floor: Double = 0.05) -> Double {
             let u1 = Swift.max(uniform(), 1e-12), u2 = uniform()
             let z = (-2 * log(u1)).squareRoot() * cos(2 * .pi * u2)
-            return Swift.min(Swift.max(0.50 + 0.12 * z, 0.05), 0.95)
+            return Swift.min(Swift.max(mean + sigma * z, floor), 0.95)
         }
     }
 

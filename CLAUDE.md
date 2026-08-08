@@ -109,17 +109,33 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   IKConvergence 91 s, ShoulderRotMask 51 s, StaticHold 48 s, MuscleQPUnits 41 s,
   IKSolverInternals 33 s), so "the kill landed just after X" is almost always a statement about the
   schedule, not about X.
-- **A moment arm the loader itself calls wrong is a PER-MUSCLE SCALE — so it cancels out of a
-  LEFT/RIGHT ratio and does not cancel between two muscles.** `MomentArmComputer` logs
-  `⚠ 76 PathWrap references on 66 muscles are NOT modelled` for `FullBody.osim`, and that set is
-  essentially every lower-limb muscle a runner would recognise. Measured on the shipping OSQP solver
-  (`MomentArmErrorCancellationTests`, bilateral rig with a known analytic answer): scaling one
-  muscle's moment arm by 0.6 on BOTH sides moves the worst left/right figure by **1.04 pp** — less
-  than the **1.52 pp** the solver's own `eps = 1e-3` tolerance already moves it — while moving the
-  cross-muscle key by **+80.9 %** and reordering the list. Scaling ONE side moves the left/right
-  figure by **23.8 pp**. So a per-muscle ranking is not a measurement in this build and is not
-  published; the left/right comparison is, and it depends on the two sides being modelled
-  identically.
+- **"A wrong moment arm cancels out of a LEFT/RIGHT ratio" was measured on a rig where it could not
+  have failed — and it is FALSE.** This entry said the opposite for two days and cost the product its
+  last claim. The rig made every right joint torque `0.8×` its left counterpart, and the shipped QP
+  (`min ½aᵀ(εI + λAᵀA)a − λτᵀAa`) is LINEAR in `τ`, so `a_R = 0.8·a_L` exactly **for any moment-arm
+  matrix**: the perturbation moved the answer by 1e-6 pp in exact arithmetic, and the **1.04 pp**
+  reported as evidence was OSQP's own `eps = 1e-3` tolerance (measured noise floor **1.52 pp**).
+  Change one variable — give the right leg a different torque SHAPE (hip 0.80×, knee 1.00×) instead
+  of a different size, which is what a gait asymmetry is — and the same bilateral `×0.6` perturbation
+  moves a published figure by **9.92 pp** on the shipping solver (13.11 pp in exact arithmetic,
+  17.72 pp at a bigger shape difference), turning a real `−17.9 %` into a displayed `−8.0 %`. It
+  lands on a muscle whose OWN path is modelled correctly, because the QP redistributes load between
+  synergists. And the regime where it does cancel is the regime where **every muscle reads the same
+  figure**, i.e. where the per-muscle breakdown carries no per-muscle information. Both halves in
+  `MomentArmErrorCancellationTests`. Consequences: the per-muscle left/right claim is retired
+  (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported = false`), the 3-D muscle overlay is off on
+  analysed running clips, and the surviving left/right finding on that screen is CONTACT TIME, which
+  touches neither a moment arm nor the QP. A one-sided error still costs **23.8 pp**; a sign-flipped
+  one still pins both sides to `aMin` and reads exactly 0.0 % against a true 22.7 %.
+- **A list sorted BY a statistic is not a sample of that statistic, and the top of it is an order
+  statistic.** `GaitLoadSummary.make` builds a comparison for **all 175** bilateral pairs in
+  `FullBody.osim`, `ordered(_:)` sorts by `|difference| / claimFloor`, and the panel drew the top 8
+  under "Each comparison is a 95 % one and 8 are shown, so about one in twenty…". A calibrated
+  t-interval admits α of the family BY CONSTRUCTION, so on a symmetric runner the per-comparison rule
+  publishes **4-5 false findings per clip** at the scatter this repo measures everything else at —
+  and they sort to positions 1-5. `samplingUncertaintyPercent` now takes its Student-t at `α/N` for
+  `N = screenedComparisonCount`; the multiplier goes 2.776 → 11.899 at df=4 (×4.3), and the measured
+  survivor count is **0 on every pinned clip at every scatter level** (`GaitClaimSurvivalTests`).
 - **`isSaturated` is not "the QP is in its linear regime" — the box has TWO bounds.** The
   cancellation above holds only in the interior. A muscle whose modelled path has the wrong sign is
   not rescaled: the QP refuses to recruit it and pins it to `a ≥ aMin = 0.02` on BOTH sides, where it

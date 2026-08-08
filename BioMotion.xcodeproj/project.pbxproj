@@ -43,6 +43,7 @@
 		732EF1424B7BE159A1A2A35B /* GaitClipFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */; };
 		776F7C63402275798F72DCF9 /* GaitReportPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6812C3DE8176C6B95FB8FFB6 /* GaitReportPanel.swift */; };
 		7CC7D377AAE200F3C611F8F2 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = BB09CCB3DD5A4B20A3553080 /* Fixtures */; };
+		7D675D34A1FC4A52B6096561 /* GaitClaimSurvivalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */; };
 		7ED1CE05D8C199C942D22051 /* SkeletonOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */; };
 		8124CC275659661624C356FD /* PostureFindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFD138F9C20ED4CCDD68860 /* PostureFindings.swift */; };
 		8642192F1B799220F845866A /* GaitContactAgreementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C84AF8B5E5E865A3939C9D2 /* GaitContactAgreementTests.swift */; };
@@ -143,6 +144,7 @@
 		421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineOrchestrationTests.swift; sourceTree = "<group>"; };
 		4472D307677A7F2DBB60C275 /* AssetPackModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetPackModelStore.swift; sourceTree = "<group>"; };
 		44D59B2D4FBCD3D020D9136A /* Rajagopal2016.osim */ = {isa = PBXFileReference; path = Rajagopal2016.osim; sourceTree = "<group>"; };
+		45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitClaimSurvivalTests.swift; sourceTree = "<group>"; };
 		47A0577D615043AFBD9112E8 /* GaitLoadSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitLoadSummary.swift; sourceTree = "<group>"; };
 		4874B31C9C33272450AE6B44 /* GaitDynamicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitDynamicsTests.swift; sourceTree = "<group>"; };
 		4A5E8807D42FF44784FCF22F /* OneEuroFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneEuroFilter.swift; sourceTree = "<group>"; };
@@ -263,6 +265,7 @@
 				C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */,
 				A8E2DEF6905CA595DA267C6A /* E1MarkerSetComparisonTests.mm */,
 				9E68C0715E9D9E407234A2F8 /* FullBodyDOFFixture.swift */,
+				45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */,
 				67BF7FEBED56390D642A6136 /* GaitClipFixture.swift */,
 				52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */,
 				F1F28CC69642340D5C1B6598 /* GaitConstantSensitivityTests.swift */,
@@ -622,6 +625,7 @@
 				61C67AFA01C9529323A6BF7B /* DerivativeWindowTests.swift in Sources */,
 				68ADD79B07C15C342DFB2CB5 /* E1MarkerSetComparisonTests.mm in Sources */,
 				58D9B346925617BEEE77A5D3 /* FullBodyDOFFixture.swift in Sources */,
+				7D675D34A1FC4A52B6096561 /* GaitClaimSurvivalTests.swift in Sources */,
 				E125B69E6C815538A4DA62A7 /* GaitClipFixture.swift in Sources */,
 				732EF1424B7BE159A1A2A35B /* GaitClipFixtureTests.swift in Sources */,
 				066964231F95A13EC1CA5E97 /* GaitConstantSensitivityTests.swift in Sources */,

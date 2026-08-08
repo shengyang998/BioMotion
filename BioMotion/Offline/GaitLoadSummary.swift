@@ -4,10 +4,15 @@ import Foundation
 /// time** — plus the per-clip resolution that says which of those comparisons
 /// the clip is actually allowed to make.
 ///
-/// # What this type claims, and the one thing it deliberately no longer claims
+/// # ⚠️ The per-muscle left/right claim is RETIRED in this build
 ///
-/// It publishes, per muscle, the LEFT/RIGHT comparison. It does NOT publish a
-/// muscle-to-muscle ordering, and `muscles` is not sorted by load.
+/// This type still MEASURES it, because the measurement is what shows it cannot
+/// be stated. `perMuscleLeftRightClaimIsSupported` is `false`, `permits(_:)`
+/// therefore returns false for every muscle on every clip, and no screen prints
+/// a per-muscle percentage. `clearsStatisticalFloor(_:)` is the surviving
+/// statistical predicate and is deliberately NOT permission to say anything.
+///
+/// # Why — the cancellation argument was circular, and its replacement fails
 ///
 /// `MomentArmComputer` logs at load that 76 `PathWrap` references on 66 of
 /// `FullBody.osim`'s 520 muscles are not modelled: those paths take a straight
@@ -19,24 +24,45 @@ import Foundation
 /// recognise. Running is a flexed-pose activity, which is where the warning says
 /// the error is worst and where the sign can flip.
 ///
-/// **The error is a per-muscle SCALE, so it cancels in a left/right ratio and
-/// does not cancel between two muscles.** Both halves of that are measured, on
-/// the shipping QP, in `MomentArmErrorCancellationTests`: perturbing one
-/// muscle's moment arm on BOTH sides moves no muscle's `differencePercent` by
-/// more than a rounding error while moving the cross-muscle quantity by tens of
-/// percent and reordering the list. So:
+/// Until 2026-08-08 this file said the error was a per-muscle SCALE that
+/// cancelled out of the left/right ratio, and cited a measurement. **That
+/// measurement could not have come out any other way.** The rig it ran on made
+/// every RIGHT joint torque `0.8×` its left counterpart, and the QP
+/// (`min ½aᵀ(εI + λAᵀA)a − λτᵀAa`) is LINEAR in `τ` while no bound is active —
+/// so `a_R = 0.8·a_L` exactly, for ANY moment-arm matrix. The perturbation could
+/// not move the answer; in exact arithmetic it moves it by 1e-6 pp, and the
+/// 1.04 pp that was reported is the solver's own tolerance. See
+/// `MomentArmErrorCancellationTests`, which now states that as an identity and
+/// tests the case that can actually fail.
 ///
-/// * the left/right sentence stays, and it is the product;
-/// * the ranking is gone. The list is ordered by which left/right comparison
-///   this clip resolved best, which is a property of the CLAIMS and not a claim
-///   about which muscle worked hardest.
+/// Two measurements replace it, both on the shipping OSQP solver:
 ///
-/// The same test isolates what the surviving claim depends on: the error must be
-/// the same factor on both sides. A one-sided perturbation moves the left/right
-/// figure by more than 10 percentage points. The model is bilaterally symmetric
-/// and each side is sampled at its own mid-contact, so this holds by
-/// construction — but it is an assumption, it is stated on screen, and this is
-/// the number it is worth.
+/// 1. **Where the two legs' torques ARE proportional, every muscle reads the
+///    SAME left/right figure.** That is the same linearity. So in the only
+///    regime where the moment-arm error provably cancels, the per-muscle
+///    breakdown carries no per-muscle information at all — it is one number
+///    repeated, and that number is the torque scale ratio, which the contact
+///    block above the list already reports from timing.
+/// 2. **Where they differ in SHAPE — which is what a gait asymmetry IS — the
+///    error does not cancel.** Perturbing one muscle's moment arm by ×0.6 on
+///    BOTH sides, with the right leg at 0.8× the left's hip torque and 1.0× its
+///    knee torque, moves a published left/right figure by **9.92 pp** on the
+///    shipping OSQP solver — a real `−17.89 %` displayed as `−7.97 %` — against
+///    a solver noise floor of 1.52 pp. That is larger than the finest of the
+///    three pinned clips' publication floors (8.086 %) and 98 % of the next
+///    (10.145 %); in exact arithmetic, where the solver's own tolerance does not
+///    blunt it, the same case is 13.11 pp, and a larger shape difference
+///    (knee_r/knee_l = 0.6) measures 17.72 pp.
+///
+///    It moves `beta`, a muscle whose OWN path is modelled correctly, because
+///    the QP redistributes load between synergists — so no per-row "this
+///    muscle's path is a straight line" flag can contain it.
+///
+/// Together: all per-muscle differentiation in this statistic lives in the
+/// non-proportional part of the torque, and that is exactly the part an
+/// unmodelled wrap corrupts. The claim is not gateable, because the gate that
+/// would protect it (proportional torques) is the regime in which it says
+/// nothing.
 ///
 /// # Why there is no headline newton figure here, and never will be
 ///
@@ -46,21 +72,23 @@ import Foundation
 /// the owner's cadences. Printed on a screen, "2.9 body weights" reads as a
 /// measurement. It is not one.
 ///
-/// What survives that error exactly is every LEFT/RIGHT ratio. A peak-force
-/// error is a COMMON SCALE over all 520 muscles in one contact, and the muscle
-/// QP is linear in the external load while no muscle is saturated. (It degrades
-/// where activations reach `a ≤ 1`; running peaks do reach that, so
-/// `isSaturated` withholds per muscle.)
+/// A peak-force error of that kind is a COMMON SCALE on `τ`, and the QP is
+/// linear in `τ` while no bound is active, so it divides out of a left/right
+/// ratio exactly — unlike a moment-arm error, which changes the MATRIX and
+/// therefore does not. That distinction is the whole content of the section
+/// above: `τ → sτ` cancels, `A → DA` does not.
 ///
-/// # Every claim passes three floors, not one
+/// # The statistical floor passes three terms, not one
 ///
-/// `claimFloorPercent(for:)` is what a stated left/right difference has to
-/// clear, and it is built from three separate things:
+/// `claimFloorPercent(for:)` is what a left/right difference would have to
+/// clear for the STATISTICS to allow it — which, since the paragraph above,
+/// is a necessary and not a sufficient condition. It is built from three
+/// separate things:
 ///
 /// 1. **What the clip's sampling grid and this runner's strides allow** —
 ///    `GaitResolution.resolvableAsymmetryPercent`. Timing only.
 /// 2. **What this muscle's own step-to-step scatter allows** —
-///    `MuscleLoad.samplingUncertaintyPercent`, the 95 % half-width of
+///    `MuscleLoad.samplingUncertaintyPercent`, the half-width of
 ///    `differencePercent` computed from the per-contact samples themselves.
 ///    This term did not exist, and its absence was measurable: at the scatter
 ///    `GaitLoadStatisticTests` uses, a perfectly symmetric runner produced a
@@ -68,19 +96,25 @@ import Foundation
 ///    floor, i.e. roughly one in four muscles reading a false finding. A floor
 ///    derived from frames per contact and the stride period cannot see that,
 ///    because activation scatter is not one of its inputs.
+///    **Its confidence level is family-wise, not per-comparison** — see
+///    `screenedComparisonCount`. `make` builds one `MuscleLoad` for every
+///    bilateral pair the model carries (175 of `FullBody.osim`'s 520 muscles
+///    have both an `_l` and an `_r`), and the list is then sorted BY the
+///    statistic under test, so quoting a per-comparison 95 % against the top of
+///    that list understates the false-positive rate by the size of the pool.
 /// 3. **The contact-time difference the force model injects** —
 ///    `contactTimeContributionPercent`. Where the clip resolves the left/right
 ///    contact difference, `Fmax_side = (π/2)(1 + tf/tc_side)` differs between
 ///    the legs, the QP is linear in the external load, and that difference
 ///    lands inside every muscle's left/right number as a common additive term.
-///    The floor is widened by it and the screen prints its size, so a user can
-///    subtract it instead of being told only that it is in there somewhere.
 ///
 /// # The clip-level gates
 ///
-/// `arePublishable` is the single answer to "may this screen show loads at
-/// all", and every consumer — the list, the bars, the 3-D overlay — has to ask
-/// it.
+/// `arePublishable` is the single answer to "did this clip measure loads at
+/// all". It is a DATA gate, and it is no longer the last one: since the
+/// per-muscle comparison was retired, a clip can pass every gate below and still
+/// state no muscle finding. The 3-D overlay is off on the running path for the
+/// same reason (`OfflinePlaybackView.muscleMagnitudesArePublishable`).
 ///
 /// 1. **`residualGatePassed`** — the VERTICAL disagreement between the timing
 ///    model's force and the one inverse dynamics solved,
@@ -178,14 +212,23 @@ struct GaitLoadSummary {
         /// landing on the floor on both sides and reading exactly 0 % left/right,
         /// which is a lost finding presented as an even one.
         let isAtActivationFloor: Bool
-        /// **The 95 % half-width of `differencePercent` implied by this muscle's
-        /// own contact-to-contact scatter**, in percent.
+        /// **The FAMILY-WISE 95 % half-width of `differencePercent` implied by
+        /// this muscle's own contact-to-contact scatter**, in percent.
         ///
         /// `SE = √(s_L²/n_L + s_R²/n_R)` over the per-contact samples, scaled to
         /// the same denominator `differencePercent` uses and multiplied by the
-        /// two-sided 95 % Student-t factor for `min(n_L, n_R) − 1` degrees of
-        /// freedom — conservative, because at five or six contacts a normal
+        /// two-sided Student-t factor for `min(n_L, n_R) − 1` degrees of freedom
+        /// — Student-t, not 1.96, because at five or six contacts a normal
         /// multiplier understates the interval by a third.
+        ///
+        /// **The t is taken at `α / N`, not at `α`.** `N` is
+        /// `screenedComparisonCount`, the number of bilateral pairs this clip
+        /// screened — every pair the model carries, ~175 on `FullBody.osim`.
+        /// A per-comparison 95 % interval applied to ~175 comparisons and then
+        /// sorted by the statistic puts the largest order statistic first by
+        /// construction; the interval has to be the one that holds for the whole
+        /// family, or the number quoted beside it is not the error rate the user
+        /// is exposed to. Measured cost: see `GaitClaimSurvivalTests`.
         ///
         /// Infinite when either side has fewer than two contacts: with one
         /// sample there is no scatter estimate, and an unmeasured uncertainty is
@@ -208,22 +251,21 @@ struct GaitLoadSummary {
 
         var heavierSide: String { leftLoad >= rightLoad ? "left" : "right" }
 
-        /// The heavier side's load, purely so a row's two bars can be drawn to
-        /// their own scale. **Never a ranking key** — see the type doc.
-        var withinMuscleScale: Double { Swift.max(leftLoad, rightLoad) }
     }
 
     /// Bilateral muscles, **ordered by how well this clip resolved each one's
-    /// left/right difference** — publishable claims first, then by the size of
-    /// the difference relative to its own floor. This is an ordering of CLAIMS,
-    /// not of muscles: position 1 is the comparison this clip is most sure
-    /// about, not the muscle carrying the most load.
+    /// left/right difference** — the ones clearing their statistical floor
+    /// first, then by the size of the difference relative to that floor.
     ///
-    /// The property was called `ranked` and was sorted by `max(left, right)`.
-    /// That sort had two independent defects on top of the moment-arm one: the
-    /// key is clipped at `a ≤ 1`, so a clip where twelve muscles saturate sorted
-    /// them alphabetically by id; and the bars drawn from it were full length
-    /// under a caption saying the comparison was withheld.
+    /// ⚠️ **This ordering is BY the statistic, so the head of it is an order
+    /// statistic and not a sample.** Nothing may take the top `k` of this array
+    /// and describe them with a per-comparison error rate; that is what the
+    /// panel did, over a pool of ~175 pairs, while telling the user "about one
+    /// in twenty". No screen consumes the order any more —
+    /// `perMuscleLeftRightClaimIsSupported` is false — and the correction that
+    /// makes the interval hold over the whole pool lives in
+    /// `samplingUncertaintyPercent`, so a future consumer inherits it rather
+    /// than having to remember.
     private(set) var muscles: [MuscleLoad]
     /// The finest left/right difference this clip's TIMING may assert, percent.
     /// One of the three inputs to `claimFloorPercent(for:)`.
@@ -259,7 +301,26 @@ struct GaitLoadSummary {
     let stanceFrameCount: Int
     /// Stance frames the plan claimed, before those exclusions.
     let claimedStanceFrameCount: Int
-    /// How many muscles hit the `a ≤ 1` bound anywhere.
+    /// **How many bilateral comparisons this clip SCREENED** — the family the
+    /// per-muscle confidence intervals have to hold over.
+    ///
+    /// It is every muscle that could have produced a claim: both sides carry at
+    /// least `minimumContactsPerSide` contacts, neither bound is active, and the
+    /// mean is positive. It deliberately does NOT depend on the size of any
+    /// muscle's difference, because a family defined by the statistic under test
+    /// is not a family — `ordered(_:)` sorts by exactly that statistic and the
+    /// panel used to take the top of it.
+    ///
+    /// On `FullBody.osim` the ceiling is 175 (the pairs with both an `_l` and an
+    /// `_r` out of 520 muscles); the realised number is lower on any clip where
+    /// the QP pins muscles to a bound, which it does to most of them.
+    let screenedComparisonCount: Int
+    /// How many MUSCLES hit the `a ≤ 1` bound anywhere.
+    ///
+    /// Muscles, not muscle-sides: it counted `soleus_l` and `soleus_r` as two
+    /// while `flooredMuscleCount` beside it counted soleus once, and the panel
+    /// printed the pair in one sentence — so a clip that clipped ten muscles on
+    /// both legs told the user twenty of their muscles had maxed out.
     let saturatedMuscleCount: Int
     /// How many muscles sat on the `a ≥ aMin` bound anywhere. Same argument,
     /// other end of the box — see `MuscleLoad.isAtActivationFloor`.
@@ -330,11 +391,32 @@ struct GaitLoadSummary {
     /// The fraction of the claimed stance the two independent contact detectors
     /// have to agree on.
     static let minimumContactAgreementFraction = 0.5
-    /// How many muscles the panel shows. Published here because the per-muscle
-    /// interval is a 95 % one, so showing this many makes roughly one in twenty
-    /// of them read a difference by chance — a fact the screen states rather
-    /// than leaves to the reader.
-    static let displayedMuscleCount = 8
+    /// The family-wise error rate the per-muscle intervals are built to hold at.
+    /// `samplingUncertaintyPercent` takes its Student-t at `α / N` for `N =`
+    /// `screenedComparisonCount`, so this is the probability that ANY of the
+    /// clip's comparisons reads a difference that is not there — not the
+    /// probability for one of them.
+    static let familyWiseErrorRate = 0.05
+
+    /// **Whether a per-muscle left/right difference may be STATED.** `false`,
+    /// and not because of anything a clip can change.
+    ///
+    /// The type doc carries the two measurements. In short: the QP is linear in
+    /// the joint torques, so where the two legs' torques are proportional every
+    /// muscle reads the same figure (no per-muscle information) and where they
+    /// are not, an unmodelled `PathWrap` moves a published figure by 9.92 pp on
+    /// the shipping solver — past the finest floor the pinned clips carry —
+    /// including on muscles whose own path is modelled correctly, because the QP
+    /// redistributes load between synergists.
+    ///
+    /// **What would flip it back.** Model the 76 missing `PathWrap` references
+    /// (or bound their moment-arm error), and then re-run
+    /// `MomentArmErrorCancellationTests.testAShapeAsymmetryMakesABilateralMomentArmErrorLeak`
+    /// with the bound in place: if the leak drops below the smallest publication
+    /// floor on the pinned clips (8.086 %), the claim can come back with that
+    /// term added to `claimFloorPercent`. Nothing else does it — more contacts
+    /// do not, because the leak is a bias and not scatter.
+    static let perMuscleLeftRightClaimIsSupported = false
 
     /// What fraction of the claimed stance frames survived every per-frame
     /// condition.
@@ -436,25 +518,35 @@ struct GaitLoadSummary {
              + "and the ground in frame."
     }
 
-    /// **The floor THIS muscle's left/right difference has to clear.**
+    /// **The STATISTICAL floor this muscle's left/right difference has to
+    /// clear** — necessary, and since the moment-arm leak, not sufficient.
     ///
     /// `max(what the clip's timing resolves, what this muscle's own step-to-step
-    /// scatter resolves) + |the contact-time term the force model injects|`.
-    /// The first two are competing lower bounds on a distinguishable difference;
-    /// the third is a known additive contamination that has to be taken off
-    /// before what is left can be attributed to the muscle.
+    /// scatter resolves across the whole screened family) + |the contact-time
+    /// term the force model injects|`. The first two are competing lower bounds
+    /// on a distinguishable difference; the third is a known additive
+    /// contamination that has to be taken off before what is left can be
+    /// attributed to the muscle.
+    ///
+    /// The unmodelled-`PathWrap` leak is deliberately NOT a fourth term here.
+    /// It is not a floor: nothing in this pipeline measures or bounds it, so
+    /// adding an invented number would make the gate look quantitative when it
+    /// is not. It is handled where an unbounded error belongs — as a flat
+    /// refusal, `perMuscleLeftRightClaimIsSupported`.
     func claimFloorPercent(for load: MuscleLoad) -> Double {
         Swift.max(resolvableAsymmetryPercent, load.samplingUncertaintyPercent)
             + abs(contactTimeContributionPercent)
     }
 
-    /// Whether this muscle's stated left/right difference may be claimed.
+    /// **Whether this muscle's left/right difference clears everything the
+    /// STATISTICS ask of it — which is not permission to say it.** See
+    /// `permits(_:)`.
     ///
     /// It takes the MUSCLE, not a bare percentage: the floor depends on that
     /// muscle's own contact-to-contact scatter, and a signature that accepts a
     /// lone number cannot ask about it. The old one could not, which is exactly
     /// how a claim came to be gated on timing quantisation alone.
-    func permits(_ load: MuscleLoad) -> Bool {
+    func clearsStatisticalFloor(_ load: MuscleLoad) -> Bool {
         let d = load.differencePercent
         return d.isFinite
             && !load.isSaturated
@@ -463,33 +555,33 @@ struct GaitLoadSummary {
             && arePublishable
     }
 
-    /// The sentence for one muscle's left/right comparison, or the refusal —
-    /// which always names the lever.
-    func claim(for load: MuscleLoad) -> String {
-        let d = load.differencePercent
-        guard d.isFinite else { return "No load measured on one side." }
-        if let reason = withheldReason { return reason }
-        if load.isSaturated {
-            return "Withheld: this muscle reached full effort, where the ground-force estimate "
-                 + "stops cancelling out of a left/right ratio."
-        }
-        if load.isAtActivationFloor {
-            return "Withheld: this muscle sat at the solver's resting-tone floor, where the same "
-                 + "cancellation stops holding — the number below the floor is not recoverable, "
-                 + "so a left/right ratio taken across it is not either."
-        }
-        let floor = claimFloorPercent(for: load)
-        guard floor.isFinite else {
-            return "Withheld: \(load.leftContacts) left and \(load.rightContacts) right contacts "
-                 + "carried this muscle, and two on each side are the minimum for measuring how "
-                 + "much it varies from step to step."
-        }
-        if abs(d) < floor {
-            return String(format: "Even to within what this clip and this muscle's own "
-                          + "step-to-step scatter can resolve (±%.0f%%).", floor)
-        }
-        return String(format: "%.0f%% harder on the %@ (needs ±%.0f%%).", abs(d),
-                      load.heavierSide, floor)
+    /// **Whether this muscle's left/right difference may be put in front of the
+    /// user.** `false` for every muscle on every clip in this build — the
+    /// statistical floor above is necessary, and
+    /// `perMuscleLeftRightClaimIsSupported` is the sufficient condition it does
+    /// not have.
+    func permits(_ load: MuscleLoad) -> Bool {
+        Self.perMuscleLeftRightClaimIsSupported && clearsStatisticalFloor(load)
+    }
+
+    /// **Why no muscle row appears on screen**, in the user's words. One
+    /// paragraph, on the screen where the rows used to be.
+    ///
+    /// It names what WAS measured, so the absence does not read as the app
+    /// having failed to run, and it points at the contact-time comparison above
+    /// it, which is the left/right finding this clip can still support.
+    var perMuscleRetirementSentence: String {
+        "Left and right were compared for \(muscles.count) muscle pairs, and none of those "
+        + "comparisons is shown. The muscle model reaches each muscle's effort by dividing a "
+        + "joint moment by a moment arm, and 66 of its muscles are given a straight line where "
+        + "the real tendon wraps around bone. That error cancels out of a left/right "
+        + "comparison only when your two legs load the joints in the same PATTERN — and when "
+        + "they do, every muscle returns the same figure, so there is one number for the whole "
+        + "leg and no per-muscle finding in it. When they do not — which is what a left/right "
+        + "difference IS — the error moves a muscle's figure by around 10 percentage points on "
+        + "this app's own test rig, as large as the difference a good clip can resolve, and it "
+        + "moves muscles whose own paths are modelled correctly. So the contact-time comparison above is the "
+        + "left/right finding this clip supports, and a per-muscle breakdown is not."
     }
 
     /// The frame rate that would put the QUANTISATION FLOOR at `target`
@@ -519,8 +611,8 @@ struct GaitLoadSummary {
     /// refused for too few contacts. Both are checked here now.
     var resolutionSentence: String {
         let base = String(format: "This clip's timing resolves left/right to about ±%.0f%% "
-                          + "(%.1f frames per contact at %.0f fps). Each muscle also has to "
-                          + "clear its own step-to-step scatter, shown with its claim.",
+                          + "(%.1f frames per contact at %.0f fps). That is what the CONTACT-TIME "
+                          + "comparison below has to clear.",
                           resolvableAsymmetryPercent, framesPerContact, framesPerSecond)
         let target = Swift.max(5.0, bestAchievablePercentAtAnyFrameRate)
         guard target.isFinite, resolvableAsymmetryPercent > target else { return base }
@@ -567,16 +659,19 @@ struct GaitLoadSummary {
     /// passing, and it is phase-dependent — braking early, propulsion late — so
     /// unlike a common scale it does not cancel out of a comparison.
     ///
-    /// It DOES still cancel out of a left/right comparison of one muscle, for
-    /// the same reason a moment-arm error does: both legs are sampled at their
-    /// own mid-contact through the same fabrication.
+    /// **It was also claimed to cancel out of a left/right comparison of one
+    /// muscle**, "for the same reason a moment-arm error does". That reason is
+    /// gone: a moment-arm error does not cancel out of a left/right comparison
+    /// unless the two legs' torques are proportional, and where they are, the
+    /// comparison carries no per-muscle information. The sentence no longer
+    /// makes the claim.
     var unmodelledTermSentence: String {
         "Fore-aft braking and push-off is not measured — and it is not left out either. Inverse "
         + "dynamics assigns whatever horizontal ground force makes the body match a pelvis the "
         + "pose model holds still, so every joint moment here contains a fabricated fore-aft "
-        + "term of roughly 0.2-0.35 body weights. It changes through the contact, so it does not "
-        + "cancel between two different muscles. It does cancel between your left and right, "
-        + "which is why that is the only comparison shown."
+        + "term of roughly 0.2-0.35 body weights. It changes through the contact, so it is not "
+        + "a single scale that divides out of a comparison between two muscles, or between your "
+        + "two legs when they load the joints differently."
     }
 
     /// The falsifier line, named for the axis it actually measures.
@@ -597,40 +692,27 @@ struct GaitLoadSummary {
     }
 
     /// Which regime the per-leg peak force is in, **with the size of what it
-    /// injects**, on the same screen as the bars it scales.
+    /// injects, in the unit it is in**.
+    ///
+    /// It used to say "%.0f%% of every bar's left/right difference is that
+    /// contact-time difference re-expressed as force" — the grammar of a SHARE
+    /// for a number that is an additive offset in percentage POINTS. On the
+    /// panel's own worked example (tcL 200 ms, tcR 160 ms) a muscle reading
+    /// 13 % harder on the right came with "9 % of the difference is contact
+    /// time", from which a reader computes 1.2 points of artefact where the
+    /// truth is 9.4 — a 3.3× overestimate of their own asymmetry, in the
+    /// direction that flatters the finding.
     var peakForceRegimeSentence: String {
         peakForceIsSharedBetweenLegs
             ? "Both legs' peak ground force is closed on the MEAN contact time, because this clip "
             + "cannot resolve the difference between them — so the left/right contact difference "
-            + "is not inside these bars either."
-            : String(format: "Each leg's peak ground force is closed on its OWN contact time, so "
-                     + "%.0f%% of every bar's left/right difference is that contact-time "
-                     + "difference re-expressed as force, on the %@. Every claim floor below is "
-                     + "widened by that amount.",
+            + "is not inside the muscle numbers either."
+            : String(format: "Each leg's peak ground force is closed on its OWN contact time, "
+                     + "which puts %.0f percentage points of %@-high difference into every "
+                     + "muscle's left/right figure before any muscle has done anything — "
+                     + "subtract it, do not take a share of it.",
                      abs(contactTimeContributionPercent),
                      contactTimeContributionPercent >= 0 ? "left" : "right")
-    }
-
-    /// What the muscle-to-muscle direction of this screen is, said where the
-    /// numbers are. The list is ordered, and an ordered list of named muscles
-    /// reads as a ranking unless it is told not to.
-    ///
-    /// The count is of the muscles ACTUALLY SHOWN, not of the model: a figure
-    /// like "66 of 520" is about a file the user cannot see, and it would be
-    /// wrong the moment the fallback model loads instead.
-    var crossMuscleSentence: String {
-        let shown = muscles.prefix(Self.displayedMuscleCount)
-        let affected = shown.filter { !$0.pathIsModelled }.count
-        let scope = affected == 0
-            ? "the effort numbers are each on a scale of their own"
-            : "\(affected) of the \(shown.count) muscles below are given a straight-line path "
-            + "where the real tendon wraps around bone, so each one's effort number carries its "
-            + "own unknown scale"
-        return "These are ordered by which left/right comparison this clip resolved best — NOT by "
-            + "which muscle worked hardest. That ordering is not available: \(scope). The scale "
-            + "is the same on your left and right, so it cancels in the comparison below and only "
-            + "there. The 3-D overlay picks its strongest muscles by the same uncalibrated "
-            + "number, so read it as where load is, not as which muscle leads."
     }
 
     // MARK: - Construction
@@ -660,7 +742,6 @@ struct GaitLoadSummary {
         var disagreements = 0
         var doubleContacts = 0
         var noCleanWindow = 0
-        var saturated = Set<String>()
         var saturatedBases = Set<String>()
         var flooredBases = Set<String>()
         var claimedStance = 0
@@ -710,7 +791,6 @@ struct GaitLoadSummary {
                 guard let (base, muscleSide) = split(name),
                       muscleSide == (onLeft ? "l" : "r") else { continue }
                 if activation >= saturationThreshold {
-                    saturated.insert(name)
                     saturatedBases.insert(base)
                 } else if activation <= activationFloorThreshold {
                     flooredBases.insert(base)
@@ -764,6 +844,22 @@ struct GaitLoadSummary {
         let contactTimeContribution = contactTimePeakContributionPercent(peaks: peaks)
 
         let bilateral = Set(leftSamples.keys).intersection(rightSamples.keys)
+
+        // TWO passes, because a confidence interval needs to know how many
+        // comparisons it is one of, and that count must not depend on the
+        // statistic being tested. Pass 1 counts the pairs this clip SCREENED:
+        // both sides carried enough contacts, neither bound was active, the mean
+        // is positive. Nothing here looks at how big any difference is.
+        var screened = 0
+        for base in bilateral {
+            guard let l = leftSamples[base], let r = rightSamples[base],
+                  l.count >= minimumContactsPerSide, r.count >= minimumContactsPerSide,
+                  !saturatedBases.contains(base), !flooredBases.contains(base) else { continue }
+            if mean(l) + mean(r) > 0 { screened += 1 }
+        }
+
+        // Pass 2 builds the loads, each carrying the interval that holds across
+        // all `screened` of them at once.
         let loads = bilateral.compactMap { base -> MuscleLoad? in
             guard let l = leftSamples[base], let r = rightSamples[base],
                   !l.isEmpty, !r.isEmpty else { return nil }
@@ -778,7 +874,8 @@ struct GaitLoadSummary {
                 rightContacts: r.count,
                 isSaturated: saturatedBases.contains(base),
                 isAtActivationFloor: flooredBases.contains(base),
-                samplingUncertaintyPercent: samplingUncertaintyPercent(left: l, right: r),
+                samplingUncertaintyPercent: samplingUncertaintyPercent(left: l, right: r,
+                                                                       comparisons: screened),
                 pathIsModelled: !musclesWithUnmodelledPaths.contains(base))
         }
 
@@ -805,7 +902,8 @@ struct GaitLoadSummary {
             framesPerSecond: framesPerSecond,
             stanceFrameCount: usableStance,
             claimedStanceFrameCount: claimedStance,
-            saturatedMuscleCount: saturated.count,
+            screenedComparisonCount: screened,
+            saturatedMuscleCount: saturatedBases.count,
             flooredMuscleCount: flooredBases.count,
             maxVerticalForceResidualInBodyWeights: maxResidual,
             medianVerticalForceResidualInBodyWeights: medianResidual,
@@ -845,7 +943,7 @@ struct GaitLoadSummary {
             return abs(load.differencePercent) / floor
         }
         return loads.sorted { a, b in
-            let pa = permits(a), pb = permits(b)
+            let pa = clearsStatisticalFloor(a), pb = clearsStatisticalFloor(b)
             if pa != pb { return pa }
             let ha = headroom(a), hb = headroom(b)
             if ha != hb { return ha > hb }
@@ -863,9 +961,16 @@ struct GaitLoadSummary {
         return 100 * (l - r) / m
     }
 
-    /// The 95 % half-width of `differencePercent` from the per-contact samples
-    /// alone. Infinite when either side has fewer than two contacts.
-    static func samplingUncertaintyPercent(left: [Double], right: [Double]) -> Double {
+    /// The half-width of `differencePercent` from the per-contact samples alone,
+    /// at a confidence level that holds across all `comparisons` of this clip's
+    /// screened pairs at once. Infinite when either side has fewer than two
+    /// contacts.
+    ///
+    /// - Parameter comparisons: `screenedComparisonCount`. One means "this is
+    ///   the only comparison being made", which is the assumption the shipped
+    ///   code used to make silently while screening ~175 of them.
+    static func samplingUncertaintyPercent(left: [Double], right: [Double],
+                                           comparisons: Int = 1) -> Double {
         let nL = left.count, nR = right.count
         guard nL >= 2, nR >= 2 else { return .infinity }
         let mL = mean(left), mR = mean(right)
@@ -873,19 +978,32 @@ struct GaitLoadSummary {
         guard m > 0 else { return .infinity }
         let standardError = (variance(left) / Double(nL) + variance(right) / Double(nR))
             .squareRoot()
-        return tMultiplier(degreesOfFreedom: Swift.min(nL, nR) - 1) * 100 * standardError / m
+        return tMultiplier(degreesOfFreedom: Swift.min(nL, nR) - 1, comparisons: comparisons)
+            * 100 * standardError / m
     }
 
-    /// Two-sided 95 % Student-t multiplier. Conservative above 15 degrees of
-    /// freedom (it holds 2.131 rather than falling to 1.96), because a clip has
-    /// at most a handful of contacts per side and the interesting regime is the
-    /// small one — at `df = 1` the factor is 12.7, not 2, and a claim built on
-    /// two contacts a side has to say so.
-    static func tMultiplier(degreesOfFreedom df: Int) -> Double {
-        let table = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306,
-                     2.262, 2.228, 2.201, 2.179, 2.160, 2.145, 2.131]
+    /// **Two-sided Student-t multiplier, Bonferroni-corrected over
+    /// `comparisons`.**
+    ///
+    /// `comparisons = 1` reproduces the 95 % table this used to be, to three
+    /// decimals, and `MuscleUncertaintyTests` pins that against the published
+    /// values so the change of method cannot move the old numbers.
+    ///
+    /// Bonferroni rather than Šidák: the comparisons share a clip, a pose
+    /// stream and a force model, so they are positively dependent, and Šidák's
+    /// independence assumption is not one this pipeline can support. The
+    /// difference at `N = 175` is under 1 % of the multiplier anyway.
+    ///
+    /// **Degrees of freedom are clamped at 15**, which is what the old table
+    /// did by ending there. It only ever binds above 16 contacts on a side —
+    /// four times what a 4 s clip carries — and clamping keeps this function
+    /// from returning anything NARROWER than the table it replaces.
+    static func tMultiplier(degreesOfFreedom df: Int, comparisons: Int = 1) -> Double {
         guard df >= 1 else { return .infinity }
-        return df <= table.count ? table[df - 1] : table[table.count - 1]
+        let n = Swift.max(1, comparisons)
+        let alpha = familyWiseErrorRate / Double(n)
+        return StudentT.twoSidedQuantile(alpha: alpha,
+                                         degreesOfFreedom: Swift.min(df, 15))
     }
 
     static func mean(_ values: [Double]) -> Double {
@@ -936,14 +1054,24 @@ struct GaitLoadSummary {
     /// moment arm — and every activation derived from it — carries a scale error
     /// of its own.
     ///
-    /// Written in the names that reach this type, i.e. after
-    /// `NimbleEngine.displayMuscleAliases` has merged `vaslat140 → vaslat` and
-    /// `gaslat140 → gaslat`. It is the union over both bundled models
-    /// (`FullBody.osim`, 66 muscles / 76 wrap references, and the
-    /// `Rajagopal2016.osim` fallback, 42 / 46), and
+    /// **Written in BOTH namespaces, because the shipping path uses the raw one
+    /// and this table used to be in the other.** `NimbleEngine` puts the RAW
+    /// solver name into `SolveRecord` (`displayMuscle` is a separate value, used
+    /// only by the live bar), so `make` splits `vaslat140_r` and looks up
+    /// `vaslat140` — while this table listed only `vaslat`, the form
+    /// `displayMuscleAliases` produces. Vastus lateralis and lateral
+    /// gastrocnemius, two of the muscles a runner would look for first, were
+    /// therefore recorded as having modelled paths on the production model. The
+    /// guard test passed because it applied the alias transform before
+    /// comparing — a transform the shipping path never performs.
+    ///
+    /// It is the union over both bundled models (`FullBody.osim`, 66 muscles /
+    /// 76 wrap references, and the `Rajagopal2016.osim` fallback, 42 / 46) in
+    /// both namespaces, and
     /// `MomentArmTests.testTheUnmodelledWrapTableMatchesTheShippedModels`
-    /// checks it against what the parser actually reports at runtime — so
-    /// swapping a model cannot leave this list quietly wrong.
+    /// checks it against what the parser actually reports at runtime, WITHOUT
+    /// the alias transform — so swapping a model cannot leave this list quietly
+    /// wrong.
     static let musclesWithUnmodelledPaths: Set<String> = [
         // Shoulder and arm (FullBody only)
         "ANC", "BIClong", "BICshort", "BRD", "SUP",
@@ -952,9 +1080,9 @@ struct GaitLoadSummary {
         "addbrev", "addlong", "addmagDist", "addmagIsch", "addmagMid", "addmagProx",
         "glmax1", "glmax2", "glmax3", "grac", "iliacus", "psoas",
         "recfem", "semimem", "semiten",
-        "vasint", "vasmed", "vaslat",
+        "vasint", "vasmed", "vaslat", "vaslat140",
         // Shank
-        "bfsh", "bfsh140", "gasmed", "gaslat",
+        "bfsh", "bfsh140", "gasmed", "gaslat", "gaslat140",
     ]
 
     /// Names for the muscles a runner would recognise. Anything not here keeps
@@ -987,5 +1115,90 @@ struct GaitLoadSummary {
 
     static func prettyName(_ base: String) -> String {
         displayNames[base] ?? base
+    }
+}
+
+/// Student-t quantiles, **computed rather than tabulated**.
+///
+/// A table works while the tail is a fixed 2.5 %. It stops working the moment
+/// the level has to be corrected for how many comparisons a clip screened,
+/// because that count is a property of the clip — `GaitLoadSummary` asks for
+/// `α / N` with `N` around 175, i.e. the 99.986th percentile, which no
+/// hand-copied table in this repo would have carried.
+enum StudentT {
+
+    /// The `t` with `P(|T| ≤ t) = 1 − alpha`, i.e. `alpha` split between the two
+    /// tails.
+    ///
+    /// Found by bisection on `cdf`, which is monotone, so the bracket cannot be
+    /// wrong — 200 halvings of `[0, 1e6]` puts the answer inside 1e-294 of its
+    /// true value long before the loop ends, and the loop is bounded so a
+    /// pathological input cannot hang the run.
+    static func twoSidedQuantile(alpha: Double, degreesOfFreedom df: Int) -> Double {
+        guard df >= 1 else { return .infinity }
+        guard alpha > 0, alpha < 1 else { return alpha <= 0 ? .infinity : 0 }
+        let target = 1 - alpha / 2
+        var lo = 0.0, hi = 1e6
+        for _ in 0..<200 {
+            let mid = 0.5 * (lo + hi)
+            if cdf(mid, degreesOfFreedom: df) < target { lo = mid } else { hi = mid }
+        }
+        return 0.5 * (lo + hi)
+    }
+
+    /// `P(T ≤ t)` for `t` real, via the regularized incomplete beta.
+    static func cdf(_ t: Double, degreesOfFreedom df: Int) -> Double {
+        guard df >= 1, t.isFinite else { return t > 0 ? 1 : 0 }
+        let v = Double(df)
+        let x = v / (v + t * t)
+        let tail = 0.5 * regularizedIncompleteBeta(x, 0.5 * v, 0.5)
+        return t >= 0 ? 1 - tail : tail
+    }
+
+    /// `I_x(a, b)`. Numerical Recipes' `betai`: the continued fraction converges
+    /// fast on one side of `(a+1)/(a+b+2)` and the symmetry
+    /// `I_x(a,b) = 1 − I_{1−x}(b,a)` covers the other.
+    static func regularizedIncompleteBeta(_ x: Double, _ a: Double, _ b: Double) -> Double {
+        guard x > 0 else { return 0 }
+        guard x < 1 else { return 1 }
+        let logBeta: Double = lgamma(a + b) - lgamma(a) - lgamma(b)
+        let logPower: Double = a * log(x) + b * log(1 - x)
+        let front: Double = exp(logBeta + logPower)
+        return x < (a + 1) / (a + b + 2)
+            ? front * continuedFraction(x, a, b) / a
+            : 1 - front * continuedFraction(1 - x, b, a) / b
+    }
+
+    /// The modified Lentz evaluation of the beta continued fraction.
+    private static func continuedFraction(_ x: Double, _ a: Double, _ b: Double) -> Double {
+        let tiny = 1e-300, epsilon = 1e-15
+        let qab = a + b, qap = a + 1, qam = a - 1
+        var c = 1.0
+        var d = 1 - qab * x / qap
+        if abs(d) < tiny { d = tiny }
+        d = 1 / d
+        var h = d
+        for m in 1...300 {
+            let mD = Double(m), m2 = Double(2 * m)
+            // Even step.
+            var numerator = mD * (b - mD) * x / ((qam + m2) * (a + m2))
+            d = 1 + numerator * d
+            if abs(d) < tiny { d = tiny }
+            c = 1 + numerator / c
+            if abs(c) < tiny { c = tiny }
+            d = 1 / d
+            h *= d * c
+            // Odd step.
+            numerator = -(a + mD) * (qab + mD) * x / ((a + m2) * (qap + m2))
+            d = 1 + numerator * d
+            if abs(d) < tiny { d = tiny }
+            c = 1 + numerator / c
+            if abs(c) < tiny { c = tiny }
+            d = 1 / d
+            let delta = d * c
+            h *= delta
+            if abs(delta - 1) < epsilon { break }
+        }
+        return h
     }
 }

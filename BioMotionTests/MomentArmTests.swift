@@ -246,8 +246,19 @@ final class MomentArmTests: XCTestCase {
     /// after `NimbleEngine.displayMuscleAliases` merges `vaslat140 → vaslat` and
     /// `gaslat140 → gaslat`, so the same mapping is applied here.
     func testTheUnmodelledWrapTableMatchesTheShippedModels() throws {
-        /// Solver muscle names → display base names, side stripped.
-        func displayBases(_ names: [String]) -> Set<String> {
+        /// **The RAW base names, which is what the shipping path looks up.**
+        /// `NimbleEngine` stores the raw solver name on `SolveRecord`;
+        /// `displayMuscleAliases` is applied only to the live bar's label. This
+        /// helper used to apply that alias before comparing, so the table could
+        /// be written entirely in alias space (`vaslat`) and still pass while
+        /// production looked up `vaslat140` and found nothing.
+        func rawBases(_ names: [String]) -> Set<String> {
+            Set(names.compactMap { GaitLoadSummary.split($0)?.base })
+        }
+
+        /// The alias-space names too, because `Rajagopal2016` emits `vaslat`
+        /// directly and the table has to cover whichever model is loaded.
+        func aliasBases(_ names: [String]) -> Set<String> {
             Set(names.compactMap { name -> String? in
                 let display = NimbleEngine.displayMuscleAliases[name] ?? name
                 return GaitLoadSummary.split(display)?.base
@@ -268,9 +279,18 @@ final class MomentArmTests: XCTestCase {
             XCTAssertFalse(wrapped.isEmpty, "\(model) reports wrap references but names none")
             XCTAssertLessThanOrEqual(wrapped.count, report.unmodelledPathWraps,
                                      "a muscle may carry more than one wrap, never fewer")
-            let bases = displayBases(wrapped)
+            let raw = rawBases(wrapped)
+            let bases = raw.union(aliasBases(wrapped))
             print("MOMENT-ARM-METRIC \(model) wrapped_muscles=\(wrapped.count) "
-                  + "wrap_refs=\(report.unmodelledPathWraps) bases=\(bases.sorted())")
+                  + "wrap_refs=\(report.unmodelledPathWraps) raw_bases=\(raw.sorted()) "
+                  + "with_aliases=\(bases.sorted())")
+            // The RAW set is the one production consults, so it is asserted on
+            // its own before the union — a table that covered only the aliased
+            // forms would pass the union check and still be wrong on the phone.
+            XCTAssertTrue(raw.isSubset(of: GaitLoadSummary.musclesWithUnmodelledPaths),
+                          "\(model) wraps muscles the table does not list in the namespace the "
+                          + "shipping path uses: "
+                          + "\(raw.subtracting(GaitLoadSummary.musclesWithUnmodelledPaths).sorted())")
             XCTAssertTrue(bases.isSubset(of: GaitLoadSummary.musclesWithUnmodelledPaths),
                           "\(model) wraps muscles the display table does not list: "
                           + "\(bases.subtracting(GaitLoadSummary.musclesWithUnmodelledPaths).sorted())")
@@ -283,7 +303,8 @@ final class MomentArmTests: XCTestCase {
 
         // The named list has to include the muscles the running screen actually
         // shows, or the flag would be decoration.
-        for base in ["glmax1", "glmax2", "recfem", "vasmed", "vaslat", "gasmed", "gaslat",
+        for base in ["glmax1", "glmax2", "recfem", "vasmed", "vaslat", "vaslat140",
+                     "gasmed", "gaslat", "gaslat140", "bfsh140",
                      "semimem", "semiten", "psoas", "iliacus", "addlong", "grac"] {
             XCTAssertTrue(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base), base)
         }

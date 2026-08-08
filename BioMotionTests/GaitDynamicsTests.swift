@@ -356,9 +356,9 @@ final class GaitDynamicsTests: XCTestCase {
         // the UI reads, so this is the shipping behaviour and not a parallel path.
         let refused = Self.summary(maxResidual: violent)
         XCTAssertFalse(refused.residualGatePassed)
-        XCTAssertFalse(refused.permits(Self.load(left: 0.9, right: 0.1)),
+        XCTAssertFalse(refused.clearsStatisticalFloor(Self.load(left: 0.9, right: 0.1)),
                        "a failed gate must withhold even a huge left/right difference")
-        XCTAssertTrue(refused.claim(for: Self.load(left: 0.9, right: 0.1)).contains("Withheld"))
+        XCTAssertTrue(try XCTUnwrap(refused.withheldReason).contains("Withheld"))
     }
 
     // MARK: - The static-hold path must be untouched
@@ -682,6 +682,7 @@ final class GaitDynamicsTests: XCTestCase {
                         framesPerSecond: 30,
                         stanceFrameCount: 10,
                         claimedStanceFrameCount: 10,
+                        screenedComparisonCount: 1,
                         saturatedMuscleCount: 0,
                         flooredMuscleCount: 0,
                         maxVerticalForceResidualInBodyWeights: maxResidual,

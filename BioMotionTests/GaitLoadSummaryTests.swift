@@ -19,8 +19,7 @@ final class GaitLoadSummaryTests: XCTestCase {
                        s.unmodelledTermSentence,
                        s.verticalFalsifierSentence,
                        s.peakForceRegimeSentence,
-                       s.claim(for: s.muscles[0]),
-                       s.claim(for: s.muscles[1])]
+                       s.perMuscleRetirementSentence]
         for text in strings {
             XCTAssertFalse(text.contains(" N "), "\(text)")
             XCTAssertFalse(text.lowercased().contains("newton"), "\(text)")
@@ -111,38 +110,59 @@ final class GaitLoadSummaryTests: XCTestCase {
 
     // MARK: - The refusal
 
-    /// A difference finer than the clip's resolution is refused, not shown with
-    /// a caveat, and the refusal says so in the user's terms.
+    /// A difference finer than the clip's resolution does not clear the
+    /// statistical floor. Asserted on `clearsStatisticalFloor` rather than on
+    /// `permits`, which is false for every muscle since the per-muscle claim was
+    /// retired — the discrimination this test exists for is the floor, and it
+    /// still has to work, because the floor is what a future de-retirement would
+    /// rest on.
     func testAClaimFinerThanTheResolutionIsRefused() {
         let s = Self.summary(resolvable: 10)
         let even = Self.load(differencePercent: 4.0)
         XCTAssertEqual(even.differencePercent, 4.0, accuracy: 1e-9)
-        XCTAssertFalse(s.permits(even))
-        XCTAssertTrue(s.claim(for: even).contains("Even to within"))
-        XCTAssertTrue(s.claim(for: even).contains("10%"))
+        XCTAssertFalse(s.clearsStatisticalFloor(even))
+        XCTAssertEqual(s.claimFloorPercent(for: even), 10, accuracy: 1e-9)
 
         let real = Self.load(differencePercent: 100.0 * 0.2 / 0.6)
-        XCTAssertTrue(s.permits(real))
-        XCTAssertTrue(s.claim(for: real).contains("left"))
+        XCTAssertTrue(s.clearsStatisticalFloor(real))
+        XCTAssertEqual(real.heavierSide, "left")
+        // And nothing reaches the user either way.
+        XCTAssertFalse(s.permits(real))
     }
 
     /// Exactly at the boundary, and either side of it.
     func testTheRefusalBoundaryIsInclusive() {
         let s = Self.summary(resolvable: 10)
-        XCTAssertTrue(s.permits(Self.load(differencePercent: 10.0)))
-        XCTAssertTrue(s.permits(Self.load(differencePercent: -10.0)))
-        XCTAssertTrue(s.permits(Self.load(differencePercent: 10.001)))
-        XCTAssertFalse(s.permits(Self.load(differencePercent: 9.999)))
-        XCTAssertFalse(s.permits(Self.load(differencePercent: 0, mean: 0)))
-        XCTAssertFalse(s.permits(Self.load(differencePercent: 0)))
+        XCTAssertTrue(s.clearsStatisticalFloor(Self.load(differencePercent: 10.0)))
+        XCTAssertTrue(s.clearsStatisticalFloor(Self.load(differencePercent: -10.0)))
+        XCTAssertTrue(s.clearsStatisticalFloor(Self.load(differencePercent: 10.001)))
+        XCTAssertFalse(s.clearsStatisticalFloor(Self.load(differencePercent: 9.999)))
+        XCTAssertFalse(s.clearsStatisticalFloor(Self.load(differencePercent: 0, mean: 0)))
+        XCTAssertFalse(s.clearsStatisticalFloor(Self.load(differencePercent: 0)))
     }
 
     /// A failed falsifier withholds everything, however large the difference.
     func testAFailedResidualGateWithholdsEveryClaim() {
         let s = Self.summary(resolvable: 5, residual: 3.0)
         XCTAssertFalse(s.residualGatePassed)
-        XCTAssertFalse(s.permits(Self.load(differencePercent: 200)))
-        XCTAssertTrue(s.claim(for: s.muscles[0]).contains("Withheld"))
+        XCTAssertFalse(s.clearsStatisticalFloor(Self.load(differencePercent: 200)))
+        XCTAssertFalse(s.arePublishable)
+        XCTAssertTrue(try XCTUnwrap(s.withheldReason).contains("Withheld"))
+    }
+
+    /// **The retirement, at the level of the type.** No clip, no muscle, no
+    /// difference size gets a per-muscle left/right statement through — and the
+    /// statistical predicate underneath still discriminates, so the two are not
+    /// the same switch wired twice.
+    func testNoMuscleIsEverPermittedWhileTheClaimIsRetired() {
+        XCTAssertFalse(GaitLoadSummary.perMuscleLeftRightClaimIsSupported)
+        let s = Self.summary(resolvable: 5)
+        for difference in [0.0, 4.0, 10.0, 50.0, 199.0] {
+            let load = Self.load(differencePercent: difference)
+            XCTAssertFalse(s.permits(load), "\(difference) % was permitted")
+        }
+        XCTAssertTrue(s.clearsStatisticalFloor(Self.load(differencePercent: 199.0)))
+        XCTAssertFalse(s.clearsStatisticalFloor(Self.load(differencePercent: 1.0)))
     }
 
     // MARK: - Building from frames
@@ -207,7 +227,9 @@ final class GaitLoadSummaryTests: XCTestCase {
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
                                                    framesPerSecond: 30, filterTaps: 5))
         XCTAssertTrue(s.arePublishable, s.withheldReason ?? "-")
-        let byLoad = s.muscles.sorted { $0.withinMuscleScale > $1.withinMuscleScale }.map(\.id)
+        let byLoad = s.muscles
+            .sorted { Swift.max($0.leftLoad, $0.rightLoad) > Swift.max($1.leftLoad, $1.rightLoad) }
+            .map(\.id)
         XCTAssertEqual(byLoad, ["glmax1", "recfem", "soleus"], "the load order, for contrast")
         XCTAssertEqual(s.muscles.map(\.id), ["soleus", "recfem", "glmax1"],
                        "the published order is by resolved left/right claim")
@@ -216,11 +238,15 @@ final class GaitLoadSummaryTests: XCTestCase {
         for i in 1..<headroom.count {
             XCTAssertGreaterThanOrEqual(headroom[i - 1], headroom[i])
         }
-        // The screen says so in words, and names the reason.
-        let sentence = s.crossMuscleSentence
-        XCTAssertTrue(sentence.contains("NOT by which muscle worked hardest"), sentence)
-        XCTAssertTrue(sentence.lowercased().contains("straight-line"), sentence)
-        print("UI-METRIC cross_muscle_sentence=\(sentence)")
+        // ⚠️ And the head of that order is an ORDER STATISTIC. Nothing may show
+        // the top k of it with a per-comparison error rate; the panel did, and
+        // the interval that makes the head defensible is the family-wise one in
+        // `samplingUncertaintyPercent`. This ordering has no screen consumer at
+        // all now — `perMuscleLeftRightClaimIsSupported` is false — which is
+        // asserted here so a future reader cannot re-attach one silently.
+        XCTAssertFalse(GaitLoadSummary.perMuscleLeftRightClaimIsSupported)
+        for load in s.muscles { XCTAssertFalse(s.permits(load), load.id) }
+        print("UI-METRIC retirement_sentence=\(s.perMuscleRetirementSentence)")
     }
 
     /// Which muscles carry a path this build does not model — surfaced per row,
@@ -242,14 +268,24 @@ final class GaitLoadSummaryTests: XCTestCase {
         let glmax = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         XCTAssertTrue(soleus.pathIsModelled, "soleus carries no PathWrap in either model")
         XCTAssertFalse(glmax.pathIsModelled, "glmax1 wraps around the pelvis and is not modelled")
-        // The flag does NOT withhold the left/right claim — that comparison is
-        // exactly the one a per-muscle scale error cancels out of.
-        XCTAssertTrue(s.permits(glmax))
-        XCTAssertTrue(s.claim(for: glmax).contains("harder on the left"), s.claim(for: glmax))
+        // The flag was a per-ROW warning, and the reason it is not enough is
+        // measured in `MomentArmErrorCancellationTests`: the QP redistributes
+        // load between synergists, so an unmodelled wrap on glmax1 moves
+        // SOLEUS's left/right figure too, and soleus's row would have carried no
+        // warning at all. The whole comparison is retired; the flag survives as
+        // a property of the model, not as a caveat on a claim.
+        XCTAssertTrue(s.clearsStatisticalFloor(glmax), "the statistics were never the problem")
+        XCTAssertFalse(s.permits(glmax))
+        XCTAssertFalse(s.permits(soleus))
     }
 
     /// Saturation is where "a force error is a common scale" stops holding, so
     /// it is counted and shown rather than quietly absorbed.
+    ///
+    /// **The count is of MUSCLES.** It counted muscle-SIDES — `soleus_l` and
+    /// `soleus_r` as two — and the panel printed it in one sentence beside
+    /// `flooredMuscleCount`, which counts muscles, so a clip that clipped ten
+    /// muscles on both legs told the user twenty of theirs had maxed out.
     func testSaturatedMusclesAreCounted() throws {
         let report = try Self.usableReport()
         let frames = [
@@ -258,7 +294,8 @@ final class GaitLoadSummaryTests: XCTestCase {
         ]
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
                                                    framesPerSecond: 30, filterTaps: 5))
-        XCTAssertEqual(s.saturatedMuscleCount, 2)
+        XCTAssertEqual(s.saturatedMuscleCount, 1,
+                       "one muscle clipped, on both of its sides — and one comparison lost")
     }
 
     /// A clip with no stance frame returns nil rather than an empty screen that
@@ -338,7 +375,7 @@ final class GaitLoadSummaryTests: XCTestCase {
         let failed = Self.summary(resolvable: 5, residual: 3.0)
         XCTAssertFalse(failed.residualGatePassed)
         XCTAssertFalse(failed.arePublishable)
-        XCTAssertFalse(failed.permits(Self.load(differencePercent: 200)),
+        XCTAssertFalse(failed.clearsStatisticalFloor(Self.load(differencePercent: 200)),
                        "a failed gate withholds even a huge left/right difference")
         // The data is still there — the ONLY thing between it and the screen is
         // the flag, which is exactly why the flag has to be asked.
@@ -346,7 +383,8 @@ final class GaitLoadSummaryTests: XCTestCase {
         let reason = try? XCTUnwrap(failed.withheldReason)
         XCTAssertTrue(reason!.contains("3.00"), "the refusal names the measurement: \(reason!)")
         XCTAssertTrue(reason!.lowercased().contains("film"), "and a lever: \(reason!)")
-        XCTAssertTrue(failed.claim(for: failed.muscles[0]).contains("Withheld"))
+        XCTAssertNil(failed.perMuscleRetirementSentence.range(of: "harder on"),
+                     "the retirement paragraph states no difference of its own")
 
         let passing = Self.summary(resolvable: 5, residual: 0.1)
         XCTAssertTrue(passing.arePublishable)
@@ -441,9 +479,11 @@ final class GaitLoadSummaryTests: XCTestCase {
         // separates them.
         XCTAssertGreaterThan(abs(soleus.differencePercent), s.resolvableAsymmetryPercent)
         XCTAssertGreaterThan(abs(glmax.differencePercent), s.resolvableAsymmetryPercent)
-        XCTAssertTrue(s.claim(for: soleus).contains("Withheld"), s.claim(for: soleus))
-        XCTAssertTrue(s.claim(for: soleus).contains("full effort"))
-        XCTAssertTrue(s.claim(for: glmax).contains("harder on the left"), s.claim(for: glmax))
+        XCTAssertFalse(s.clearsStatisticalFloor(soleus), "saturated: the bound, not a measurement")
+        XCTAssertTrue(s.clearsStatisticalFloor(glmax), "its neighbour is unaffected by that bound")
+        // And neither reaches the user, for the separate reason that the whole
+        // per-muscle comparison is retired.
+        XCTAssertFalse(s.permits(glmax))
     }
 
     // MARK: - The advice has to be deliverable
@@ -597,14 +637,21 @@ final class GaitLoadSummaryTests: XCTestCase {
         XCTAssertTrue(shared.peakForceIsSharedBetweenLegs)
         XCTAssertTrue(shared.peakForceRegimeSentence.contains("MEAN contact time"),
                       shared.peakForceRegimeSentence)
-        XCTAssertTrue(shared.peakForceRegimeSentence.contains("not inside these bars"),
+        XCTAssertTrue(shared.peakForceRegimeSentence.contains("not inside the muscle numbers"),
                       shared.peakForceRegimeSentence)
 
-        let perLeg = Self.summary(resolvable: 10, sharedPeak: false)
+        // The per-leg branch has to state the SIZE of what it injects, in
+        // percentage POINTS, on a summary that actually carries a non-zero term
+        // — quoting "0 percentage points" for the default fixture would have let
+        // the wording pass without the number ever being exercised.
+        let perLeg = Self.summary(resolvable: 10, sharedPeak: false,
+                                  contactTimeContribution: -9.3863)
         XCTAssertTrue(perLeg.peakForceRegimeSentence.contains("OWN contact time"),
                       perLeg.peakForceRegimeSentence)
-        XCTAssertTrue(perLeg.peakForceRegimeSentence.contains("re-expressed as force"),
-                      "the user is told the bars contain it: \(perLeg.peakForceRegimeSentence)")
+        XCTAssertTrue(perLeg.peakForceRegimeSentence.contains("9 percentage points"),
+                      "the size is stated in its own unit: \(perLeg.peakForceRegimeSentence)")
+        XCTAssertTrue(perLeg.peakForceRegimeSentence.contains("right-high"),
+                      perLeg.peakForceRegimeSentence)
     }
 
     // MARK: - The floors a claim has to clear
@@ -646,8 +693,8 @@ final class GaitLoadSummaryTests: XCTestCase {
         let glmax = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         XCTAssertTrue(soleus.isSaturated, "0.982 is on the bound within OSQP's own tolerance")
         XCTAssertFalse(glmax.isSaturated, "0.97 is not, so the threshold is not simply lower")
-        XCTAssertTrue(s.claim(for: soleus).contains("full effort"))
-        XCTAssertFalse(s.permits(soleus), "and a saturated muscle publishes nothing")
+        XCTAssertFalse(s.clearsStatisticalFloor(soleus), "a saturated muscle publishes nothing")
+        XCTAssertEqual(s.saturatedMuscleCount, 1, "and it is counted once, as one muscle")
     }
 
     /// **A claim has to clear the statistic's OWN noise, not only the clip's
@@ -688,8 +735,7 @@ final class GaitLoadSummaryTests: XCTestCase {
               + "claim_floor=\(s.claimFloorPercent(for: load))")
         XCTAssertGreaterThan(load.samplingUncertaintyPercent, abs(load.differencePercent),
                              "this muscle's own scatter is larger than the difference")
-        XCTAssertFalse(s.permits(load))
-        XCTAssertTrue(s.claim(for: load).contains("step-to-step scatter"), s.claim(for: load))
+        XCTAssertFalse(s.clearsStatisticalFloor(load))
 
         // The control: the SAME means with no contact-to-contact scatter do
         // publish, so this is not a gate that now refuses everything.
@@ -704,7 +750,8 @@ final class GaitLoadSummaryTests: XCTestCase {
                                                       framesPerSecond: 30, filterTaps: 5))
         let calmLoad = try XCTUnwrap(calm.muscles.first { $0.id == "soleus" })
         XCTAssertEqual(calmLoad.samplingUncertaintyPercent, 0, accuracy: 1e-12)
-        XCTAssertTrue(calm.permits(calmLoad), calm.claim(for: calmLoad))
+        XCTAssertTrue(calm.clearsStatisticalFloor(calmLoad),
+                      "zero scatter, so the timing floor is the only one left and it clears it")
     }
 
     /// The multiplier is Student-t and not 1.96, because a clip has a handful of
@@ -716,6 +763,23 @@ final class GaitLoadSummaryTests: XCTestCase {
         XCTAssertEqual(GaitLoadSummary.tMultiplier(degreesOfFreedom: 40), 2.131, accuracy: 1e-3,
                        "held at the df=15 value rather than relaxed to 1.96")
         XCTAssertFalse(GaitLoadSummary.tMultiplier(degreesOfFreedom: 0).isFinite)
+        // The multiplier is now COMPUTED, not looked up, because the corrected
+        // level is a property of the clip. These are the published two-sided
+        // 95 % values it has to reproduce, and three deeper tails the old table
+        // never carried — checked against R's `qt`.
+        for (df, expected) in [(2, 4.303), (3, 3.182), (5, 2.571), (10, 2.228), (15, 2.131)] {
+            XCTAssertEqual(GaitLoadSummary.tMultiplier(degreesOfFreedom: df), expected,
+                           accuracy: 1e-3, "df=\(df)")
+        }
+        XCTAssertEqual(StudentT.twoSidedQuantile(alpha: 0.01, degreesOfFreedom: 10),
+                       3.169, accuracy: 1e-3)
+        XCTAssertEqual(StudentT.twoSidedQuantile(alpha: 0.001, degreesOfFreedom: 5),
+                       6.869, accuracy: 1e-3)
+        XCTAssertEqual(StudentT.twoSidedQuantile(alpha: 0.0001, degreesOfFreedom: 4),
+                       15.544, accuracy: 1e-2)
+        // And the correction only ever widens.
+        XCTAssertGreaterThan(GaitLoadSummary.tMultiplier(degreesOfFreedom: 4, comparisons: 175),
+                             GaitLoadSummary.tMultiplier(degreesOfFreedom: 4, comparisons: 1))
         // One contact on a side means no scatter estimate at all.
         XCTAssertFalse(GaitLoadSummary
             .samplingUncertaintyPercent(left: [0.5], right: [0.4, 0.4]).isFinite)
@@ -766,12 +830,18 @@ final class GaitLoadSummaryTests: XCTestCase {
                              contactTimeContribution: injected)
         let load = Self.load(differencePercent: -9.0)
         XCTAssertEqual(s.claimFloorPercent(for: load), 8.086 + 9.3863, accuracy: 1e-3)
-        XCTAssertFalse(s.permits(load),
+        XCTAssertFalse(s.clearsStatisticalFloor(load),
                        "a 9 % reading that the contact-time term alone can produce is not a "
                        + "muscle finding, however far above the timing floor it sits")
-        XCTAssertTrue(s.permits(Self.load(differencePercent: -25.0)),
-                      "and a difference well past the injected term still publishes")
-        XCTAssertTrue(s.peakForceRegimeSentence.contains("9%"), s.peakForceRegimeSentence)
+        XCTAssertTrue(s.clearsStatisticalFloor(Self.load(differencePercent: -25.0)),
+                      "and a difference well past the injected term still clears the floor")
+        // The size is quoted in the unit it is in. It used to be phrased as a
+        // SHARE — "9 % of every bar's left/right difference is contact time" —
+        // from which a reader takes 9 % of 13 % = 1.2 points of artefact where
+        // the truth is 9.4, and concludes their imbalance is 3.3x what it is.
+        XCTAssertTrue(s.peakForceRegimeSentence.contains("9 percentage points"),
+                      s.peakForceRegimeSentence)
+        XCTAssertFalse(s.peakForceRegimeSentence.contains("9% of"), s.peakForceRegimeSentence)
         XCTAssertTrue(s.peakForceRegimeSentence.contains("right"), s.peakForceRegimeSentence)
         print("UI-METRIC peak_force_regime=\(s.peakForceRegimeSentence)")
 
@@ -1029,6 +1099,7 @@ final class GaitLoadSummaryTests: XCTestCase {
             framesPerSecond: fps,
             stanceFrameCount: 10,
             claimedStanceFrameCount: 10,
+            screenedComparisonCount: 2,
             saturatedMuscleCount: 0,
             flooredMuscleCount: 0,
             maxVerticalForceResidualInBodyWeights: residual,

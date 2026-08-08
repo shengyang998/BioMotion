@@ -13,22 +13,30 @@ import SwiftUI
 ///
 /// `loadBlock` used to render every muscle's L/R peak and bars unconditionally
 /// while `honestyBlock`, three lines below, printed "FAILED, loads withheld".
-/// Now `summary.arePublishable` decides the whole block, the withheld case
-/// states the measurement and the lever, and the 3-D muscle overlay in
-/// `OfflinePlaybackView` asks the same question.
+/// `summary.arePublishable` decides the whole block, and the withheld case
+/// states the measurement and the lever. The 3-D overlay in
+/// `OfflinePlaybackView` is stricter than that gate rather than equal to it: it
+/// draws no muscles at all on an analysed running clip, because colouring the
+/// strongest 24 is a cross-muscle ordering and there is no muscle claim left on
+/// this path to draw.
 ///
-/// # This screen makes ONE kind of comparison, and says which
+/// # This screen makes ONE kind of comparison, and it is not a muscle one
 ///
-/// Left against right, one muscle at a time. It does not rank muscles against
-/// each other, because 66 of the model's muscles are given a straight-line path
-/// where the real tendon wraps around bone and their effort numbers are
-/// therefore each on a scale of their own — measured in
-/// `MomentArmErrorCancellationTests`, which also measures that the same error
-/// cancels out of the left/right figure. Three consequences are visible here:
-/// the rows are ordered by which comparison the clip resolved best rather than
-/// by load; each row's two bars are drawn to that ROW's own scale, so no bar
-/// length is comparable to the row above; and `crossMuscleSentence` says both
-/// things in words above the list.
+/// **Left against right, by CONTACT TIME.** The per-muscle left/right rows are
+/// gone as of 2026-08-08, with the cross-muscle ranking that went before them.
+/// `MomentArmErrorCancellationTests` measures why: 66 of the model's muscles
+/// take a straight-line path where the real tendon wraps around bone, that error
+/// cancels out of a left/right comparison only when the two legs load the joints
+/// in proportion — and in that regime every muscle returns the same figure, so
+/// there is no per-muscle finding to make. Where they do not, the error moves a
+/// published figure by 9.92 pp on the shipping solver (13.11 pp in exact
+/// arithmetic, 17.72 pp at a larger shape difference) — as large as the finest
+/// difference any of the three pinned clips can resolve — and it moves muscles
+/// whose own paths are modelled correctly.
+///
+/// So `loadBlock` states what was measured and why it is not shown, in one
+/// paragraph, and points at the contact-time comparison above it — which is
+/// measured from stance timing and touches neither a moment arm nor the QP.
 ///
 /// # The honesty note is not optional on this path either
 ///
@@ -135,7 +143,10 @@ struct GaitReportPanel: View {
 
     private func contactBlock(_ report: GaitReport, _ s: GaitLoadSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            header("Ground contact")
+            // The surviving left/right finding on this screen, so it is labelled
+            // as one. It is measured from stance timing: no moment arm, no
+            // muscle QP, no force model.
+            header("Left vs right: time on the ground")
             // STEPS, not strides. `stance` is contacts per side, and this
             // codebase defines a stride as one leg's touchdown-to-touchdown
             // interval everywhere else (`strideSeconds`, `stridePeriodFrames`),
@@ -163,103 +174,44 @@ struct GaitReportPanel: View {
         }
     }
 
-    /// The product: **left against right, one muscle at a time** — or nothing at
-    /// all, when the gates say so.
+    /// **What the muscle model produced, and why none of it is a claim.**
+    ///
+    /// This block used to be eight muscle rows: a name, `L 0.71 · R 0.55`, two
+    /// bars and an orange sentence each. Every one of those is a per-muscle
+    /// left/right statement, including the bare number pair — a ratio quoted to
+    /// two decimals is a stronger statement than a bar length, which is why the
+    /// pair survived the round that removed the bars from withheld rows and had
+    /// to go with the rest.
+    ///
+    /// The clip-level refusal still comes first when it fires: "the app could
+    /// not measure this" and "the app measured this and cannot interpret it"
+    /// are different things to be told, and the first one has a lever attached.
     @ViewBuilder
     private func loadBlock(_ s: GaitLoadSummary) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            header("Left vs right, muscle by muscle")
+            header("Muscle by muscle: not shown, and why")
             if let reason = s.withheldReason {
                 Text(reason)
                     .font(.caption)
                     .foregroundStyle(.red)
             } else {
-                Text(s.crossMuscleSentence)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text("Each row's two bars are that muscle's own left and right effort at "
-                     + "mid-contact, drawn to that row's own scale and averaged over its leg's "
-                     + "contacts.")
+                Text(s.perMuscleRetirementSentence)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                ForEach(s.muscles.prefix(GaitLoadSummary.displayedMuscleCount)) { load in
-                    muscleRow(load, s)
-                }
-                Text(String(format: "From %d of %d claimed stance frames (%d left, %d right), "
-                            + "one sample per contact — %d left contacts, %d right.",
+                Text(String(format: "It ran on %d of %d claimed stance frames (%d left, "
+                            + "%d right), one sample per contact — %d left contacts, %d right, "
+                            + "%d muscle pairs screened.",
                             s.stanceFrameCount, s.claimedStanceFrameCount,
                             s.leftStanceFrameCount, s.rightStanceFrameCount,
-                            s.leftContactCount, s.rightContactCount))
+                            s.leftContactCount, s.rightContactCount,
+                            s.screenedComparisonCount))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(s.peakForceRegimeSentence)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Text("Each comparison is a 95% one and \(GaitLoadSummary.displayedMuscleCount) "
-                     + "are shown, so about one in twenty of them can read a difference that is "
-                     + "not there.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
-    }
-
-    /// One muscle's row.
-    ///
-    /// A saturated muscle gets NO bars. It used to get two full-length ones
-    /// directly above a caption reading "Withheld: this muscle reached full
-    /// effort" — the same show-the-number-while-saying-withheld pattern this
-    /// file's header says was fixed at the clip level. The bars encode the
-    /// left/right ratio, which is precisely the quantity being withheld.
-    @ViewBuilder
-    private func muscleRow(_ load: GaitLoadSummary.MuscleLoad, _ s: GaitLoadSummary) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(load.displayName).font(.caption).bold()
-                Spacer()
-                Text(String(format: "L %.2f · R %.2f", load.leftLoad, load.rightLoad))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            if load.isSaturated || load.isAtActivationFloor {
-                Text(load.isSaturated
-                     ? "Clipped at full effort — no bars drawn, because their ratio is the thing "
-                     + "being withheld."
-                     : "Sitting on the solver's resting-tone floor — no bars drawn, for the same "
-                     + "reason.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else {
-                let scale = load.withinMuscleScale
-                HStack(spacing: 4) {
-                    bar(scale > 0 ? load.leftLoad / scale : 0, tint: .blue)
-                    bar(scale > 0 ? load.rightLoad / scale : 0, tint: .red)
-                }
-            }
-            Text(s.claim(for: load))
-                .font(.caption2)
-                .foregroundStyle(s.permits(load) ? .orange : .secondary)
-            if !load.pathIsModelled {
-                Text("This muscle's path is modelled as a straight line where it really wraps "
-                     + "around bone, so its 0-1 numbers are on a scale of their own — compare "
-                     + "them left to right, not to the row above.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func bar(_ value: Double, tint: Color) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(tint.opacity(0.15))
-                Capsule()
-                    .fill(tint)
-                    .frame(width: geo.size.width * min(max(value, 0), 1))
-            }
-        }
-        .frame(height: 6)
     }
 
     /// Everything that could make the numbers above wrong, on the same screen
@@ -269,9 +221,9 @@ struct GaitReportPanel: View {
             header("What this does not measure")
             Text(s.unmodelledTermSentence).font(.caption)
             Text("Peak ground force is not measured — it is implied by contact and flight "
-                 + "timing, and nothing here can contradict its size. Left/right ratios are "
-                 + "shown because a size error cancels out of them; the two checks below test "
-                 + "that cancellation ON THE VERTICAL AXIS ONLY.")
+                 + "timing, and nothing here can contradict its size. The two checks below ask "
+                 + "only whether that implied force agrees with inverse dynamics ON THE VERTICAL "
+                 + "AXIS, on the frames both contact tests agreed about.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Text(s.verticalFalsifierSentence)
@@ -287,10 +239,15 @@ struct GaitReportPanel: View {
                     .foregroundStyle(.secondary)
             }
             if s.saturatedMuscleCount > 0 || s.flooredMuscleCount > 0 {
+                // Both counts are MUSCLES, not muscle-sides. They used to be
+                // mixed — `saturatedMuscleCount` counted `soleus_l` and
+                // `soleus_r` as two while the number beside it counted soleus
+                // once — and the sentence put them side by side as if they were
+                // comparable.
                 Text("\(s.saturatedMuscleCount) muscle(s) reached full effort and "
-                     + "\(s.flooredMuscleCount) sat on the resting-tone floor; their left/right "
-                     + "comparisons are withheld, because a force error stops cancelling at "
-                     + "either bound.")
+                     + "\(s.flooredMuscleCount) sat on the resting-tone floor, out of "
+                     + "\(s.screenedComparisonCount) pairs the solver kept between the two. At "
+                     + "either bound the solver's answer is the bound, not a measurement.")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }

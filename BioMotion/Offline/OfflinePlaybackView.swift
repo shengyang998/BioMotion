@@ -57,17 +57,22 @@ struct OfflinePlaybackView: View {
 
     /// Whether the 3-D muscle overlay may be drawn at all, for the CLIP.
     ///
-    /// The overlay renders `frame.muscleResult` directly — the same activations
-    /// `GaitReportPanel` withholds when a gate fails — so drawing it
-    /// unconditionally reinstated the exact numbers the panel had just refused,
-    /// in a form (coloured capsules on a skeleton) that reads as more
-    /// authoritative than the list. On a running clip the overlay follows the
-    /// panel's gate. Off the running path nothing changes: a still-pose clip has
-    /// no gait summary and the overlay is governed by the static-hold gate as
-    /// before.
+    /// **False on every analysed running clip, because there is no muscle claim
+    /// left for it to draw.** `MuscleOverlay` selects the strongest 24
+    /// activations and colours every capsule from one shared colormap — a
+    /// cross-muscle ORDERING, on numbers whose per-muscle scale carries the
+    /// unmodelled-`PathWrap` error. That ordering was retired from the panel on
+    /// 2026-08-08 for exactly that reason, and the left/right comparison was
+    /// retired the same day (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`).
+    /// A picture that says "your glutes are red and your calves are dim" is the
+    /// retired claim made in colour, and it reads as MORE authoritative than the
+    /// list, not less: no number, no caption, no floor.
+    ///
+    /// Off the running path nothing changes: a still-pose clip has no gait
+    /// summary and the overlay is governed by the static-hold gate as before.
     private var muscleMagnitudesArePublishable: Bool {
         guard case .analysed? = resultStore.gait else { return true }
-        return loadSummary?.arePublishable ?? false
+        return false
     }
 
     /// **And whether THIS frame's may.** The clip-level gate was the only one:
@@ -194,13 +199,18 @@ struct OfflinePlaybackView: View {
                 switch verdict {
                 case .gaitStance:
                     // A frame excluded from the load comparison must not be
-                    // captioned "relative loads" — the ranked list has already
+                    // captioned "relative loads" — the summary has already
                     // discarded it, and the overlay is hidden for it too.
                     guard frame.gaitLoadsAreComparable else {
                         return "Pose only — foot down, outside the load comparison"
                     }
+                    // And a frame INSIDE the comparison must not claim
+                    // "relative loads" either, now that no relative load is
+                    // published: the muscle solve ran, the overlay is off, and
+                    // the panel says why. The badge said the frame carried a
+                    // comparison the panel was refusing on the same screen.
                     return frame.hasFullBiomechanics
-                        ? "Pose + muscle (foot down — relative loads)"
+                        ? "Pose — foot down, muscle solve not shown"
                         : "Pose only — foot down, no solve"
                 case .gaitFlight: return "Pose only — both feet off the ground"
                 case .gaitOutsideAnalysis: return "Pose only — outside the analysed strides"
@@ -342,8 +352,11 @@ struct OfflinePlaybackView: View {
                 }
                 Spacer()
                 // Muscles only exist in the 3-D scene, so the toggle is
-                // meaningless while the photo overlay is showing.
-                if !showSourceImage {
+                // meaningless while the photo overlay is showing — and equally
+                // meaningless on an analysed running clip, where the overlay is
+                // off whatever it says. A green control that changes nothing is
+                // its own small lie.
+                if !showSourceImage && muscleMagnitudesArePublishable {
                     Button { showMuscles.toggle() } label: {
                         Image(systemName: "figure.run")
                             .foregroundStyle(showMuscles ? Color.green : Color.gray)

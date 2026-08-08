@@ -1,68 +1,61 @@
 import XCTest
 @testable import BioMotion
 
-/// **Does a wrong moment arm cancel out of a LEFT/RIGHT comparison, and does it
-/// fail to cancel BETWEEN muscles?** Measured on the shipping QP, not argued.
+/// **Does a wrong moment arm cancel out of a LEFT/RIGHT comparison?** Measured
+/// on the shipping QP, not argued. As of 2026-08-08 the answer is NO, and this
+/// file is the measurement that retired the product's last per-muscle claim.
 ///
-/// # Why this file decides what the screen may say
+/// # The experiment that could not fail, and what replaced it
 ///
-/// `MomentArmComputer` logs at load:
+/// This file used to answer YES, on a rig where every RIGHT joint torque was
+/// `0.8 ×` its left counterpart. The shipped QP is
 ///
-///     ⚠ 76 PathWrap references are NOT modelled. Those muscles take a
-///     straight-line shortcut where the real path wraps around bone, so their
-///     L_MT and moment arms are wrong (worst at flexed poses, where the sign
-///     can flip)
+///     min ½ aᵀ(εI + λAᵀA) a − λ τᵀA a,   a ∈ [0.02, 1]
 ///
-/// Parsing the shipped `FullBody.osim` says which 66 muscles those are, and
-/// `MomentArmTests.testTheUnmodelledWrapTableMatchesTheShippedModels` pins the
-/// list against the parser's own report: it contains glmax1/2/3, recfem,
-/// vasmed, vaslat140, vasint, gasmed, gaslat140, semimem, semiten, bfsh140,
-/// psoas, iliacus, addlong, addbrev, addmag{Prox,Mid,Dist,Isch} and grac —
-/// essentially every lower-limb muscle a runner would recognise. Running is a
-/// flexed-pose activity, so this is not a corner case for this product.
+/// whose interior solution is `a = (εI + λAᵀA)⁻¹ λAᵀ τ` — **linear in `τ`**. So
+/// under `τ_R = c·τ_L` the solution obeys `a_R = c·a_L` EXACTLY, for any moment
+/// arm matrix whatsoever. The perturbation could not move the answer: in exact
+/// arithmetic the "measured" shift is 1e-6 pp, and the 1.04 pp that was reported
+/// as evidence of cancellation is OSQP's own termination tolerance.
+/// `testTheProportionalRigIsAnIdentityAndCertifiesNothing` keeps that case and
+/// says so, because the identity is worth stating — it is half the argument for
+/// retirement.
 ///
-/// A wrong moment arm `r → k·r` maps a joint torque to a wrong muscle force
-/// `F = τ/r`, hence a wrong activation. The claim under test is that the error
-/// is a PER-MUSCLE SCALE, so:
+/// The other half is the case that CAN fail:
+/// `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` gives the right leg a
+/// different torque PATTERN rather than a different size — 0.80× the left's hip
+/// moment, 1.00× its knee moment, which is what a gait asymmetry is — and
+/// measures the same bilateral `×0.6` moment-arm error moving a published
+/// left/right figure by more than any of the three pinned clips can resolve.
 ///
-/// * it cancels in `(L − R)/mean` for that muscle, because the same wrong path
-///   is used on both sides — this is the deliverable and it survives;
-/// * it does NOT cancel between two different muscles, because their errors
-///   differ — so a muscle-to-muscle ordering is not a measurement.
+/// # Why the two halves together end the claim rather than bounding it
 ///
-/// The QP couples every muscle through `min ½aᵀPa + ½λ‖A a − τ‖²`, so "it is
-/// just a scale" is not obvious: perturbing one muscle's column of `A`
-/// redistributes load across all of them. That redistribution is what these
-/// tests measure.
+/// The leak vanishes exactly when the two legs' torques are proportional. But in
+/// that regime every muscle returns the SAME left/right figure — the linearity
+/// again — so the per-muscle breakdown carries no per-muscle information at all.
+/// Every bit of per-muscle differentiation in the statistic comes from the
+/// non-proportional part of the torque, and that is precisely the part a wrong
+/// moment arm distorts. There is no regime where the claim is both safe and
+/// informative, which is why `GaitLoadSummary.perMuscleLeftRightClaimIsSupported`
+/// is a flat `false` rather than a gate.
 ///
-/// # The regime the argument holds in, and the two places it stops
+/// # The two other bounds, both still measured here
 ///
-/// The QP is linear in `τ` — and therefore the left/right ratio is exactly
-/// invariant to a per-muscle scale on `A` — only while NO activation sits on a
-/// bound. Both bounds are reachable and both are measured here:
-/// `a ≤ 1` (`MuscleLoad.isSaturated`) and `a ≥ aMin = 0.02`
-/// (`MuscleLoad.isAtActivationFloor`). The sign-flip test is what found the
-/// second one: a muscle whose modelled path has the wrong sign is pushed onto
-/// the floor on BOTH sides and reads exactly 0 % left/right, i.e. a lost finding
-/// presented as an even one. That is why the floor now withholds too.
+/// * A ONE-SIDED error (different paths on the two legs, or the same wrap error
+///   evaluated at two different poses) costs more than 10 pp.
+/// * A SIGN-FLIPPED moment arm — which the loader's own warning says happens at
+///   flexed poses — does not rescale the muscle at all: the QP refuses to
+///   recruit it and pins it to `a ≥ aMin` on BOTH sides, where it reads exactly
+///   0 % left/right against a true 22.7 %. A finding destroyed and presented as
+///   "even".
 ///
 /// # The numerical floor on any of these figures
 ///
 /// OSQP stops on `eps_abs = eps_rel = 1e-3` with polishing off, so an activation
 /// carries about 2e-3 of absolute slack and a left/right percentage built from
-/// two of them carries a couple of percentage points. The unperturbed rig is
-/// solved for exactly that reason: its analytic answer is known, so the gap
-/// between the analytic answer and what OSQP returns IS the noise floor, and the
-/// perturbation tests are calibrated against it rather than against a guess.
-///
-/// # The load-bearing assumption, isolated deliberately
-///
-/// The cancellation needs the error to be the SAME factor on both sides.
-/// `testAOneSidedMomentArmErrorDoesNotCancelAndIsTheAssumptionTheClaimRestsOn`
-/// perturbs one side only and shows the left/right figure moves by an order of
-/// magnitude more, which is the falsifier: if the two legs were ever modelled
-/// with different paths, or sampled at poses far enough apart that the same
-/// wrap error evaluates differently, the left/right claim would go too.
+/// two of them carries a couple of percentage points. `solverNoiseFloor()` is
+/// that gap, measured against the proportional rig's known analytic answer, and
+/// every claim below is scaled by it rather than by a guess.
 final class MomentArmErrorCancellationTests: XCTestCase {
 
     // MARK: - The rig
@@ -71,25 +64,6 @@ final class MomentArmErrorCancellationTests: XCTestCase {
     /// real model is: no muscle in `FullBody.osim` spans the left and right
     /// legs. Two DOFs and three muscles per side, one of which spans both DOFs,
     /// so the QP has real redundancy to redistribute through.
-    /// The rig's analytic answer: with every right torque `rightScale` times its
-    /// left counterpart and no bound active, the QP's solution is linear in `τ`,
-    /// so EVERY muscle reads the same figure.
-    static var analyticDifferencePercent: Double {
-        100 * (1 - Rig.rightScale) / (0.5 * (1 + Rig.rightScale))
-    }
-
-    /// How far the unperturbed solve lands from that analytic answer — i.e. what
-    /// OSQP's own termination tolerance is worth in these units.
-    private func solverNoiseFloor() throws -> Double {
-        let a = try solve()
-        var worst = 0.0
-        for (base, _, _, _) in Rig.muscles {
-            let d = try differencePercent(a, base)
-            worst = Swift.max(worst, abs(d - Self.analyticDifferencePercent))
-        }
-        return worst
-    }
-
     private enum Rig {
         static let dofNames = ["hip_l", "knee_l", "hip_r", "knee_r"]
         /// base name → (hip arm, knee arm, F_max)
@@ -105,22 +79,53 @@ final class MomentArmErrorCancellationTests: XCTestCase {
         static let isometricLength = 0.3
         static let softPenalty = 100.0
 
-        /// A genuinely asymmetric runner: every RIGHT torque is `rightScale`
-        /// times its left counterpart. The QP is linear in `τ` while no bound is
-        /// active, so the true per-muscle answer is a uniform
-        /// `100·(1 − rightScale)/(0.5·(1 + rightScale))` on EVERY muscle — a
-        /// number this file checks rather than assumes.
         static let leftTorques: [String: Double] = ["hip_l": 135, "knee_l": 90]
+        /// The proportional case: every right torque this multiple of its left
+        /// counterpart. A pure SIZE difference between the legs.
         static let rightScale = 0.8
+
+        /// Right-side torques as a per-joint multiple of the left's, so a case
+        /// can differ in PATTERN and not only in size.
+        static func torques(hipScale: Double, kneeScale: Double) -> [Double] {
+            [leftTorques["hip_l"] ?? 0,
+             leftTorques["knee_l"] ?? 0,
+             (leftTorques["hip_l"] ?? 0) * hipScale,
+             (leftTorques["knee_l"] ?? 0) * kneeScale]
+        }
+
+        static var proportionalTorques: [Double] {
+            torques(hipScale: rightScale, kneeScale: rightScale)
+        }
+    }
+
+    /// The rig's analytic answer in the PROPORTIONAL case: with no bound active
+    /// the QP is linear in `τ`, so every muscle reads the same figure.
+    static var analyticDifferencePercent: Double {
+        100 * (1 - Rig.rightScale) / (0.5 * (1 + Rig.rightScale))
+    }
+
+    /// How far the unperturbed proportional solve lands from that analytic
+    /// answer — i.e. what OSQP's own termination tolerance is worth in these
+    /// units.
+    private func solverNoiseFloor() throws -> Double {
+        let a = try solve(torques: Rig.proportionalTorques)
+        var worst = 0.0
+        for (base, _, _, _) in Rig.muscles {
+            let d = try differencePercent(a, base)
+            worst = Swift.max(worst, abs(d - Self.analyticDifferencePercent))
+        }
+        return worst
     }
 
     /// One solve on a FRESH solver, so warm starts and `L_MT` history cannot
     /// couple two cases together.
     ///
+    /// - Parameter torques: the four joint torques, `hip_l knee_l hip_r knee_r`.
     /// - Parameter scale: per-muscle-base multiplier on BOTH sides' moment arms.
     /// - Parameter leftOnlyScale: per-muscle-base multiplier applied to the LEFT
     ///   side only, on top of `scale`.
-    private func solve(scale: [String: Double] = [:],
+    private func solve(torques: [Double],
+                       scale: [String: Double] = [:],
                        leftOnlyScale: [String: Double] = [:]) throws -> [String: Double] {
         var names: [String] = []
         var arms: [Double] = []      // row-major [nMuscles x nDOFs]
@@ -136,11 +141,6 @@ final class MomentArmErrorCancellationTests: XCTestCase {
                             ? [k * hip, k * knee, 0, 0]
                             : [0, 0, k * hip, k * knee])
             }
-        }
-        let torques = Rig.dofNames.map { dof -> Double in
-            if let t = Rig.leftTorques[dof] { return t }
-            let mirrored = dof.replacingOccurrences(of: "_r", with: "_l")
-            return (Rig.leftTorques[mirrored] ?? 0) * Rig.rightScale
         }
         let result = MuscleSolver().solveReal(
             withJointTorques: torques.map(NSNumber.init(value:)),
@@ -176,15 +176,35 @@ final class MomentArmErrorCancellationTests: XCTestCase {
         Swift.max(try XCTUnwrap(a["\(base)_l"]), try XCTUnwrap(a["\(base)_r"]))
     }
 
+    /// The finest left/right difference any of the pinned clips can assert,
+    /// read from the clips themselves rather than copied — a leak larger than
+    /// this is a leak the product cannot tell from a finding.
+    private func smallestPublicationFloorOnThePinnedClips() throws -> Double {
+        let bundle = Bundle(for: type(of: self))
+        var floors: [Double] = []
+        for id in GaitClipFixture.allIds {
+            let report = try GaitAnalysis.analyse(
+                frames: try GaitClipFixture.load(id, bundle: bundle).frames)
+            guard report.isUsable else { continue }
+            floors.append(report.resolution.resolvableAsymmetryPercent)
+        }
+        return try XCTUnwrap(floors.min(), "no pinned clip is usable")
+    }
+
     // MARK: - Preconditions, checked rather than assumed
 
     /// The linearity the whole argument rests on holds only while no activation
-    /// sits on a bound. If one did, the QP would be piecewise linear and a
-    /// scale would stop cancelling — which is precisely what
-    /// `MuscleLoad.isSaturated` is for. Checked here so the two tests below
-    /// cannot pass for the wrong reason.
+    /// sits on a bound. If one did, the QP would be piecewise linear for a
+    /// different reason and every number below would mean something else.
+    /// Checked on BOTH torque patterns and both perturbations.
     func testNoActivationSitsOnABoundInThisRig() throws {
-        for activations in [try solve(), try solve(scale: ["gamma": 0.6])] {
+        let cases: [[String: Double]] = [
+            try solve(torques: Rig.proportionalTorques),
+            try solve(torques: Rig.proportionalTorques, scale: ["gamma": 0.6]),
+            try solve(torques: Rig.torques(hipScale: 0.8, kneeScale: 1.0)),
+            try solve(torques: Rig.torques(hipScale: 0.8, kneeScale: 1.0), scale: ["gamma": 0.6]),
+        ]
+        for activations in cases {
             for (name, a) in activations {
                 XCTAssertGreaterThan(a, MuscleSolver().minActivation + 1e-3,
                                      "\(name) is on the lower bound")
@@ -196,14 +216,14 @@ final class MomentArmErrorCancellationTests: XCTestCase {
     /// The rig really does carry a left/right difference, so "the difference did
     /// not move" below is not the trivial statement that it was zero.
     func testTheUnperturbedRigCarriesTheAsymmetryItWasBuiltWith() throws {
-        let a = try solve()
+        let a = try solve(torques: Rig.proportionalTorques)
         let expected = Self.analyticDifferencePercent
         var measured: [Double] = []
         for (base, _, _, _) in Rig.muscles {
             let d = try differencePercent(a, base)
             measured.append(d)
             // 2 percentage points is the SOLVER's slack, not a tolerance chosen
-            // to make this pass: `solverNoiseFloor` below is the measured gap and
+            // to make this pass: `solverNoiseFloor` is the measured gap and
             // every other assertion in this file is scaled by it.
             XCTAssertEqual(d, expected, accuracy: 2.0,
                            "\(base) should read the rig's \(expected) % left-high")
@@ -214,60 +234,173 @@ final class MomentArmErrorCancellationTests: XCTestCase {
 
     // MARK: - The finding
 
-    /// **A per-muscle moment-arm error cancels out of that muscle's left/right
-    /// comparison and does NOT cancel out of the muscle-to-muscle ordering.**
+    /// **The retired experiment, kept and labelled.** With the two legs'
+    /// torques proportional, a bilateral moment-arm error cannot move the
+    /// left/right figure — not because the error cancels in any interesting
+    /// sense, but because the QP is linear in `τ` and the answer is
+    /// `100(1−c)/(0.5(1+c))` for every muscle whatever `A` is.
     ///
-    /// This is the measurement the panel's scoping decision rests on: the
-    /// left/right sentence stays, the cross-muscle ranking goes.
-    func testABilateralMomentArmErrorLeavesLeftRightAloneAndMovesTheRanking() throws {
-        let truth = try solve()
-        // A straight-line shortcut where the path really wraps around bone.
-        // 0.6 is well inside what a missing wrap costs — the log's own warning
-        // says the SIGN can flip at flexed poses, which is a scale of −1.
-        let wrong = try solve(scale: ["gamma": 0.6])
+    /// Two things are asserted, and the SECOND is the one that matters:
+    ///
+    /// 1. the perturbation does not move any figure (the old headline);
+    /// 2. **all three muscles read the same figure**, i.e. in the only regime
+    ///    where the moment-arm error demonstrably cancels, a per-muscle
+    ///    breakdown is one number repeated and carries no per-muscle
+    ///    information.
+    func testTheProportionalRigIsAnIdentityAndCertifiesNothing() throws {
+        let truth = try solve(torques: Rig.proportionalTorques)
+        let wrong = try solve(torques: Rig.proportionalTorques, scale: ["gamma": 0.6])
+        let noise = try solverNoiseFloor()
 
-        var worstDifferenceShift = 0.0
+        var shift = 0.0
+        var figures: [Double] = []
+        for (base, _, _, _) in Rig.muscles {
+            let dTruth = try differencePercent(truth, base)
+            figures.append(dTruth)
+            shift = Swift.max(shift, abs(try differencePercent(wrong, base) - dTruth))
+        }
+        let spread = (figures.max() ?? 0) - (figures.min() ?? 0)
+        print("MOMENT-ARM-METRIC proportional_identity worst_shift_pp=\(shift) "
+              + "solver_noise_floor_pp=\(noise) figures=\(figures) "
+              + "spread_across_muscles_pp=\(spread)")
+
+        XCTAssertLessThanOrEqual(shift, 2 * noise,
+                                 "under proportional torques the shift is algebraically zero, so "
+                                 + "anything above the solver's slack would mean the QP is not "
+                                 + "the one this file documents")
+        XCTAssertLessThanOrEqual(spread, 2 * noise,
+                                 "and every muscle must read the SAME figure — which is why this "
+                                 + "regime cannot support a per-muscle claim: measured spread "
+                                 + "\(spread) pp across \(figures.count) muscles")
+    }
+
+    /// **THE EXPERIMENT.** Same rig, same bilateral `gamma × 0.6` moment-arm
+    /// error, one variable changed: the right leg differs from the left in the
+    /// PATTERN of its joint torques (hip 0.80×, knee 1.00×) rather than in their
+    /// common size. That is what a gait asymmetry is, and it is the panel's own
+    /// worked example — a runner with 200 ms of left contact against 160 ms of
+    /// right does not scale both joint moments by one factor.
+    ///
+    /// The cancellation is then not an identity, and it fails: the error moves a
+    /// published left/right figure by more than any pinned clip can resolve.
+    /// This test CAN fail — if the QP's redistribution were insensitive to the
+    /// moment arms, the shift would sit at the solver's noise floor, and the
+    /// per-muscle claim could have stayed.
+    func testAShapeAsymmetryMakesABilateralMomentArmErrorLeak() throws {
+        let torques = Rig.torques(hipScale: 0.8, kneeScale: 1.0)
+        let truth = try solve(torques: torques)
+        let wrong = try solve(torques: torques, scale: ["gamma": 0.6])
+        let noise = try solverNoiseFloor()
+        let floor = try smallestPublicationFloorOnThePinnedClips()
+
+        var worst = 0.0
+        var worstBase = ""
+        var rows: [String] = []
+        for (base, _, _, _) in Rig.muscles {
+            let dTruth = try differencePercent(truth, base)
+            let dWrong = try differencePercent(wrong, base)
+            rows.append(String(format: "%@ %.4f->%.4f (%+.4f pp)", base, dTruth, dWrong,
+                               dWrong - dTruth))
+            if abs(dWrong - dTruth) > worst {
+                worst = abs(dWrong - dTruth)
+                worstBase = base
+            }
+        }
+        print("MOMENT-ARM-METRIC shape_asymmetry hip_r=0.80 knee_r=1.00 gamma_scale=0.6 "
+              + "worst_left_right_shift_pp=\(worst) on=\(worstBase) "
+              + "solver_noise_floor_pp=\(noise) smallest_pinned_clip_floor_percent=\(floor) "
+              + "rows=\(rows)")
+
+        XCTAssertGreaterThan(worst, 4 * noise,
+                             "the shift must be a real effect and not the solver's slack "
+                             + "(shift \(worst) pp, noise \(noise) pp)")
+        XCTAssertGreaterThan(worst, floor,
+                             "and it must exceed what the best pinned clip can resolve "
+                             + "(\(floor) %), or it would be inside the claim floor and the "
+                             + "per-muscle comparison could have survived")
+    }
+
+    /// **The leak lands on a muscle whose own path is modelled correctly**, so
+    /// no per-row "this muscle takes a straight-line path" warning can contain
+    /// it. `beta`'s moment arms are untouched by the perturbation; the QP moves
+    /// its share of the knee torque anyway, because `gamma` spans the same
+    /// joint and now supplies a different amount of it.
+    func testTheLeakMovesAMuscleWhosePathIsNotTheOnePerturbed() throws {
+        let torques = Rig.torques(hipScale: 0.8, kneeScale: 1.0)
+        let truth = try solve(torques: torques)
+        let wrong = try solve(torques: torques, scale: ["gamma": 0.6])
+        let noise = try solverNoiseFloor()
+
+        let dTruth = try differencePercent(truth, "beta")
+        let dWrong = try differencePercent(wrong, "beta")
+        print("MOMENT-ARM-METRIC leak_on_unperturbed_muscle beta \(dTruth) -> \(dWrong) "
+              + "shift_pp=\(abs(dWrong - dTruth)) noise_pp=\(noise)")
+
+        XCTAssertGreaterThan(abs(dWrong - dTruth), 4 * noise,
+                             "beta's own moment arms did not change and its figure moved anyway")
+        XCTAssertLessThan(abs(dWrong), abs(dTruth),
+                          "and it moved TOWARDS even: a real \(dTruth) % difference is displayed "
+                          + "as \(dWrong) %, so the error destroys findings as well as "
+                          + "manufacturing them")
+    }
+
+    /// **How the leak scales with the asymmetry being measured.** Zero when the
+    /// two legs' torques are proportional (`knee_r/knee_l = 0.8`, matching
+    /// `hip_r/hip_l`), and growing in both directions away from it — so the
+    /// contamination is largest for exactly the runners the product exists to
+    /// help, and it cannot be traded away by asking for a better clip.
+    func testTheLeakIsZeroAtProportionalTorqueAndGrowsWithTheShapeDifference() throws {
+        let noise = try solverNoiseFloor()
+        var rows: [String] = []
+        var atProportional = Double.infinity
+        var worstOverSweep = 0.0
+        for kneeScale in [0.6, 0.7, 0.8, 0.9, 0.95, 1.0] {
+            let torques = Rig.torques(hipScale: 0.8, kneeScale: kneeScale)
+            let truth = try solve(torques: torques)
+            let wrong = try solve(torques: torques, scale: ["gamma": 0.6])
+            var worst = 0.0
+            for (base, _, _, _) in Rig.muscles {
+                worst = Swift.max(worst, abs(try differencePercent(wrong, base)
+                                             - (try differencePercent(truth, base))))
+            }
+            rows.append(String(format: "knee_r/knee_l=%.2f worst_shift_pp=%.4f", kneeScale, worst))
+            if kneeScale == 0.8 { atProportional = worst }
+            worstOverSweep = Swift.max(worstOverSweep, worst)
+        }
+        print("MOMENT-ARM-METRIC leak_vs_shape_difference hip_r=0.80 gamma_scale=0.6 "
+              + "noise_pp=\(noise) \(rows.joined(separator: " "))")
+
+        XCTAssertLessThanOrEqual(atProportional, 2 * noise,
+                                 "at knee_r/knee_l = hip_r/hip_l the torques are proportional and "
+                                 + "the leak is algebraically zero")
+        XCTAssertGreaterThan(worstOverSweep, 10 * atProportional,
+                             "and away from that point it is an order of magnitude larger")
+    }
+
+    /// **The cross-muscle ordering, still not a measurement.** Kept from the
+    /// round that retired it: the bilateral perturbation moves the absolute
+    /// activations by tens of percent and reorders the list, on the same rig
+    /// where it was claimed to be harmless to the left/right figure.
+    func testABilateralMomentArmErrorMovesTheCrossMuscleQuantityAndTheOrder() throws {
+        let truth = try solve(torques: Rig.proportionalTorques)
+        let wrong = try solve(torques: Rig.proportionalTorques, scale: ["gamma": 0.6])
         var worstRankingShiftPercent = 0.0
         var truthKeys: [String: Double] = [:]
         var wrongKeys: [String: Double] = [:]
         for (base, _, _, _) in Rig.muscles {
-            let dTruth = try differencePercent(truth, base)
-            let dWrong = try differencePercent(wrong, base)
-            worstDifferenceShift = Swift.max(worstDifferenceShift, abs(dWrong - dTruth))
-            // The ranking key is an ABSOLUTE activation, so it moves — both for
-            // the perturbed muscle and, through the QP's redistribution of the
-            // torque it no longer supplies, for the others.
             let t = try rankingKey(truth, base)
             let w = try rankingKey(wrong, base)
             truthKeys[base] = t
             wrongKeys[base] = w
             worstRankingShiftPercent = Swift.max(worstRankingShiftPercent, 100 * abs(w - t) / t)
         }
-
-        // And the ORDER itself, which is what the user reads.
         let bases = Rig.muscles.map(\.base)
         let truthOrder = bases.sorted { (truthKeys[$0] ?? 0) > (truthKeys[$1] ?? 0) }
         let wrongOrder = bases.sorted { (wrongKeys[$0] ?? 0) > (wrongKeys[$1] ?? 0) }
+        print("MOMENT-ARM-METRIC cross_muscle worst_ranking_shift_percent="
+              + "\(worstRankingShiftPercent) order_truth=\(truthOrder) order_wrong=\(wrongOrder)")
 
-        let noise = try solverNoiseFloor()
-        print("MOMENT-ARM-METRIC bilateral_perturbation gamma_scale=0.6 "
-              + "worst_left_right_shift_pp=\(worstDifferenceShift) "
-              + "solver_noise_floor_pp=\(noise) "
-              + "worst_ranking_shift_percent=\(worstRankingShiftPercent) "
-              + "order_truth=\(truthOrder) order_wrong=\(wrongOrder)")
-
-        // The left/right figure must not move by more than the solver's own
-        // slack already moves it. That is the strongest statement available: the
-        // analytic answer says the shift is exactly zero, and OSQP cannot
-        // resolve zero any finer than `noise`.
-        XCTAssertLessThanOrEqual(worstDifferenceShift, 2 * noise,
-                                 "a bilateral moment-arm error must not move a left/right figure "
-                                 + "by more than the solver's own tolerance does "
-                                 + "(shift \(worstDifferenceShift) pp, noise \(noise) pp)")
-        XCTAssertLessThan(worstDifferenceShift, 2.0, "and it must stay small in absolute terms")
-        XCTAssertGreaterThan(worstRankingShiftPercent, 10 * worstDifferenceShift,
-                             "and it must move the cross-muscle quantity by far more, or the "
-                             + "distinction this panel is scoped on does not exist")
+        XCTAssertGreaterThan(worstRankingShiftPercent, 10.0)
         XCTAssertNotEqual(truthOrder, wrongOrder,
                           "the ranking the panel used to publish must be shown to reorder")
     }
@@ -275,15 +408,13 @@ final class MomentArmErrorCancellationTests: XCTestCase {
     /// **The sign flip the loader's own warning names, and what it actually
     /// does.**
     ///
-    /// Not what this file first assumed. A muscle whose modelled moment arm has
-    /// the wrong sign is not merely rescaled — the QP refuses to recruit it and
-    /// pushes it onto the `a ≥ aMin` bound on BOTH sides, where it reads exactly
-    /// 0 % left/right. That is a real finding turned into "even", and it is why
-    /// `MuscleLoad.isAtActivationFloor` exists and withholds: the cancellation
-    /// argument holds in the interior of the box and nowhere else.
+    /// A muscle whose modelled moment arm has the wrong sign is not merely
+    /// rescaled — the QP refuses to recruit it and pushes it onto the
+    /// `a ≥ aMin` bound on BOTH sides, where it reads exactly 0 % left/right.
+    /// That is a real finding turned into "even".
     func testASignFlippedMomentArmPinsTheMuscleToTheFloorAndReadsFalselyEven() throws {
-        let truth = try solve()
-        let flipped = try solve(scale: ["gamma": -1.0])
+        let truth = try solve(torques: Rig.proportionalTorques)
+        let flipped = try solve(torques: Rig.proportionalTorques, scale: ["gamma": -1.0])
         let floor = GaitLoadSummary.activationFloorThreshold
         let left = try XCTUnwrap(flipped["gamma_l"])
         let right = try XCTUnwrap(flipped["gamma_r"])
@@ -299,26 +430,40 @@ final class MomentArmErrorCancellationTests: XCTestCase {
         XCTAssertGreaterThan(abs(dTruth), 10.0,
                              "while the truth is a large real difference — this is a finding "
                              + "destroyed, not a false positive")
-        // Which is exactly the case the summary now withholds instead of
-        // publishing as "even to within what this clip can resolve".
         XCTAssertTrue(GaitLoadSummary.activationFloorThreshold > MuscleSolver().minActivation)
     }
 
-    /// **The assumption, isolated.** If the two sides' paths were modelled
-    /// differently — or the same wrap error evaluated differently at the two
-    /// legs' sampled poses — the cancellation would not hold, and this is how
-    /// much it would cost. Reported so the residual risk in the shipped claim
-    /// has a number attached rather than a shrug.
-    func testAOneSidedMomentArmErrorDoesNotCancelAndIsTheAssumptionTheClaimRestsOn() throws {
-        let truth = try solve()
-        let oneSided = try solve(leftOnlyScale: ["gamma": 0.6])
+    /// **A one-sided error**, i.e. the two legs modelled differently, or the
+    /// same wrap error evaluated at two poses far enough apart to differ. Each
+    /// side IS sampled at its own mid-contact, and nothing checks that those
+    /// poses are comparable, so this is not hypothetical.
+    func testAOneSidedMomentArmErrorDoesNotCancel() throws {
+        let truth = try solve(torques: Rig.proportionalTorques)
+        let oneSided = try solve(torques: Rig.proportionalTorques,
+                                 leftOnlyScale: ["gamma": 0.6])
         let dOneSided = try differencePercent(oneSided, "gamma")
         let dTruth = try differencePercent(truth, "gamma")
         let shift = abs(dOneSided - dTruth)
         print("MOMENT-ARM-METRIC one_sided_perturbation gamma_scale_left_only=0.6 "
               + "left_right_shift_pp=\(shift)")
         XCTAssertGreaterThan(shift, 10.0,
-                             "a one-sided error must move the left/right figure — the claim "
-                             + "depends on the model being bilaterally identical")
+                             "a one-sided error must move the left/right figure — this was the "
+                             + "assumption the retired claim rested on, and it is worth this much")
+    }
+
+    /// **The consequence, pinned where a future reader cannot miss it.** No
+    /// clip, however clean, may state a per-muscle left/right difference in this
+    /// build; the retirement is a property of the model, not of the data.
+    func testNoClipMayStateAPerMuscleLeftRightDifference() throws {
+        XCTAssertFalse(GaitLoadSummary.perMuscleLeftRightClaimIsSupported,
+                       "the leak above is larger than the pinned clips' floors and nothing in "
+                       + "this pipeline bounds it")
+        let summary = GaitLoadSummaryTests.summary(resolvable: 5)
+        let huge = GaitLoadSummaryTests.load(differencePercent: 200)
+        XCTAssertTrue(summary.clearsStatisticalFloor(huge),
+                      "a 200 % difference clears every statistical floor there is")
+        XCTAssertFalse(summary.permits(huge),
+                       "and is still not permitted, because the statistics were never the "
+                       + "binding constraint")
     }
 }

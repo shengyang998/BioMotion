@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-07.
+Last updated: 2026-08-08.
 
 ---
 
@@ -41,6 +41,15 @@ biggest links were **not** where the effort had been going.
   167–247 ms and peak GRF 2.08–2.85 BW at **±32%**, with no robustness result at all. Not
   implemented; a first attempt is parked on `wip/gait-dynamics-broken`. See
   [Gait-cycle dynamics](#gait-cycle-dynamics-the-route-survives-its-evidence-did-not-2026-08-07).
+- **The per-muscle LEFT/RIGHT claim is RETIRED** (2026-08-08). The measurement that certified it ran
+  on a rig where it could not fail — the QP is linear in the joint torques, so a right leg scaled
+  `0.8×` gives `a_R = 0.8·a_L` for ANY moment arms. Give the right leg a different torque SHAPE
+  instead, and an unmodelled `PathWrap` moves a published figure by **9.92 pp**, turning a real
+  −17.9 % into a displayed −8.0 %, on a muscle whose own path is modelled correctly. Where it does
+  cancel, every muscle reads the same number. Separately, the eight rows shown were the top of 175
+  screened pairs quoted at a per-comparison 95 %; family-wise, **zero claims survive on any pinned
+  clip at any scatter level**. The running screen's surviving left/right finding is CONTACT TIME. See
+  [Fifth round](#fifth-round-the-cancellation-was-an-identity-and-the-per-muscle-claim-is-retired-2026-08-08).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -124,7 +133,7 @@ optimizer bound by colormap appearance; dead `maxMuscleForceAtState` and the leg
 | | 2026-08-06 start | after Phase 0 | 2026-08-07 | 2026-08-08 |
 |---|---|---|---|---|
 | Test target | **did not compile** (`MomentArmTests.swift:124` used a stale signature) | builds | builds | builds |
-| Tests | 0 runnable | 88 total, 87 pass | 219 total, 219 pass | **371 total, 371 pass, 0 crash-restarts** |
+| Tests | 0 runnable | 88 total, 87 pass | 219 total, 219 pass | **380 total, 380 pass, 0 crash-restarts** |
 
 `E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
 fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
@@ -1846,6 +1855,147 @@ surviving on the other code path because the test did not look at the string. Ne
 * The horizontal residual is still not computed, so M10 is a disclosure fix and not a measurement.
 * The minors were not addressed.
 
+
+### Fifth round: the cancellation was an identity, and the per-muscle claim is retired (2026-08-08)
+
+Two blockers from the final adversarial pass. Both attacked the last surviving product claim — the
+per-muscle LEFT/RIGHT percentage — and both stand up. **The claim is gone.** Test count 371 → **380**,
+`Executed 380 tests, with 0 failures (0 unexpected)`, **0 restarts**, `** TEST SUCCEEDED **`, 680 s
+wall, via `tools/run_tests.sh` on the private `BioMotion-CI` device. The floor in `run_tests.sh` is
+raised to 380.
+
+#### S1 — the test that certified the claim could not fail, and the test that can, fails
+
+`MomentArmErrorCancellationTests` pinned `rightScale = 0.8` on EVERY right joint torque. The shipped
+QP is `min ½aᵀ(εI + λAᵀA)a − λτᵀAa`, whose interior solution `a = (εI + λAᵀA)⁻¹λAᵀτ` is **linear in
+τ** — so `a_R = 0.8·a_L` exactly, for ANY moment-arm matrix. The perturbation could not move the
+answer. In exact arithmetic (active-set enumeration, `/tmp/qp_probe.py`) it moves it by **1e-6 pp**;
+the **1.04 pp** recorded as evidence of cancellation is OSQP's own tolerance, and the assertion
+`shift ≤ 2 × noise` was satisfied by construction.
+
+Change ONE variable — the right leg differs in torque SHAPE rather than size (hip 0.80×, knee 1.00×
+of the left, which is what a gait asymmetry is) — and the same bilateral `gamma × 0.6` perturbation
+leaks. MEASURED on the shipping OSQP solver:
+
+| case | worst shift in a left/right figure | note |
+|---|---|---|
+| solver noise floor | **1.52 pp** | gap between the analytic answer and what OSQP returns |
+| proportional torques, `gamma × 0.6` both sides | **1.04 pp** | an identity — cannot exceed the noise |
+| proportional torques: spread ACROSS the three muscles | **1.97 pp** | i.e. all three read the same figure |
+| **shape asymmetry, `gamma × 0.6` both sides** | **9.92 pp** | on `beta`, whose own path is modelled correctly |
+| shape asymmetry at `knee_r/knee_l = 0.6` | **17.72 pp** | the leak grows with the asymmetry |
+| one-sided `gamma × 0.6` | **23.84 pp** | unchanged from the previous round |
+
+`beta` reads `−17.89 %` with correct moment arms and `−7.97 %` with the wrong ones: a real 18 %
+difference displayed as 8 %. Against publication floors of 10.145 % / 8.086 % on the two usable
+pinned clips, 9.92 pp is larger than the finer of them and 98 % of the other. It is a BIAS, not
+scatter — more contacts do not shrink it — and it lands on a correctly-modelled muscle, because the
+QP redistributes load between synergists, so no per-row "this path is a straight line" flag contains
+it.
+
+**Why this retires the claim instead of widening a floor.** The leak is exactly zero when the two
+legs' torques are proportional (measured: 1.04 pp at `knee_r/knee_l = hip_r/hip_l = 0.8`). But in
+that regime the same linearity makes every muscle read the SAME figure — measured spread 1.97 pp
+against a 1.52 pp noise floor — so the per-muscle breakdown is one number repeated, and that number
+is the torque scale ratio the contact block already reports from timing. **All per-muscle
+differentiation lives in the non-proportional part of the torque, which is precisely the part a wrong
+moment arm distorts.** There is no regime that is both safe and informative, so
+`perMuscleLeftRightClaimIsSupported` is a flat `false` and not a gate. The condition that would flip
+it back is registered in its doc: model the 76 missing `PathWrap` references, or bound their error,
+and re-run `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` against the 8.086 % floor.
+
+#### S2 — eight order statistics quoted as eight independent tests
+
+`make` builds a comparison for EVERY bilateral pair — **175 measured** on `FullBody.osim` — and
+`ordered(_:)` sorts by `|difference| / claimFloor`, so the panel's `prefix(8)` took the eight largest
+values of the very statistic the interval was about, under the caption "Each comparison is a 95 % one
+and 8 are shown, so about one in twenty of them can read a difference that is not there."
+
+`MuscleLoad.samplingUncertaintyPercent` now takes its Student-t at `α/N`, `N = screenedComparisonCount`
+(pairs with ≥2 contacts a side and neither QP bound active — a rule that does not look at the
+statistic). The multiplier is computed, not tabulated: `StudentT` evaluates the t CDF through the
+regularized incomplete beta and inverts it by bisection, pinned against published quantiles
+(`t₀.₉₇₅,₄ = 2.776`, `t₀.₉₉₉₅,₅ = 6.869`, `t₀.₉₉₉₉₅,₄ = 15.544`). Cost at real contact counts:
+2.776 → **11.899** at df=4 (×4.29), 2.571 → 8.980 at df=5 (×3.49).
+
+**MEASURED, per pinned clip — a symmetric runner, both legs drawn from one distribution, so every
+survivor is false** (`GaitClaimSurvivalTests`; the clips supply the contact counts, timing floor and
+contact-time term, the activations are synthetic because the fixtures carry five joints and no IK):
+
+| clip | contacts/side | timing floor | σ | false claims, per-comparison rule | false claims, family-wise |
+|---|---|---|---|---|---|
+| video_012 | 6 | 10.145 % | 0.02 / 0.04 / 0.08 / 0.12 | 0 / **4** / **5** / **5** | 0 / 0 / 0 / 0 |
+| video_015 | 5 | 8.086 % | 0.02 / 0.04 / 0.08 / 0.12 | 0 / **4** / **4** / **4** | 0 / 0 / 0 / 0 |
+| video_013 | — | refused | — | 0 | 0 |
+
+σ = 0.12 is the scatter every other measurement in this repo is taken at. The corrected claim floor
+at that scatter is a MEDIAN of **121 %** (video_012) and **178 %** (video_015) — against a statistic
+mathematically bounded at ±200 %. The smallest planted asymmetry that still survives: **40 %** at
+σ = 0.04, **100 %** (video_012) and **120 %** (video_015) at σ = 0.12.
+
+**So the honest answer to "what survives" is: nothing, on any clip.** Not because the correction was
+tuned — it was not touched after the first run — but because 4-6 contacts a side cannot separate 175
+muscles. Even with the moment-arm leak repaired, this feature would need a real asymmetry above 100 %
+to report anything at the scatter we have.
+
+#### What the running screen shows now
+
+* **The surviving left/right finding is CONTACT TIME** — measured from stance timing, touching
+  neither a moment arm nor the QP — and it is labelled as such ("Left vs right: time on the ground").
+* The muscle block states, in one paragraph, that the comparison ran, how many pairs it covered, and
+  why none of it is shown. No name, no `L 0.71 · R 0.55`, no bars, no orange verdict.
+* **The 3-D muscle overlay is off on analysed running clips.** It selected the strongest 24
+  activations and coloured them from one shared colormap — the cross-muscle ordering retired in round
+  four, made in colour with no number and no caption. The still-pose path is untouched.
+* The stance badge no longer reads "Pose + muscle (foot down — relative loads)", because no relative
+  load is published.
+
+#### Also fixed here, because the blockers' fixes touched them
+
+* **The contact-time term was printed in the grammar of a share.** "so 9 % of every bar's left/right
+  difference is that contact-time difference" — the value is an additive offset in percentage POINTS
+  (−9.386 on the panel's own worked example), so a reader took 9 % of a 13 % reading, computed 1.2
+  points of artefact where the truth is 9.4, and overstated their own asymmetry 3.3×. It now says
+  "9 percentage points of right-high difference … subtract it, do not take a share of it".
+* **`musclesWithUnmodelledPaths` was in the wrong namespace.** The table listed `vaslat`/`gaslat`
+  (the `displayMuscleAliases` forms); the shipping path feeds it RAW solver names, so `vaslat140` and
+  `gaslat140` — vastus lateralis and lateral gastrocnemius on the production model — were recorded as
+  correctly modelled. The guard test passed because it applied the alias transform first, which the
+  shipping path never does. Both names added; the test now asserts the RAW set separately.
+* **`saturatedMuscleCount` counted muscle-SIDES** while `flooredMuscleCount` beside it counted
+  muscles, and the panel printed them in one sentence — a clip clipping ten muscles on both legs told
+  the user twenty had maxed out. Both are muscles now (`GaitLoadSummaryTests` asserts 1, not 2, for
+  one muscle clipped on both sides).
+
+#### What this stage did NOT do
+
+* **No device run.** Everything is the `BioMotion-CI` simulator on one Mac.
+* **The survival numbers use synthetic activation scatter.** No real per-muscle activation exists for
+  the pinned clips — the fixtures carry five joints, which is what `GaitAnalysis` needs and not what
+  IK needs. The scatter is swept over four levels rather than assumed at one, and the conclusion does
+  not turn on the choice: above the level where the sampling term binds, a calibrated t-interval
+  admits α of the family whatever the scatter is.
+* **The LIVE ARKit path's muscle overlay is unchanged.** `MuscleOverlay` still picks its strongest 24
+  by an uncalibrated cross-muscle number; only the offline running path is gated. The live path is a
+  different surface with its own static-hold gating, and changing the shared renderer was not this
+  stage's to do.
+* **Minors deferred, recorded here rather than fixed:**
+  1. Pass-1 static-hold muscle output survives on frames the gait pass excluded
+     (`OfflineResultStore.swift:310` merges `muscleResult ?? existing.muscleResult` and overwrites
+     `isStaticHoldEstimate`), so a `.gaitOutsideAnalysis` frame keeps activations solved with q̈ = 0
+     under a "Pose only" caption. Materially reduced by this round — the overlay no longer draws on
+     analysed running clips — but the provenance flag is still destroyed.
+  2. The multiplicity sentence's row count was hard-coded rather than taken from the rows drawn.
+     Dead: the sentence and the rows are gone.
+  3. `GaitLoadSummary.framesPerSecond` is the video track's NOMINAL rate even when the sparse `.fps`
+     sampler ran, so `resolutionSentence` names a rate the run did not use. Still open, still wrong.
+  4. `OfflinePlaybackView.statusText` consults `gaitLoadsAreComparable` and never
+     `summary.arePublishable`, so a clip whose residual gate FAILED still gets a per-frame badge
+     implying a successful solve. Half-closed: the badge no longer claims relative loads.
+  5. Two refusals state a fact and offer no lever ("No contact produced muscle output on both
+     sides.", "The strides were measured but no contact produced muscle output.") while every other
+     refusal on the screen ends in an action.
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -2148,21 +2298,38 @@ arms must differ in the work that PRECEDES the mask.
 
 ### Newly opened by the 2026-08-08 muscle-claim scoping
 
-15. **The 3-D muscle overlay still picks its strongest 24 muscles by the same uncalibrated
-    cross-muscle number the panel's ranking was retired for.** `MuscleOverlay` sorts
-    `muscle.rawActivations` and takes a prefix. Those activations carry per-muscle moment-arm scale
-    errors, so "which muscles are drawn" is not a measurement — the same statement that removed the
-    list's ranking. It is disclosed on the panel (`crossMuscleSentence`) and not changed, for two
-    reasons: the overlay carries no names and no figures, so it reads as a region picture rather than
-    as a league table; and it is shared verbatim with the live ARKit path, so changing its selection
-    rule changes a second product surface that this review did not cover. Deciding it needs a
-    preregistered criterion for what the overlay is claiming.
-16. **The left/right claim depends on the two legs' moment-arm errors being IDENTICAL, and that is
-    an assumption, not a measurement.** It holds by construction — the model is bilaterally symmetric
-    and each side is sampled at its own mid-contact — but `MomentArmErrorCancellationTests` measures
-    that a one-sided error costs **23.8 pp** on the published figure. Nothing in the pipeline checks
-    that the two legs are sampled at comparable poses. A pose-similarity check between the two sides'
-    mid-contact samples would turn the assumption into a gate.
+15. ~~**The 3-D muscle overlay still picks its strongest 24 muscles by the same uncalibrated
+    cross-muscle number.**~~ **Closed for the offline running path on 2026-08-08**: the overlay is
+    off on analysed running clips, and the `figure.run` toggle is hidden there rather than left
+    green and inert. **Still open for the LIVE ARKit path**, which shares `MuscleOverlay` verbatim
+    and is a product surface neither review covered. Deciding that one needs a preregistered
+    criterion for what the picture is claiming.
+16. ~~**The left/right claim depends on the two legs' moment-arm errors being IDENTICAL.**~~
+    **Overtaken on 2026-08-08.** The claim needed more than that: it needed the two legs' TORQUES to
+    be proportional, which is both unmeasured and — where it holds — fatal to the claim's content
+    (every muscle then reads the same figure). The claim is retired. The one-sided figure stands at
+    **23.8 pp** and the shape-asymmetry leak at **9.92 pp**, both in
+    `MomentArmErrorCancellationTests`.
+
+### Newly opened by the 2026-08-08 retirement
+
+17. **The route that is not exposed to this defect: compare LEFT/RIGHT at the JOINT, not at the
+    muscle.** `τ = M·q̈ + C − JᵀF` never touches a moment arm — the moment arms enter only in the
+    muscle QP — so a left/right comparison of the hip, knee and ankle moments at mid-contact carries
+    none of the leak that retired the per-muscle claim. It is NOT free: it still inherits the
+    fabricated fore-aft term (0.2-0.35 BW), the timing-derived vertical force, and the per-leg `Fmax`
+    contact-time contamination, and there are still only 4-6 contacts a side — so the multiplicity
+    arithmetic in `GaitClaimSurvivalTests` applies to it too, over a family of 3-6 joints instead of
+    175 muscles, which is a very different number (`t` at `α/6`, df=4, is 4.77 rather than 11.90).
+    Preregister the gates before building it.
+18. **Repair the 76 unmodelled `PathWrap` references, or bound their moment-arm error.** This is the
+    only thing that reopens the muscle claim. The falsifier is registered on
+    `GaitLoadSummary.perMuscleLeftRightClaimIsSupported`: with the wraps modelled, re-run
+    `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` and require the leak below 8.086 %.
+19. **The scatter the sampling interval is built from has never been measured on real footage.**
+    Every survival number in `GaitClaimSurvivalTests` sweeps it because of that. Real per-muscle
+    contact-to-contact scatter needs a clip that reaches the muscle solver — i.e. the 20-marker
+    offline path on real video, not the five-joint gait fixtures.
 
 ### Newly opened by the cam_t measurement (2026-08-07)
 
