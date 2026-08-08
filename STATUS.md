@@ -2320,6 +2320,67 @@ the rest stand.
 * It did not touch the QP, the moment arms, the solver or any test that measures them.
 * It did not re-open any retired claim. The contact-time claim is narrower than it was, not wider.
 * The parent repo's `labs/BioMotion` gitlink is still behind.
+### What build 30 actually delivers, and what it refuses to (2026-08-08)
+
+Five workflow rounds, twelve commits, 219 → 398 tests. The honest summary, because the headline is
+that **two product claims were retired on evidence and the third is empty on all three reference
+clips.**
+
+**Retired: the cross-muscle ranking.** `MomentArmComputer` logs that 76 PathWrap references are not
+modelled, so those muscles take a straight-line shortcut instead of wrapping around bone. The
+affected set is essentially every muscle a running analysis would name. A wrong moment arm maps a
+joint torque to a wrong force, and that does not cancel between two different muscles.
+
+**Retired: the per-muscle left/right figure.** The cancellation argument — same wrong model on both
+sides, so `F_left/F_right` survives — was MEASURED FALSE. The test that certified it pinned every
+right-side torque at 0.8× its left counterpart, making the QP's response an algebraic identity
+(1e-6 pp in exact arithmetic; the "1.04 pp" it reported was OSQP's own 1.52 pp noise floor). With a
+shape-asymmetric torque instead of a proportional one, the same bilateral moment-arm error leaks
+**9.92 pp** into `beta` — a muscle whose own path IS modelled correctly, because the QP redistributes
+between synergists. Publication floors are 8.09–10.15%. `perMuscleLeftRightClaimIsSupported = false`.
+
+**Retired: the 3-D muscle overlay on analysed running clips**, because colouring muscles against each
+other is the cross-muscle ranking on a more authoritative surface. It is an anatomy layer now.
+
+**Retired: the live screen's L/R load split.** `NimbleBridge` seeds the solve with a hardcoded 50/50
+wrench when both feet are down, and double-support indeterminacy is ±18 pp against a ~10 pp
+meaningful threshold. The badge shows the SUM.
+
+**Multiplicity.** The eight muscle rows were the top-8 order statistics of ~175 bilateral pairs
+quoted at a per-comparison error rate. On a symmetric runner — where every survivor is false — the
+old rule published 4–5 claims at realistic scatter; family-wise correction over the 175 actually
+screened publishes 0, and its floor (121–178%) exceeds what a statistic bounded at ±200% can express.
+
+**The one surviving mechanical claim is left/right CONTACT TIME**, because it touches neither a
+moment arm nor the QP. Its gate was built from the wrong variance — stride-period scatter, when the
+statistic is the difference of two means of ~5 contact durations. Monte-Carlo on a symmetric runner
+at `video_015`'s own configuration: the old gate published a false finding on **25.29%** of clips,
+the corrected gate on **2.43%** (nominal 5%; Welch 4.01%).
+
+**And it is empty on all three clips, which is the honest result, not a bug:**
+
+| clip | measured | timing floor | contact half-width | claim floor | published |
+|---|---|---|---|---|---|
+| video_012 | 2.90% | 10.145% | 7.451% | 10.145% | none |
+| video_015 | −0.54% | 8.086% | **16.464%** | **16.464%** | none |
+| video_013 | — | — | 62.031% | — | refused |
+
+The correction removed no existing finding. What it revealed is that `video_015`'s honest floor is
+**double** what the screen had been printing. The surviving claim needs a 20–25% left/right contact
+difference on a 4 s clip before it speaks (true 10% publishes on 14.5% of clips, 25% on 75.5%, 40%
+on 99.2%).
+
+**The lever is measured and it is not the camera.** The timing floor binds on only 0.49% of draws —
+this claim is limited by the runner, not the sampling grid. The half-width falls as 1/√n, so halving
+16.5% needs ~20 contacts a side ≈ a 16 s steady run against the current 4 s window. Cost: 480 model
+calls ≈ 5.6 min at 0.7 s/frame, ~850 MB peak for 576×768 (it would NOT fit at 1080p). That is a
+bounded engineering change and it is the obvious next step; it is out of scope for build 30.
+
+**What build 30 does deliver:** a skeleton whose legs finally track the stride (the `upperBodyOnly`
+crop fix), gait timing per side with its scatter and step counts, a per-clip resolution figure the
+app computes rather than disclaims, the kinematics posture findings, static-hold muscle output
+unchanged, and a commit gate (`tools/run_tests.sh`) whose green actually means green.
+
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
