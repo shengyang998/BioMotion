@@ -267,7 +267,14 @@ final class GaitLoadSummaryTests: XCTestCase {
         let soleus = try XCTUnwrap(s.muscles.first { $0.id == "soleus" })
         let glmax = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         XCTAssertTrue(soleus.pathIsModelled, "soleus carries no PathWrap in either model")
-        XCTAssertFalse(glmax.pathIsModelled, "glmax1 wraps around the pelvis and is not modelled")
+        // glmax1 wraps around the pelvis on a WrapCylinder, and cylinder
+        // wrapping ships since 2026-08-08, so its path IS modelled now. The
+        // muscle that still is not is at the elbow.
+        XCTAssertTrue(glmax.pathIsModelled,
+                      "glmax1's pelvis cylinder is solved since cylinder wrapping shipped")
+        XCTAssertFalse(GaitLoadSummary.musclesWithUnmodelledPaths.contains("soleus"))
+        XCTAssertTrue(GaitLoadSummary.musclesWithUnmodelledPaths.contains("BIClong"),
+                      "BIClong carries a WrapEllipsoid, which is not implemented")
         // The flag was a per-ROW warning, and the reason it is not enough is
         // measured in `MomentArmErrorCancellationTests`: the QP redistributes
         // load between synergists, so an unmodelled wrap on glmax1 moves

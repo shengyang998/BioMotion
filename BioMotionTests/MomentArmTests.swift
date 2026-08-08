@@ -134,9 +134,14 @@ final class MomentArmTests: XCTestCase {
         XCTAssertEqual(report.unknownPathPointElementsSkipped, 0)
         XCTAssertEqual(report.musclesWithDefaultedTendonSlackLength, [String](),
                        "Every Rajagopal muscle declares tendon_slack_length")
-        // Wrap geometry is deliberately out of scope, but must not be silent.
-        XCTAssertEqual(report.unmodelledPathWraps, 46,
-                       "46 PathWrap references exist and none of them are modelled")
+        // Every one of Rajagopal2016's 46 PathWraps names a WrapCylinder, and
+        // cylinder wrapping ships, so NOTHING is unmodelled in the fallback
+        // model. Both halves are asserted: a solver that silently stopped
+        // solving would read 0 / 46 and still look tidy.
+        XCTAssertEqual(report.solvedPathWraps, 46,
+                       "all 46 of Rajagopal2016's PathWrap references are cylinders")
+        XCTAssertEqual(report.unmodelledPathWraps, 0)
+        XCTAssertEqual(report.musclesWithUnmodelledPathWraps, [String]())
     }
 
     /// FullBody.osim is what ships as production. Before document-order parsing
@@ -160,8 +165,13 @@ final class MomentArmTests: XCTestCase {
         // so assert the total is accounted for rather than that all 4 survive.
         XCTAssertEqual(report.movingPathPointsParsed + report.movingPathPointsSkipped, 4)
         XCTAssertEqual(report.unknownPathPointElementsSkipped, 0)
-        XCTAssertEqual(report.unmodelledPathWraps, 76,
-                       "76 PathWrap references exist and none of them are modelled")
+        // 64 of FullBody's 76 PathWrap references name a WrapCylinder and are
+        // solved; the remaining 12 name a WrapEllipsoid and are not.
+        XCTAssertEqual(report.solvedPathWraps, 64)
+        XCTAssertEqual(report.unmodelledPathWraps, 12)
+        XCTAssertEqual(report.wrapObjectsParsed, 69)
+        XCTAssertEqual(report.wrapObjectsRejected, 0,
+                       "a rejected WrapObject silently stops its PathWraps wrapping")
     }
 
     /// Path points are polyline vertices: a via point at the wrong index is
@@ -276,7 +286,9 @@ final class MomentArmTests: XCTestCase {
             XCTAssertTrue(computer.parseMusclePaths(fromOsimPath: path, from: bridge))
             let report = computer.fidelityReport
             let wrapped = report.musclesWithUnmodelledPathWraps
-            XCTAssertFalse(wrapped.isEmpty, "\(model) reports wrap references but names none")
+            XCTAssertEqual(wrapped.isEmpty, report.unmodelledPathWraps == 0,
+                           "\(model): the named list and the count must agree about whether "
+                           + "anything is unmodelled")
             XCTAssertLessThanOrEqual(wrapped.count, report.unmodelledPathWraps,
                                      "a muscle may carry more than one wrap, never fewer")
             let raw = rawBases(wrapped)
@@ -301,16 +313,21 @@ final class MomentArmTests: XCTestCase {
                        + "entries would flag a muscle whose path IS modelled: "
                        + "\(GaitLoadSummary.musclesWithUnmodelledPaths.subtracting(union).sorted())")
 
-        // The named list has to include the muscles the running screen actually
-        // shows, or the flag would be decoration.
+        // Until 2026-08-08 this block asserted that every lower-limb muscle the
+        // running screen shows was in the table. Cylinder wrapping ships now, so
+        // the opposite is the truth to pin: those muscles' paths ARE modelled,
+        // and a regression that stopped solving them would put them back.
         for base in ["glmax1", "glmax2", "recfem", "vasmed", "vaslat", "vaslat140",
                      "gasmed", "gaslat", "gaslat140", "bfsh140",
-                     "semimem", "semiten", "psoas", "iliacus", "addlong", "grac"] {
-            XCTAssertTrue(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base), base)
+                     "semimem", "semiten", "psoas", "iliacus", "addlong", "grac",
+                     "soleus", "tibant", "tibpost", "glmed1", "glmin1", "tfl", "sart", "piri"] {
+            XCTAssertFalse(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base),
+                           "\(base)'s path is modelled since cylinder wrapping shipped")
         }
-        // And exclude ones that really are modelled, so it is not a blanket.
-        for base in ["soleus", "tibant", "tibpost", "glmed1", "glmin1", "tfl", "sart", "piri"] {
-            XCTAssertFalse(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base), base)
+        // What survives is the elbow, where WrapEllipsoid is still missing.
+        for base in ["ANC", "BIClong", "BICshort", "BRD", "TRIlong"] {
+            XCTAssertTrue(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base),
+                          "\(base) carries a WrapEllipsoid, which is not implemented")
         }
     }
 

@@ -1,4 +1,5 @@
 #import "MomentArmComputer.h"
+#import "MusclePathWrap.h"
 #import "../Nimble/NimbleBridge+Internal.h"
 
 #include <vector>
@@ -36,6 +37,12 @@ struct InternalPathPoint {
     std::string bodyName;
     Eigen::Vector3s localOffset;
 
+    /// Index in the muscle's ORIGINAL `<PathPointSet>`, counting every point the
+    /// file declares including the ones this parser dropped. `<PathWrap>`'s
+    /// `<range>` is written in those indices, so a dropped point must not shift
+    /// the range onto a different segment.
+    int originalIndex = -1;
+
     // ConditionalPathPoint gating. `conditionDofIndex < 0` means the point is
     // unconditional (a plain PathPoint, or a conditional one whose coordinate
     // is not a DOF of this skeleton) and is therefore always active.
@@ -60,6 +67,23 @@ struct InternalMusclePath {
     double optimalFiberLength;
     double tendonSlackLength;
     double pennationAngle;
+
+    /// The muscle's whole `<PathWrapSet>` in file order, INCLUDING the wraps
+    /// this build cannot solve. They stay in the list because OpenSim's own
+    /// numerics depend on the set's SIZE: with one `PathWrap` it takes the
+    /// closed-form spiral length and never iterates for axial tangency; with
+    /// two or more it iterates, and re-solves the whole set up to 8 times.
+    /// Dropping an ellipsoid would silently move a two-cylinder muscle onto the
+    /// one-wrap code path.
+    std::vector<biomotion::PathWrapSpec> pathWraps;
+
+    /// Size of the original `<PathPointSet>`, which is what `<range>` counts.
+    int originalPointCount = 0;
+
+    /// False when the path plus its wrap points would not fit the solver's
+    /// fixed storage. Those muscles keep the straight line and are counted as
+    /// unmodelled rather than truncated.
+    bool wrapStorageFits = true;
 };
 
 // MARK: - XML helpers
@@ -176,6 +200,107 @@ static Eigen::Vector3s localOffsetForPathPoint(const InternalPathPoint& pp,
     return offset;
 }
 
+// MARK: - Wrap object parsing
+
+/// Read every `<WrapObject>` off the model's `<BodySet>` into a flat table.
+///
+/// Rejections are counted, never guessed around: an unsupported subclass, a
+/// `<quadrant>` spelling OpenSim would have thrown on, a body the skeleton does
+/// not carry, or a non-positive radius all leave the object out of the table, so
+/// any `<PathWrap>` naming it stays unmodelled instead of wrapping on a side
+/// nobody chose.
+static void parseWrapObjects(tinyxml2::XMLElement* model,
+                             const dynamics::Skeleton* skeleton,
+                             std::vector<biomotion::WrapObjectSpec>& objects,
+                             std::vector<int>& bodyIndices,
+                             std::map<std::string, int>& indexByName,
+                             NSInteger& rejected) {
+    objects.clear();
+    bodyIndices.clear();
+    indexByName.clear();
+    rejected = 0;
+    if (!model || !skeleton) return;
+
+    auto* bodySet = model->FirstChildElement("BodySet");
+    if (!bodySet) return;
+    auto* bodies = bodySet->FirstChildElement("objects");
+    if (!bodies) return;
+
+    for (auto* bodyEl = bodies->FirstChildElement("Body");
+         bodyEl; bodyEl = bodyEl->NextSiblingElement("Body")) {
+        const char* bodyName = bodyEl->Attribute("name");
+        if (!bodyName) continue;
+        auto* wrapSet = bodyEl->FirstChildElement("WrapObjectSet");
+        if (!wrapSet) continue;
+        auto* wrapObjects = wrapSet->FirstChildElement("objects");
+        if (!wrapObjects) continue;
+
+        for (auto* el = wrapObjects->FirstChildElement();
+             el; el = el->NextSiblingElement()) {
+            const char* name = el->Attribute("name");
+            if (!name) { rejected++; continue; }
+
+            biomotion::WrapObjectSpec spec;
+            spec.name = name;
+            spec.bodyName = bodyName;
+
+            const std::string kind = el->Name();
+            if (kind == "WrapCylinder") {
+                spec.kind = biomotion::WrapKind::Cylinder;
+            } else if (kind == "WrapEllipsoid") {
+                spec.kind = biomotion::WrapKind::Ellipsoid;
+            } else {
+                spec.kind = biomotion::WrapKind::Unsupported;
+            }
+
+            auto* activeEl = el->FirstChildElement("active");
+            if (activeEl && activeEl->GetText()) {
+                std::string text(activeEl->GetText());
+                spec.active = (text.find("false") == std::string::npos);
+            }
+
+            const auto radius = readNumbers(el, "radius");
+            const auto length = readNumbers(el, "length");
+            spec.radius = radius.empty() ? 0.0 : radius[0];
+            spec.length = length.empty() ? 0.0 : length[0];
+
+            const auto translation = readNumbers(el, "translation");
+            const auto rotation = readNumbers(el, "xyz_body_rotation");
+            Eigen::Vector3d offset = Eigen::Vector3d::Zero();
+            Eigen::Vector3d angles = Eigen::Vector3d::Zero();
+            if (translation.size() >= 3) {
+                offset = Eigen::Vector3d(translation[0], translation[1], translation[2]);
+            }
+            if (rotation.size() >= 3) {
+                angles = Eigen::Vector3d(rotation[0], rotation[1], rotation[2]);
+            }
+            spec.pose = Eigen::Isometry3d::Identity();
+            spec.pose.linear() = biomotion::bodyFixedXYZRotation(angles);
+            spec.pose.translation() = offset;
+
+            std::string quadrant = "all";
+            if (auto* quadrantEl = el->FirstChildElement("quadrant")) {
+                if (quadrantEl->GetText()) quadrant = quadrantEl->GetText();
+            }
+            if (!biomotion::decodeWrapQuadrant(quadrant, spec.wrapAxis, spec.wrapSign)) {
+                rejected++;
+                continue;
+            }
+
+            const dynamics::BodyNode* node = skeleton->getBodyNode(spec.bodyName);
+            if (!node) { rejected++; continue; }
+            if (spec.kind == biomotion::WrapKind::Cylinder && spec.radius <= 0.0) {
+                rejected++;
+                continue;
+            }
+
+            indexByName[spec.name] = (int)objects.size();
+            objects.push_back(spec);
+            bodyIndices.push_back((int)node->getIndexInSkeleton());
+        }
+    }
+}
+
 // MARK: - MusclePathFidelityReport
 
 NS_ASSUME_NONNULL_BEGIN
@@ -191,7 +316,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readwrite) NSInteger movingPathPointsApproximated;
 @property (nonatomic, readwrite) NSInteger movingPathPointsSkipped;
 @property (nonatomic, readwrite) NSInteger unknownPathPointElementsSkipped;
+@property (nonatomic, readwrite) NSInteger solvedPathWraps;
 @property (nonatomic, readwrite) NSInteger unmodelledPathWraps;
+@property (nonatomic, readwrite) NSInteger wrapObjectsParsed;
+@property (nonatomic, readwrite) NSInteger wrapObjectsRejected;
 @property (nonatomic, readwrite) NSArray<NSString *> *musclesWithUnmodelledPathWraps;
 @property (nonatomic, readwrite) NSArray<NSString *> *musclesWithDefaultedTendonSlackLength;
 @end
@@ -213,7 +341,8 @@ NS_ASSUME_NONNULL_END
     return [NSString stringWithFormat:
         @"%ld muscles | PathPoint %ld | Conditional %ld parsed (%ld skipped, "
         @"%ld ungated) | Moving %ld parsed (%ld approximated, %ld skipped) | "
-        @"unknown elements %ld | UNMODELLED PathWraps %ld | "
+        @"unknown elements %ld | WrapObjects %ld (%ld rejected) | "
+        @"PathWraps %ld solved, %ld UNMODELLED | "
         @"defaulted tendon_slack_length %lu",
         (long)_musclesParsed, (long)_pathPointsParsed,
         (long)_conditionalPathPointsParsed, (long)_conditionalPathPointsSkipped,
@@ -221,7 +350,8 @@ NS_ASSUME_NONNULL_END
         (long)_movingPathPointsParsed, (long)_movingPathPointsApproximated,
         (long)_movingPathPointsSkipped,
         (long)_unknownPathPointElementsSkipped,
-        (long)_unmodelledPathWraps,
+        (long)_wrapObjectsParsed, (long)_wrapObjectsRejected,
+        (long)_solvedPathWraps, (long)_unmodelledPathWraps,
         (unsigned long)_musclesWithDefaultedTendonSlackLength.count];
 }
 
@@ -283,6 +413,17 @@ NS_ASSUME_NONNULL_END
     std::shared_ptr<dynamics::Skeleton> _skeleton;
     BOOL _loaded;
     MusclePathFidelityReport *_fidelityReport;
+
+    /// The model's `<WrapObject>`s, and the body node each one rides on.
+    std::vector<biomotion::WrapObjectSpec> _wrapObjects;
+    std::vector<int> _wrapObjectBodyIndex;
+    /// World transform of each wrap object's body at the skeleton's current
+    /// pose. Refreshed once per `setPositions`, not once per muscle.
+    std::vector<Eigen::Isometry3d> _wrapBodyTransforms;
+
+    NSInteger _lastCentredDifferenceSamples;
+    NSInteger _lastOneSidedDifferenceSamples;
+    NSInteger _lastUnresolvedDiscontinuitySamples;
 }
 
 - (instancetype)init {
@@ -292,6 +433,12 @@ NS_ASSUME_NONNULL_END
         _fidelityReport = [[MusclePathFidelityReport alloc] init];
     }
     return self;
+}
+
+- (NSInteger)lastCentredDifferenceSamples { return _lastCentredDifferenceSamples; }
+- (NSInteger)lastOneSidedDifferenceSamples { return _lastOneSidedDifferenceSamples; }
+- (NSInteger)lastUnresolvedDiscontinuitySamples {
+    return _lastUnresolvedDiscontinuitySamples;
 }
 
 - (MusclePathFidelityReport *)fidelityReport { return _fidelityReport; }
@@ -341,6 +488,15 @@ NS_ASSUME_NONNULL_END
     for (size_t i = 0; i < _skeleton->getNumDofs(); i++) {
         dofIndexByName[_skeleton->getDof(i)->getName()] = (int)i;
     }
+
+    // The wrap surfaces have to exist before the muscles that reference them.
+    std::map<std::string, int> wrapObjectIndexByName;
+    NSInteger wrapObjectsRejected = 0;
+    parseWrapObjects(model, _skeleton.get(), _wrapObjects, _wrapObjectBodyIndex,
+                     wrapObjectIndexByName, wrapObjectsRejected);
+    _wrapBodyTransforms.assign(_wrapObjects.size(), Eigen::Isometry3d::Identity());
+    report.wrapObjectsParsed = (NSInteger)_wrapObjects.size();
+    report.wrapObjectsRejected = wrapObjectsRejected;
 
     // Muscle parser that handles both Millard2012EquilibriumMuscle and
     // Thelen2003Muscle — they share the same XML fields (max_isometric_force,
@@ -410,6 +566,12 @@ NS_ASSUME_NONNULL_END
         NSInteger nPlain = 0, nCond = 0, nCondSkipped = 0, nCondUngated = 0;
         NSInteger nMoving = 0, nMovingApprox = 0, nMovingSkipped = 0, nUnknown = 0;
 
+        // Index into the muscle's `<PathPointSet>` as the FILE declares it —
+        // incremented for every path point element whether or not this parser
+        // keeps it, because `<PathWrap>`'s `<range>` is written in these
+        // indices and a dropped point must not shift the range.
+        int originalIndex = -1;
+
         for (auto* pp = ppObjects->FirstChildElement();
              pp; pp = pp->NextSiblingElement()) {
 
@@ -421,8 +583,10 @@ NS_ASSUME_NONNULL_END
                 nUnknown++;
                 continue;
             }
+            originalIndex++;
 
             InternalPathPoint ipp;
+            ipp.originalIndex = originalIndex;
 
             // Body name. Pre-4.0 models use <body>, 4.x uses a component path
             // in <socket_parent_frame> (e.g. "/bodyset/tibia_r" → "tibia_r").
@@ -510,17 +674,56 @@ NS_ASSUME_NONNULL_END
             mp.points.push_back(ipp);
         }
 
-        // PathWrap geometry (WrapCylinder / WrapEllipsoid) is not implemented:
-        // those muscles cut straight through bone instead of wrapping. Count
-        // the references so nobody mistakes this path set for complete.
-        NSInteger nWraps = 0;
+        mp.originalPointCount = originalIndex + 1;
+
+        // `<PathWrapSet>`. Every reference is kept, whether or not this build
+        // can solve it, because OpenSim's numerics key off the SET's SIZE (one
+        // wrap = closed-form spiral, no axial iteration; two or more = iterate,
+        // and re-solve the whole set up to 8 times). What varies is whether the
+        // wrap object it names resolves to a CYLINDER in the table.
+        NSInteger nWrapsSolved = 0;
+        NSInteger nWrapsUnmodelled = 0;
         if (auto* wrapSet = geoPath->FirstChildElement("PathWrapSet")) {
             if (auto* wrapObjects = wrapSet->FirstChildElement("objects")) {
                 for (auto* w = wrapObjects->FirstChildElement("PathWrap");
                      w; w = w->NextSiblingElement("PathWrap")) {
-                    nWraps++;
+                    biomotion::PathWrapSpec wrap;
+
+                    std::string objectName;
+                    if (readLeafRef(w, {"wrap_object"}, objectName)) {
+                        auto it = wrapObjectIndexByName.find(objectName);
+                        if (it != wrapObjectIndexByName.end()) {
+                            wrap.wrapObject = it->second;
+                        }
+                    }
+
+                    // `<range>` is a 1-based [start end] pair into the original
+                    // PathPointSet; "-1 -1" means the whole path.
+                    const auto range = readNumbers(w, "range");
+                    if (range.size() >= 2) {
+                        wrap.startPoint = (int)std::lround(range[0]);
+                        wrap.endPoint = (int)std::lround(range[1]);
+                    }
+
+                    const bool solved =
+                        wrap.wrapObject >= 0 &&
+                        _wrapObjects[(size_t)wrap.wrapObject].kind
+                            == biomotion::WrapKind::Cylinder;
+                    if (solved) nWrapsSolved++; else nWrapsUnmodelled++;
+                    mp.pathWraps.push_back(wrap);
                 }
             }
+        }
+
+        // Fixed stack storage in the solver, so a path that would not fit keeps
+        // the straight line and every one of its wraps counts as unmodelled.
+        mp.wrapStorageFits =
+            (int)mp.points.size() + 2 * (int)mp.pathWraps.size()
+                <= biomotion::kMaxWrappedPathNodes &&
+            (int)mp.pathWraps.size() <= biomotion::kMaxPathWrapsPerMuscle;
+        if (!mp.wrapStorageFits) {
+            nWrapsUnmodelled += nWrapsSolved;
+            nWrapsSolved = 0;
         }
 
         if (mp.points.size() >= 2 && mp.maxIsometricForce > 0) {
@@ -537,8 +740,13 @@ NS_ASSUME_NONNULL_END
             report.movingPathPointsApproximated += nMovingApprox;
             report.movingPathPointsSkipped += nMovingSkipped;
             report.unknownPathPointElementsSkipped += nUnknown;
-            report.unmodelledPathWraps += nWraps;
-            if (nWraps > 0) {
+            report.solvedPathWraps += nWrapsSolved;
+            report.unmodelledPathWraps += nWrapsUnmodelled;
+            // A muscle with ONE unsolved wrap has an unmodelled path even if its
+            // other wraps are solved — a partly-wrapped path is not a wrapped
+            // path, and the display table this feeds decides what may be
+            // compared with what.
+            if (nWrapsUnmodelled > 0) {
                 [wrappedMuscles
                     addObject:[NSString stringWithUTF8String:mp.name.c_str()]];
             }
@@ -598,6 +806,11 @@ NS_ASSUME_NONNULL_END
     }
 
     NSLog(@"MomentArmComputer: geometry fidelity — %@", report.summary);
+    if (report.solvedPathWraps > 0) {
+        NSLog(@"MomentArmComputer: %ld PathWrap references solved over %ld wrap "
+              @"objects (WrapCylinder).",
+              (long)report.solvedPathWraps, (long)report.wrapObjectsParsed);
+    }
     if (report.unmodelledPathWraps > 0) {
         NSLog(@"MomentArmComputer: ⚠ %ld PathWrap references on %lu muscles are NOT "
               @"modelled. Those muscles take a straight-line shortcut where the real "
@@ -664,6 +877,14 @@ NS_ASSUME_NONNULL_END
     return nil;
 }
 
+- (NSInteger)pathWrapCountForMuscleNamed:(NSString *)name {
+    std::string nameStr([name UTF8String]);
+    for (const auto& mp : _musclePaths) {
+        if (mp.name == nameStr) return (NSInteger)mp.pathWraps.size();
+    }
+    return -1;
+}
+
 /// Latch which ConditionalPathPoints are active at the skeleton's CURRENT pose.
 /// Deliberately NOT called from inside the finite-difference loop: re-evaluating
 /// the range test at q ± eps lets a via point switch state across a 1e-4 rad
@@ -684,26 +905,83 @@ NS_ASSUME_NONNULL_END
     }
 }
 
-/// Compute total musculotendon path length for a muscle at the current skeleton configuration.
-- (double)computeMuscleLengthForIndex:(NSInteger)muscleIdx {
+/// Cache each wrap object's body transform for the skeleton's CURRENT pose.
+///
+/// Must be called after every `setPositions`, and it is deliberately NOT called
+/// per muscle: 66 wrapped muscles share 64 wrap objects, so recomputing per
+/// muscle would repeat the same body transforms 76 times per pose.
+- (void)refreshWrapBodyTransforms {
+    if (!_skeleton) return;
+    for (size_t i = 0; i < _wrapObjects.size(); i++) {
+        const int bodyIndex = _wrapObjectBodyIndex[i];
+        const dynamics::BodyNode* node =
+            (bodyIndex >= 0 && bodyIndex < (int)_skeleton->getNumBodyNodes())
+                ? _skeleton->getBodyNode(bodyIndex) : nullptr;
+        _wrapBodyTransforms[i] = node ? node->getWorldTransform()
+                                      : Eigen::Isometry3d::Identity();
+    }
+}
+
+/// Compute total musculotendon path length for a muscle at the current skeleton
+/// configuration, WITH its `<PathWrap>`s applied.
+///
+/// `outSignature` receives the wrap solver's discrete state — see
+/// `MomentArmComputer.lastCentredDifferenceSamples` for why a caller
+/// differentiating this function has to look at it. It is 0 for every muscle
+/// that carries no solvable wrap, which is what puts those muscles back on the
+/// plain centred difference they have always used.
+- (double)computeMuscleLengthForIndex:(NSInteger)muscleIdx
+                            signature:(std::uint64_t*)outSignature
+                           wrapPoints:(int*)outWrapPoints {
+    if (outSignature) *outSignature = 0;
+    if (outWrapPoints) *outWrapPoints = 0;
     if (!_skeleton || muscleIdx < 0 || muscleIdx >= (NSInteger)_musclePaths.size()) return 0;
 
     const auto& mp = _musclePaths[muscleIdx];
-    double totalLength = 0;
 
-    // Inactive conditional via points drop out of the polyline entirely; the
-    // segment then spans their neighbours, so the walk cannot use fixed indices.
-    Eigen::Vector3s previous = Eigen::Vector3s::Zero();
-    bool havePrevious = false;
-    for (const auto& pp : mp.points) {
-        if (!pp.active) continue;
-        Eigen::Vector3s world = [self worldPositionForPathPoint:pp];
-        if (havePrevious) totalLength += (world - previous).norm();
-        previous = world;
-        havePrevious = true;
+    // No wrap geometry: stream the polyline without touching the stack buffers.
+    // 454 of FullBody.osim's 520 muscles take this branch, so it stays the
+    // allocation-free straight-line sum it has always been.
+    if (mp.pathWraps.empty() || !mp.wrapStorageFits) {
+        double totalLength = 0;
+        // Inactive conditional via points drop out of the polyline entirely; the
+        // segment then spans their neighbours, so the walk cannot use fixed
+        // indices.
+        Eigen::Vector3s previous = Eigen::Vector3s::Zero();
+        bool havePrevious = false;
+        for (const auto& pp : mp.points) {
+            if (!pp.active) continue;
+            Eigen::Vector3s world = [self worldPositionForPathPoint:pp];
+            if (havePrevious) totalLength += (world - previous).norm();
+            previous = world;
+            havePrevious = true;
+        }
+        return totalLength;
     }
 
-    return totalLength;
+    Eigen::Vector3d points[biomotion::kMaxWrappedPathNodes];
+    int originalIndices[biomotion::kMaxWrappedPathNodes];
+    int count = 0;
+    for (const auto& pp : mp.points) {
+        if (!pp.active) continue;
+        if (count >= biomotion::kMaxWrappedPathNodes) break;  // guarded at parse time
+        points[count] = [self worldPositionForPathPoint:pp];
+        originalIndices[count] = pp.originalIndex;
+        count++;
+    }
+
+    const biomotion::WrappedPathResult solved = biomotion::solveWrappedPathLength(
+        points, originalIndices, count, mp.originalPointCount,
+        mp.pathWraps.data(), (int)mp.pathWraps.size(),
+        _wrapObjects.data(), _wrapBodyTransforms.data(), (int)_wrapObjects.size());
+
+    if (outSignature) *outSignature = solved.signature;
+    if (outWrapPoints) *outWrapPoints = solved.wrapPointCount;
+    return solved.length;
+}
+
+- (double)computeMuscleLengthForIndex:(NSInteger)muscleIdx {
+    return [self computeMuscleLengthForIndex:muscleIdx signature:nullptr wrapPoints:nullptr];
 }
 
 /// Transform a path point from body-local coordinates to world coordinates.
@@ -748,11 +1026,17 @@ NS_ASSUME_NONNULL_END
     // Latch conditional via points at the UNPERTURBED pose and hold them for
     // the whole stencil, so dL/dq stays the derivative of a continuous path.
     [self refreshConditionalPathPointActivity];
+    [self refreshWrapBodyTransforms];
 
-    // Compute baseline muscle lengths
+    // Baseline lengths AND the wrap solver's discrete state at the unperturbed
+    // pose. The state is what decides, below, whether a centred difference is a
+    // derivative or a fabrication.
     std::vector<double> baselineLengths(nMuscles);
+    std::vector<std::uint64_t> baselineSignatures(nMuscles);
     for (NSInteger m = 0; m < nMuscles; m++) {
-        baselineLengths[m] = [self computeMuscleLengthForIndex:m];
+        baselineLengths[m] = [self computeMuscleLengthForIndex:m
+                                                     signature:&baselineSignatures[m]
+                                                    wrapPoints:nullptr];
     }
 
     // Numerical differentiation: r_ij = -(L_i(q + eps*e_j) - L_i(q - eps*e_j)) / (2*eps)
@@ -764,6 +1048,15 @@ NS_ASSUME_NONNULL_END
         [momentArms addObject:@(0.0)];
     }
 
+    _lastCentredDifferenceSamples = 0;
+    _lastOneSidedDifferenceSamples = 0;
+    _lastUnresolvedDiscontinuitySamples = 0;
+
+    std::vector<double> lengthsPlus(nMuscles);
+    std::vector<std::uint64_t> signaturesPlus(nMuscles);
+    std::vector<double> lengthsMinus(nMuscles);
+    std::vector<std::uint64_t> signaturesMinus(nMuscles);
+
     for (NSInteger j = 0; j < nDOFs; j++) {
         std::string dofName([dofNames[j] UTF8String]);
         auto it = dofToSkeletonIdx.find(dofName);
@@ -774,44 +1067,146 @@ NS_ASSUME_NONNULL_END
         Eigen::VectorXs qPlus = q;
         qPlus(skelIdx) += eps;
         _skeleton->setPositions(qPlus);
+        [self refreshWrapBodyTransforms];
 
-        std::vector<double> lengthsPlus(nMuscles);
         for (NSInteger m = 0; m < nMuscles; m++) {
-            lengthsPlus[m] = [self computeMuscleLengthForIndex:m];
+            lengthsPlus[m] = [self computeMuscleLengthForIndex:m
+                                                     signature:&signaturesPlus[m]
+                                                    wrapPoints:nullptr];
         }
 
         // Perturb -eps
         Eigen::VectorXs qMinus = q;
         qMinus(skelIdx) -= eps;
         _skeleton->setPositions(qMinus);
+        [self refreshWrapBodyTransforms];
 
-        std::vector<double> lengthsMinus(nMuscles);
         for (NSInteger m = 0; m < nMuscles; m++) {
-            lengthsMinus[m] = [self computeMuscleLengthForIndex:m];
+            lengthsMinus[m] = [self computeMuscleLengthForIndex:m
+                                                      signature:&signaturesMinus[m]
+                                                     wrapPoints:nullptr];
         }
 
-        // Compute moment arms: r = -dL/dq
+        // r = -dL/dq. Which stencil is legitimate depends on whether the wrap
+        // solver stayed on one branch of L across it.
         for (NSInteger m = 0; m < nMuscles; m++) {
-            double r = -(lengthsPlus[m] - lengthsMinus[m]) / (2.0 * eps);
+            const std::uint64_t s0 = baselineSignatures[m];
+            const bool plusAgrees = signaturesPlus[m] == s0;
+            const bool minusAgrees = signaturesMinus[m] == s0;
+            double r = 0.0;
+            if (plusAgrees && minusAgrees) {
+                r = -(lengthsPlus[m] - lengthsMinus[m]) / (2.0 * eps);
+                _lastCentredDifferenceSamples++;
+            } else if (plusAgrees) {
+                r = -(lengthsPlus[m] - baselineLengths[m]) / eps;
+                _lastOneSidedDifferenceSamples++;
+            } else if (minusAgrees) {
+                r = -(baselineLengths[m] - lengthsMinus[m]) / eps;
+                _lastOneSidedDifferenceSamples++;
+            } else {
+                bool resolved = false;
+                r = [self derivativeAcrossWrapSwitchForMuscle:m
+                                                 skeletonDOF:skelIdx
+                                                    basePose:q
+                                                  baseLength:baselineLengths[m]
+                                               baseSignature:s0
+                                                     initialStep:eps
+                                                    resolved:&resolved];
+                if (resolved) {
+                    _lastOneSidedDifferenceSamples++;
+                } else {
+                    _lastUnresolvedDiscontinuitySamples++;
+                }
+                // The refinement moved the skeleton; the next j iteration sets
+                // its own pose, and the restore below is unconditional.
+            }
             momentArms[m * nDOFs + j] = @(r);
         }
     }
 
     // Restore original configuration
     _skeleton->setPositions(q);
+    [self refreshWrapBodyTransforms];
 
     return momentArms;
+}
+
+/// The wrap state differs on BOTH sides of the stencil, i.e. the switch is at
+/// the base pose itself. Halve the step until one side lands back on the base
+/// pose's branch and take the one-sided difference there.
+///
+/// A switch is a measure-zero set in q, so halving resolves it in practice; the
+/// cap exists so a pose that really does sit on the boundary costs a bounded
+/// amount rather than looping. When nothing resolves, the forward difference at
+/// the smallest step is returned and the sample is counted in
+/// `lastUnresolvedDiscontinuitySamples` — a directional derivative across a
+/// genuine kink, reported as such rather than dressed up as `r = 0`, which the
+/// QP would read as "this muscle cannot act here".
+- (double)derivativeAcrossWrapSwitchForMuscle:(NSInteger)muscleIdx
+                                  skeletonDOF:(int)skeletonDOF
+                                     basePose:(const Eigen::VectorXs&)basePose
+                                   baseLength:(double)baseLength
+                                baseSignature:(std::uint64_t)baseSignature
+                                  initialStep:(double)initialStep
+                                     resolved:(bool*)resolved {
+    if (resolved) *resolved = false;
+    double step = initialStep;
+    double forwardLength = baseLength;
+    for (int attempt = 0; attempt < 8; attempt++) {
+        step *= 0.5;
+
+        Eigen::VectorXs probe = basePose;
+        probe(skeletonDOF) += step;
+        _skeleton->setPositions(probe);
+        [self refreshWrapBodyTransforms];
+        std::uint64_t signature = 0;
+        forwardLength = [self computeMuscleLengthForIndex:muscleIdx
+                                                signature:&signature
+                                               wrapPoints:nullptr];
+        if (signature == baseSignature) {
+            if (resolved) *resolved = true;
+            return -(forwardLength - baseLength) / step;
+        }
+
+        probe = basePose;
+        probe(skeletonDOF) -= step;
+        _skeleton->setPositions(probe);
+        [self refreshWrapBodyTransforms];
+        const double backwardLength = [self computeMuscleLengthForIndex:muscleIdx
+                                                              signature:&signature
+                                                             wrapPoints:nullptr];
+        if (signature == baseSignature) {
+            if (resolved) *resolved = true;
+            return -(baseLength - backwardLength) / step;
+        }
+    }
+    return -(forwardLength - baseLength) / step;
 }
 
 - (NSArray<NSNumber *> *)currentMuscleLengths {
     if (!_loaded || !_skeleton) return @[];
     [self refreshConditionalPathPointActivity];
+    [self refreshWrapBodyTransforms];
     NSMutableArray<NSNumber *> *lengths =
         [NSMutableArray arrayWithCapacity:_musclePaths.size()];
     for (NSInteger i = 0; i < (NSInteger)_musclePaths.size(); i++) {
         [lengths addObject:@([self computeMuscleLengthForIndex:i])];
     }
     return lengths;
+}
+
+- (NSArray<NSNumber *> *)currentWrapPointCounts {
+    if (!_loaded || !_skeleton) return @[];
+    [self refreshConditionalPathPointActivity];
+    [self refreshWrapBodyTransforms];
+    NSMutableArray<NSNumber *> *counts =
+        [NSMutableArray arrayWithCapacity:_musclePaths.size()];
+    for (NSInteger i = 0; i < (NSInteger)_musclePaths.size(); i++) {
+        int wrapPoints = 0;
+        (void)[self computeMuscleLengthForIndex:i signature:nullptr wrapPoints:&wrapPoints];
+        [counts addObject:@(wrapPoints)];
+    }
+    return counts;
 }
 
 - (NSArray<NSNumber *> *)maxIsometricForces {

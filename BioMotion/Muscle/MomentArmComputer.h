@@ -67,10 +67,21 @@ NS_ASSUME_NONNULL_BEGIN
 /// Child elements of `<PathPointSet>/<objects>` whose tag we do not recognise.
 @property (nonatomic, readonly) NSInteger unknownPathPointElementsSkipped;
 
-/// `<PathWrap>` references found on the retained muscles. Wrap-object geometry
-/// (WrapCylinder / WrapEllipsoid) is NOT implemented: those muscles take a
-/// straight-line shortcut where the real path wraps around bone. Non-zero
-/// means the model is geometrically incomplete.
+/// `<PathWrap>` references on the retained muscles that are SOLVED — the path
+/// wraps around the surface instead of cutting through it. Only `WrapCylinder`
+/// is solved (`MusclePathWrap.cpp`, ported from opensim-core).
+@property (nonatomic, readonly) NSInteger solvedPathWraps;
+
+/// `<PathWrap>` references that are NOT solved, so those muscles still take a
+/// straight-line shortcut where the real path wraps around bone. Non-zero means
+/// the model is geometrically incomplete.
+///
+/// Since 2026-08-08 this is the count of the wraps that REMAIN unmodelled, not
+/// of all wraps — `WrapEllipsoid` (a numerical geodesic), a `<wrap_object>`
+/// naming something the model does not define, and a path too long for the
+/// solver's fixed storage. A muscle carrying one solved and one unsolved wrap
+/// counts here and appears in `musclesWithUnmodelledPathWraps`, because a
+/// partly-wrapped path is not a wrapped path.
 @property (nonatomic, readonly) NSInteger unmodelledPathWraps;
 
 /// **Which muscles those wraps belong to**, in parse order. A count alone
@@ -80,6 +91,16 @@ NS_ASSUME_NONNULL_BEGIN
 /// `GaitLoadSummary.musclesWithUnmodelledPaths`, which is checked against this
 /// list by `MomentArmTests`.
 @property (nonatomic, readonly) NSArray<NSString *> *musclesWithUnmodelledPathWraps;
+
+/// `<WrapObject>`s parsed off the model's bodies and available to solve.
+@property (nonatomic, readonly) NSInteger wrapObjectsParsed;
+
+/// `<WrapObject>`s the parser refused: an unsupported subclass, a body the
+/// skeleton does not carry, a `<quadrant>` spelling OpenSim would have thrown
+/// on, or a non-positive radius. A `PathWrap` pointing at one of these counts
+/// as unmodelled — silently wrapping on a guessed side is the exact failure
+/// this project keeps paying for.
+@property (nonatomic, readonly) NSInteger wrapObjectsRejected;
 
 /// Muscles whose `tendon_slack_length` was missing or unparseable and fell
 /// back to 0. Downstream that makes fiber length = L_MT / cos(α), which
@@ -96,6 +117,14 @@ NS_ASSUME_NONNULL_BEGIN
 ///
 /// Uses the Nimble skeleton's forward kinematics to transform muscle attachment
 /// points to world coordinates and compute total muscle-tendon path length.
+///
+/// Path WRAPPING is applied where the model defines it: a `<PathWrap>` naming a
+/// `WrapCylinder` makes the path run around the cylinder instead of through it
+/// (`MusclePathWrap.h`, ported from opensim-core). `WrapEllipsoid` is not
+/// solved and stays counted in `MusclePathFidelityReport.unmodelledPathWraps`.
+/// Because only the path's scalar LENGTH is differentiated, only the length of
+/// the wrapped path has to be right; the tangent-point geometry OpenSim also
+/// computes for rendering is not reproduced.
 ///
 /// ConditionalPathPoint gating: the coordinate value fed to a conditional
 /// point's `<range>` test is the CURRENT POSITION OF THE MATCHING SKELETON DOF
@@ -160,8 +189,46 @@ NS_ASSUME_NONNULL_BEGIN
 /// Get the muscle path data for a specific muscle.
 - (nullable MusclePathData *)musclePathDataForName:(NSString *)name;
 
+/// How many `<PathWrap>` references this muscle carries, solvable or not.
+/// -1 when the muscle is not in the parsed set.
+///
+/// This is a structural fact about the model with a numerical consequence:
+/// OpenSim solves a ONE-wrap path in closed form and an N-wrap path by
+/// re-solving the whole set up to 8 times, and the two code paths do not agree
+/// to the same tolerance. Anything comparing this implementation with OpenSim
+/// has to stratify on it.
+- (NSInteger)pathWrapCountForMuscleNamed:(NSString *)name;
+
 /// All muscle names.
 @property (nonatomic, readonly) NSArray<NSString *> *muscleNames;
+
+/// How many wrap points the solver inserted for each muscle at the skeleton's
+/// CURRENT pose — 2 per engaged wrap object, 0 when nothing wraps. Same
+/// quantity as the reference fixture's `wrapPoints` column, so the two can be
+/// compared directly. Ordered like `muscleNames`.
+@property (nonatomic, readonly) NSArray<NSNumber *> *currentWrapPointCounts;
+
+/// # dL/dq is DISCONTINUOUS where a muscle starts or stops wrapping
+///
+/// A centred difference straddling that switch divides a finite jump in L by
+/// `2·eps` and returns it as a moment arm — metres, not centimetres, and it
+/// looks entirely plausible. `computeMomentArmsWithJointAngles:dofNames:`
+/// therefore compares the wrap solver's discrete state (`WrappedPathResult`'s
+/// signature: which objects engaged, on which segment, which branch) at
+/// `q`, `q+eps` and `q−eps`, and drops to a ONE-SIDED difference on the side
+/// that stays on the base pose's branch. These three counters are that
+/// decision, over the most recent call, and they sum to nMuscles × nDOFs.
+@property (nonatomic, readonly) NSInteger lastCentredDifferenceSamples;
+
+/// Samples where the wrap state changed on one side of the stencil, so a
+/// one-sided difference on the other side was used instead.
+@property (nonatomic, readonly) NSInteger lastOneSidedDifferenceSamples;
+
+/// Samples where the base pose sits alone — the wrap state differs on BOTH
+/// sides, i.e. the switch is at `q` itself. The step is halved up to 8 times to
+/// find a side that agrees; this counts the ones where none ever did and the
+/// forward difference at the smallest step was used. Expected to be 0.
+@property (nonatomic, readonly) NSInteger lastUnresolvedDiscontinuitySamples;
 
 /// World-space start/end positions of each muscle path at the current skeleton
 /// pose. Returned as a flat `[x0, y0, z0, x1, y1, z1, ...]` array of 6 floats

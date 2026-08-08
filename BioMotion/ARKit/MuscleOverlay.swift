@@ -11,14 +11,16 @@ import simd
 /// It filtered `rawActivations`, sorted them descending, kept the strongest 24
 /// and coloured every capsule — both render passes — from one shared
 /// blue→red colormap. That is a CROSS-MUSCLE ORDERING: it says this muscle is
-/// working harder than that one. The model cannot support that statement. 66 of
-/// `FullBody.osim`'s muscles are given a straight-line path where the real
-/// tendon wraps around bone (42 of the `Rajagopal2016` fallback's), so the
-/// moment arm that divides each joint moment is wrong by a factor of its own,
-/// and the activation it returns is inflated by 1/k for an unknown, POSE-DEPENDENT
-/// k. A muscle with an unmodelled wrap therefore sorts into the top 24 and
-/// renders redder than a correctly-modelled muscle that is genuinely working
-/// harder.
+/// working harder than that one. The model cannot support that statement. When
+/// this was written, 66 of `FullBody.osim`'s muscles were given a straight-line
+/// path where the real tendon wraps around bone (42 of the `Rajagopal2016`
+/// fallback's), so the moment arm that divides each joint moment was wrong by a
+/// factor of its own and the activation it returned was inflated by 1/k for an
+/// unknown, POSE-DEPENDENT k. Cylinder wrapping shipped on 2026-08-08 and that
+/// count is down to 10 elbow muscles — but the ordering is still retired,
+/// because retiring it took a second argument that wrapping does not touch:
+/// nothing establishes that two DIFFERENT muscles' activations share a scale,
+/// and the QP redistributes load between synergists.
 ///
 /// The panel retired exactly this ordering on 2026-08-08
 /// (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`,

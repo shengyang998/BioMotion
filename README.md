@@ -150,9 +150,27 @@ uv pip install --python .venv/bin/python opensim numpy
 ./.venv/bin/python dump_reference.py        # ~5 min, writes ~98 MB of CSV to out/ (gitignored)
 ./.venv/bin/python analyse.py --write-fixture   # report + the committed 2.5 MB fixture
 ./.venv/bin/python pose_coverage.py         # what the pose grid covers, and what the clips say
+
+# The DEFINITION-MATCHED column: OpenSim's own central difference of its own path
+# length. `computeMomentArm` does NOT differentiate the length (it asks
+# MomentArmSolver for a generalized force), and the two disagree by centimetres
+# where a wrap solution is marginal, so this is the column a `-dL/dq`
+# implementation is comparable with. 7 s, 649 KB.
+./.venv/bin/python dump_finite_difference.py \
+    --out ../../BioMotionTests/Fixtures/opensim_moment_arms_fd.txt
+
+# Debugging aids, not part of the fixtures:
+./.venv/bin/python fd_check.py --pose spine_flexed --muscle TR2_l --coordinates L2_L3_FE
+./.venv/bin/python inspect_wrap.py --pose neutral --muscle gasmed_r
 ```
 
 Everything here is read-only against `BioMotion/Resources/FullBody.osim`.
+
+## Third-party notices
+
+`BioMotion/Muscle/MusclePathWrap.{h,cpp}` is a port of OpenSim's path-wrapping code
+(Apache License 2.0, Stanford University). The licence header is in both files and the
+attribution is in [`NOTICE`](./NOTICE), which must ship with any binary distribution.
 
 ## TestFlight upload
 

@@ -48,7 +48,8 @@ photo or video through a Core ML SAM 3D Body model.
 ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 - `NimbleBridge.h/.mm` — loads .osim, runs IK/ID, owns the runtime DOF mask. Registers virtual markers at joint centers for ARKit compatibility. **The IK solve is the app's own Levenberg-Marquardt**, not `Skeleton::fitMarkersToWorldPositions` / `math::refineIK`; the vendored nimble tree is untouched.
 - `MuscleSolver.h/.mm` — parses the model's muscles (520 in FullBody.osim, 80 in Rajagopal2016), runs OSQP static optimization
-- `MomentArmComputer.h/.mm` — parses muscle paths, computes moment arms via FK + numerical differentiation. Shares the bridge's skeleton (`NimbleBridge+Internal.h`) rather than parsing a second copy.
+- `MomentArmComputer.h/.mm` — parses muscle paths, computes moment arms via FK + numerical differentiation. Shares the bridge's skeleton (`NimbleBridge+Internal.h`) rather than parsing a second copy. Applies path WRAPPING, and picks a one-sided difference where the wrap state changes inside the stencil.
+- `MusclePathWrap.h/.cpp` — the cylinder wrap solver, ported from opensim-core (Apache 2.0; licence header in the file, attribution in `./NOTICE`). Length only: `wrap_pts` are not generated, `WrapEllipsoid` is not implemented. Every intentional difference is listed under DEVIATIONS at the top of the .cpp.
 - Bridging header: `BioMotion/Nimble/BioMotion-Bridging-Header.h`
 
 ### Key files
@@ -71,7 +72,7 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `BioMotion/Muscle/osqp_interrupt_stub.c` | OSQP interrupt handler stub for iOS |
 | `nimblephysics/CMakeLists.txt` | iOS-specific CMake (NOT the original — upstream is preserved as `CMakeLists_original.txt`) |
 | `tools/osim_fixes/` | The FullBody.osim edit (patella weld + shoulder axis unit-snap), its measurement harness and revert instructions |
-| `tools/opensim_ref/` | The OpenSim 4.6 moment-arm reference generator (`uv` venv, PyPI `opensim` wheel). `dump_reference.py` → CSV, `analyse.py --write-fixture` → `BioMotionTests/Fixtures/opensim_moment_arms.txt`, `pose_coverage.py` → what the pose grid covers. Read-only against the shipped `.osim` |
+| `tools/opensim_ref/` | The OpenSim 4.6 reference generators (`uv` venv, PyPI `opensim` wheel), all read-only against the shipped `.osim`. `dump_reference.py` → CSV, `analyse.py --write-fixture` → `BioMotionTests/Fixtures/opensim_moment_arms.txt`; `dump_finite_difference.py` → `opensim_moment_arms_fd.txt`, OpenSim's own central difference of its own length (the column a `-dL/dq` implementation is comparable with); `fd_check.py` → analytic vs central for one pose/muscle; `inspect_wrap.py` → the wrapped path point by point, with the solver's raw inputs; `pose_coverage.py` → what the pose grid covers |
 | `tools/assetpack/` | Pack build + upload; `dev_bundle_model.sh on\|off` bundles the model locally so the Simulator needs no download |
 
 ### Nimble iOS patches
@@ -112,8 +113,40 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   IKConvergence 91 s, ShoulderRotMask 51 s, StaticHold 48 s, MuscleQPUnits 41 s,
   IKSolverInternals 33 s), so "the kill landed just after X" is almost always a statement about the
   schedule, not about X.
-- **The straight-line moment arm is not "a bit off" — 9.00 % of the pairs on wrapped muscles point
-  the WRONG WAY, and the worst is 32× too small with the sign reversed.** This entry used to be a
+- **The reference's MOMENT ARM is not the derivative of the reference's own LENGTH, and gating a
+  finite-difference implementation on it manufactures four sign flips.**
+  `GeometryPath::computeMomentArm` asks `MomentArmSolver` for the generalized force a unit tension
+  along the CURRENT path produces with the wrap points held fixed on their bodies — the envelope
+  theorem, exact where the path varies smoothly with q and NOT where the wrap solution is marginal.
+  OpenSim differencing its OWN length at the same 1e-4 rad: `TR2_l`/`L2_L3_FE` at `spine_flexed`
+  reads analytic **+0.002252** against central **−0.005274**; `gasmed_r`/`knee_angle_r` at `neutral`
+  reads **+0.021761** against **+0.004891** (and at `squat_deep` the two agree to 1e-6). Every
+  "sign flip" the first cylinder-wrapping run reported was that gap, not a backwards `quadrant`.
+  The definition-matched column is `BioMotionTests/Fixtures/opensim_moment_arms_fd.txt`
+  (`tools/opensim_ref/dump_finite_difference.py`, 7 s). Second half of the same trap: OpenSim's
+  MULTI-wrap output is not self-consistent — on `gasmed_r` at `neutral` the tangent points it
+  reports are the closed-form `P1→P2` solution while the spiral length stored beside them belongs
+  to a later `C2→P2` solve (0.038054 against the 0.046516 its own points imply), so a
+  fixed-point solver differs from it by 8.75 mm and is not thereby wrong.
+- **`dL/dq` IS DISCONTINUOUS where a muscle starts or stops wrapping, and the centred difference
+  across it reads in METRES.** Not at the tangency boundary — L is continuous there — but at the
+  cylinder-END rule: the surface is a finite segment, so when both tangent points slide past
+  `length/2` the wrap stops being applied from a length that is nowhere near the straight line.
+  Measured on constructed geometry: **L steps 36.1 mm**, a centred difference at 1e-4 returns
+  **−180.7 m** per unit, the one-sided difference on the engaged branch reads 0.000. Driven
+  through the shipped chain at a real switch (`grac_r`/`knee_angle_r`), the raw centred difference
+  is **−19.62 m** against a true **−0.0337 m**. `MomentArmComputer` compares
+  `WrappedPathResult.signature` — the wrap solver's DISCRETE state — at `q`, `q±eps` and drops to
+  a one-sided difference; `lastOneSidedDifferenceSamples` is how anybody downstream can tell. It
+  fires **0 times in 3,163,680 samples** at the 36 validation poses, which is why the test that
+  proves it has to CONSTRUCT the switch by bisection rather than wait for one.
+- **The straight-line moment arm was not "a bit off" — 9.00 % of the pairs on wrapped muscles
+  pointed the WRONG WAY, and the worst was 32× too small with the sign reversed. Cylinder wrapping
+  shipped on 2026-08-08 and this entry is now the BEFORE.** After the port: median 0.048 mm, max
+  8.07 mm, 4 sign flips (all of them the definition gap above), and against OpenSim's own
+  derivative the single-wrap muscles read max 3.569 mm. `unmodelledPathWraps` counts 12, not 76 —
+  the `WrapEllipsoid` references on 10 elbow muscles. The numbers below describe the code as it
+  was, and they are what the port has to keep beating. This entry used to be a
   count of unmodelled `PathWrap`s and an argument; since 2026-08-08 it is a measurement against
   OpenSim 4.6 reading the same `FullBody.osim` (`BioMotionTests/Fixtures/opensim_moment_arms.txt`,
   173 poses × 104 muscles, generated by `tools/opensim_ref/`). On the 66 muscles that carry a

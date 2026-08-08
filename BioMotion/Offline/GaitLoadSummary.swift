@@ -14,14 +14,21 @@ import Foundation
 ///
 /// # Why — the cancellation argument was circular, and its replacement fails
 ///
-/// `MomentArmComputer` logs at load that 76 `PathWrap` references on 66 of
-/// `FullBody.osim`'s 520 muscles are not modelled: those paths take a straight
-/// line where the real tendon wraps around bone, so their moment arm `r` is
-/// wrong, and `F = τ/r` makes the muscle's force — and hence its activation —
-/// wrong by a factor of its own. `musclesWithUnmodelledPaths` is that list, and
-/// it contains glmax1/2/3, recfem, the vasti, gasmed, the hamstrings, psoas,
-/// iliacus, the adductors and grac: essentially every muscle a runner would
-/// recognise. Running is a flexed-pose activity, which is where the warning says
+/// **The wrap half of this argument was fixed on 2026-08-08 and the conclusion
+/// did not change.** `MomentArmComputer` used to log that 76 `PathWrap`
+/// references on 66 of `FullBody.osim`'s 520 muscles were not modelled — every
+/// muscle a runner would recognise. Cylinder wrapping ships now, 64 of the 76
+/// are solved, and `musclesWithUnmodelledPaths` is down to the five elbow
+/// muscles that carry a `WrapEllipsoid`. What follows is why that is NOT enough
+/// to reopen the claim: the cancellation argument was circular independently of
+/// how wrong the moment arms were, and re-measuring the 9.92 pp synergist leak
+/// against the corrected arms is its own piece of work that has not been done.
+///
+/// The historical statement, kept because the reasoning below refers to it: an
+/// unmodelled path takes a straight line where the real tendon wraps around
+/// bone, so its moment arm `r` is wrong, and `F = τ/r` makes the muscle's force
+/// — and hence its activation — wrong by a factor of its own. Running is a
+/// flexed-pose activity, which is where the warning says
 /// the error is worst and where the sign can flip.
 ///
 /// Until 2026-08-08 this file said the error was a per-muscle SCALE that
@@ -1129,24 +1136,34 @@ struct GaitLoadSummary {
     /// guard test passed because it applied the alias transform before
     /// comparing — a transform the shipping path never performs.
     ///
-    /// It is the union over both bundled models (`FullBody.osim`, 66 muscles /
-    /// 76 wrap references, and the `Rajagopal2016.osim` fallback, 42 / 46) in
+    /// It is the union over both bundled models of the muscles with a wrap that
+    /// is still UNMODELLED — since cylinder wrapping shipped that is 10 muscles
+    /// / 12 references in `FullBody.osim` and none at all in the
+    /// `Rajagopal2016.osim` fallback, whose 46 wraps are all cylinders — in
     /// both namespaces, and
     /// `MomentArmTests.testTheUnmodelledWrapTableMatchesTheShippedModels`
     /// checks it against what the parser actually reports at runtime, WITHOUT
     /// the alias transform — so swapping a model cannot leave this list quietly
     /// wrong.
+    /// **This list shrank to five entries on 2026-08-08** — it used to hold 37,
+    /// including every lower-limb muscle a running analysis names. Cylinder path
+    /// wrapping now SHIPS (`MusclePathWrap.cpp`, ported from opensim-core), so
+    /// those muscles' paths run around the bone instead of through it and their
+    /// moment arms match OpenSim's own derivative of its own path length to
+    /// 3.6 mm worst case over 7,056 samples (`CylinderWrapValidationTests`).
+    ///
+    /// What survives is the elbow: `WrapEllipsoid` is a numerical geodesic and
+    /// is NOT implemented, so the 10 muscles carrying one still cut straight
+    /// through. `TRIlong` is here even though two of its three wraps ARE solved
+    /// — a partly-wrapped path is not a wrapped path.
+    ///
+    /// Shrinking this list does NOT reopen the per-muscle left/right claim:
+    /// `perMuscleLeftRightClaimIsSupported` is a separate decision that needs
+    /// its own measurement (the 9.92 pp leak in `MomentArmErrorCancellationTests`
+    /// was measured with the OLD arms and has not been re-run).
     static let musclesWithUnmodelledPaths: Set<String> = [
-        // Shoulder and arm (FullBody only)
-        "ANC", "BIClong", "BICshort", "BRD", "SUP",
-        "TR2", "TR3", "TR4", "TR5", "TRIlat", "TRIlong", "TRImed",
-        // Hip and thigh
-        "addbrev", "addlong", "addmagDist", "addmagIsch", "addmagMid", "addmagProx",
-        "glmax1", "glmax2", "glmax3", "grac", "iliacus", "psoas",
-        "recfem", "semimem", "semiten",
-        "vasint", "vasmed", "vaslat", "vaslat140",
-        // Shank
-        "bfsh", "bfsh140", "gasmed", "gaslat", "gaslat140",
+        // Elbow, FullBody only: these carry a WrapEllipsoid.
+        "ANC", "BIClong", "BICshort", "BRD", "TRIlong",
     ]
 
     /// Names for the muscles a runner would recognise. Anything not here keeps

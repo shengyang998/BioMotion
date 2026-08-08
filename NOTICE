@@ -1,0 +1,54 @@
+BioMotion
+Copyright (c) 2026 Soleil
+
+This product includes software developed at Stanford University.
+
+--------------------------------------------------------------------------------
+OpenSim (opensim-core)
+--------------------------------------------------------------------------------
+
+`BioMotion/Muscle/MusclePathWrap.h` and `BioMotion/Muscle/MusclePathWrap.cpp`
+are a port of the muscle path-wrapping code in OpenSim:
+
+    OpenSim/Simulation/Wrap/WrapCylinder.cpp
+    OpenSim/Simulation/Wrap/WrapObject.cpp
+    OpenSim/Simulation/Wrap/WrapMath.cpp
+    OpenSim/Simulation/Model/GeometryPath.cpp
+
+    Copyright (c) 2005-2017 Stanford University and the Authors
+    Author(s): Peter Loan, Frank C. Anderson
+
+    The OpenSim API is a toolkit for musculoskeletal modeling and simulation.
+    See http://opensim.stanford.edu and the NOTICE file in the opensim-core
+    repository for more information. OpenSim is developed at Stanford University
+    and supported by the US National Institutes of Health (U54 GM072970,
+    R24 HD065690) and by DARPA through the Warrior Web program.
+
+    Licensed under the Apache License, Version 2.0 (the "License"); you may not
+    use these files except in compliance with the License. You may obtain a copy
+    of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+    License for the specific language governing permissions and limitations
+    under the License.
+
+The port is not a verbatim copy: it computes the wrapped path's scalar LENGTH
+only, omits the wrap-point sampling OpenSim generates for rendering, and does
+not implement `WrapEllipsoid`. Every intentional difference is listed under
+DEVIATIONS at the top of `MusclePathWrap.cpp`.
+
+`BioMotion/Resources/FullBody.osim` and `BioMotion/Resources/Rajagopal2016.osim`
+are OpenSim musculoskeletal models; their own licence terms are recorded in
+STATUS.md ("The upper-limb licence blocker").
+
+--------------------------------------------------------------------------------
+Other third-party components
+--------------------------------------------------------------------------------
+
+nimblephysics (vendored under `nimblephysics/`), OSQP (under `osqp/`), Eigen and
+tinyxml2 (vendored under `nimblephysics/third_party/`) carry their own licences
+in their own trees.

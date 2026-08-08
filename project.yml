@@ -163,6 +163,9 @@ targets:
         CLANG_CXX_LANGUAGE_STANDARD: "c++17"
         HEADER_SEARCH_PATHS:
           - "$(PROJECT_DIR)/BioMotion/Nimble"
+          # MusclePathWrapTests.mm calls the ported cylinder wrap solver
+          # directly, so the geometry is unit-tested without a skeleton.
+          - "$(PROJECT_DIR)/BioMotion/Muscle"
           - "$(PROJECT_DIR)/nimblephysics"
           - "$(PROJECT_DIR)/nimblephysics/third_party/eigen"
           - "$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2"

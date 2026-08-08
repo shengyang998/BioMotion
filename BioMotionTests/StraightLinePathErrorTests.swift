@@ -42,6 +42,8 @@ final class StraightLinePathErrorTests: XCTestCase {
     }
 
     private static var samples: [Sample] = []
+    /// Declared by the fixture generator, never inferred from the numbers.
+    private static var carriesPathWrap: Set<String> = []
     private static var setupFailure: String?
     private static var dofNameMismatch: (missing: [String], extra: [String])?
 
@@ -92,6 +94,8 @@ final class StraightLinePathErrorTests: XCTestCase {
             poseIndices.insert(index)
         }
 
+        carriesPathWrap = Set(table.muscles.filter(\.carriesPathWrap).map(\.name))
+
         let dofNames = table.coordinateNames
         var collected: [Sample] = []
         for poseIndex in poseIndices.sorted() {
@@ -137,28 +141,47 @@ final class StraightLinePathErrorTests: XCTestCase {
 
     // MARK: - Question 1: is wrap-off a faithful stand-in for our code
 
-    /// **This test is a TRIPWIRE and it is meant to fail when path wrapping
-    /// lands.** It asserts that `MomentArmComputer` reproduces OpenSim with
-    /// wrapping DISABLED, which is true exactly as long as the wrap solver is
-    /// missing. When the solver ships, point it at `wrapOn` — do not delete it,
-    /// because the same comparison is then the gate that says the solver works.
-    func testOurStraightLineTracksOpenSimWithWrappingDisabled() {
-        let differences = Self.samples.map { abs($0.ours - $0.wrapOff) }
-        print(Self.describe(differences, label: "ours vs OpenSim wrap-OFF"))
-        print(Self.worstOffenders(by: { abs($0.ours - $0.wrapOff) },
-                                  label: "largest ours-vs-wrapOFF residuals"))
+    /// **The tripwire FIRED on 2026-08-08, which is what it was for.**
+    ///
+    /// It used to assert that `MomentArmComputer` reproduces OpenSim with
+    /// wrapping DISABLED — true exactly as long as the wrap solver was missing.
+    /// Cylinder wrapping ships now, so the muscles that carry a `PathWrap` no
+    /// longer track that column, and the assertion moved to
+    /// `CylinderWrapValidationTests` where it belongs (against the wrap-ON
+    /// reference and OpenSim's own derivative of its own length).
+    ///
+    /// What remains here is the half of the claim that is still true and still
+    /// load-bearing: on the muscles with NO wrap object — where there is nothing
+    /// to solve — the two independent straight-line implementations must still
+    /// agree to a few mm, because that residual is the FLOOR every other
+    /// comparison in this repo is read against. It is `MovingPathPoint` splines,
+    /// latched `ConditionalPathPoint`s, nimble's FK and a 1e-4 rad difference,
+    /// and nothing else.
+    func testOurStraightLineTracksOpenSimOnMusclesWithNoWrapObject() {
+        let unwrapped = Self.samples.filter { !Self.carriesPathWrap.contains($0.muscle) }
+        let wrapped = Self.samples.filter { Self.carriesPathWrap.contains($0.muscle) }
+        let differences = unwrapped.map { abs($0.ours - $0.wrapOff) }
+        print(Self.describe(differences, label: "NO-WRAP muscles: ours vs OpenSim wrap-OFF"))
+        print(Self.describe(wrapped.map { abs($0.ours - $0.wrapOff) },
+                            label: "WRAPPED muscles: ours vs wrap-OFF (must NOT be small now)"))
+        XCTAssertGreaterThan(unwrapped.count, 0)
+        XCTAssertGreaterThan(wrapped.count, 0)
         let worst = differences.max() ?? .infinity
         XCTAssertLessThan(worst, 0.005,
                           "the shipped straight line and OpenSim's straight line must "
-                          + "agree to a few mm, or the reference's wrap-OFF column is "
-                          + "not modelling this code and the wrap attribution below "
-                          + "is unsafe. The residual that remains is the "
-                          + "linearly-interpolated MovingPathPoint splines, the "
-                          + "latched ConditionalPathPoints and nimble's FK.")
+                          + "agree to a few mm where no wrap object exists, or every "
+                          + "attribution in this repo is being read against the wrong floor")
+        XCTAssertGreaterThan(wrapped.map { abs($0.ours - $0.wrapOff) }.max() ?? 0, 0.05,
+                             "the WRAPPED muscles must have left the wrap-OFF column behind "
+                             + "by centimetres; if they have not, the wrap solver is not "
+                             + "running and CylinderWrapValidationTests is passing vacuously")
     }
 
     // MARK: - Question 2: how far is the shipped number from the reference
 
+    /// Straight-line-era headline, kept as the before/after record. `ours` is
+    /// now the WRAPPED path, so the gap to the reference has collapsed; what
+    /// this asserts is that the collapse happened.
     func testShippedMomentArmsAgainstTheOpenSimReference() {
         let toReference = Self.samples.map { abs($0.ours - $0.wrapOn) }
         let wrapShare = Self.samples.map { abs($0.wrapOff - $0.wrapOn) }
@@ -168,13 +191,13 @@ final class StraightLinePathErrorTests: XCTestCase {
                                   label: "largest ours-vs-REFERENCE errors"))
 
         let worstToReference = toReference.max() ?? 0
-        let worstImplementation = Self.samples.map { abs($0.ours - $0.wrapOff) }.max() ?? 0
-        XCTAssertGreaterThan(worstToReference, 0.10,
-                             "the shipped moment arm is out by more than 10 cm somewhere; "
-                             + "if this ever drops the reference or the model changed")
-        XCTAssertGreaterThan(worstToReference, 20 * worstImplementation,
-                             "essentially all of the error is the missing wrap solver, "
-                             + "not the other implementation differences")
+        let worstWrapShare = wrapShare.max() ?? 0
+        XCTAssertGreaterThan(worstWrapShare, 0.10,
+                             "the wrap solver's own share of the old error was 14.7 cm; if "
+                             + "this drops, the reference or the model changed")
+        XCTAssertLessThan(worstToReference, 0.02,
+                          "with wrapping shipped, no sampled moment arm may be more than "
+                          + "2 cm from the reference — it was 14.66 cm before")
     }
 
     /// No `String(format:"%s")` here: it needs a C string, and every route to

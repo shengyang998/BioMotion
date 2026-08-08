@@ -84,6 +84,20 @@ biggest links were **not** where the effort had been going.
   4.39 mm, so 97 % of its error is the missing solver.
   `BioMotionTests/Fixtures/opensim_moment_arms.txt` is now the gate a wrap solver has to pass. See
   [the reference](#the-moment-arms-now-have-a-reference-and-the-defect-is-measured-2026-08-08).
+- **CYLINDER PATH WRAPPING SHIPS** (2026-08-08). `MusclePathWrap.cpp`, ported from
+  opensim-core (Apache 2.0, attribution in `./NOTICE`), solves **64 of FullBody's 76**
+  `PathWrap` references and **all 46** of Rajagopal2016's. On the 56 muscles whose every
+  wrap is a cylinder the moment-arm error against OpenSim falls from median 0.972 mm /
+  max **146.6 mm** / **661 sign flips** to median **0.048 mm** / max **8.07 mm** /
+  **4**; against OpenSim's own derivative of its own length the single-wrap muscles read
+  max **3.569 mm** and **1** flip, at a 1.00 mm reference value below the 3.758 mm floor
+  the two implementations agree to anyway. Wrap engagement matches on 2,016/2,016 rows.
+  The discontinuity is handled by a signature-aware one-sided difference and proved on a
+  constructed switch (raw centred **−19.62 m**, shipped **−0.0337 m**). Cost: 889 →
+  6,049 ms per solve in Debug, ~36 ms extrapolated at −O2, NOT measured on device. Still
+  missing: `WrapEllipsoid` (12 references, 10 elbow muscles). The per-muscle left/right
+  claim is NOT reopened.
+  [Cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -172,6 +186,10 @@ optimizer bound by colormap appearance; dead `maxMuscleForceAtState` and the leg
 The last +10 are the OpenSim moment-arm reference (`OpenSimReferenceTests` 6,
 `StraightLinePathErrorTests` 4) — see
 [the moment arms now have a reference](#the-moment-arms-now-have-a-reference-and-the-defect-is-measured-2026-08-08).
+The +30 after that are cylinder path wrapping (`MusclePathWrapTests` 17,
+`CylinderWrapValidationTests` 11, `MomentArmWrapDiscontinuityTests` 2), taking the
+`tools/run_tests.sh` floor to **438** — see
+[cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08).
 
 `E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
 fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
@@ -190,7 +208,13 @@ a private device, refuses to start if another run holds it, and prints the only 
 decide whether a run means anything: the executed count, the restart count, and the final verdict.
 It exits non-zero unless all three are right.
 
-Per class (2026-08-08, 408 total): GaitLoadSummaryTests 39 · PostureFindingsTests 26 ·
+**Wall time roughly doubled on 2026-08-08** when cylinder path wrapping landed: the last
+408-test run took 748 s, the first 438-test run took **1,627 s**. It is the Debug build, not
+the algorithm — the same solver costs 58.0 us per one-wrap solve at -O0 and 0.268 us at -O2.
+The suites that pay are the ones that drive `computeMomentArms` in a loop
+(`GaitDynamicsTests`, `StraightLinePathErrorTests`, `CylinderWrapValidationTests`).
+
+Per class (2026-08-08, 408-test snapshot; +30 since): GaitLoadSummaryTests 39 · PostureFindingsTests 26 ·
 NimbleBridgeTests 22 · GaitClipFixtureTests / GaitReportTests 20 · StaticHoldTests 19 ·
 TRCExporterTests 14 · IKConvergenceTests / MuscleSolverTests 13 · MomentArmTests 12 ·
 BodyPlausibilityTests / CalibrationTests / GaitDynamicsTests / NativeWindowSamplingTests 11 ·
@@ -2547,6 +2571,157 @@ matters most.
 * It did not fix the 4.4 mm `MovingPathPoint` spline residual.
 
 
+## Cylinder path WRAPPING ships (2026-08-08)
+
+The moment arms had a reference and a measured 146.6 mm defect. This closes most
+of it: `MusclePathWrap.cpp` is a port of opensim-core's `WrapCylinder.cpp` +
+`WrapObject.cpp` + `WrapMath.cpp` + `GeometryPath::applyWrapObjects`
+(Apache 2.0, Stanford, Peter Loan / Frank C. Anderson — licence header in the
+file, attribution in `./NOTICE`).
+
+**64 of FullBody.osim's 76 `PathWrap` references are now SOLVED** (all 46 of
+Rajagopal2016's are). `unmodelledPathWraps` counts 12 — the `WrapEllipsoid`
+references on 10 elbow muscles — and nothing else.
+`GaitLoadSummary.musclesWithUnmodelledPaths` went from 37 entries to 5.
+
+### What it cost the error
+
+Same 36 poses and the same structurally-spanned pairs
+`StraightLinePathErrorTests` uses, over the 56 muscles whose every wrap is a
+cylinder (7,488 pairs):
+
+| vs the analytic reference | median | p90 | p99 | max | sign flips |
+|---|---|---|---|---|---|
+| straight line (what shipped) | 0.972 mm | 78.1 mm | 119.1 mm | **146.6 mm** | **661** |
+| wrapped (this change) | **0.048 mm** | 1.24 mm | 2.04 mm | **8.07 mm** | **4** |
+
+Path LENGTH, single-wrap muscles: median 0, p99 **0.047 mm**, max **0.428 mm**
+against OpenSim's own. Wrap ENGAGEMENT — whether the wrap is on at all, which is
+the thing a length can agree with by accident — matches OpenSim on **2,016 of
+2,016** (pose, muscle) rows, including 1,189 where it is engaged.
+
+The control still holds: the 454 muscles with NO wrap object are unchanged, max
+3.758 mm from the reference, exactly where they were.
+
+### Two things the reference turned out to be, that it was not thought to be
+
+**1. `computeMomentArm` is not `dL/dq`.** `MomentArmSolver` computes the
+generalized force a unit tension along the CURRENT path produces with the wrap
+points held fixed on their bodies. That equals `−dL/dq` where the path varies
+smoothly with q, and it does not where the wrap solution is marginal. OpenSim
+differencing its OWN length at the same `eps` (`tools/opensim_ref/fd_check.py`):
+
+    TR2_l   / L2_L3_FE    at spine_flexed: analytic +0.002252, central −0.005274
+    gasmed_r/ knee_angle_r at neutral:     analytic +0.021761, central +0.004891
+    gasmed_r/ knee_angle_r at squat_deep:  analytic +0.026091, central +0.026090
+
+All four of the "sign flips" above are that gap. Against the definition-matched
+column (`BioMotionTests/Fixtures/opensim_moment_arms_fd.txt`, generated in 7 s by
+`dump_finite_difference.py`) the single-wrap muscles read median **0.000 mm**,
+p99 **0.000 mm**, max **3.569 mm** over 7,056 pairs, and **1** sign flip — at a
+reference value of 1.00 mm, i.e. below the 3.758 mm floor at which these two
+implementations agree about anything at all.
+
+**2. OpenSim's MULTI-wrap output is not self-consistent.** With one `PathWrap`
+it solves the spiral in closed form; with two or more it re-solves the whole set
+up to 8 times. On `gasmed_r` at `neutral` the path it reports has tangent points
+that are the closed-form solution for the ORIGINAL `P1→P2` segment — verified by
+deactivating the other wrap object, which reproduces them to 6 decimal places —
+while the spiral length stored beside them, 0.038054, belongs to a later
+`C2→P2` solve; the spiral implied by its own tangent points is 0.046516. This
+port re-solves to a fixed point, so it cannot match that state. It differs by
+**8.75 mm** of length on the 4 two-cylinder muscles (`gasmed`, `gaslat140`, left
+and right) and by 15.8 mm of moment arm at `neutral` — where, note, this code is
+1.05 mm from OpenSim's ANALYTIC value and OpenSim's own central difference is
+16.9 mm away from it. Open; recorded, not fixed.
+
+### The discontinuity, constructed and handled
+
+`dL/dq` is discontinuous where a muscle starts or stops wrapping. The dangerous
+switch is the cylinder-END rule (the surface is a finite segment, so when both
+tangent points slide past `length/2` the wrap stops being applied from a length
+that is NOT close to the straight line). Constructed on bare geometry
+(`MusclePathWrapTests`): **L steps 36.1 mm**, and a centred difference at
+`eps = 1e-4` returns **−180.7 metres** per unit while the one-sided difference on
+the engaged branch reads 0.000.
+
+`computeMomentArmsWithJointAngles:` therefore compares the wrap solver's
+DISCRETE state — which objects engaged, on which segment, which branch, hashed
+into `WrappedPathResult.signature` — at `q`, `q+eps` and `q−eps`, and drops to a
+one-sided difference on the side that stays on the base pose's branch. Driven
+through the shipped chain (`MomentArmWrapDiscontinuityTests` bisects to a real
+switch: `grac_r` / `knee_angle_r` at q\* = −1.465481812):
+
+| | value |
+|---|---|
+| raw centred difference across the switch | **−19.62 m** |
+| shipped (branch-consistent one-sided) | **−0.033693 m** |
+| the same muscle 20 steps inside the branch | −0.033602 m |
+
+Three counters expose the decision: `lastCentredDifferenceSamples`,
+`lastOneSidedDifferenceSamples`, `lastUnresolvedDiscontinuitySamples`. Over the
+36 validation poses they read **3,163,680 / 0 / 0** — at a normal pose the
+stencil never straddles a switch, which is exactly why the test has to construct
+one rather than wait for it.
+
+### Cost — the named risk, with numbers
+
+Measured A/B on the same 36 poses, Debug, iOS Simulator, 169 coordinates x 520
+muscles, by clearing every muscle's `pathWraps` after parsing and re-running:
+
+| | mean per `computeMomentArms` call |
+|---|---|
+| straight line (before) | **889.0 ms** |
+| wrapped (after) | **6048.8 ms** |
+
+That is **6.8x**, and it is a Debug number. The solver benchmarked standalone
+(`clang++`, same source, gasmed_r's own geometry) shows how much of that is the
+build:
+
+| | −O0 | −O2 | ratio |
+|---|---|---|---|
+| 2-wrap solve | 3096.8 us | **22.13 us** | 140x |
+| 1-wrap solve | 58.0 us | **0.268 us** | 217x |
+| straight polyline | 0.253 us | 0.004 us | 63x |
+
+At the −O2 rates the wrap layer costs about **36 ms** per moment-arm solve
+(1,356 two-wrap solves at 22.1 us + 20,340 one-wrap solves at 0.268 us) against
+a chain STATUS sizes at ~200 ms/frame. **This is an extrapolation, not a
+measurement: nothing here ran in a Release build or on the phone.** The
+two-wrap path is 80x the one-wrap path and dominates, so that is where an
+optimisation would go.
+
+### One side effect, found by the commit gate and not swallowed
+
+`MuscleQPUnitsTests.testResidualMechanismSweep` sweeps the QP's soft-penalty
+weight to check that the leftover torque residual is a REACHABILITY distance
+rather than an artefact of the objective weighting. With the corrected moment
+arms, one point of that sweep — `lambda = 100` on the synthetic `dancer` pose —
+now returns the **all-at-floor corner**: 520 of 520 muscles pinned to `aMin`,
+`relativeForce = 1.026`, i.e. the solution explains none of the demand. Every
+other lambda at the same pose solves normally (relative 0.3404-0.3505, 105-184
+at the floor), and dropping the locked rows solves it at 0.334.
+
+It happens ONLY with `excludesLockedCoordinates = false`, which the sweep forces
+and the shipping path never uses. The test now refuses to read a solve that
+returned the lower-bound corner — comparing that with a healthy residual is
+comparing a failure with a measurement — and asserts the mechanism claim over
+the solves that solved, where the spread is **0.029** (dancer) and **0.229**
+(upright) against a 0.5 falsifier. **Open:** why lambda = 100 specifically
+degenerates on that pose with locked rows included has not been chased.
+
+### What this did NOT do
+
+* `WrapEllipsoid` — 12 `PathWrap` references on 10 elbow muscles, still straight.
+* It did NOT reopen the per-muscle left/right claim.
+  `perMuscleLeftRightClaimIsSupported` is still `false`: the 9.92 pp synergist
+  leak in `MomentArmErrorCancellationTests` was measured with the OLD moment
+  arms and has not been re-run against these.
+* No Release build, no device, no re-run of the QP or `GaitLoadSummary`.
+* The 4.4 mm `MovingPathPoint` spline residual is untouched; it is now the
+  largest remaining implementation gap rather than the smallest.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -2873,7 +3048,23 @@ arms must differ in the work that PRECEDES the mask.
     arithmetic in `GaitClaimSurvivalTests` applies to it too, over a family of 3-6 joints instead of
     175 muscles, which is a very different number (`t` at `α/6`, df=4, is 4.77 rather than 11.90).
     Preregister the gates before building it.
-18. **Repair the 76 unmodelled `PathWrap` references, or bound their moment-arm error.** This is the
+18. ~~**Repair the 76 unmodelled `PathWrap` references, or bound their moment-arm error.**~~
+    **CYLINDERS DONE 2026-08-08** — see
+    [cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08). 64 of the 76 are solved; the
+    error on the 56 cylinder-only muscles went from median 0.972 mm / max 146.6 mm / 661 sign flips
+    to median 0.048 mm / max 8.07 mm / 4. **What remains on this line, in the order it matters:**
+    (a) `WrapEllipsoid` — 12 references, 10 elbow muscles, a numerical geodesic; (b) the
+    re-measurement that would actually reopen the claim — re-run
+    `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` with the corrected arms and require the
+    leak below 8.086 %, which HAS NOT BEEN DONE and is why
+    `perMuscleLeftRightClaimIsSupported` is still `false`; (c) the cost in a RELEASE build on the
+    phone, which was extrapolated (~36 ms) and never measured, and where the two-wrap solve is 80x
+    the one-wrap solve and is the thing to optimise; (d) the 8.75 mm gap on the 4 two-cylinder
+    muscles, which is OpenSim's own non-self-consistent iterate and needs a decision about which
+    answer is wanted rather than a bug fix.
+
+    The original item, kept because the falsifier it registers is unchanged:
+    **Repair the 76 unmodelled `PathWrap` references, or bound their moment-arm error.** This is the
     only thing that reopens the muscle claim. The falsifier is registered on
     `GaitLoadSummary.perMuscleLeftRightClaimIsSupported`: with the wraps modelled, re-run
     `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` and require the leak below 8.086 %.
