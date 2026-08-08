@@ -168,9 +168,11 @@ Everything here is read-only against `BioMotion/Resources/FullBody.osim`.
 
 ## Third-party notices
 
-`BioMotion/Muscle/MusclePathWrap.{h,cpp}` is a port of OpenSim's path-wrapping code
-(Apache License 2.0, Stanford University). The licence header is in both files and the
-attribution is in [`NOTICE`](./NOTICE), which must ship with any binary distribution.
+`BioMotion/Muscle/MusclePathWrap.{h,cpp}` is a port of OpenSim's path-wrapping code —
+`WrapCylinder`, `WrapEllipsoid`, `WrapObject`, `WrapMath` and
+`GeometryPath::applyWrapObjects` (Apache License 2.0, Stanford University). The licence
+header is in both files and the attribution is in [`NOTICE`](./NOTICE), which must ship
+with any binary distribution.
 
 ## TestFlight upload
 

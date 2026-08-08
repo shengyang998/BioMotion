@@ -98,6 +98,22 @@ biggest links were **not** where the effort had been going.
   missing: `WrapEllipsoid` (12 references, 10 elbow muscles). The per-muscle left/right
   claim is NOT reopened.
   [Cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08).
+- **ELLIPSOID PATH WRAPPING SHIPS TOO, so every `PathWrap` in the model is solved**
+  (2026-08-08). The remaining 12 references — 8 `WrapEllipsoid`s on the humeri, 10 elbow
+  muscles — are a port of opensim-core's `WrapEllipsoid.cpp` (`hybrid` method only; the
+  other two are refused because they are not pure functions of the pose).
+  `unmodelledPathWraps` is **0** and `GaitLoadSummary.musclesWithUnmodelledPaths` is
+  **empty**. Against OpenSim's own derivative: single-wrap p90 **2.438 mm**, max
+  **4.414 mm**; path LENGTH max **0.210 mm**; engagement **600/600**; sign flips
+  **135 → 0**; numerical refusals **0** over 60 poses. It was implemented rather than
+  disclosed because the paired A/B says **1.28×** (7,688 vs 6,019 ms, Debug) against a
+  pre-registered 3× ceiling — an ellipsoid solve is 130–450× a cylinder solve at −O2 but
+  only runs when the segment actually pierces the surface. The ablation is the finding:
+  without it, `BRD_r`/`elbow_flex_r` read **−8.73 mm** against a true **+1.51 mm**, sign
+  and all. The largest surviving residual, 4.414 mm on `BICshort_l`/`pro_sup_l`, is the
+  `MovingPathPoint` linear interpolation, not the wrap. The per-muscle left/right claim is
+  STILL NOT reopened.
+  [Ellipsoid wrapping](#ellipsoid-path-wrapping-ships--every-pathwrap-in-the-model-is-solved-2026-08-08).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -190,6 +206,13 @@ The +30 after that are cylinder path wrapping (`MusclePathWrapTests` 17,
 `CylinderWrapValidationTests` 11, `MomentArmWrapDiscontinuityTests` 2), taking the
 `tools/run_tests.sh` floor to **438** — see
 [cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08).
+The +21 after THAT are ellipsoid path wrapping: `MusclePathWrapTests` 17 → 28 (the
+sphere closed form, both quadrant tests, the engagement boundary, the chord-count
+signature, purity, the closest-point routine against an exhaustive search and against
+its own scale trap), `EllipsoidWrapValidationTests` 11 new, and
+`CylinderWrapValidationTests` 11 → 10 (the "ellipsoid muscles are reported and not
+claimed" test moved and became a claim). Floor **459** — see
+[ellipsoid wrapping](#ellipsoid-path-wrapping-ships--every-pathwrap-in-the-model-is-solved-2026-08-08).
 
 `E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
 fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
@@ -2713,6 +2736,7 @@ degenerates on that pose with locked rows included has not been chased.
 ### What this did NOT do
 
 * `WrapEllipsoid` — 12 `PathWrap` references on 10 elbow muscles, still straight.
+  **Closed on the same day — see the next section.**
 * It did NOT reopen the per-muscle left/right claim.
   `perMuscleLeftRightClaimIsSupported` is still `false`: the 9.92 pp synergist
   leak in `MomentArmErrorCancellationTests` was measured with the OLD moment
@@ -2720,6 +2744,219 @@ degenerates on that pose with locked rows included has not been chased.
 * No Release build, no device, no re-run of the QP or `GaitLoadSummary`.
 * The 4.4 mm `MovingPathPoint` spline residual is untouched; it is now the
   largest remaining implementation gap rather than the smallest.
+
+
+## Ellipsoid path WRAPPING ships — every PathWrap in the model is solved (2026-08-08)
+
+The cylinder left 12 `PathWrap` references unsolved: the 8 `WrapEllipsoid`s on
+the two humeri, carried by 10 elbow muscles (`ANC`, `BIClong`, `BICshort`, `BRD`,
+`TRIlong`, left and right). `wrapEllipsoidLine` in `MusclePathWrap.cpp` is a port
+of opensim-core's `WrapEllipsoid.cpp` — `wrapLine` + `calcTangentPoint` +
+`CalcDistanceOnEllipsoid` + `findClosestPoint` + `closestPointToEllipse`, the
+last two being David Eberly's Graphics Gems IV routines — under the same Apache
+2.0 header, with `WrapEllipsoid.cpp` added to `NOTICE`.
+
+**`solvedPathWraps` is 76 and `unmodelledPathWraps` is 0** on FullBody.osim (46 /
+0 on Rajagopal2016), and `GaitLoadSummary.musclesWithUnmodelledPaths` — 37
+entries two commits ago, 5 one commit ago — **is now empty**. That table stays,
+as the tripwire: a surface this build has no solver for, or a
+`<PathWrap><method>` other than `hybrid`, puts entries back into it.
+
+### Why it was implementable rather than disclosed
+
+The brief allowed shipping the 56 cylinders and DISCLOSING the 8 ellipsoids if
+the numerical solve turned out too slow — on a measurement. The measurement says
+implement:
+
+| paired A/B, one process, 6 poses, ellipsoids active then deactivated | mean per `computeMomentArms` |
+|---|---|
+| with `WrapEllipsoid` | **7687.6 ms** |
+| without | **6018.9 ms** |
+| ratio | **1.28×** (+1668.7 ms) |
+
+That is Debug, iOS Simulator, 169 coordinates × 520 muscles, against a
+pre-registered ceiling of 3×. It is cheap for a reason worth knowing: an
+ellipsoid wrap engages ONLY when the straight segment actually pierces it, and
+the expensive part — the 298-sample "fan" of point-to-ellipsoid Newton solves
+that picks the wrapping plane — is downstream of that test. Standalone (an ad-hoc
+`clang++` harness against the same `MusclePathWrap.cpp`, the model's own radii,
+3,000 iterations per case; not committed, like the cylinder's):
+
+| | −O0 | −O2 |
+|---|---|---|
+| ellipsoid, fan runs (segment 45° to the axes) | 690–762 µs | **12.3–40.8 µs** |
+| ellipsoid, no fan (segment axis-aligned, `mu > 0.9`) | 174–179 µs | **0.71–1.98 µs** |
+| cylinder, 1 wrap, same machine | 34.9 µs | 0.092 µs |
+
+So one engaged ellipsoid solve is 130–450× a cylinder solve, and it is affordable
+only because it is rare. The whole 60-pose sweep costs **8037.9 ms** mean per
+solve now, against 6091.7 ms for cylinders alone.
+
+### The pre-registered gates, and the two amendments
+
+Gates E1–E8 / X1–X5 are in the `EllipsoidWrapValidationTests` docstring, written
+before any number from this stage was read. The population is the 10 muscles the
+parser itself reports as carrying an ellipsoid, stratified single-wrap
+(`ANC`, `BICshort`, `BRD`) versus multi-wrap (`BIClong`, `TRIlong`) for the same
+reason the cylinder gates are: with one `PathWrap` OpenSim solves the path once,
+with more it re-solves the set up to 8 times.
+
+| | median | p90 | p99 | max |
+|---|---|---|---|---|
+| single-wrap, ours vs OpenSim's own central difference (n=960) | 0.000 mm | 2.438 mm | 4.414 mm | **4.414 mm** |
+| multi-wrap, same column (n=1,080) | 0.000 mm | 1.129 mm | 4.414 mm | 4.414 mm |
+| path LENGTH, single-wrap (n=360) | 0.000 mm | 0.181 mm | 0.210 mm | **0.210 mm** |
+| path LENGTH, multi-wrap (n=240) | 0.057 mm | 0.181 mm | 0.210 mm | 0.210 mm |
+
+Wrap ENGAGEMENT — the discrete thing a length cannot agree with by accident —
+matches OpenSim on **600 of 600** (pose, muscle) rows, 303 of them engaged. Sign
+flips against the analytic column go **135 → 0**. Numerical refusals (the two
+places this port returns `NoWrap` where OpenSim returns a NaN): **0 over 60
+poses**.
+
+**Amendment E-A1 — the p99 threshold was copied from the wrong population.** E2
+was pre-registered at 4.0 mm because that was the cylinder muscles' measured p99.
+This population is different in a way that was already documented: all four of
+`FullBody.osim`'s `MovingPathPoint`s are on `BIClong_*` and `BICshort_*`,
+`MomentArmComputer` interpolates them LINEARLY between cubic-spline control
+points, and the section above recorded the resulting **4.39 mm** residual on
+`BIClong_l`/`pro_sup_l` before this stage began. E2 is 5.0 mm, E1's bar.
+
+The ablation settles the attribution rather than arguing it. The ten worst
+surviving residuals are all `BIClong_l` and `BICshort_l` about `pro_sup_l` — the
+two `MovingPathPoint` muscles, on the coordinate their moving point tracks — and
+each reads **4.414 mm with the ellipsoid and 5.569 mm without it**. The ellipsoid
+did not cause the survivor; it made it smaller.
+
+**Amendment E-A2 — "beats the straight line" is measured by ABLATION, not
+against OpenSim's wrap-off column.** X3 was pre-registered against the wrap-off
+column, whose median error on these muscles is *exactly 0* over this pose set —
+so "strictly better than the median" was unreachable by construction, and the
+comparison also carries every other difference between the two implementations.
+The honest A/B is this code with the ellipsoids ON and OFF at the same poses
+(`MomentArmComputer.setEllipsoidWrapObjectsActive:`), against OpenSim's own
+derivative:
+
+| 204 ablation pairs, of which 100 the ellipsoid changes | median | p90 | max |
+|---|---|---|---|
+| ellipsoids OFF | 2.449 mm | 5.913 mm | **10.242 mm** |
+| ellipsoids ON | **0.000 mm** | 3.851 mm | **4.414 mm** |
+
+76 of the 100 changed pairs move towards OpenSim. The individual rows say it
+better than the percentiles:
+
+    BRD_r  / elbow_flex_r   on +0.00151   off -0.00873   OpenSim +0.00151
+    BRD_l  / elbow_flex_l   on +0.00429   off -0.00423   OpenSim +0.00429
+    BIClong_r/elbow_flex_r  on +0.00382   off -0.00208   OpenSim +0.00384
+
+Elbow flexion is what brachioradialis and biceps DO. Without the ellipsoid their
+moment arm about it had the wrong sign.
+
+### Two things about `WrapEllipsoid` that were not known before
+
+**1. `hybrid` is a pure function of the pose; `axial` is not.** OpenSim seeds
+`r1`, `r2`, `c1` and `sv` from the PREVIOUS call's `WrapResult`. On the `hybrid`
+branch all four are overwritten before they are read — `r1`/`r2` by the
+line/ellipsoid intersection and then by `c1`; `c1`/`sv` by Frans, by the fan, or
+by the blend of the two — so the answer depends only on `q`. On `axial`,
+`use_c1_to_find_tangent_pts` can be false, which leaves the PREVIOUS call's
+tangent points as the seed for the iteration. Differentiating a function of call
+history is not differentiating a function of `q`. All 12 references in the model
+say `hybrid`; anything else is refused at parse time and counted as unmodelled
+(DEVIATION 8), and `MusclePathWrapTests` proves the refusal and the purity.
+
+**2. `findClosestPoint` is scale-dependent, and at metre scale it silently
+returns the query point.** Its Newton iteration stops on `|f| < 1e-9` where `f`
+is a degree-6 polynomial in the radii. With the model's real radii (0.02 m) `f`
+is already ~1e-19 at the first iterate, so the routine returns `t = 0`, i.e. the
+point it was asked about, unchanged — a plausible answer, off by centimetres.
+That is why OpenSim's `factor = 3/(a+b+c)` exists. Measured both ways in
+`MusclePathWrapTests`: normalised, it agrees with an exhaustive search over the
+surface to 1.5e-3 (the search's own grid); unnormalised, it hands the query point
+straight back, and the test asserts that it does so nobody "fixes" the
+normalisation away.
+
+### What the geometry tests pin
+
+* **A sphere has a closed form** and `ANC_l`/`ANC_r` are literally spheres
+  (`0.02 0.02 0.02`). Great-circle arc 0.010218987 m against ours 0.010217239 m;
+  the −1.748e-6 m gap is the chord sum's own deficit (`s·Δφ²/24` = 1.112e-6 for
+  the 10 chords it used) and the test's tolerance IS that quantity. Tangent
+  points land on the surface to 4.4e-7 m.
+* **`<quadrant>` is tested twice**: mirrored on a sphere with the chord through
+  the centre (contact at z = ±0.018856, identical length to 1e-9), and on
+  asymmetric geometry where the two sides differ by 4.22 mm so a solver that
+  ignored the quadrant would return the same number twice.
+* **The engagement boundary is BENIGN.** Bisecting to the exact `h` where the
+  segment starts piercing a 20 mm sphere: the jump in L is **0.000e+00** — the
+  arc goes to zero there, so a centred difference across it is legitimate.
+* **The chord count is not.** The surface distance is summed over
+  `(int)(|r1−r2| / 1 mm)` chords, so L STEPS by 2.609e-6 m each time that integer
+  ticks. Small, but divided by `2·eps` it is a 13 mm/rad moment arm, so the chord
+  count is part of `WrappedPathResult::signature` and the stencil sees it. Over
+  the 60 validation poses the counters read **5,272,800 centred / 0 one-sided /
+  0 unresolved**, which is why the test has to construct the tick by sweeping.
+
+### One side effect, found by the commit gate and not swallowed
+
+`OfflineOrchestrationTests.testNineSubmissionsProduceMuscleOutput` failed on the
+first full-gate run, reporting **"no muscle output after 9 submissions"**. It was
+not an orchestration failure. That suite drives `NimbleEngine` one frame at a
+time and waited a hard-coded 10 s per submission; the ninth push is the first
+where the Savitzky-Golay window is full, so it is the first that runs ID + moment
+arms + QP, and with the ellipsoids it costs **11.65 s** in a Debug simulator
+build. It used to fit: the same test ran in 12.45–12.56 s end to end with every
+submission inside the 10 s bound. Measured per push, now:
+
+| push | cost | what runs |
+|---|---|---|
+| 0 | 4.07 s | first solve, cold |
+| 1–7 | 0.09 s each | IK only — the window is not full |
+| 8 | **11.65 s** | ID + moment arms + QP |
+
+The bound is now a NAMED `submissionLivenessTimeout` of 45 s with the measurement
+in its doc comment, the per-push seconds are printed, and `timedOut == 0` is
+asserted explicitly — so the failure mode it used to report as "no muscle output"
+now reports as the number that caused it. **This is a judgement call and it is
+recorded as one:** a 10 s wall clock in an async Debug test was acting as an
+unstated performance gate, and the honest instrument for per-frame cost is the
+paired A/B in `EllipsoidWrapValidationTests`, which measures it directly against a
+pre-registered ceiling. The trade is that a cost regression between 10 s and 45 s
+on this path would no longer fail here; it would still fail the A/B's 3× ceiling.
+
+### The pose set grew, and the cylinder numbers held
+
+The harness now runs **60 poses**, not 36: `WrapValidationHarness` adds all 16
+`elbow_sweep_*` and 13 `shoulder_sweep_*` poses, because all 8 ellipsoids are on
+the humerus and without them the arm sat at ONE configuration in 31 of the 36
+strided poses — a large sample count of near-copies of one arm pose. Both suites
+read the same sweep (two harnesses would be two measurements). The cylinder gates
+were re-run on the larger set and did not move: single-wrap max **3.569 mm**
+(n=11,760), path length max **0.428 mm**, engagement **3,360 of 3,360**, 0 sign
+flips above the 3.758 mm control floor, control unchanged at max 3.758 mm.
+
+### What this did NOT do
+
+* It did NOT reopen the per-muscle left/right claim.
+  `perMuscleLeftRightClaimIsSupported` is still `false`. The 9.92 pp synergist
+  leak in `MomentArmErrorCancellationTests` was measured with the OLD moment arms
+  and still has not been re-run. Every `PathWrap` being solved is a NECESSARY
+  condition that is now met; it is not the measurement.
+* No Release build, no device. The 1.28× is Debug/simulator and the −O2 rates are
+  a desktop benchmark of the solver in isolation. Extrapolating the same
+  Debug→Release ratio the cylinder measured (≈170× on the solver itself) puts the
+  ellipsoid layer at roughly **10 ms** per moment-arm solve on top of the
+  cylinder's ~36 ms, against a chain this file sizes at ~200 ms/frame — but that
+  is arithmetic, not a measurement, and the LIVE ARKit path runs this every frame.
+* The `MovingPathPoint` linear interpolation is untouched and is now, by
+  measurement, the largest implementation gap left: 4.414 mm on
+  `BICshort_l`/`pro_sup_l`, against a 3.758 mm floor at which nimble's FK and
+  OpenSim agree about anything at all.
+* The 4 two-cylinder muscles still differ from OpenSim's non-self-consistent
+  iterate by 8.749 mm of length and 15.824 mm of moment arm. Unchanged; open.
+* Nothing was done about `MuscleOverlay`, `GaitLoadSummary`'s claim gate, or the
+  QP. The only behaviour change downstream is that `pathIsModelled` is now true
+  for every muscle in both shipped models.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -3049,19 +3286,26 @@ arms must differ in the work that PRECEDES the mask.
     175 muscles, which is a very different number (`t` at `α/6`, df=4, is 4.77 rather than 11.90).
     Preregister the gates before building it.
 18. ~~**Repair the 76 unmodelled `PathWrap` references, or bound their moment-arm error.**~~
-    **CYLINDERS DONE 2026-08-08** — see
-    [cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08). 64 of the 76 are solved; the
-    error on the 56 cylinder-only muscles went from median 0.972 mm / max 146.6 mm / 661 sign flips
-    to median 0.048 mm / max 8.07 mm / 4. **What remains on this line, in the order it matters:**
-    (a) `WrapEllipsoid` — 12 references, 10 elbow muscles, a numerical geodesic; (b) the
-    re-measurement that would actually reopen the claim — re-run
-    `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` with the corrected arms and require the
-    leak below 8.086 %, which HAS NOT BEEN DONE and is why
-    `perMuscleLeftRightClaimIsSupported` is still `false`; (c) the cost in a RELEASE build on the
-    phone, which was extrapolated (~36 ms) and never measured, and where the two-wrap solve is 80x
-    the one-wrap solve and is the thing to optimise; (d) the 8.75 mm gap on the 4 two-cylinder
-    muscles, which is OpenSim's own non-self-consistent iterate and needs a decision about which
-    answer is wanted rather than a bug fix.
+    **ALL 76 DONE 2026-08-08** — cylinders first
+    ([cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08), 64 references, error on the 56
+    cylinder-only muscles from median 0.972 mm / max 146.6 mm / 661 sign flips to median 0.048 mm /
+    max 8.07 mm / 4), then the ellipsoids
+    ([ellipsoid wrapping](#ellipsoid-path-wrapping-ships--every-pathwrap-in-the-model-is-solved-2026-08-08),
+    the remaining 12, single-wrap max 4.414 mm against OpenSim's own derivative, engagement 600/600,
+    sign flips 135 → 0). `unmodelledPathWraps` is 0 and
+    `GaitLoadSummary.musclesWithUnmodelledPaths` is empty. **What remains on this line, in the order
+    it matters:** (a) **THE re-measurement, and it is the only thing that reopens the claim** —
+    re-run `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` with the corrected arms and
+    require the leak below 8.086 %. It HAS NOT BEEN DONE, which is why
+    `perMuscleLeftRightClaimIsSupported` is still `false`, and it is now unblocked: the wrap
+    condition it was waiting on is met; (b) the cost in a RELEASE build on the phone, which was
+    extrapolated (~36 ms for the cylinders, +1.28× for the ellipsoids in Debug) and never measured,
+    and where the two-wrap cylinder solve is 80× the one-wrap solve and one engaged ellipsoid solve
+    is 130–450× it; (c) the `MovingPathPoint` linear interpolation, which is now the largest
+    implementation gap by measurement — 4.414 mm on `BICshort_l`/`pro_sup_l`, against a 3.758 mm
+    floor; (d) the 8.75 mm gap on the 4 two-cylinder muscles, which is OpenSim's own
+    non-self-consistent iterate and needs a decision about which answer is wanted rather than a bug
+    fix.
 
     The original item, kept because the falsifier it registers is unchanged:
     **Repair the 76 unmodelled `PathWrap` references, or bound their moment-arm error.** This is the

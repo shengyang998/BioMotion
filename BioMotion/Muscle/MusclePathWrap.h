@@ -1,10 +1,11 @@
 /* -------------------------------------------------------------------------- *
- *  MusclePathWrap.h — muscle path wrapping over WrapCylinder geometry.        *
+ *  MusclePathWrap.h — muscle path wrapping over cylinder and ellipsoid        *
+ *                     geometry.                                              *
  * -------------------------------------------------------------------------- *
  *  Ported from OpenSim (opensim-core), which carries:                         *
  *                                                                            *
- *      OpenSim:  WrapCylinder.cpp / WrapObject.cpp / WrapMath.cpp /           *
- *                GeometryPath.cpp                                            *
+ *      OpenSim:  WrapCylinder.cpp / WrapEllipsoid.cpp / WrapObject.cpp /      *
+ *                WrapMath.cpp / GeometryPath.cpp                             *
  *      Copyright (c) 2005-2017 Stanford University and the Authors            *
  *      Author(s): Peter Loan, Frank C. Anderson                              *
  *                                                                            *
@@ -35,9 +36,9 @@
 
 namespace biomotion {
 
-/// Which surface a `<WrapObject>` describes. Only `Cylinder` is solved; every
-/// other kind is parsed, counted and left to the straight line, so the fidelity
-/// report can keep saying which paths are still incomplete.
+/// Which surface a `<WrapObject>` describes. `Cylinder` and `Ellipsoid` are
+/// solved; every other kind is parsed, counted and left to the straight line, so
+/// the fidelity report can keep saying which paths are still incomplete.
 enum class WrapKind { Cylinder, Ellipsoid, Unsupported };
 
 /// One `<WrapObject>` off a `<Body>`'s `<WrapObjectSet>`.
@@ -45,7 +46,8 @@ enum class WrapKind { Cylinder, Ellipsoid, Unsupported };
 /// `pose` is OpenSim's `_pose`: the transform from the owning BODY's frame to
 /// the WRAP OBJECT's frame, built from `<translation>` and `<xyz_body_rotation>`
 /// exactly as `WrapObject::extendFinalizeFromProperties` builds it. The
-/// cylinder's axis is the wrap frame's +z, centred on z = 0.
+/// cylinder's axis is the wrap frame's +z, centred on z = 0; the ellipsoid is
+/// centred on the wrap frame's origin with `dimensions` as its semi-axes.
 struct WrapObjectSpec {
     std::string name;
     std::string bodyName;
@@ -54,6 +56,10 @@ struct WrapObjectSpec {
 
     double radius = 0.0;   // WrapCylinder
     double length = 0.0;   // WrapCylinder
+
+    /// WrapEllipsoid `<dimensions>` — the three semi-axes, in metres. All three
+    /// must be > 0 or OpenSim throws at load, and so this refuses to solve.
+    Eigen::Vector3d dimensions = Eigen::Vector3d::Zero();
 
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
 
@@ -66,6 +72,13 @@ struct WrapObjectSpec {
     int wrapSign = 1;
 };
 
+/// `<PathWrap><method>`. `WrapCylinder::wrapLine` never reads it;
+/// `WrapEllipsoid::wrapLine` branches on it three ways and returns a materially
+/// different path for each, so a `<method>` this port does not implement is
+/// `Unsupported` and the wrap stays unmodelled rather than being solved as
+/// though it said `hybrid`.
+enum class PathWrapMethod { Hybrid, Unsupported };
+
 /// One `<PathWrap>` off a muscle's `<PathWrapSet>`.
 struct PathWrapSpec {
     /// Index into the model-wide wrap-object table. -1 = the reference could
@@ -76,6 +89,8 @@ struct PathWrapSpec {
     /// has switched off). Anything < 1 means "the first"/"the last".
     int startPoint = -1;
     int endPoint = -1;
+    /// `<method>`. Only consulted for an ellipsoid.
+    PathWrapMethod method = PathWrapMethod::Hybrid;
 };
 
 /// `WrapObject::WrapAction`, verbatim.
@@ -89,12 +104,23 @@ struct WrapSegmentResult {
     Eigen::Vector3d r1 = Eigen::Vector3d::Zero();
     Eigen::Vector3d r2 = Eigen::Vector3d::Zero();
     double wrapPathLength = 0.0;
-    /// The two discrete branch choices inside the solve. They are not outputs
+    /// The discrete branch choices inside the solve. They are not outputs
     /// anybody consumes — they are carried so the caller can tell one branch of
     /// the length function from another, which is what makes a finite
     /// difference across a branch switch detectable instead of silent.
-    bool longWrap = false;
-    bool farSideWrap = false;
+    bool longWrap = false;     // cylinder: the long way round
+    bool farSideWrap = false;  // both: the long way round
+    /// Ellipsoid: `<quadrant>` put the contact point on the wrong side and it
+    /// was mirrored. A different branch of L(q).
+    bool quadrantFlipped = false;
+    /// Ellipsoid: how many chords the surface distance was summed over.
+    /// `(int)(|r1-r2| / 1 mm)`, so it steps by one as the path grows — a
+    /// genuine, if small, discontinuity in L, and therefore part of the branch.
+    int pathSegments = 0;
+    /// The solve hit a case OpenSim answers with a NaN or a division by zero
+    /// (tangent segment, negative discriminant on the surface ray). `action` is
+    /// `NoWrap`: a refusal the caller can COUNT rather than a NaN in a length.
+    bool numericalRefusal = false;
 };
 
 /// Calculate the wrapping of one line segment over a cylinder.
@@ -110,6 +136,43 @@ WrapSegmentResult wrapCylinderLine(const WrapObjectSpec& cylinder,
                                    const Eigen::Vector3d& point1,
                                    const Eigen::Vector3d& point2,
                                    bool singleWrap);
+
+/// Calculate the wrapping of one line segment over an ellipsoid, `hybrid`
+/// method only.
+///
+/// Ported from `WrapEllipsoid::wrapLine` + `calcTangentPoint` +
+/// `CalcDistanceOnEllipsoid` + `findClosestPoint` + `closestPointToEllipse`.
+/// `point1` and `point2` are in the ELLIPSOID's frame.
+///
+/// There is no `singleWrap` parameter and no previous-wrap parameter. OpenSim
+/// seeds `r1`/`r2`/`c1`/`sv` from the PREVIOUS call's result, but on the
+/// `hybrid` branch every one of those four is overwritten before it is read
+/// (`r1`,`r2` by the line/ellipsoid intersection and then by `c1`; `c1`,`sv` by
+/// Frans, by the fan, or by the blend of the two) — so hybrid wrapping is a
+/// pure function of the pose, which is what makes differentiating it legitimate.
+/// `axial` and `midpoint` are NOT like that and are not implemented.
+WrapSegmentResult wrapEllipsoidLine(const WrapObjectSpec& ellipsoid,
+                                    const Eigen::Vector3d& point1,
+                                    const Eigen::Vector3d& point2);
+
+/// The point on the ellipsoid `(x/a)^2+(y/b)^2+(z/c)^2 = 1` closest to
+/// `(u,v,w)`, and whether it converged. `WrapEllipsoid::findClosestPoint`
+/// (Graphics Gems IV). `specialCaseAxis >= 0` forces the 2-D reduction on that
+/// axis; -1 lets the routine detect it. Returns false when the Newton iteration
+/// did not converge, in which case `closest` holds the last iterate rather than
+/// the uninitialised memory OpenSim returns (DEVIATION 10).
+///
+/// ⚠ `radii` MUST BE NORMALISED — of order 1, i.e. scaled by OpenSim's
+/// `factor = 3 / (a + b + c)`, which is why that factor exists. The Newton
+/// iteration stops on `|f| < 1e-9` where `f` is a degree-6 polynomial in the
+/// radii, so at metre scale (`a·b·c ≈ 2e-5`) `f ≈ 1e-19` at the very first
+/// iterate and the routine returns the QUERY POINT unchanged — a plausible
+/// answer, off by centimetres. `wrapEllipsoidLine` always calls it normalised;
+/// anything else calling it has to do the same.
+bool closestPointOnEllipsoid(const Eigen::Vector3d& radii,
+                             const Eigen::Vector3d& point,
+                             Eigen::Vector3d& closest,
+                             int specialCaseAxis);
 
 /// The result of running a muscle's whole `<PathWrapSet>` over its polyline.
 struct WrappedPathResult {
@@ -131,6 +194,11 @@ struct WrappedPathResult {
     /// `kMaxPathWrapsPerMuscle`. `length` is then the STRAIGHT polyline: a
     /// refusal the caller can count, not a truncated wrap presented as a wrap.
     bool refused = false;
+
+    /// How many `wrapEllipsoidLine` calls returned `numericalRefusal`. Those
+    /// segments took the straight line. Non-zero means a pose reached a case
+    /// OpenSim answers with a NaN, and it should be reported, not averaged.
+    int numericalRefusals = 0;
 };
 
 /// Caps on the fixed stack storage the solver uses. FullBody.osim's largest

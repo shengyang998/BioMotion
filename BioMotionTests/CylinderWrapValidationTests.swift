@@ -14,12 +14,17 @@ import XCTest
 ///
 /// - **SOLVED** — carries a `PathWrap` and none of them are unmodelled. Every
 ///   wrap is a `WrapCylinder` this build solves. 56 muscles. **The claim.**
-/// - **PARTIAL/UNSOLVED** — carries at least one unmodelled wrap
-///   (`WrapEllipsoid`). 10 muscles, all elbow. Reported, never gated: they match
-///   NEITHER reference column, and saying so is the honest result.
+/// - **PARTIAL/UNSOLVED** — carries at least one unmodelled wrap. Empty on this
+///   model since the ellipsoid landed; the class stays because a future model,
+///   or a `<method>` other than `hybrid`, puts muscles back into it.
 /// - **NO WRAP** — carries no `PathWrap`. 454 muscles. The CONTROL: the two
 ///   reference columns are identical there to the last stored digit, so any
 ///   change is this stage breaking something it was not supposed to touch.
+///
+/// The 10 muscles that carry a `WrapEllipsoid` are EXCLUDED from every number
+/// in this file (`surface != .carriesEllipsoid`) and gated separately in
+/// `EllipsoidWrapValidationTests`. Two solvers averaged together is one
+/// solver's residual hiding inside the other's.
 ///
 /// ## CORRECT — all of these must hold
 ///
@@ -35,8 +40,10 @@ import XCTest
 /// - **C5** path LENGTH: `max |ours − reference length| ≤ 5.0 mm` on SOLVED.
 /// - **C6** wrap ENGAGEMENT agrees with OpenSim's `wrapPoints` on ≥ 99 % of
 ///   (pose, SOLVED muscle) rows.
-/// - **C7** `unmodelledPathWraps` is 12 on FullBody (the ellipsoid references)
-///   and 0 on Rajagopal2016 (all 46 of its wraps are cylinders).
+/// - **C7** the fidelity report counts solved and unmodelled wraps separately,
+///   and its numbers are the ones the display layer reads. It said 64 solved /
+///   12 unmodelled while only the cylinder shipped; since the ellipsoid landed
+///   it says 76 / 0. Rajagopal2016 is 46 / 0 either way (all cylinders).
 ///
 /// ## WRONG — any one of these means the port is wrong, not "close enough"
 ///
@@ -101,165 +108,27 @@ import XCTest
 ///   at W1/W3. Recorded in STATUS.md as open.
 final class CylinderWrapValidationTests: XCTestCase {
 
-    /// Same pose subset as `StraightLinePathErrorTests`, for comparability:
-    /// every one costs a full 169-coordinate sweep over all 520 muscles.
-    private static let namedPoses = ["neutral", "squat_deep", "spine_flexed"]
-    private static let poseStride = 6
+    typealias Sample = WrapValidationHarness.Sample
+    typealias LengthSample = WrapValidationHarness.LengthSample
 
-    enum WrapClass { case solved, unsolved, none }
-
-    private struct Sample {
-        let pose: String
-        let muscle: String
-        let coordinate: String
-        let wrapClass: WrapClass
-        /// How many `PathWrap`s the muscle carries. 1 = OpenSim's closed-form
-        /// path; >1 = its iterative one (amendment A2).
-        let wrapCount: Int
-        let ours: Double
-        let wrapOff: Double
-        let wrapOn: Double
-        /// OpenSim's own central difference of its own length, or nil when the
-        /// muscle carries no `PathWrap` (that fixture covers only wrapped ones).
-        let centralDifference: Double?
+    /// Every number below comes from `WrapValidationHarness`, restricted to the
+    /// muscles whose every `PathWrap` names a `WrapCylinder`. Muscles carrying a
+    /// `WrapEllipsoid` are a different solver with a different tolerance and are
+    /// gated in `EllipsoidWrapValidationTests`; mixing them here would let one
+    /// solver's residual hide inside the other's average.
+    private static var samples: [Sample] {
+        WrapValidationHarness.samples.filter { $0.surface != .carriesEllipsoid }
     }
-
-    private struct LengthSample {
-        let pose: String
-        let muscle: String
-        let wrapClass: WrapClass
-        let wrapCount: Int
-        let ours: Double
-        let wrapOn: Double
-        let ourWrapPoints: Int
-        let referenceWrapPoints: Int
+    private static var lengthSamples: [LengthSample] {
+        WrapValidationHarness.lengthSamples.filter { $0.surface != .carriesEllipsoid }
     }
-
-    private static var samples: [Sample] = []
-    private static var lengthSamples: [LengthSample] = []
-    private static var setupFailure: String?
-    private static var solvedMuscles: Set<String> = []
-    private static var unsolvedMuscles: Set<String> = []
-    private static var fullBodyReport: MusclePathFidelityReport?
-    private static var solveMilliseconds: [Double] = []
-    private static var discontinuityCounters: (centred: Int, oneSided: Int, unresolved: Int) = (0, 0, 0)
+    private static var cylinderMuscles: Set<String> {
+        WrapValidationHarness.solvedMuscles.subtracting(WrapValidationHarness.ellipsoidMuscles)
+    }
 
     override func setUpWithError() throws {
-        try Self.build(bundle: Bundle(for: type(of: self)))
-        if let failure = Self.setupFailure { throw XCTSkip(failure) }
-    }
-
-    private static func build(bundle: Bundle) throws {
-        guard samples.isEmpty, setupFailure == nil else { return }
-        guard let path = bundle.path(forResource: "FullBody", ofType: "osim") else {
-            setupFailure = "FullBody.osim is not reachable from the test bundle"
-            return
-        }
-        let table = try OpenSimReferenceFixture.load(bundle: bundle)
-        let finiteDifference = try OpenSimFiniteDifferenceFixture.load(bundle: bundle)
-
-        let bridge = NimbleBridge()
-        guard bridge.loadModel(fromPath: path) else {
-            setupFailure = "NimbleBridge could not load FullBody.osim"
-            return
-        }
-        let computer = MomentArmComputer()
-        guard computer.parseMusclePaths(fromOsimPath: path, from: bridge) else {
-            setupFailure = "MomentArmComputer could not parse FullBody.osim"
-            return
-        }
-        fullBodyReport = computer.fidelityReport
-        unsolvedMuscles = Set(computer.fidelityReport.musclesWithUnmodelledPathWraps)
-
-        let muscleIndex = Dictionary(uniqueKeysWithValues:
-            (computer.muscleNames as [String]).enumerated().map { ($0.element, $0.offset) })
-        let coordinateColumn = Dictionary(uniqueKeysWithValues:
-            table.coordinateNames.enumerated().map { ($0.element, $0.offset) })
-
-        func classify(_ muscle: OpenSimReferenceFixture.Muscle) -> WrapClass {
-            guard muscle.carriesPathWrap else { return .none }
-            return unsolvedMuscles.contains(muscle.name) ? .unsolved : .solved
-        }
-        solvedMuscles = Set(table.muscles.filter { classify($0) == .solved }.map(\.name))
-
-        var poseIndices = Set<Int>()
-        for (index, pose) in table.poses.enumerated()
-        where namedPoses.contains(pose.id) || index % poseStride == 0 {
-            poseIndices.insert(index)
-        }
-        for (index, pose) in table.poses.enumerated() where pose.id.hasPrefix("run_") {
-            poseIndices.insert(index)
-        }
-
-        let dofNames = table.coordinateNames
-        var collected: [Sample] = []
-        var collectedLengths: [LengthSample] = []
-        var timings: [Double] = []
-        var counters = (centred: 0, oneSided: 0, unresolved: 0)
-
-        for poseIndex in poseIndices.sorted() {
-            let pose = table.poses[poseIndex]
-            let angles = pose.values.map { NSNumber(value: $0) }
-            let start = Date()
-            guard let flat = computer.computeMomentArms(withJointAngles: angles,
-                                                        dofNames: dofNames) else {
-                setupFailure = "computeMomentArms returned nil at pose \(pose.id)"
-                return
-            }
-            timings.append(Date().timeIntervalSince(start) * 1000.0)
-            counters.centred += computer.lastCentredDifferenceSamples
-            counters.oneSided += computer.lastOneSidedDifferenceSamples
-            counters.unresolved += computer.lastUnresolvedDiscontinuitySamples
-
-            // `computeMomentArms` restores the pose it was given, so these two
-            // describe the same configuration the matrix above was taken at.
-            let lengths = computer.currentMuscleLengths as [NSNumber]
-            let wrapPoints = computer.currentWrapPointCounts as [NSNumber]
-
-            let columns = dofNames.count
-            // The two fixtures name their poses the same way, so the row lookup
-            // is by ID rather than by a shared index nothing enforces.
-            let fdPose = finiteDifference.poseIndex(pose.id)
-            for (fixtureMuscle, muscle) in table.muscles.enumerated() {
-                guard let ourRow = muscleIndex[muscle.name],
-                      let row = table.row(pose: poseIndex, muscle: fixtureMuscle) else { continue }
-                let wrapClass = classify(muscle)
-                let wrapCount = computer.pathWrapCount(forMuscleNamed: muscle.name)
-                var fdByCoordinate: [String: Double] = [:]
-                if let fdPose, let fdMuscle = finiteDifference.muscleIndex(muscle.name),
-                   let fdRow = finiteDifference.row(pose: fdPose, muscle: fdMuscle) {
-                    let names = finiteDifference.muscles[fdMuscle].coordinates
-                    for (slot, name) in names.enumerated() where slot < fdRow.momentArms.count {
-                        fdByCoordinate[name] = fdRow.momentArms[slot]
-                    }
-                }
-                for (slot, coordinate) in muscle.coordinates.enumerated() {
-                    guard let column = coordinateColumn[coordinate] else { continue }
-                    collected.append(Sample(pose: pose.id,
-                                            muscle: muscle.name,
-                                            coordinate: coordinate,
-                                            wrapClass: wrapClass,
-                                            wrapCount: wrapCount,
-                                            ours: flat[ourRow * columns + column].doubleValue,
-                                            wrapOff: row.momentArmsWrapOff[slot],
-                                            wrapOn: row.momentArmsWrapOn[slot],
-                                            centralDifference: fdByCoordinate[coordinate]))
-                }
-                guard ourRow < lengths.count, ourRow < wrapPoints.count else { continue }
-                collectedLengths.append(LengthSample(pose: pose.id,
-                                                     muscle: muscle.name,
-                                                     wrapClass: wrapClass,
-                                                     wrapCount: wrapCount,
-                                                     ours: lengths[ourRow].doubleValue,
-                                                     wrapOn: row.lengthWrapOn,
-                                                     ourWrapPoints: wrapPoints[ourRow].intValue,
-                                                     referenceWrapPoints: row.wrapPoints))
-            }
-        }
-        samples = collected
-        lengthSamples = collectedLengths
-        solveMilliseconds = timings
-        discontinuityCounters = counters
+        try WrapValidationHarness.build(bundle: Bundle(for: type(of: self)))
+        if let failure = WrapValidationHarness.setupFailure { throw XCTSkip(failure) }
     }
 
     // MARK: - Did anything get measured
@@ -270,26 +139,34 @@ final class CylinderWrapValidationTests: XCTestCase {
         let solved = Self.samples.filter { $0.wrapClass == .solved }
         let unsolved = Self.samples.filter { $0.wrapClass == .unsolved }
         let none = Self.samples.filter { $0.wrapClass == .none }
-        print("WRAP-CLASSES solved=\(Self.solvedMuscles.count) muscles / \(solved.count) pairs, "
-              + "unsolved=\(Self.unsolvedMuscles.count) muscles / \(unsolved.count) pairs, "
-              + "no-wrap pairs=\(none.count)")
+        print("WRAP-CLASSES cylinder-only=\(Self.cylinderMuscles.count) muscles / \(solved.count) pairs, "
+              + "unsolved=\(WrapValidationHarness.unsolvedMuscles.count) muscles / \(unsolved.count) pairs, "
+              + "carries-ellipsoid=\(WrapValidationHarness.ellipsoidMuscles.count) muscles "
+              + "(gated in EllipsoidWrapValidationTests), no-wrap pairs=\(none.count)")
         XCTAssertGreaterThan(solved.count, 0, "no muscle's wraps are solved — nothing shipped")
         XCTAssertGreaterThan(none.count, 0, "the control class is empty")
-        XCTAssertEqual(Self.solvedMuscles.count, 56,
+        XCTAssertEqual(Self.cylinderMuscles.count, 56,
                        "FullBody.osim has 56 muscles whose every PathWrap is a WrapCylinder")
-        XCTAssertEqual(Self.unsolvedMuscles.count, 10,
-                       "and 10 that carry a WrapEllipsoid: \(Self.unsolvedMuscles.sorted())")
+        XCTAssertEqual(WrapValidationHarness.ellipsoidMuscles.count, 10,
+                       "and 10 that carry a WrapEllipsoid: "
+                       + "\(WrapValidationHarness.ellipsoidMuscles.sorted())")
+        XCTAssertEqual(unsolved.count, 0,
+                       "a cylinder-only muscle whose wraps are not solved would mean the "
+                       + "parser rejected a WrapCylinder this suite thinks it is claiming")
     }
 
     // MARK: - C7 / the fidelity report
 
     func testTheFidelityReportCountsSolvedAndUnmodelledWrapsSeparately() throws {
-        let report = try XCTUnwrap(Self.fullBodyReport)
+        let report = try XCTUnwrap(WrapValidationHarness.fullBodyReport)
         print("FIDELITY \(report.summary)")
-        XCTAssertEqual(report.solvedPathWraps, 64,
-                       "64 of FullBody's 76 PathWrap references name a WrapCylinder")
-        XCTAssertEqual(report.unmodelledPathWraps, 12,
-                       "the remaining 12 name a WrapEllipsoid and stay unmodelled")
+        XCTAssertEqual(report.solvedPathWraps, 76,
+                       "all 76 of FullBody's PathWrap references are solved: 64 WrapCylinder "
+                       + "since 2026-08-08 and the 12 WrapEllipsoid added by this stage")
+        XCTAssertEqual(report.unmodelledPathWraps, 0,
+                       "nothing is left unmodelled in this model. The count is not decoration: "
+                       + "GaitLoadSummary.musclesWithUnmodelledPaths reads it and the display "
+                       + "decides what may be compared with what from it")
         XCTAssertEqual(report.wrapObjectsParsed, 69)
         XCTAssertEqual(report.wrapObjectsRejected, 0,
                        "every WrapObject in the shipped model must parse, or a PathWrap "
@@ -316,7 +193,7 @@ final class CylinderWrapValidationTests: XCTestCase {
                        "the fixture's own control is broken: \(control.count - identical.count) "
                        + "no-wrap pairs differ between its two columns")
         let errors = control.map { abs($0.ours - $0.wrapOn) }
-        print(Self.describe(errors, label: "CONTROL: no-wrap muscles, ours vs reference"))
+        print(WrapValidationHarness.describe(errors, label: "CONTROL: no-wrap muscles, ours vs reference"))
         XCTAssertLessThan(errors.max() ?? .infinity, 0.005,
                           "C4: a muscle with no wrap object must be exactly where it was")
     }
@@ -335,17 +212,17 @@ final class CylinderWrapValidationTests: XCTestCase {
         let singleErrors = single.map { abs($0.ours - ($0.centralDifference ?? 0)) }
         let multiErrors = multi.map { abs($0.ours - ($0.centralDifference ?? 0)) }
         let allErrors = solved.map { abs($0.ours - ($0.centralDifference ?? 0)) }
-        print(Self.describe(singleErrors, label: "SINGLE-WRAP: ours vs OpenSim central difference"))
-        print(Self.describe(multiErrors, label: "MULTI-WRAP: ours vs OpenSim central difference"))
-        print(Self.describe(allErrors, label: "ALL SOLVED: ours vs OpenSim central difference"))
-        print(Self.worstOffenders(in: single, by: { abs($0.ours - ($0.centralDifference ?? 0)) },
+        print(WrapValidationHarness.describe(singleErrors, label: "SINGLE-WRAP: ours vs OpenSim central difference"))
+        print(WrapValidationHarness.describe(multiErrors, label: "MULTI-WRAP: ours vs OpenSim central difference"))
+        print(WrapValidationHarness.describe(allErrors, label: "ALL SOLVED: ours vs OpenSim central difference"))
+        print(WrapValidationHarness.worstOffenders(in: single, by: { abs($0.ours - ($0.centralDifference ?? 0)) },
                                   label: "largest SINGLE-WRAP residuals"))
-        print(Self.worstOffenders(in: multi, by: { abs($0.ours - ($0.centralDifference ?? 0)) },
+        print(WrapValidationHarness.worstOffenders(in: multi, by: { abs($0.ours - ($0.centralDifference ?? 0)) },
                                   label: "largest MULTI-WRAP residuals"))
 
         XCTAssertLessThan(singleErrors.max() ?? .infinity, 0.005,
                           "C1: max residual over single-wrap solved muscles")
-        XCTAssertLessThan(Self.percentile(singleErrors, 0.99), 0.004,
+        XCTAssertLessThan(WrapValidationHarness.percentile(singleErrors, 0.99), 0.004,
                           "C2: p99 residual over single-wrap solved muscles")
         XCTAssertLessThan(allErrors.max() ?? .infinity, 0.020,
                           "W1: a >20 mm residual anywhere is a different branch, not FK noise")
@@ -359,16 +236,16 @@ final class CylinderWrapValidationTests: XCTestCase {
         let solved = Self.samples.filter { $0.wrapClass == .solved }
         let errors = solved.map { abs($0.ours - $0.wrapOn) }
         let straightLine = solved.map { abs($0.wrapOff - $0.wrapOn) }
-        print(Self.describe(errors, label: "SOLVED: ours vs analytic reference"))
-        print(Self.describe(straightLine, label: "SOLVED: straight line vs analytic reference"))
-        print(Self.worstOffenders(in: solved, by: { abs($0.ours - $0.wrapOn) },
+        print(WrapValidationHarness.describe(errors, label: "SOLVED: ours vs analytic reference"))
+        print(WrapValidationHarness.describe(straightLine, label: "SOLVED: straight line vs analytic reference"))
+        print(WrapValidationHarness.worstOffenders(in: solved, by: { abs($0.ours - $0.wrapOn) },
                                   label: "largest residuals vs the ANALYTIC column"))
-        let median = Self.percentile(errors, 0.5)
-        let medianBefore = Self.percentile(straightLine, 0.5)
+        let median = WrapValidationHarness.percentile(errors, 0.5)
+        let medianBefore = WrapValidationHarness.percentile(straightLine, 0.5)
         XCTAssertLessThan(median, medianBefore,
                           "W3: wrapping must beat the straight line it replaced "
                           + "(median \(median) vs \(medianBefore))")
-        XCTAssertLessThan(Self.percentile(errors, 0.9), Self.percentile(straightLine, 0.9),
+        XCTAssertLessThan(WrapValidationHarness.percentile(errors, 0.9), WrapValidationHarness.percentile(straightLine, 0.9),
                           "W3: and at p90, where the straight line's error lives")
     }
 
@@ -452,8 +329,8 @@ final class CylinderWrapValidationTests: XCTestCase {
         let multi = solved.filter { $0.wrapCount > 1 }
         let singleErrors = single.map { abs($0.ours - $0.wrapOn) }
         let multiErrors = multi.map { abs($0.ours - $0.wrapOn) }
-        print(Self.describe(singleErrors, label: "SINGLE-WRAP: path length, ours vs reference"))
-        print(Self.describe(multiErrors, label: "MULTI-WRAP: path length, ours vs reference"))
+        print(WrapValidationHarness.describe(singleErrors, label: "SINGLE-WRAP: path length, ours vs reference"))
+        print(WrapValidationHarness.describe(multiErrors, label: "MULTI-WRAP: path length, ours vs reference"))
         for sample in multi.sorted(by: { abs($0.ours - $0.wrapOn) > abs($1.ours - $1.wrapOn) })
                            .prefix(4) {
             print(String(format: "  LENGTH-MULTI %@ %@ ours %.6f ref %.6f",
@@ -490,24 +367,6 @@ final class CylinderWrapValidationTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(rate, 0.99, "C6: engagement agreement")
     }
 
-    // MARK: - What is NOT claimed
-
-    /// The 10 elbow muscles that carry a `WrapEllipsoid` match neither column.
-    /// Printed, never gated — this is the part of the model this stage did not
-    /// fix, and it has to stay visible rather than be smoothed into an average.
-    func testMusclesWithAnEllipsoidAreReportedAndNotClaimed() {
-        let unsolved = Self.samples.filter { $0.wrapClass == .unsolved }
-        guard !unsolved.isEmpty else { return XCTFail("no unsolved muscles were sampled") }
-        let toReference = unsolved.map { abs($0.ours - $0.wrapOn) }
-        let toStraightLine = unsolved.map { abs($0.ours - $0.wrapOff) }
-        print(Self.describe(toReference, label: "UNSOLVED (ellipsoid): ours vs reference"))
-        print(Self.describe(toStraightLine, label: "UNSOLVED (ellipsoid): ours vs straight line"))
-        XCTAssertGreaterThan(toReference.max() ?? 0, 0.001,
-                             "if the ellipsoid muscles already matched the reference there "
-                             + "would be nothing left to implement, and this suite is "
-                             + "claiming more than it measured")
-    }
-
     // MARK: - Cost
 
     /// The named risk. The whole chain costs ~200 ms/frame with 520 muscles; a
@@ -515,7 +374,7 @@ final class CylinderWrapValidationTests: XCTestCase {
     /// number rather than asserting a machine-dependent threshold — except for
     /// one ceiling that would mean the feature cannot ship at all.
     func testMomentArmSolveCostPerFrame() {
-        let timings = Self.solveMilliseconds
+        let timings = WrapValidationHarness.solveMilliseconds
         guard !timings.isEmpty else { return XCTFail("no timings were collected") }
         let sorted = timings.sorted()
         let mean = timings.reduce(0, +) / Double(timings.count)
@@ -523,7 +382,7 @@ final class CylinderWrapValidationTests: XCTestCase {
                      + "(Debug, iOS Simulator, 169 coordinates x 520 muscles)",
                      timings.count, mean, sorted[sorted.count / 2], sorted[0],
                      sorted[sorted.count - 1]))
-        let counters = Self.discontinuityCounters
+        let counters = WrapValidationHarness.discontinuityCounters
         let total = counters.centred + counters.oneSided + counters.unresolved
         print(String(format: "STENCIL total=%d centred=%d one-sided=%d (%.4f%%) unresolved=%d",
                      total, counters.centred, counters.oneSided,
@@ -535,39 +394,4 @@ final class CylinderWrapValidationTests: XCTestCase {
                           + "feature with a performance problem, it is not a feature")
     }
 
-    // MARK: - Reporting helpers
-
-    private static func percentile(_ values: [Double], _ p: Double) -> Double {
-        guard !values.isEmpty else { return .nan }
-        let sorted = values.sorted()
-        let k = (Double(sorted.count) - 1) * p
-        let low = Int(k.rounded(.down))
-        let high = min(low + 1, sorted.count - 1)
-        return sorted[low] + (sorted[high] - sorted[low]) * (k - Double(low))
-    }
-
-    private static func describe(_ values: [Double], label: String) -> String {
-        guard !values.isEmpty else { return "\(label): no samples" }
-        return String(format: "%@: n=%d  median %.6f m  p90 %.6f  p99 %.6f  max %.6f",
-                      label, values.count, percentile(values, 0.5), percentile(values, 0.9),
-                      percentile(values, 0.99), values.max() ?? 0)
-    }
-
-    private static func worstOffenders(in pool: [Sample], by metric: (Sample) -> Double,
-                                       label: String) -> String {
-        let ranked = pool.sorted { metric($0) > metric($1) }.prefix(6)
-        var lines = ["\(label):"]
-        for sample in ranked {
-            lines.append("    " + pad(sample.pose, 22) + pad(sample.muscle, 16)
-                + pad(sample.coordinate, 20)
-                + String(format: "ours %+.5f  straight %+.5f  ref %+.5f",
-                         sample.ours, sample.wrapOff, sample.wrapOn))
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private static func pad(_ text: String, _ width: Int) -> String {
-        text.count >= width ? text + " "
-                            : text + String(repeating: " ", count: width - text.count)
-    }
 }

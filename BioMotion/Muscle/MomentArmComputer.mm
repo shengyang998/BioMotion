@@ -6,6 +6,7 @@
 #include <string>
 #include <map>
 #include <set>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <sstream>
@@ -264,6 +265,12 @@ static void parseWrapObjects(tinyxml2::XMLElement* model,
             spec.radius = radius.empty() ? 0.0 : radius[0];
             spec.length = length.empty() ? 0.0 : length[0];
 
+            const auto dimensions = readNumbers(el, "dimensions");
+            if (dimensions.size() >= 3) {
+                spec.dimensions = Eigen::Vector3d(dimensions[0], dimensions[1],
+                                                  dimensions[2]);
+            }
+
             const auto translation = readNumbers(el, "translation");
             const auto rotation = readNumbers(el, "xyz_body_rotation");
             Eigen::Vector3d offset = Eigen::Vector3d::Zero();
@@ -290,6 +297,15 @@ static void parseWrapObjects(tinyxml2::XMLElement* model,
             const dynamics::BodyNode* node = skeleton->getBodyNode(spec.bodyName);
             if (!node) { rejected++; continue; }
             if (spec.kind == biomotion::WrapKind::Cylinder && spec.radius <= 0.0) {
+                rejected++;
+                continue;
+            }
+            // OpenSim throws at load on a non-positive ellipsoid radius, so a
+            // model that reaches here with one is malformed: reject rather than
+            // divide by it.
+            if (spec.kind == biomotion::WrapKind::Ellipsoid &&
+                !(spec.dimensions[0] > 0.0 && spec.dimensions[1] > 0.0 &&
+                  spec.dimensions[2] > 0.0)) {
                 rejected++;
                 continue;
             }
@@ -424,6 +440,9 @@ NS_ASSUME_NONNULL_END
     NSInteger _lastCentredDifferenceSamples;
     NSInteger _lastOneSidedDifferenceSamples;
     NSInteger _lastUnresolvedDiscontinuitySamples;
+    /// Accumulated by every `computeMuscleLengthForIndex:` between the resets in
+    /// `computeMomentArmsWithJointAngles:dofNames:`.
+    NSInteger _ellipsoidNumericalRefusals;
 }
 
 - (instancetype)init {
@@ -439,6 +458,20 @@ NS_ASSUME_NONNULL_END
 - (NSInteger)lastOneSidedDifferenceSamples { return _lastOneSidedDifferenceSamples; }
 - (NSInteger)lastUnresolvedDiscontinuitySamples {
     return _lastUnresolvedDiscontinuitySamples;
+}
+- (NSInteger)lastEllipsoidNumericalRefusals {
+    return _ellipsoidNumericalRefusals;
+}
+
+- (NSInteger)setEllipsoidWrapObjectsActive:(BOOL)active {
+    NSInteger changed = 0;
+    for (auto& object : _wrapObjects) {
+        if (object.kind != biomotion::WrapKind::Ellipsoid) continue;
+        if (object.active == (bool)active) continue;
+        object.active = (bool)active;
+        changed++;
+    }
+    return changed;
 }
 
 - (MusclePathFidelityReport *)fidelityReport { return _fidelityReport; }
@@ -705,10 +738,31 @@ NS_ASSUME_NONNULL_END
                         wrap.endPoint = (int)std::lround(range[1]);
                     }
 
-                    const bool solved =
-                        wrap.wrapObject >= 0 &&
-                        _wrapObjects[(size_t)wrap.wrapObject].kind
-                            == biomotion::WrapKind::Cylinder;
+                    // `<method>` picks between three different ellipsoid
+                    // algorithms; a cylinder ignores it. Anything but `hybrid`
+                    // stays unmodelled — see DEVIATION 8 in MusclePathWrap.cpp.
+                    std::string method = "hybrid";
+                    if (auto* methodEl = w->FirstChildElement("method")) {
+                        if (methodEl->GetText()) method = methodEl->GetText();
+                    }
+                    method.erase(std::remove_if(method.begin(), method.end(),
+                                                [](unsigned char c) {
+                                                    return std::isspace(c);
+                                                }),
+                                 method.end());
+                    wrap.method = (method == "hybrid")
+                                      ? biomotion::PathWrapMethod::Hybrid
+                                      : biomotion::PathWrapMethod::Unsupported;
+
+                    bool solved = false;
+                    if (wrap.wrapObject >= 0) {
+                        const auto kind = _wrapObjects[(size_t)wrap.wrapObject].kind;
+                        if (kind == biomotion::WrapKind::Cylinder) {
+                            solved = true;
+                        } else if (kind == biomotion::WrapKind::Ellipsoid) {
+                            solved = wrap.method == biomotion::PathWrapMethod::Hybrid;
+                        }
+                    }
                     if (solved) nWrapsSolved++; else nWrapsUnmodelled++;
                     mp.pathWraps.push_back(wrap);
                 }
@@ -808,7 +862,7 @@ NS_ASSUME_NONNULL_END
     NSLog(@"MomentArmComputer: geometry fidelity — %@", report.summary);
     if (report.solvedPathWraps > 0) {
         NSLog(@"MomentArmComputer: %ld PathWrap references solved over %ld wrap "
-              @"objects (WrapCylinder).",
+              @"objects (WrapCylinder + WrapEllipsoid, hybrid method).",
               (long)report.solvedPathWraps, (long)report.wrapObjectsParsed);
     }
     if (report.unmodelledPathWraps > 0) {
@@ -881,6 +935,22 @@ NS_ASSUME_NONNULL_END
     std::string nameStr([name UTF8String]);
     for (const auto& mp : _musclePaths) {
         if (mp.name == nameStr) return (NSInteger)mp.pathWraps.size();
+    }
+    return -1;
+}
+
+- (NSInteger)ellipsoidPathWrapCountForMuscleNamed:(NSString *)name {
+    std::string nameStr([name UTF8String]);
+    for (const auto& mp : _musclePaths) {
+        if (mp.name != nameStr) continue;
+        NSInteger count = 0;
+        for (const auto& wrap : mp.pathWraps) {
+            if (wrap.wrapObject < 0 ||
+                wrap.wrapObject >= (int)_wrapObjects.size()) continue;
+            if (_wrapObjects[(size_t)wrap.wrapObject].kind
+                    == biomotion::WrapKind::Ellipsoid) count++;
+        }
+        return count;
     }
     return -1;
 }
@@ -977,6 +1047,7 @@ NS_ASSUME_NONNULL_END
 
     if (outSignature) *outSignature = solved.signature;
     if (outWrapPoints) *outWrapPoints = solved.wrapPointCount;
+    _ellipsoidNumericalRefusals += solved.numericalRefusals;
     return solved.length;
 }
 
@@ -1033,6 +1104,7 @@ NS_ASSUME_NONNULL_END
     // derivative or a fabrication.
     std::vector<double> baselineLengths(nMuscles);
     std::vector<std::uint64_t> baselineSignatures(nMuscles);
+    _ellipsoidNumericalRefusals = 0;
     for (NSInteger m = 0; m < nMuscles; m++) {
         baselineLengths[m] = [self computeMuscleLengthForIndex:m
                                                      signature:&baselineSignatures[m]

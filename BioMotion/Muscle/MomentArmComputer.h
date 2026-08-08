@@ -68,8 +68,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) NSInteger unknownPathPointElementsSkipped;
 
 /// `<PathWrap>` references on the retained muscles that are SOLVED — the path
-/// wraps around the surface instead of cutting through it. Only `WrapCylinder`
-/// is solved (`MusclePathWrap.cpp`, ported from opensim-core).
+/// wraps around the surface instead of cutting through it. `WrapCylinder` and
+/// `WrapEllipsoid` (`hybrid` method) are solved
+/// (`MusclePathWrap.cpp`, ported from opensim-core); that is all 76 of
+/// FullBody.osim's references and all 46 of Rajagopal2016's.
 @property (nonatomic, readonly) NSInteger solvedPathWraps;
 
 /// `<PathWrap>` references that are NOT solved, so those muscles still take a
@@ -77,11 +79,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// the model is geometrically incomplete.
 ///
 /// Since 2026-08-08 this is the count of the wraps that REMAIN unmodelled, not
-/// of all wraps — `WrapEllipsoid` (a numerical geodesic), a `<wrap_object>`
-/// naming something the model does not define, and a path too long for the
-/// solver's fixed storage. A muscle carrying one solved and one unsolved wrap
-/// counts here and appears in `musclesWithUnmodelledPathWraps`, because a
-/// partly-wrapped path is not a wrapped path.
+/// of all wraps, and on both shipped models it is **0**. What can still land
+/// here: a `WrapObject` subclass with no solver (sphere, torus), an ellipsoid
+/// `<PathWrap>` whose `<method>` is not `hybrid` (see DEVIATION 8 in
+/// `MusclePathWrap.cpp`), a `<wrap_object>` naming something the model does not
+/// define, and a path too long for the solver's fixed storage. A muscle carrying
+/// one solved and one unsolved wrap counts here and appears in
+/// `musclesWithUnmodelledPathWraps`, because a partly-wrapped path is not a
+/// wrapped path.
 @property (nonatomic, readonly) NSInteger unmodelledPathWraps;
 
 /// **Which muscles those wraps belong to**, in parse order. A count alone
@@ -97,7 +102,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// `<WrapObject>`s the parser refused: an unsupported subclass, a body the
 /// skeleton does not carry, a `<quadrant>` spelling OpenSim would have thrown
-/// on, or a non-positive radius. A `PathWrap` pointing at one of these counts
+/// on, a non-positive cylinder radius, or a non-positive ellipsoid semi-axis
+/// (OpenSim throws at load on that one). A `PathWrap` pointing at one of these counts
 /// as unmodelled — silently wrapping on a guessed side is the exact failure
 /// this project keeps paying for.
 @property (nonatomic, readonly) NSInteger wrapObjectsRejected;
@@ -119,12 +125,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// points to world coordinates and compute total muscle-tendon path length.
 ///
 /// Path WRAPPING is applied where the model defines it: a `<PathWrap>` naming a
-/// `WrapCylinder` makes the path run around the cylinder instead of through it
-/// (`MusclePathWrap.h`, ported from opensim-core). `WrapEllipsoid` is not
-/// solved and stays counted in `MusclePathFidelityReport.unmodelledPathWraps`.
-/// Because only the path's scalar LENGTH is differentiated, only the length of
-/// the wrapped path has to be right; the tangent-point geometry OpenSim also
-/// computes for rendering is not reproduced.
+/// `WrapCylinder` or a `WrapEllipsoid` makes the path run around the surface
+/// instead of through it (`MusclePathWrap.h`, ported from opensim-core). Every
+/// `PathWrap` in both shipped models is solved; anything that is not — an
+/// unsupported surface, or an ellipsoid whose `<method>` is not `hybrid` — stays
+/// counted in `MusclePathFidelityReport.unmodelledPathWraps` rather than being
+/// approximated. Because only the path's scalar LENGTH is differentiated, only
+/// the length of the wrapped path has to be right; the tangent-point geometry
+/// OpenSim also computes for rendering is not reproduced.
 ///
 /// ConditionalPathPoint gating: the coordinate value fed to a conditional
 /// point's `<range>` test is the CURRENT POSITION OF THE MATCHING SKELETON DOF
@@ -199,6 +207,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// has to stratify on it.
 - (NSInteger)pathWrapCountForMuscleNamed:(NSString *)name;
 
+/// How many of that muscle's `<PathWrap>` references name a `WrapEllipsoid`.
+/// -1 when the muscle is not in the parsed set.
+///
+/// Also a structural fact with a numerical consequence, and a much larger one:
+/// the cylinder spiral is closed form while the ellipsoid path is a fan of ~300
+/// point-to-ellipsoid Newton solves followed by two Levenberg-Marquardt tangent
+/// solves and a chorded geodesic. Any comparison with OpenSim has to stratify on
+/// which surface it is looking at, and this is the parser's own answer rather
+/// than a hand-written muscle list that can drift away from the code.
+- (NSInteger)ellipsoidPathWrapCountForMuscleNamed:(NSString *)name;
+
 /// All muscle names.
 @property (nonatomic, readonly) NSArray<NSString *> *muscleNames;
 
@@ -229,6 +248,23 @@ NS_ASSUME_NONNULL_BEGIN
 /// find a side that agrees; this counts the ones where none ever did and the
 /// forward difference at the smallest step was used. Expected to be 0.
 @property (nonatomic, readonly) NSInteger lastUnresolvedDiscontinuitySamples;
+
+/// How many ellipsoid wrap solves refused during the most recent
+/// `computeMomentArmsWithJointAngles:dofNames:` — cases OpenSim answers with a
+/// NaN (an exactly tangent segment, a negative discriminant on the surface
+/// ray). Those segments took the straight line. Expected to be 0; a non-zero
+/// value is a pose to report, not to average away.
+@property (nonatomic, readonly) NSInteger lastEllipsoidNumericalRefusals;
+
+/// Switch every parsed `WrapEllipsoid` on or off, exactly as
+/// `<active>false</active>` in the model would, and return how many changed.
+///
+/// It exists for ONE reason: the per-frame cost of a wrap solver is an A/B that
+/// has to happen inside one process, on one machine, at one pose set, or it is
+/// two numbers from two runs being subtracted. The ellipsoid is 130–450× the
+/// cost of a cylinder solve, so this is the difference that decides whether it
+/// can ship.
+- (NSInteger)setEllipsoidWrapObjectsActive:(BOOL)active;
 
 /// World-space start/end positions of each muscle path at the current skeleton
 /// pose. Returned as a flat `[x0, y0, z0, x1, y1, z1, ...]` array of 6 floats

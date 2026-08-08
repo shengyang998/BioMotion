@@ -11,6 +11,7 @@ OpenSim (opensim-core)
 are a port of the muscle path-wrapping code in OpenSim:
 
     OpenSim/Simulation/Wrap/WrapCylinder.cpp
+    OpenSim/Simulation/Wrap/WrapEllipsoid.cpp
     OpenSim/Simulation/Wrap/WrapObject.cpp
     OpenSim/Simulation/Wrap/WrapMath.cpp
     OpenSim/Simulation/Model/GeometryPath.cpp
@@ -36,10 +37,14 @@ are a port of the muscle path-wrapping code in OpenSim:
     License for the specific language governing permissions and limitations
     under the License.
 
+    `WrapEllipsoid::findClosestPoint` and `closestPointToEllipse` are in turn
+    David Eberly's point-to-ellipsoid and point-to-ellipse algorithms from
+    Graphics Gems IV, as noted in OpenSim's own source.
+
 The port is not a verbatim copy: it computes the wrapped path's scalar LENGTH
-only, omits the wrap-point sampling OpenSim generates for rendering, and does
-not implement `WrapEllipsoid`. Every intentional difference is listed under
-DEVIATIONS at the top of `MusclePathWrap.cpp`.
+only, does not return the wrap points OpenSim generates for rendering, and
+implements only the `hybrid` ellipsoid method. Every intentional difference is
+listed under DEVIATIONS at the top of `MusclePathWrap.cpp`.
 
 `BioMotion/Resources/FullBody.osim` and `BioMotion/Resources/Rajagopal2016.osim`
 are OpenSim musculoskeletal models; their own licence terms are recorded in

@@ -34,10 +34,32 @@ final class OfflineOrchestrationTests: XCTestCase {
         return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
     }
 
+    /// How long one submission may take before this test calls it dead.
+    ///
+    /// It is a LIVENESS bound, not a performance budget — this suite exists to
+    /// isolate the async orchestration layer, and a Debug simulator build is not
+    /// where per-frame cost is judged. It was an unnamed `= 10` default until
+    /// 2026-08-08, when ellipsoid path wrapping made the ninth submission — the
+    /// first one where the Savitzky-Golay window is full, so the first that runs
+    /// ID + moment arms + QP — cross it, and the suite failed with
+    /// "no muscle output" rather than with the cost that caused it. The number
+    /// below has a measurement behind it and the per-push seconds are printed,
+    /// so a real regression shows up as a number instead of as a mystery.
+    ///
+    /// Measured on this machine, Debug, iOS Simulator, `FullBody.osim`: pushes
+    /// 1–7 cost **0.09 s** each (IK only — the window is not full), push 0 costs
+    /// **4.07 s** (first solve, cold), and push 8 — the first with a full window,
+    /// so the first that runs ID + moment arms + QP — costs **11.65 s**. Before
+    /// the ellipsoids the whole test ran in 12.45–12.56 s with every submission
+    /// inside the old 10 s bound, so push 8 was under 10 s and is now over it.
+    /// 45 s is ~4× the measured worst case, and `timedOut == 0` is asserted, so a
+    /// large regression still fails — with the seconds printed beside it.
+    private let submissionLivenessTimeout: TimeInterval = 45
+
     /// Mirrors `OfflineSessionRunner.submitAndWait`: subscribe first, submit,
     /// then wait for the engine to publish.
     @MainActor
-    private func submitAndWait(_ frame: BodyFrame, timeout: TimeInterval = 10) async -> Bool {
+    private func submitAndWait(_ frame: BodyFrame, timeout: TimeInterval) async -> Bool {
         await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             var resumed = false
             var token: AnyCancellable?
@@ -73,17 +95,29 @@ final class OfflineOrchestrationTests: XCTestCase {
         let dt = 1.0 / 30.0
         var published = 0
         var timedOut = 0
+        var elapsed: [Double] = []
         for push in 0..<SavitzkyGolayFilter.windowSize {
             let ts = Double(push - SavitzkyGolayFilter.halfWindow) * dt
-            if await submitAndWait(bodyFrame(timestamp: ts, frameNumber: push)) {
+            let start = Date()
+            if await submitAndWait(bodyFrame(timestamp: ts, frameNumber: push),
+                                   timeout: submissionLivenessTimeout) {
                 published += 1
             } else {
                 timedOut += 1
             }
-            print("ORCH-METRIC push=\(push) ts=\(ts) muscle=\(engine.lastMuscleResult != nil) dropped=\(engine.droppedFrameCount)")
+            elapsed.append(Date().timeIntervalSince(start))
+            print(String(format: "ORCH-METRIC push=%d ts=%.4f muscle=%@ dropped=%d elapsed=%.2f s",
+                         push, ts, engine.lastMuscleResult != nil ? "true" : "false",
+                         engine.droppedFrameCount, elapsed[push]))
         }
 
-        print("ORCH-METRIC published=\(published) timedOut=\(timedOut) dropped=\(engine.droppedFrameCount)")
+        let slowest = elapsed.max() ?? 0
+        print(String(format: "ORCH-METRIC published=%d timedOut=%d dropped=%d slowest=%.2f s total=%.2f s",
+                     published, timedOut, engine.droppedFrameCount, slowest, elapsed.reduce(0, +)))
+        XCTAssertEqual(timedOut, 0,
+                       "a submission never published within \(submissionLivenessTimeout) s — "
+                       + "slowest \(slowest) s. That is a liveness failure or a very large "
+                       + "cost regression, not a small one")
         XCTAssertEqual(engine.droppedFrameCount, 0,
                        "frames were dropped — the runner submitted while a solve was in flight")
 

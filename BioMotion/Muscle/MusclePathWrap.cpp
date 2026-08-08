@@ -1,10 +1,11 @@
 /* -------------------------------------------------------------------------- *
- *  MusclePathWrap.cpp — muscle path wrapping over WrapCylinder geometry.      *
+ *  MusclePathWrap.cpp — muscle path wrapping over cylinder and ellipsoid      *
+ *                       geometry.                                            *
  * -------------------------------------------------------------------------- *
  *  Ported from OpenSim (opensim-core), which carries:                         *
  *                                                                            *
- *      OpenSim:  WrapCylinder.cpp / WrapObject.cpp / WrapMath.cpp /           *
- *                GeometryPath.cpp                                            *
+ *      OpenSim:  WrapCylinder.cpp / WrapEllipsoid.cpp / WrapObject.cpp /      *
+ *                WrapMath.cpp / GeometryPath.cpp                             *
  *      Copyright (c) 2005-2017 Stanford University and the Authors            *
  *      Author(s): Peter Loan, Frank C. Anderson                              *
  *                                                                            *
@@ -25,7 +26,8 @@
  *
  *  # What this is
  *
- *  A line-for-line port of the length half of OpenSim's cylinder wrapping.
+ *  A line-for-line port of the length half of OpenSim's cylinder and ellipsoid
+ *  wrapping.
  *  SimTK::Vec3 becomes Eigen::Vector3d, `~a*b` becomes `a.dot(b)`, `a % b`
  *  becomes `a.cross(b)`; the control flow, the branch order, the magic
  *  constants and the tolerances are OpenSim's. It was ported rather than
@@ -58,11 +60,13 @@
  *     Here the adjustment is skipped, which is what "no intersection to slide
  *     to" means.
  *
- *  4. ELLIPSOIDS ARE NOT SOLVED. `WrapEllipsoid` is a numerical geodesic and is
- *     a separate piece of work; those `PathWrap`s stay counted as unmodelled.
- *     A muscle carrying both (TRIlong_r/_l) gets its two cylinders solved and
- *     its ellipsoid skipped, which is a partial path — reported as such rather
- *     than presented as complete.
+ *  4. NO ELLIPSOID `wrap_pts` LEAVE THE SOLVER EITHER, but unlike the cylinder
+ *     the ellipsoid cannot avoid GENERATING them: `CalcDistanceOnEllipsoid`
+ *     computes the surface distance BY summing the chords between them, and the
+ *     wrong-way-wrap test reads `wrap_pts[1]` and `wrap_pts[size-2]`. They are
+ *     streamed instead of stored — a running sum plus the two the test reads —
+ *     so the 12 KB `s[500][3]` stack array is gone and the arithmetic is
+ *     unchanged.
  *
  *  5. THE SIGNATURE. `WrappedPathResult::signature` has no counterpart in
  *     OpenSim. It exists because OpenSim never differentiates its own path
@@ -79,6 +83,48 @@
  *     `PathWrap`s, so the working path lives in a fixed stack array. A muscle
  *     that exceeded the cap would be REFUSED (straight line, `refused` set),
  *     never silently truncated.
+ *
+ *  8. ONLY THE `hybrid` ELLIPSOID METHOD IS IMPLEMENTED. `WrapEllipsoid`
+ *     branches three ways on `<PathWrap><method>` and the three produce
+ *     materially different paths. All 12 ellipsoid `PathWrap`s in FullBody.osim
+ *     say `hybrid`. `axial` and `midpoint` are refused at parse time and counted
+ *     as unmodelled, so the tested surface and the shipped surface are the same
+ *     set. Also: `hybrid` is the only one of the three that is a PURE FUNCTION
+ *     of the pose. OpenSim seeds `r1`/`r2`/`c1`/`sv` from the PREVIOUS call's
+ *     `WrapResult`, and on the `axial` branch `use_c1_to_find_tangent_pts` can
+ *     be false, which leaves the previous call's `r1`/`r2` as the seed for
+ *     `calcTangentPoint`. Differentiating a function of call history is not
+ *     differentiating a function of q. Hybrid overwrites all four.
+ *
+ *  9. THE ELLIPSOID REFUSES INSTEAD OF RETURNING A NaN. Two places have no
+ *     guard upstream: `t = (m - r1)/(r2 - r1)` divides by zero when the segment
+ *     is exactly tangent (`disc == 0`, so `r1 == r2`), and the surface ray in
+ *     `CalcDistanceOnEllipsoid` takes `sqrt(bb*bb - 4*aa*cc)` with no check that
+ *     it is non-negative. Both return `NoWrap` with `numericalRefusal` set, and
+ *     `WrappedPathResult::numericalRefusals` counts them, because a NaN length
+ *     becomes a NaN moment arm becomes a QP that fails in a different file.
+ *
+ * 10. `findClosestPoint` RETURNS ITS LAST ITERATE. OpenSim's general (non
+ *     axis-aligned) branch writes `*x`,`*y`,`*z` only on the iteration where
+ *     `|f| < 1e-9`; if 64 Newton steps do not get there it returns -1.0 having
+ *     written nothing, and every caller uses the outputs regardless — reading
+ *     uninitialised stack. Here the same expressions are evaluated at the final
+ *     `t` (which is what OpenSim's own 2-D `closestPointToEllipse` does after
+ *     its loop) and the caller is told convergence failed.
+ *
+ * 11. FRANS IS EVALUATED ONCE, NOT THREE TIMES. `wrapLine` computes `t[i]`,
+ *     `t_sv[i]` and `t_c1[i]` for all three axes and then reads only
+ *     `[bestMu]`; `bestMu` depends on `mu` alone, so choosing first and solving
+ *     once is bit-identical and drops two point-to-ellipsoid solves per call.
+ *     It also stops the routine evaluating a NaN: `t[i]` divides by `r1r2[i]`,
+ *     which is zero on exactly the axes `bestMu` can never be.
+ *
+ * 12. `EQUAL_WITHIN_ERROR(fanWeight, -Infinity)` IS REPRODUCED, NOT REPAIRED.
+ *     It expands to `fabs(-inf - -inf) <= 2e-13`, i.e. `NaN <= 2e-13`, i.e.
+ *     FALSE — so the sentinel it is testing for never matches and the
+ *     quadrant-flip bisection is skipped whenever the fan did not run. That is
+ *     the reference's behaviour, and this port has to reproduce it to be
+ *     comparable with the reference. Fixing it here would be a silent fork.
  */
 
 #include "MusclePathWrap.h"
@@ -558,6 +604,607 @@ WrapSegmentResult wrapCylinderLine(const WrapObjectSpec& cylinder,
     return out;
 }
 
+// MARK: - WrapEllipsoid::wrapLine
+
+namespace {
+
+// WrapEllipsoid.cpp's own constants, verbatim.
+constexpr double kEllipsoidTiny = 0.00000001;
+constexpr double kMuBlendMin = 0.7073;   // 100% fan (must exceed cos(45 deg))
+constexpr double kMuBlendMax = 0.9;      // 100% Frans
+constexpr int kNumFanSamples = 300;      // larger produces less jitter
+constexpr double kSvBoundaryBlend = 0.3;
+constexpr double kDesiredSegLength = 0.001;  // metres
+constexpr int kMaxSurfaceSegments = 499;
+constexpr int kTangentMaxIterations = 50;
+constexpr int kTangentInnerMaxIterations = 1000;
+
+inline double sqr(double x) { return x * x; }
+
+/// `WrapEllipsoid::closestPointToEllipse`, Graphics Gems IV. Returns the
+/// distance; writes the closest point to (x, y).
+double closestPointToEllipse(double a, double b, double u, double v,
+                             double& x, double& y) {
+    const double a2 = a * a, b2 = b * b;
+    const double a2u2 = a2 * u * u, b2v2 = b2 * v * v;
+
+    const bool nearXOrigin = equalWithinError(0.0, u);
+    const bool nearYOrigin = equalWithinError(0.0, v);
+
+    if (nearXOrigin && nearYOrigin) {
+        if (a < b) {
+            x = (u < 0.0 ? -a : a);
+            y = v;
+            return a;
+        }
+        x = u;
+        y = (v < 0.0 ? -b : b);
+        return b;
+    }
+
+    if (nearXOrigin) {
+        if (a >= b || std::abs(v) >= b - a2 / b) {
+            x = u;
+            y = (v >= 0 ? b : -b);
+            return std::abs(y - v);
+        }
+        y = b2 * v / (b2 - a2);
+        const double dy = y - v;
+        const double ydb = y / b;
+        x = a * std::sqrt(std::abs(1 - ydb * ydb));
+        return std::sqrt(x * x + dy * dy);
+    }
+
+    if (nearYOrigin) {
+        if (b >= a || std::abs(u) >= a - b2 / a) {
+            x = (u >= 0 ? a : -a);
+            y = v;
+            return std::abs(x - u);
+        }
+        x = a2 * u / (a2 - b2);
+        const double dx = x - u;
+        const double xda = x / a;
+        y = b * std::sqrt(std::abs(1 - xda * xda));
+        return std::sqrt(dx * dx + y * y);
+    }
+
+    double t = 0.0;
+    if ((u / a) * (u / a) + (v / b) * (v / b) >= 1.0) {
+        t = std::max(a, b) * std::sqrt(u * u + v * v);
+    }
+
+    double P = t + a2;
+    double Q = t + b2;
+    for (int i = 0; i < 64; i++) {
+        P = t + a2;
+        Q = t + b2;
+        const double P2 = P * P, Q2 = Q * Q;
+        const double f = P2 * Q2 - a2u2 * Q2 - b2v2 * P2;
+        if (std::abs(f) < 1e-09) break;
+        const double fp = 2.0 * (P * Q * (P + Q) - a2u2 * Q - b2v2 * P);
+        t -= f / fp;
+    }
+
+    x = a2 * u / P;
+    y = b2 * v / Q;
+    const double dx = x - u, dy = y - v;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+}  // namespace
+
+bool closestPointOnEllipsoid(const Eigen::Vector3d& radii,
+                             const Eigen::Vector3d& point,
+                             Eigen::Vector3d& closest,
+                             int specialCaseAxis) {
+    const double a = radii[0], b = radii[1], c = radii[2];
+    const double u = point[0], v = point[1], w = point[2];
+
+    // Points near a coordinate plane reduce to a 2-D point-to-ellipse, which
+    // the general branch below is not stable for. When more than one plane is
+    // close, OpenSim picks the narrowest cross-section.
+    if (specialCaseAxis < 0) {
+        double minEllipseRadiiSum = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < 3; i++) {
+            if (!equalWithinError(0.0, point[i])) continue;
+            double ellipseRadiiSum = 0.0;
+            for (int j = 0; j < 3; j++) {
+                if (j != i) ellipseRadiiSum += radii[j];
+            }
+            if (minEllipseRadiiSum > ellipseRadiiSum) {
+                specialCaseAxis = i;
+                minEllipseRadiiSum = ellipseRadiiSum;
+            }
+        }
+    }
+    if (specialCaseAxis == 0) {
+        closest[0] = u;
+        closestPointToEllipse(b, c, v, w, closest[1], closest[2]);
+        return true;
+    }
+    if (specialCaseAxis == 1) {
+        closest[1] = v;
+        closestPointToEllipse(c, a, w, u, closest[2], closest[0]);
+        return true;
+    }
+    if (specialCaseAxis == 2) {
+        closest[2] = w;
+        closestPointToEllipse(a, b, u, v, closest[0], closest[1]);
+        return true;
+    }
+
+    const double a2 = a * a, b2 = b * b, c2 = c * c;
+    const double a2u2 = a2 * u * u, b2v2 = b2 * v * v, c2w2 = c2 * w * w;
+
+    double t = 0.0;
+    if ((u / a) * (u / a) + (v / b) * (v / b) + (w / c) * (w / c) >= 1.0) {
+        t = std::max(a, std::max(b, c)) * std::sqrt(u * u + v * v + w * w);
+    }
+
+    double P = t + a2, Q = t + b2, R = t + c2;
+    bool converged = false;
+    for (int i = 0; i < 64; i++) {
+        P = t + a2;
+        Q = t + b2;
+        R = t + c2;
+        const double P2 = P * P, Q2 = Q * Q, R2 = R * R;
+        const double f = P2 * Q2 * R2 - a2u2 * Q2 * R2 - b2v2 * P2 * R2
+                       - c2w2 * P2 * Q2;
+        if (std::abs(f) < 1e-09) { converged = true; break; }
+        const double PQ = P * Q, PR = P * R, QR = Q * R, PQR = P * Q * R;
+        const double fp = 2.0 * (PQR * (QR + PR + PQ) - a2u2 * QR * (Q + R)
+                                 - b2v2 * PR * (P + R) - c2w2 * PQ * (P + Q));
+        t -= f / fp;
+    }
+
+    // DEVIATION 10: OpenSim leaves the outputs unwritten when this fails.
+    closest[0] = a2 * u / P;
+    closest[1] = b2 * v / Q;
+    closest[2] = c2 * w / R;
+    return converged;
+}
+
+namespace {
+
+/// `WrapEllipsoid::calcTangentPoint`. Slides `r1` along the wrapping plane
+/// (`vs`, `vs4`) until the segment `p1 -> r1` is tangent to the ellipsoid.
+/// Levenberg-Marquardt on four residuals; every constant is OpenSim's.
+void calcTangentPoint(double p1e, Eigen::Vector3d& r1,
+                      const Eigen::Vector3d& p1, const Eigen::Vector3d& m,
+                      const Eigen::Vector3d& a, const Eigen::Vector3d& vs,
+                      double vs4) {
+    if (std::abs(p1e) < 0.0001) {
+        r1 = p1;
+        return;
+    }
+
+    Eigen::Vector3d nr1;
+    for (int i = 0; i < 3; i++) nr1[i] = 2.0 * (r1[i] - m[i]) / sqr(a[i]);
+
+    double d1 = -nr1.dot(r1);
+    Eigen::Vector4d ee;
+    auto residuals = [&](const Eigen::Vector3d& rr, double dd1) {
+        Eigen::Vector4d e;
+        e[0] = vs.dot(rr) + vs4;
+        e[1] = -1.0;
+        for (int i = 0; i < 3; i++) e[1] += sqr((rr[i] - m[i]) / a[i]);
+        Eigen::Vector3d n;
+        for (int i = 0; i < 3; i++) n[i] = 2.0 * (rr[i] - m[i]) / sqr(a[i]);
+        e[2] = n.dot(rr) + dd1;
+        e[3] = n.dot(p1) + dd1;
+        return e;
+    };
+    ee = residuals(r1, d1);
+
+    double ssqo = ee.squaredNorm();
+    double ssq = ssqo;
+    double alpha = 0.01;
+    Eigen::Vector4d vt = Eigen::Vector4d::Zero();
+
+    int nit = 0;
+    while (ssq > kEllipsoidTiny && nit < kTangentMaxIterations) {
+        nit++;
+
+        // dedth(i, j) = d e_j / d theta_i, theta = (r1.x, r1.y, r1.z, d1).
+        Eigen::Matrix4d dedth = Eigen::Matrix4d::Zero();
+        for (int i = 0; i < 3; i++) {
+            dedth(i, 0) = vs[i];
+            dedth(i, 1) = 2.0 * (r1[i] - m[i]) / sqr(a[i]);
+            dedth(i, 2) = 2.0 * (2.0 * r1[i] - m[i]) / sqr(a[i]);
+            dedth(i, 3) = 2.0 * p1[i] / sqr(a[i]);
+        }
+        dedth(3, 0) = 0.0;
+        dedth(3, 1) = 0.0;
+        dedth(3, 2) = 1.0;
+        dedth(3, 3) = 1.0;
+
+        Eigen::Vector3d p1r1, p1m;
+        normalizeOrZero(p1 - r1, p1r1);
+        normalizeOrZero(p1 - m, p1m);
+        const double pcos = p1r1.dot(p1m);
+        const double dd = (pcos > 0.1) ? 1.0 - std::pow(pcos, 100) : 1.0;
+
+        const Eigen::Vector4d v = -(dedth * ee);
+        Eigen::Matrix4d dedth2 = dedth * dedth.transpose();
+        Eigen::Vector4d diag = dedth2.diagonal();
+
+        int nit2 = 0;
+        while (ssq >= ssqo && nit2 < kTangentInnerMaxIterations) {
+            for (int i = 0; i < 4; i++) dedth2(i, i) = diag[i] * (1.0 + alpha);
+            const Eigen::Matrix4d ddinv2 = dedth2.inverse();
+            if (!ddinv2.allFinite()) return;  // DEVIATION 9: refuse, not NaN
+
+            vt = (dd / 16.0) * (ddinv2 * v);
+            r1 += vt.head<3>();
+            d1 += vt[3];
+
+            ee = residuals(r1, d1);
+            ssqo = ssq;
+            ssq = ee.squaredNorm();
+
+            alpha *= 4.0;
+            nit2++;
+        }
+
+        alpha /= 8.0;
+
+        double fakt = 0.5;
+        nit2 = 0;
+        while (ssq <= ssqo && nit2 < kTangentInnerMaxIterations) {
+            fakt *= 2.0;
+            r1 += vt.head<3>() * fakt;
+            d1 += vt[3] * fakt;
+
+            ee = residuals(r1, d1);
+            ssqo = ssq;
+            ssq = ee.squaredNorm();
+            nit2++;
+        }
+
+        r1 -= vt.head<3>() * fakt;
+        d1 -= vt[3] * fakt;
+
+        ee = residuals(r1, d1);
+        ssq = ee.squaredNorm();
+        ssqo = ssq;
+
+        if (!r1.allFinite()) return;  // DEVIATION 9
+    }
+}
+
+/// `WrapEllipsoid::CalcDistanceOnEllipsoid` — the surface distance between two
+/// points on the ellipsoid, in the plane (`vs`, `vs4`).
+///
+/// DEVIATION 4: the interior points are streamed. `firstInterior` /
+/// `lastInterior` are `wrap_pts[1]` and `wrap_pts[size-2]`, the only two the
+/// wrong-way test reads, and `haveInterior` is `wrap_pts.getSize() > 2`.
+/// Returns false on the negative-discriminant case OpenSim answers with a NaN.
+bool calcDistanceOnEllipsoid(const Eigen::Vector3d& r1, const Eigen::Vector3d& r2,
+                             const Eigen::Vector3d& m, const Eigen::Vector3d& a,
+                             const Eigen::Vector3d& vs, double vs4,
+                             bool farSideWrap, double factor,
+                             double& wrapPathLength, int& pathSegments,
+                             Eigen::Vector3d& firstInterior,
+                             Eigen::Vector3d& lastInterior, bool& haveInterior) {
+    haveInterior = false;
+    const double len = (r1 - r2).norm() / factor;
+
+    if (len < kDesiredSegLength) {
+        // Too short to be worth sampling: r1 and r2 are the whole path.
+        wrapPathLength = len * factor;
+        pathSegments = 1;
+        return true;
+    }
+
+    int numPathSegments = static_cast<int>(len / kDesiredSegLength);
+    if (numPathSegments <= 0) {
+        // Unreachable — len >= kDesiredSegLength above — and OpenSim's version
+        // returns an unnormalised length here. Kept as a refusal rather than
+        // reproducing a unit bug nothing can reach.
+        wrapPathLength = len;
+        pathSegments = 0;
+        return false;
+    }
+    if (numPathSegments > kMaxSurfaceSegments) numPathSegments = kMaxSurfaceSegments;
+
+    const int numInteriorPts = numPathSegments - 1;
+
+    int imax = 0;
+    for (int i = 1; i < 3; i++) {
+        if (std::abs(vs[i]) > std::abs(vs[imax])) imax = i;
+    }
+    Eigen::Vector3d u = Eigen::Vector3d::Zero();
+    u[imax] = 1.0;
+
+    const double denom = vs.dot(u);
+    if (denom == 0.0) return false;  // DEVIATION 9
+    const double mu = (-vs.dot(m) - vs4) / denom;
+    const Eigen::Vector3d a0 = m + mu * u;
+
+    Eigen::Vector3d ar1, ar2;
+    normalizeOrZero(r1 - a0, ar1);
+    normalizeOrZero(r2 - a0, ar2);
+
+    const double phi0 = clampedAcos(ar1.dot(ar2));
+    const double dphi = farSideWrap ? -(2.0 * M_PI - phi0) / numPathSegments
+                                    : phi0 / numPathSegments;
+
+    Eigen::Vector3d vsz;
+    normalizeOrZero(ar1.cross(ar2), vsz);
+    const Eigen::Vector3d vsy = vsz.cross(ar1);
+
+    // r0 * (cos phi, sin phi, 0) with r0's columns ar1, vsy, vsz.
+    wrapPathLength = 0.0;
+    Eigen::Vector3d previous = r1;
+    for (int i = 0; i < numInteriorPts; i++) {
+        const double phi = (i + 1) * dphi;
+        const Eigen::Vector3d r = std::cos(phi) * ar1 + std::sin(phi) * vsy;
+
+        Eigen::Vector3d f1, f2;
+        for (int j = 0; j < 3; j++) {
+            f1[j] = r[j] / a[j];
+            f2[j] = (a0[j] - m[j]) / a[j];
+        }
+        const double aa = f1.dot(f1);
+        const double bb = 2.0 * f1.dot(f2);
+        const double cc = f2.dot(f2) - 1.0;
+        const double disc = bb * bb - 4.0 * aa * cc;
+        if (disc < 0.0 || aa == 0.0) return false;  // DEVIATION 9
+        const double mu3 = (-bb + std::sqrt(disc)) / (2.0 * aa);
+        const Eigen::Vector3d s = a0 + mu3 * r;
+
+        if (i == 0) firstInterior = s;
+        lastInterior = s;
+        haveInterior = true;
+
+        wrapPathLength += (s - previous).norm();
+        previous = s;
+    }
+    wrapPathLength += (r2 - previous).norm();
+    pathSegments = numPathSegments;
+    return true;
+}
+
+}  // namespace
+
+WrapSegmentResult wrapEllipsoidLine(const WrapObjectSpec& ellipsoid,
+                                    const Eigen::Vector3d& point1,
+                                    const Eigen::Vector3d& point2) {
+    WrapSegmentResult out;
+
+    const Eigen::Vector3d& dims = ellipsoid.dimensions;
+    if (!(dims[0] > 0.0 && dims[1] > 0.0 && dims[2] > 0.0)) return out;
+
+    // Work in units where the ellipsoid is about 1 across: OpenSim's `factor`,
+    // which depends only on the geometry and so is the same on every call.
+    const double factor = 3.0 / (dims[0] + dims[1] + dims[2]);
+    const Eigen::Vector3d p1 = point1 * factor;
+    const Eigen::Vector3d p2 = point2 * factor;
+    const Eigen::Vector3d m = Eigen::Vector3d::Zero();  // OpenSim's `origin * factor`
+    const Eigen::Vector3d a = dims * factor;
+
+    double p1e = -1.0, p2e = -1.0;
+    for (int i = 0; i < 3; i++) {
+        p1e += sqr((p1[i] - m[i]) / a[i]);
+        p2e += sqr((p2[i] - m[i]) / a[i]);
+    }
+    if (p1e < -0.0001 || p2e < -0.0001) {
+        out.action = WrapAction::InsideRadius;
+        return out;
+    }
+
+    const Eigen::Vector3d p1p2 = p1 - p2;
+    Eigen::Vector3d p1m, p2m;
+    normalizeOrZero(p1 - m, p1m);
+    normalizeOrZero(p2 - m, p2m);
+    if (std::abs(p1m.dot(p2m) - 1.0) < 0.0001) {
+        out.action = WrapAction::NoWrap;  // p1 -> m and p2 -> m are collinear
+        return out;
+    }
+
+    // Does the line through p1 and p2 cut the ellipsoid, between the two points?
+    Eigen::Vector3d f1, f2;
+    for (int i = 0; i < 3; i++) {
+        f1[i] = p1p2[i] / a[i];
+        f2[i] = (p2[i] - m[i]) / a[i];
+    }
+    const double aa = f1.dot(f1);
+    const double bb = 2.0 * f1.dot(f2);
+    const double cc = f2.dot(f2) - 1.0;
+    const double disc = bb * bb - 4.0 * aa * cc;
+    if (disc < 0.0 || aa == 0.0) {
+        out.action = WrapAction::NoWrap;
+        return out;
+    }
+    const double l1 = (-bb + std::sqrt(disc)) / (2.0 * aa);
+    const double l2 = (-bb - std::sqrt(disc)) / (2.0 * aa);
+    if (!(0.0 < l1 && l1 < 1.0) || !(0.0 < l2 && l2 < 1.0)) {
+        out.action = WrapAction::NoWrap;
+        return out;
+    }
+
+    Eigen::Vector3d r1 = p2 + l1 * p1p2;
+    Eigen::Vector3d r2 = p2 + l2 * p1p2;
+    const Eigen::Vector3d r1r2 = r2 - r1;
+
+    // ==== the wrapping plane ====
+
+    Eigen::Vector3d mu;
+    normalizeOrZero(p1p2, mu);
+    for (int i = 0; i < 3; i++) mu[i] = std::abs(mu[i]);
+    int bestMu = 0;
+    for (int i = 1; i < 3; i++) {
+        if (mu[i] > mu[bestMu]) bestMu = i;
+    }
+
+    // (1) Frans: cross the plane where the most-parallel major axis is zero,
+    // which reduces the point-to-ellipsoid problem to a point-to-ellipse.
+    // DEVIATION 11: only bestMu's is computed, because only bestMu's is read.
+    if (r1r2[bestMu] == 0.0) {  // DEVIATION 9: exactly tangent, r1 == r2
+        out.action = WrapAction::NoWrap;
+        out.numericalRefusal = true;
+        return out;
+    }
+    const double tBest = (m[bestMu] - r1[bestMu]) / r1r2[bestMu];
+    const Eigen::Vector3d svFrans = r1 + tBest * r1r2;
+    Eigen::Vector3d c1Frans = Eigen::Vector3d::Zero();
+    closestPointOnEllipsoid(a, svFrans, c1Frans, bestMu);
+
+    double muBest = mu[bestMu];
+    Eigen::Vector3d c1 = Eigen::Vector3d::Zero();
+    Eigen::Vector3d sv = Eigen::Vector3d::Zero();
+    double fanWeight = -std::numeric_limits<double>::infinity();
+
+    // A Frans `sv` outside the r1 -> r2 segment sits outside the ellipsoid and
+    // can point sv->c1 nearly 180 deg away from the fan's answer, so it is faded
+    // out near the ends. OpenSim mutates mu[bestMu] here and every later test
+    // reads the mutated value.
+    if (muBest > kMuBlendMin) {
+        double s = 1.0;
+        if (tBest < 0.0 || tBest > 1.0) {
+            s = 0.0;
+        } else if (tBest < kSvBoundaryBlend) {
+            s = tBest / kSvBoundaryBlend;
+        } else if (tBest > (1.0 - kSvBoundaryBlend)) {
+            s = (1.0 - tBest) / kSvBoundaryBlend;
+        }
+        if (s < 1.0) muBest = kMuBlendMin + s * (muBest - kMuBlendMin);
+    }
+    if (muBest > kMuBlendMin) {
+        c1 = c1Frans;
+        sv = svFrans;
+    }
+
+    // (2) Fan: average the normalised sv->c1 "blades" sampled along r1 -> r2.
+    if (muBest < kMuBlendMax) {
+        const Eigen::Vector3d svMid = r1 + 0.5 * r1r2;
+        Eigen::Vector3d vSum = Eigen::Vector3d::Zero();
+        for (int i = 1; i < kNumFanSamples - 1; i++) {
+            const double tt = static_cast<double>(i) / kNumFanSamples;
+            const Eigen::Vector3d svSample = r1 + tt * r1r2;
+            Eigen::Vector3d c1Sample = Eigen::Vector3d::Zero();
+            closestPointOnEllipsoid(a, svSample, c1Sample, -1);
+            Eigen::Vector3d blade;
+            normalizeOrZero(c1Sample - svSample, blade);
+            vSum += blade;
+        }
+        normalizeOrZero(vSum, vSum);
+        const Eigen::Vector3d c1Raw = svMid + vSum;
+
+        if (muBest <= kMuBlendMin) {
+            closestPointOnEllipsoid(a, c1Raw, c1, -1);
+            sv = svMid;
+            fanWeight = 1.0;
+        } else {
+            const double tt = (muBest - kMuBlendMin) / (kMuBlendMax - kMuBlendMin);
+            const double oneMinusT = 1.0 - tt;
+            Eigen::Vector3d c1Fan = Eigen::Vector3d::Zero();
+            closestPointOnEllipsoid(a, c1Raw, c1Fan, -1);
+            const Eigen::Vector3d blended = tt * c1 + oneMinusT * c1Fan;
+            sv = tt * sv + oneMinusT * svMid;
+            closestPointOnEllipsoid(a, blended, c1, -1);
+            fanWeight = oneMinusT;
+        }
+    }
+    (void)sv;  // OpenSim stores it for the NEXT call; hybrid never reads it back
+
+    // Seeding r1/r2 from c1 rather than from the line/ellipsoid intersection is
+    // what stops the path jumping to the other side while c1 stays put.
+    r1 = c1;
+    r2 = c1;
+
+    // Wrapping restricted to one half of the ellipsoid: mirror c1 if it landed
+    // on the inactive side. Getting this backwards produces a plausible path on
+    // the wrong side of the bone.
+    bool quadrantFlipped = false;
+    if (ellipsoid.wrapSign != 0) {
+        const int axis = ellipsoid.wrapAxis;
+        const double dist = c1[axis] - m[axis];
+        if (dsign(dist) != ellipsoid.wrapSign) {
+            quadrantFlipped = true;
+            const Eigen::Vector3d origC1 = c1;
+            c1[axis] = -c1[axis];
+            r1 = c1;
+            r2 = c1;
+
+            // DEVIATION 12: this test is false when fanWeight IS the sentinel.
+            if (equalWithinError(fanWeight,
+                                 -std::numeric_limits<double>::infinity())) {
+                fanWeight = 1.0 - (muBest - kMuBlendMin)
+                                      / (kMuBlendMax - kMuBlendMin);
+            }
+            if (fanWeight > 1.0) fanWeight = 1.0;
+            if (fanWeight > 0.0) {
+                const double bisection = (origC1[axis] + c1[axis]) / 2.0;
+                c1[axis] = c1[axis] + fanWeight * (bisection - c1[axis]);
+                const Eigen::Vector3d tc1 = c1;
+                closestPointOnEllipsoid(a, tc1, c1, -1);
+            }
+        }
+    }
+
+    const Eigen::Vector3d p1c1 = p1 - c1;
+    Eigen::Vector3d vs;
+    normalizeOrZero(p1p2.cross(p1c1), vs);
+    const double vs4 = -vs.dot(c1);
+
+    calcTangentPoint(p1e, r1, p1, m, a, vs, vs4);
+    calcTangentPoint(p2e, r2, p2, m, a, vs, vs4);
+    if (!r1.allFinite() || !r2.allFinite()) {  // DEVIATION 9
+        out.action = WrapAction::NoWrap;
+        out.numericalRefusal = true;
+        return out;
+    }
+
+    bool farSideWrap = false;
+    double wrapPathLength = 0.0;
+    int pathSegments = 0;
+    Eigen::Vector3d w1 = Eigen::Vector3d::Zero();
+    Eigen::Vector3d w2 = Eigen::Vector3d::Zero();
+    bool haveInterior = false;
+
+    // OpenSim's `goto calc_wrap_path`: at most one retry, and only from the
+    // near side to the far side.
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (!calcDistanceOnEllipsoid(r1, r2, m, a, vs, vs4, farSideWrap, factor,
+                                     wrapPathLength, pathSegments,
+                                     w1, w2, haveInterior)) {
+            out.action = WrapAction::NoWrap;
+            out.numericalRefusal = true;
+            return out;
+        }
+        if (ellipsoid.wrapSign == 0 || !haveInterior || farSideWrap) break;
+
+        // Wrong-way check: the first and last surface segments must leave the
+        // tangent points AWAY from p1 and p2.
+        Eigen::Vector3d r1p1, r1w1, r2p2, r2w2;
+        normalizeOrZero(p1 - r1, r1p1);
+        normalizeOrZero(w1 - r1, r1w1);
+        normalizeOrZero(p2 - r2, r2p2);
+        normalizeOrZero(w2 - r2, r2w2);
+        if (r1p1.dot(r1w1) > 0.0 || r2p2.dot(r2w2) > 0.0) {
+            farSideWrap = true;
+            continue;
+        }
+        break;
+    }
+
+    if (!std::isfinite(wrapPathLength)) {  // DEVIATION 9
+        out.action = WrapAction::NoWrap;
+        out.numericalRefusal = true;
+        return out;
+    }
+
+    out.action = WrapAction::MandatoryWrap;
+    out.r1 = r1 / factor;
+    out.r2 = r2 / factor;
+    out.wrapPathLength = wrapPathLength / factor;
+    out.farSideWrap = farSideWrap;
+    out.quadrantFlipped = quadrantFlipped;
+    out.pathSegments = pathSegments;
+    return out;
+}
+
 // MARK: - GeometryPath::applyWrapObjects
 
 namespace {
@@ -612,6 +1259,10 @@ struct Branch {
     int segment = -1;
     bool longWrap = false;
     bool farSideWrap = false;
+    bool quadrantFlipped = false;
+    /// Ellipsoid only. The chord count the surface distance is summed over
+    /// steps by one as the arc grows past each millimetre, and L steps with it.
+    int pathSegments = 0;
 };
 
 }  // namespace
@@ -683,8 +1334,17 @@ WrappedPathResult solveWrappedPathLength(
             if (spec.wrapObject < 0 || spec.wrapObject >= wrapObjectCount) continue;
             const WrapObjectSpec& wrapObject = wrapObjects[spec.wrapObject];
             if (!wrapObject.active) continue;
-            if (wrapObject.kind != WrapKind::Cylinder) continue;  // DEVIATION 4
-            if (wrapObject.radius <= 0.0) continue;
+            const bool isCylinder = wrapObject.kind == WrapKind::Cylinder;
+            const bool isEllipsoid = wrapObject.kind == WrapKind::Ellipsoid;
+            if (!isCylinder && !isEllipsoid) continue;
+            if (isCylinder && wrapObject.radius <= 0.0) continue;
+            if (isEllipsoid) {
+                // DEVIATION 8: only `hybrid` is a pure function of the pose.
+                if (spec.method != PathWrapMethod::Hybrid) continue;
+                if (!(wrapObject.dimensions[0] > 0.0 &&
+                      wrapObject.dimensions[1] > 0.0 &&
+                      wrapObject.dimensions[2] > 0.0)) continue;
+            }
 
             const Eigen::Isometry3d toWorld =
                 wrapBodyTransforms[spec.wrapObject] * wrapObject.pose;
@@ -733,8 +1393,11 @@ WrappedPathResult solveWrappedPathLength(
                 const Eigen::Vector3d local1 = toWrapFrame * a.world;
                 const Eigen::Vector3d local2 = toWrapFrame * b.world;
                 const WrapSegmentResult wr =
-                    wrapCylinderLine(wrapObject, local1, local2, pathWrapCount == 1);
+                    isCylinder
+                        ? wrapCylinderLine(wrapObject, local1, local2, pathWrapCount == 1)
+                        : wrapEllipsoidLine(wrapObject, local1, local2);
                 result[i] = wr.action;
+                if (wr.numericalRefusal) out.numericalRefusals++;
 
                 if (wr.action == WrapAction::MandatoryWrap) {
                     best = wr;
@@ -774,6 +1437,8 @@ WrappedPathResult solveWrappedPathLength(
             record.segment = bestEndPoint;
             record.longWrap = best.longWrap;
             record.farSideWrap = best.farSideWrap;
+            record.quadrantFlipped = best.quadrantFlipped;
+            record.pathSegments = best.pathSegments;
         }
 
         const double length = pathLength(path, count);
@@ -800,8 +1465,10 @@ WrappedPathResult solveWrappedPathLength(
         std::uint64_t packed = record.engaged ? 1ull : 0ull;
         packed |= static_cast<std::uint64_t>(record.longWrap ? 1 : 0) << 1;
         packed |= static_cast<std::uint64_t>(record.farSideWrap ? 1 : 0) << 2;
-        packed |= static_cast<std::uint64_t>(record.segment + 1) << 3;
+        packed |= static_cast<std::uint64_t>(record.quadrantFlipped ? 1 : 0) << 3;
+        packed |= static_cast<std::uint64_t>(record.segment + 1) << 4;
         packed |= static_cast<std::uint64_t>(order[i] + 1) << 20;
+        packed |= static_cast<std::uint64_t>(record.pathSegments & 0x3FF) << 36;
         mixSignature(out.signature, packed);
     }
     // A path whose ACTIVE point set changed is a different function of q too,

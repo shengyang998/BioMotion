@@ -165,10 +165,13 @@ final class MomentArmTests: XCTestCase {
         // so assert the total is accounted for rather than that all 4 survive.
         XCTAssertEqual(report.movingPathPointsParsed + report.movingPathPointsSkipped, 4)
         XCTAssertEqual(report.unknownPathPointElementsSkipped, 0)
-        // 64 of FullBody's 76 PathWrap references name a WrapCylinder and are
-        // solved; the remaining 12 name a WrapEllipsoid and are not.
-        XCTAssertEqual(report.solvedPathWraps, 64)
-        XCTAssertEqual(report.unmodelledPathWraps, 12)
+        // All 76 of FullBody's PathWrap references are solved: 64 name a
+        // WrapCylinder and 12 a WrapEllipsoid, and both solvers ship. Both
+        // halves are asserted — a solver that silently stopped solving would
+        // read 0 / 76 and still look tidy.
+        XCTAssertEqual(report.solvedPathWraps, 76)
+        XCTAssertEqual(report.unmodelledPathWraps, 0)
+        XCTAssertEqual(report.musclesWithUnmodelledPathWraps, [String]())
         XCTAssertEqual(report.wrapObjectsParsed, 69)
         XCTAssertEqual(report.wrapObjectsRejected, 0,
                        "a rejected WrapObject silently stops its PathWraps wrapping")
@@ -314,21 +317,23 @@ final class MomentArmTests: XCTestCase {
                        + "\(GaitLoadSummary.musclesWithUnmodelledPaths.subtracting(union).sorted())")
 
         // Until 2026-08-08 this block asserted that every lower-limb muscle the
-        // running screen shows was in the table. Cylinder wrapping ships now, so
-        // the opposite is the truth to pin: those muscles' paths ARE modelled,
-        // and a regression that stopped solving them would put them back.
+        // running screen shows was in the table. Cylinder wrapping shipped, then
+        // ellipsoid wrapping, so the opposite is the truth to pin: every wrap in
+        // both shipped models is solved, and a regression that stopped solving
+        // one would put its muscle back. The elbow list is here BY NAME because
+        // it was the last thing in the table and is the first thing a broken
+        // ellipsoid solver would return.
         for base in ["glmax1", "glmax2", "recfem", "vasmed", "vaslat", "vaslat140",
                      "gasmed", "gaslat", "gaslat140", "bfsh140",
                      "semimem", "semiten", "psoas", "iliacus", "addlong", "grac",
-                     "soleus", "tibant", "tibpost", "glmed1", "glmin1", "tfl", "sart", "piri"] {
+                     "soleus", "tibant", "tibpost", "glmed1", "glmin1", "tfl", "sart", "piri",
+                     "ANC", "BIClong", "BICshort", "BRD", "TRIlong"] {
             XCTAssertFalse(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base),
-                           "\(base)'s path is modelled since cylinder wrapping shipped")
+                           "\(base)'s path is modelled since wrapping shipped")
         }
-        // What survives is the elbow, where WrapEllipsoid is still missing.
-        for base in ["ANC", "BIClong", "BICshort", "BRD", "TRIlong"] {
-            XCTAssertTrue(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base),
-                          "\(base) carries a WrapEllipsoid, which is not implemented")
-        }
+        XCTAssertTrue(GaitLoadSummary.musclesWithUnmodelledPaths.isEmpty,
+                      "nothing in either shipped model is unmodelled: "
+                      + "\(GaitLoadSummary.musclesWithUnmodelledPaths.sorted())")
     }
 
     private func osimPath(named name: String) -> String? {

@@ -49,7 +49,7 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 - `NimbleBridge.h/.mm` — loads .osim, runs IK/ID, owns the runtime DOF mask. Registers virtual markers at joint centers for ARKit compatibility. **The IK solve is the app's own Levenberg-Marquardt**, not `Skeleton::fitMarkersToWorldPositions` / `math::refineIK`; the vendored nimble tree is untouched.
 - `MuscleSolver.h/.mm` — parses the model's muscles (520 in FullBody.osim, 80 in Rajagopal2016), runs OSQP static optimization
 - `MomentArmComputer.h/.mm` — parses muscle paths, computes moment arms via FK + numerical differentiation. Shares the bridge's skeleton (`NimbleBridge+Internal.h`) rather than parsing a second copy. Applies path WRAPPING, and picks a one-sided difference where the wrap state changes inside the stencil.
-- `MusclePathWrap.h/.cpp` — the cylinder wrap solver, ported from opensim-core (Apache 2.0; licence header in the file, attribution in `./NOTICE`). Length only: `wrap_pts` are not generated, `WrapEllipsoid` is not implemented. Every intentional difference is listed under DEVIATIONS at the top of the .cpp.
+- `MusclePathWrap.h/.cpp` — the cylinder AND ellipsoid wrap solvers, ported from opensim-core (Apache 2.0; licence header in the file, attribution in `./NOTICE`). Length only: no `wrap_pts` leave the solver, and only the ellipsoid's `hybrid` `<method>` is implemented — the other two are refused, not approximated. All 76 `PathWrap` references in `FullBody.osim` and all 46 in `Rajagopal2016.osim` are solved. Every intentional difference is listed under DEVIATIONS at the top of the .cpp (12 of them).
 - Bridging header: `BioMotion/Nimble/BioMotion-Bridging-Header.h`
 
 ### Key files
@@ -138,14 +138,47 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   is **−19.62 m** against a true **−0.0337 m**. `MomentArmComputer` compares
   `WrappedPathResult.signature` — the wrap solver's DISCRETE state — at `q`, `q±eps` and drops to
   a one-sided difference; `lastOneSidedDifferenceSamples` is how anybody downstream can tell. It
-  fires **0 times in 3,163,680 samples** at the 36 validation poses, which is why the test that
-  proves it has to CONSTRUCT the switch by bisection rather than wait for one.
+  fires **0 times in 5,272,800 samples** at the 60 validation poses, which is why the test that
+  proves it has to CONSTRUCT the switch by bisection rather than wait for one. The ellipsoid adds a
+  SMALL sibling to the same hazard: its surface distance is a sum of `(int)(|r1−r2| / 1 mm)`
+  chords, so L steps by **2.6e-6 m** every time that integer ticks — 13 mm/rad once divided by
+  `2·eps`, well under the 3.758 mm floor but not zero. The chord count is therefore part of the
+  signature too.
+- **A NUMERICAL ROUTINE CAN BE VALID ONLY AT ONE SCALE, and OpenSim's point-to-ellipsoid solver
+  is.** `WrapEllipsoid::findClosestPoint` (Graphics Gems IV) stops its Newton iteration on
+  `|f| < 1e-9`, where `f` is a DEGREE-6 polynomial in the radii. Called with the model's real
+  radii — `TRIlonghh_*` is `0.035 0.02 0.02` m — `f` is already ~1e-19 at the first iterate, so it
+  returns `t = 0`, i.e. **the point it was asked about, unchanged**. Measured: probe
+  `(0.004, 0.003, 0.002)` against radii `(0.035, 0.02, 0.02)` returns `(0.004, 0.003, 0.002)`;
+  the true closest surface point is 16.7 mm away. That is what `factor = 3/(a+b+c)` is for, and it
+  is why `wrapEllipsoidLine` scales EVERYTHING — points, radii, the returned length — before doing
+  any geometry. Normalised, the same routine agrees with an exhaustive search over the surface to
+  1.5e-3. Both halves are pinned in `MusclePathWrapTests` so nobody "fixes" the normalisation away.
+- **`WrapEllipsoid` SEEDS ITSELF FROM THE PREVIOUS CALL, and only `hybrid` overwrites all of it.**
+  `wrapLine` copies `r1`, `r2`, `c1` and `sv` out of `aPathWrap.getPreviousWrap()` before it starts.
+  On the `hybrid` branch every one of the four is overwritten before it is read (`r1`/`r2` by the
+  line/ellipsoid intersection and then by `c1`; `c1`/`sv` by Frans, by the fan, or by the blend), so
+  hybrid is a pure function of `q` and differentiating it is legitimate. On `axial`,
+  `use_c1_to_find_tangent_pts` can be false, which leaves the PREVIOUS call's tangent points as the
+  seed for the iteration — a function of call history, not of `q`. All 12 references in
+  `FullBody.osim` say `hybrid`; `MomentArmComputer` parses `<method>` and counts anything else as
+  UNMODELLED rather than solving it as hybrid.
+- **`EQUAL_WITHIN_ERROR(x, -Infinity)` IS ALWAYS FALSE, and OpenSim uses it as a sentinel test.**
+  It expands to `fabs(-inf − −inf) <= 2e-13`, i.e. `NaN <= 2e-13`. So the `fanWeight` sentinel
+  branch in `WrapEllipsoid::wrapLine` never fires and the quadrant-flip bisection is skipped
+  whenever the fan did not run. This port reproduces that verbatim (DEVIATION 12) — repairing it
+  would fork the answer away from the reference every gate here is measured against.
 - **The straight-line moment arm was not "a bit off" — 9.00 % of the pairs on wrapped muscles
-  pointed the WRONG WAY, and the worst was 32× too small with the sign reversed. Cylinder wrapping
-  shipped on 2026-08-08 and this entry is now the BEFORE.** After the port: median 0.048 mm, max
-  8.07 mm, 4 sign flips (all of them the definition gap above), and against OpenSim's own
-  derivative the single-wrap muscles read max 3.569 mm. `unmodelledPathWraps` counts 12, not 76 —
-  the `WrapEllipsoid` references on 10 elbow muscles. The numbers below describe the code as it
+  pointed the WRONG WAY, and the worst was 32× too small with the sign reversed. Cylinder and then
+  ellipsoid wrapping shipped on 2026-08-08 and this entry is now the BEFORE.** After the cylinder:
+  median 0.048 mm, max 8.07 mm, 4 sign flips (all of them the definition gap above), and against
+  OpenSim's own derivative the single-wrap muscles read max 3.569 mm. After the ellipsoid,
+  `unmodelledPathWraps` counts **0**, not 12 and not 76, and
+  `GaitLoadSummary.musclesWithUnmodelledPaths` is EMPTY — which does not mean the paths are exact,
+  it means every wrap OBJECT is solved; the `MovingPathPoint` linear interpolation is still worth
+  4.414 mm on `BICshort_l`/`pro_sup_l`. The elbow muscles' own before/after is an ABLATION rather
+  than an argument: `BRD_r`/`elbow_flex_r` reads **−8.73 mm** with the ellipsoids off against a true
+  **+1.51 mm**, and **+1.51 mm** with them on. The numbers below describe the code as it
   was, and they are what the port has to keep beating. This entry used to be a
   count of unmodelled `PathWrap`s and an argument; since 2026-08-08 it is a measurement against
   OpenSim 4.6 reading the same `FullBody.osim` (`BioMotionTests/Fixtures/opensim_moment_arms.txt`,
