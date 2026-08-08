@@ -2,12 +2,17 @@ import SwiftUI
 import ARKit
 import RealityKit
 
-/// ARView wrapper that displays the camera feed with skeleton + muscle overlay.
+/// ARView wrapper that displays the camera feed with the skeleton and the
+/// muscle ANATOMY layer.
+///
+/// The muscle solve is not an input here any more. `MuscleOverlay` used to be
+/// handed `nimble.displayMuscleResult` and coloured its capsules from it, which
+/// stated a cross-muscle ordering this model cannot support — see that type's
+/// doc. The live screen carries `MuscleOverlay.anatomyOnlyNote` instead.
 struct SkeletonARView: UIViewRepresentable {
     let session: ARSession
     @Binding var currentFrame: BodyFrame?
     var isTracking: Bool = true
-    var muscleOutput: NimbleEngine.MuscleOutput?
     var showMuscles: Bool = true
 
     func makeUIView(context: Context) -> ARView {
@@ -32,8 +37,8 @@ struct SkeletonARView: UIViewRepresentable {
         }
         context.coordinator.updateSkeleton(frame: frame)
         context.coordinator.muscleOverlay.setVisible(showMuscles)
-        if showMuscles, let output = muscleOutput {
-            context.coordinator.muscleOverlay.update(joints: frame.joints, muscle: output)
+        if showMuscles {
+            context.coordinator.muscleOverlay.update(joints: frame.joints)
         }
     }
 

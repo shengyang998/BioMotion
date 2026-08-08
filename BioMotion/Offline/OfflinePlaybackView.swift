@@ -11,9 +11,12 @@ import simd
 /// `isTracking` flips true inside the ARSessionDelegate callback — none of that
 /// applies to an imported clip, so this view builds its own `ARView` in
 /// `.nonAR` camera mode with a manual `PerspectiveCamera` entity instead, per
-/// this file's task brief. It reuses `MuscleOverlay` verbatim (both its render
-/// passes work unchanged: pass 1 is keyed by the ARKit joint id strings our
-/// `BodyFrame` already supplies, pass 2 by world-space muscle paths).
+/// this file's task brief. It reuses `MuscleOverlay` verbatim — which since
+/// 2026-08-08 is an ANATOMY layer keyed by the ARKit joint id strings our
+/// `BodyFrame` already supplies, with no activation input and one constant
+/// capsule colour. Its old second pass, which drew the strongest 24 muscles by
+/// world-space path and coloured them against each other, is gone from both
+/// this surface and the live one.
 struct OfflinePlaybackView: View {
     @ObservedObject var resultStore: OfflineResultStore
     let onDone: () -> Void
@@ -57,16 +60,20 @@ struct OfflinePlaybackView: View {
 
     /// Whether the 3-D muscle overlay may be drawn at all, for the CLIP.
     ///
-    /// **False on every analysed running clip, because there is no muscle claim
-    /// left for it to draw.** `MuscleOverlay` selects the strongest 24
-    /// activations and colours every capsule from one shared colormap — a
+    /// **False on every analysed running clip.** The reason has changed and the
+    /// answer has not. It was: `MuscleOverlay` selected the strongest 24
+    /// activations and coloured every capsule from one shared colormap — a
     /// cross-muscle ORDERING, on numbers whose per-muscle scale carries the
-    /// unmodelled-`PathWrap` error. That ordering was retired from the panel on
-    /// 2026-08-08 for exactly that reason, and the left/right comparison was
-    /// retired the same day (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`).
-    /// A picture that says "your glutes are red and your calves are dim" is the
-    /// retired claim made in colour, and it reads as MORE authoritative than the
-    /// list, not less: no number, no caption, no floor.
+    /// unmodelled-`PathWrap` error, retired from the panel the same day
+    /// (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`). That renderer is
+    /// gone: the capsules are a fixed anatomical set in one constant colour and
+    /// state nothing about effort.
+    ///
+    /// What survives is a COHERENCE rule. On an analysed running clip the panel
+    /// beside this view is headed "Muscle by muscle: not shown, and why";
+    /// putting muscle capsules on the picture next to it invites the reading
+    /// that they are what the paragraph refused. So the 3-D view stays out of
+    /// that conversation and shows pose only.
     ///
     /// Off the running path nothing changes: a still-pose clip has no gait
     /// summary and the overlay is governed by the static-hold gate as before.
@@ -86,6 +93,20 @@ struct OfflinePlaybackView: View {
             && (resultStore.selectedFrame?.gaitLoadsAreComparable ?? true)
     }
 
+    /// **Exactly when muscle capsules are on screen.** The scene draws on this
+    /// and the legend is shown on this, so a user cannot be given the sentence
+    /// without the picture or the picture without the sentence.
+    ///
+    /// The last clause is a provenance rule rather than a claim gate: the
+    /// capsules carry none of the solve's numbers, but the anatomy layer marks
+    /// the frames whose muscle chain ran, and on a frame where it did not (SG
+    /// warm-up, failed solve) the picture stays pose-only so it cannot imply
+    /// one.
+    private var anatomyCapsulesAreOnScreen: Bool {
+        !showSourceImage && showMuscles && selectedFrameLoadsAreDrawable
+            && resultStore.selectedFrame?.muscleResult != nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
@@ -100,7 +121,7 @@ struct OfflinePlaybackView: View {
                         .ignoresSafeArea(edges: .top)
                 } else {
                     OfflineSceneView(frame: resultStore.selectedFrame,
-                                     showMuscles: showMuscles && selectedFrameLoadsAreDrawable)
+                                     showMuscles: anatomyCapsulesAreOnScreen)
                         .ignoresSafeArea(edges: .top)
                 }
 
@@ -111,6 +132,19 @@ struct OfflinePlaybackView: View {
                     }
                     .padding(8)
                     Spacer()
+                    // The legend belongs against the picture, not three blocks
+                    // down a scroll view. It is the same sentence the live
+                    // screen carries — one constant, so the two cannot drift.
+                    if anatomyCapsulesAreOnScreen {
+                        Text(MuscleOverlay.anatomyOnlyNote)
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(8)
+                            .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 8)
+                    }
                 }
             }
 
@@ -351,14 +385,15 @@ struct OfflinePlaybackView: View {
                     }
                 }
                 Spacer()
-                // Muscles only exist in the 3-D scene, so the toggle is
+                // Muscle anatomy only exists in the 3-D scene, so the toggle is
                 // meaningless while the photo overlay is showing — and equally
                 // meaningless on an analysed running clip, where the overlay is
                 // off whatever it says. A green control that changes nothing is
                 // its own small lie.
                 if !showSourceImage && muscleMagnitudesArePublishable {
                     Button { showMuscles.toggle() } label: {
-                        Image(systemName: "figure.run")
+                        Label("Anatomy", systemImage: "figure.stand")
+                            .font(.caption)
                             .foregroundStyle(showMuscles ? Color.green : Color.gray)
                     }
                 }
@@ -449,13 +484,12 @@ private struct OfflineSceneView: UIViewRepresentable {
         context.coordinator.updateSkeleton(joints: bodyFrame.joints)
         context.coordinator.muscleOverlay.setVisible(showMuscles)
 
-        if showMuscles, let muscle = frame.muscleResult {
-            context.coordinator.muscleOverlay.update(joints: bodyFrame.joints, muscle: muscle)
-        } else {
-            // No muscle data for this exact frame (SG warm-up / failed solve) —
-            // hide rather than let stale muscle geometry from a previously
-            // scrubbed-to frame linger and be misread as belonging to this one.
-            context.coordinator.muscleOverlay.setVisible(false)
+        // One condition decides this, and it lives in `OfflinePlaybackView`
+        // beside the legend that has to appear with it — see
+        // `anatomyCapsulesAreOnScreen`. A second copy here is how the picture
+        // and its caption drift apart.
+        if showMuscles {
+            context.coordinator.muscleOverlay.update(joints: bodyFrame.joints)
         }
     }
 

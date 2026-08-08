@@ -31,10 +31,10 @@ photo or video through a Core ML SAM 3D Body model.
                  └→ OSQP muscle optimization
                               ↓
         ┌─────────────────────┴─────────────────────┐
-   3D muscle overlay (RealityKit,        posture findings layer
-   strongest 24 by rank, never           (kinematics only — reads
-   by a fixed threshold)                 BodyFrame.joints, NOT ik/id/muscle)
-                                          + 2-D overlay on the source photo
+   3-D muscle ANATOMY overlay            posture findings layer
+   (RealityKit; fixed 26-capsule         (kinematics only — reads
+   set, ONE constant colour, takes       BodyFrame.joints, NOT ik/id/muscle)
+   no activation input at all)            + 2-D overlay on the source photo
 
 # COST. The old "~1ms IK / ~0.5ms OSQP" figures were measured on Rajagopal2016
 # (81 muscles / 39 DOF). The shipped model is FullBody.osim — 169 coordinates
@@ -59,7 +59,7 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `BioMotion/Resources/FullBody.osim` | **Production** model — 169 coordinates, 520 muscles, full spine + ribcage + upper limb |
 | `BioMotion/Resources/Rajagopal2016.osim` | Fallback only (lower extremity: 80 muscles, 39 DOFs, 66 markers). Loaded when FullBody.osim is missing from the bundle. |
 | `BioMotion/ARKit/BodyTrackingSession.swift` | ARKit body tracking + 1-euro filter |
-| `BioMotion/ARKit/MuscleOverlay.swift` | 3D muscle capsule visualization (strongest 24 by rank) |
+| `BioMotion/ARKit/MuscleOverlay.swift` | 3-D muscle **anatomy** capsules — fixed set, one colour, no activation input. Read its type doc before adding anything magnitude-shaped |
 | `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK → SG → ID → moment arms → muscle on a background queue; owns `staticHoldGating` |
 | `BioMotion/Offline/` | The photo/video path: `FrameSource` (decode), `SAM3DPoseEstimator` (Core ML), `MHRRetarget` (127 MHR joints → 20 markers + the body-size gate), `OfflineSessionRunner` (batch + SG edge padding), `OfflineResultStore`, `OfflinePlaybackView` / `PhotoOverlayView` |
 | `BioMotion/Findings/` | `PostureFindings` + `PostureFindingsPanel` — kinematics-only posture measurements with view gating. **No clinical thresholds, no verdicts.** |
@@ -127,6 +127,18 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   analysed running clips, and the surviving left/right finding on that screen is CONTACT TIME, which
   touches neither a moment arm nor the QP. A one-sided error still costs **23.8 pp**; a sign-flipped
   one still pins both sides to `aMin` and reads exactly 0.0 % against a true 22.7 %.
+- **A PICTURE makes the ranking claim more loudly than a list, and it outlived the round that killed
+  the list.** `MuscleOverlay` filtered `rawActivations`, kept the strongest 24 and coloured every
+  capsule from one shared blue→red ramp with alpha rising 0.45 → 0.95 — so BOTH which muscles
+  appeared and how they looked were ordered by a number whose per-muscle scale is unknown (`1/k` per
+  muscle, `k` pose-dependent). It shipped on the LIVE screen, where `MuscleActivationBar` printed
+  the same twelve muscles' activations as bars and per cent underneath it, and on the offline 3-D
+  view beside the paragraph refusing that exact comparison. A picture has no number to check, no
+  floor and no caption, so it is the MORE authoritative surface, not the lesser one. Retiring a claim
+  from one view is not retiring the claim: grep for every consumer of the same numbers. Since
+  2026-08-08 `update(joints:)` takes no muscle solve at all, the capsules are a fixed 26-muscle set
+  in one constant colour, the bar chart is deleted, and `MuscleOverlay.anatomyOnlyNote` states the
+  absence on both screens (`MuscleOverlayClaimTests`).
 - **A list sorted BY a statistic is not a sample of that statistic, and the top of it is an order
   statistic.** `GaitLoadSummary.make` builds a comparison for **all 175** bilateral pairs in
   `FullBody.osim`, `ordered(_:)` sorts by `|difference| / claimFloor`, and the panel drew the top 8

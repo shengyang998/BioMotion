@@ -91,6 +91,7 @@
 		FD1FE9596B21A15A5811F83C /* OfflineResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A01F5A8E43E144EF7C64ED03 /* OfflineResultStore.swift */; };
 		FD38E7F1B9C09FAC1FE3C10A /* Rajagopal2016.osim in Resources */ = {isa = PBXBuildFile; fileRef = 44D59B2D4FBCD3D020D9136A /* Rajagopal2016.osim */; };
 		FF414DA499FA347E42CA9E02 /* GaitForceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D771BFB2C0C4E889668C7A46 /* GaitForceModel.swift */; };
+		FFA748003ECB954CB9A5BAAF /* MuscleOverlayClaimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BACF32AD900AF070B3BA8BB7 /* MuscleOverlayClaimTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -190,6 +191,7 @@
 		AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NimbleBridgeTests.swift; sourceTree = "<group>"; };
 		AFAE9EC6FC90AA7AC829F48E /* IKDriftDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IKDriftDiagnosticsTests.swift; sourceTree = "<group>"; };
 		B5CF5D0AED383C64CF63377B /* OfflineDisclosureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDisclosureTests.swift; sourceTree = "<group>"; };
+		BACF32AD900AF070B3BA8BB7 /* MuscleOverlayClaimTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuscleOverlayClaimTests.swift; sourceTree = "<group>"; };
 		BB09CCB3DD5A4B20A3553080 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fixtures; path = BioMotionTests/Fixtures; sourceTree = SOURCE_ROOT; };
 		BB61194FADC588D790C9D483 /* SessionChartsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionChartsView.swift; sourceTree = "<group>"; };
 		BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentArmTests.swift; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 				3E8B8C3CE8F2D82F14349982 /* MomentArmErrorCancellationTests.swift */,
 				BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */,
 				85CB2DC650F7D9EA6AA72EF6 /* MotionRecorderTests.swift */,
+				BACF32AD900AF070B3BA8BB7 /* MuscleOverlayClaimTests.swift */,
 				F450A13A5F81381FF86F4B39 /* MuscleQPUnitsTests.swift */,
 				91F66CB7BEA67689B99D4833 /* MuscleSolverTests.swift */,
 				6518DB5CBEDA2DA4D714B81B /* NativeWindowSamplingTests.swift */,
@@ -641,6 +644,7 @@
 				5B04B5EC2DC03F8598906B57 /* MomentArmErrorCancellationTests.swift in Sources */,
 				5EB4E09CAD2BF5644147136D /* MomentArmTests.swift in Sources */,
 				BFE358FA68B0E8249A400DBF /* MotionRecorderTests.swift in Sources */,
+				FFA748003ECB954CB9A5BAAF /* MuscleOverlayClaimTests.swift in Sources */,
 				A4E5CF602F7F6EA2A4112740 /* MuscleQPUnitsTests.swift in Sources */,
 				20F59FB07F06FD0CAC0E3C90 /* MuscleSolverTests.swift in Sources */,
 				C46293E89DE399B7557FE5B5 /* NativeWindowSamplingTests.swift in Sources */,

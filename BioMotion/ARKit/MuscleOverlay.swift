@@ -2,8 +2,41 @@ import UIKit
 import RealityKit
 import simd
 
-/// Renders 3D muscle visualization as colored capsules positioned anatomically,
-/// overlaid on the camera feed via RealityKit.
+/// **The anatomy layer of the 3-D view: WHERE these muscles sit on the pose.**
+/// It carries no effort reading, and it cannot be handed one — `update(joints:)`
+/// takes no muscle solve.
+///
+/// # What this used to draw, and why it is gone (2026-08-08)
+///
+/// It filtered `rawActivations`, sorted them descending, kept the strongest 24
+/// and coloured every capsule — both render passes — from one shared
+/// blue→red colormap. That is a CROSS-MUSCLE ORDERING: it says this muscle is
+/// working harder than that one. The model cannot support that statement. 66 of
+/// `FullBody.osim`'s muscles are given a straight-line path where the real
+/// tendon wraps around bone (42 of the `Rajagopal2016` fallback's), so the
+/// moment arm that divides each joint moment is wrong by a factor of its own,
+/// and the activation it returns is inflated by 1/k for an unknown, POSE-DEPENDENT
+/// k. A muscle with an unmodelled wrap therefore sorts into the top 24 and
+/// renders redder than a correctly-modelled muscle that is genuinely working
+/// harder.
+///
+/// The panel retired exactly this ordering on 2026-08-08
+/// (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`,
+/// `MomentArmErrorCancellationTests`), and this renderer went on making it in
+/// colour on the more authoritative surface — a picture, with no number, no
+/// caption and no floor, above the paragraph that refuses it.
+///
+/// So the colour is now a CONSTANT and the drawn set is FIXED. Both properties
+/// are load-bearing:
+///
+/// * one colour for every capsule ⇒ no muscle is drawn against another;
+/// * a fixed anatomical set ⇒ nothing is SELECTED by a magnitude either. The
+///   old top-24 was a selection by the same corrupted number, so the capsules
+///   that appeared at all were an ordering even before they were coloured.
+///
+/// `Self.anatomyOnlyNote` is the sentence the screens carry beside it. Both
+/// surfaces (live `SkeletonARView`, offline `OfflineSceneView`) read it from
+/// here so they cannot drift apart.
 final class MuscleOverlay {
 
     /// Definition of a visual muscle representation.
@@ -19,66 +52,44 @@ final class MuscleOverlay {
         enum Side { case left, right, center }
     }
 
-    private struct MuscleState {
-        let entity: ModelEntity
-        var lastBucket: Int
-        /// Marks which pass last refreshed this entity: hardcoded-def or
-        /// path-based. Allows garbage-collecting stale path entities when
-        /// a muscle drops below the activation threshold.
-        var kind: Kind
-        enum Kind { case def, path }
+    /// One capsule to draw, in world space.
+    ///
+    /// **It carries no activation and no colour.** The drawn set is a function
+    /// of the pose alone — see `capsulePlan(joints:)`, whose signature is the
+    /// guarantee. A colour field here would be the seam through which a
+    /// per-muscle magnitude could come back.
+    struct Capsule: Equatable {
+        let name: String
+        let start: SIMD3<Float>
+        let end: SIMD3<Float>
+        let radius: Float
     }
 
-    private var muscleEntities: [String: MuscleState] = [:]
+    private var muscleEntities: [String: ModelEntity] = [:]
     private var anchor: AnchorEntity?
 
-    /// Path-based rendering: muscles with raw activation above this
-    /// threshold AND not covered by the hardcoded set get a capsule drawn
-    /// directly between their .osim path endpoints. 0.08 is empirically
-    /// above the postural-tone floor (≈0.02–0.05 after the rebalance).
-    private static let pathRenderActivationThreshold: Float = 0.08
-    /// How far above the solver's activation floor a muscle must sit before it
-    /// counts as firing. The floor itself is a solver bound, not an observation.
-    private static let floorMargin: Float = 0.05
-    /// Hard cap on simultaneously drawn path capsules. The static-optimisation
-    /// QP has ~520 unknowns against ~110 torque equations, so most of what it
-    /// returns is the cost function choosing among a ~410-dimensional null
-    /// space. Rendering all of it would imply far more measurement than exists.
-    private static let maxRenderedPathMuscles = 24
+    /// The one colour every capsule is drawn in. A muted clay tone, deliberately
+    /// OFF the retired blue→cyan→green→yellow→red ramp so a user who saw the old
+    /// display cannot read a heat value into a uniform field.
+    static let capsuleColor = UIColor(red: 0.72, green: 0.51, blue: 0.47, alpha: 0.55)
 
-    /// Names (after alias merging) already handled by the hardcoded defs.
-    /// Computed once so per-frame lookup is O(1).
-    private static let hardcodedDisplayNames: Set<String> = {
-        Set(muscleDefs.map(\.name))
-    }()
+    /// The colour for a capsule. Constant by construction: this is the seam a
+    /// re-introduced cross-muscle colormap would have to come through, and
+    /// `MuscleOverlayClaimTests` asserts the whole plan maps to ONE colour.
+    static func color(for capsule: Capsule) -> UIColor { capsuleColor }
 
-    /// Aliases from solver-native names to display names — a subset copy
-    /// of NimbleEngine.displayMuscleAliases. Kept local to avoid a
-    /// cross-module reach; the entries are load-bearing only when the
-    /// overlay decides whether a path-named muscle is already drawn by a
-    /// hardcoded def.
-    private static let solverToDisplayAlias: [String: String] = [
-        "bflh140_r": "bflh_r",
-        "bflh140_l": "bflh_l",
-        "gaslat140_r": "gaslat_r",
-        "gaslat140_l": "gaslat_l",
-        "vaslat140_r": "vaslat_r",
-        "vaslat140_l": "vaslat_l",
-        "multifidus_T9_T7": "ercspn_r",
-        "multifidus_T9_T7_L": "ercspn_l",
-    ]
-
-    // Quantize activation into this many buckets; material only rebuilt on bucket change.
-    // 64 (vs the original 32) because the display mapping now spreads 0.02-0.30
-    // across the full color band — we need finer resolution in the visible range.
-    private static let activationBuckets = 64
-
-    // Visual calibration: activation values are remapped via sqrt onto
-    // [displayFloor, displaySaturation] so the normal physiological range
-    // (postural tone ~0.02 → active effort ~0.30) spans the full colormap.
-    // Higher values saturate at red.
-    private static let displayFloor: Float = 0.02
-    private static let displaySaturation: Float = 0.30
+    /// What the screens say beside the capsules, so the picture is not left to
+    /// speak for itself. Shared by the live and offline surfaces.
+    ///
+    /// It states the absence first ("effort is not shown"), then what the
+    /// capsules ARE, then the mechanism — in that order, because the first
+    /// clause is the one a user scanning the screen needs.
+    static let anatomyOnlyNote =
+        "Muscle effort is not shown. These capsules mark WHERE the muscles are on your pose — "
+        + "their colour is fixed and means nothing. The model reaches a muscle's effort by "
+        + "dividing a joint moment by a moment arm, and it gives many of its muscles a "
+        + "straight line where the real tendon wraps around bone, so each effort number is on a "
+        + "scale of its own and cannot be read against another muscle's."
 
     // Pre-defined muscle visual positions (approximate anatomical placement)
     static let muscleDefs: [MuscleDef] = {
@@ -201,12 +212,36 @@ final class MuscleOverlay {
         self.anchor = anchor
     }
 
-    /// Update muscle visualization with current joint positions and the
-    /// latest muscle-solver output. `muscle` carries both alias-merged
-    /// display activations (used by the hardcoded defs) and raw
-    /// solver-native paths + activations (used for path-based rendering
-    /// of muscles the hardcoded set doesn't cover).
-    func update(joints: [TrackedJoint], muscle: NimbleEngine.MuscleOutput) {
+    /// **The whole drawn set, as pure data, from the pose alone.**
+    ///
+    /// There is no muscle-solver argument, and that is the point rather than an
+    /// omission: with no activation in scope, neither the SELECTION nor the
+    /// colour of a capsule can depend on one. The returned set is the fixed
+    /// anatomical list `muscleDefs`, minus any capsule whose two joints are not
+    /// both tracked in this frame and any that comes out degenerate.
+    ///
+    /// Split out of `update` so it can be tested without RealityKit.
+    static func capsulePlan(joints: [String: SIMD3<Float>]) -> [Capsule] {
+        // Trunk-stable body frame: (right, up, forward) in meters.
+        // Muscle offsets are interpreted in this frame rather than world
+        // axes, so capsules stay anchored anatomically as the body rotates.
+        let body = computeBodyFrame(joints)
+
+        var plan: [Capsule] = []
+        plan.reserveCapacity(muscleDefs.count)
+        for def in muscleDefs {
+            guard let startPos = joints[def.startJoint],
+                  let endPos = joints[def.endJoint] else { continue }
+            let start = startPos + body.transform(def.offsetStart)
+            let end = endPos + body.transform(def.offsetEnd)
+            guard simd_length(end - start) > 0.01 else { continue }
+            plan.append(Capsule(name: def.name, start: start, end: end, radius: def.radius))
+        }
+        return plan
+    }
+
+    /// Draw the anatomy layer for this pose. Nothing else is an input.
+    func update(joints: [TrackedJoint]) {
         guard let anchor else { return }
 
         var jointPositions: [String: SIMD3<Float>] = [:]
@@ -214,141 +249,60 @@ final class MuscleOverlay {
             jointPositions[joint.id] = joint.worldPosition
         }
 
-        // Trunk-stable body frame: (right, up, forward) in meters.
-        // Muscle offsets are interpreted in this frame rather than world
-        // axes, so capsules stay anchored anatomically as the body rotates.
-        let body = Self.computeBodyFrame(jointPositions)
-
-        // --- Pass 1: hardcoded anatomical defs (visible even at rest) ---
-        for def in Self.muscleDefs {
-            guard let startPos = jointPositions[def.startJoint],
-                  let endPos = jointPositions[def.endJoint] else {
-                muscleEntities[def.name]?.entity.isEnabled = false
-                continue
-            }
-
-            let worldStart = startPos + body.transform(def.offsetStart)
-            let worldEnd = endPos + body.transform(def.offsetEnd)
-            let activation = muscle.activations[def.name] ?? Double(Self.displayFloor)
-            updateCapsule(key: def.name,
-                          start: worldStart,
-                          end: worldEnd,
-                          radius: def.radius,
-                          activation: activation,
-                          kind: .def,
-                          anchor: anchor)
+        let plan = Self.capsulePlan(joints: jointPositions)
+        var drawn: Set<String> = []
+        for capsule in plan {
+            drawn.insert(capsule.name)
+            updateCapsule(capsule, anchor: anchor)
         }
-
-        // --- Pass 2: path-based rendering for active uncovered muscles ---
-        // Only draw what the solver says is firing AND that isn't already
-        // represented by a hardcoded def (avoids double-rendering).
-        // A fixed activation threshold does not work on a 520-muscle model.
-        // Measured on a real solve (OfflineOrchestrationTests): 139 of 520
-        // muscles cleared 0.08, so the figure disappeared under a thicket of
-        // capsules. The distribution is not a spread — the median sits at
-        // 0.0200027 against an `aMin` floor of 0.02, with a handful saturated at
-        // 1.0. Almost every muscle is either pinned at the floor or railed at
-        // the ceiling.
-        //
-        // The floor is not a measurement. STATUS.md records that `aMin`/`epsA`
-        // were tuned so the visualisation would not go "permanently blue" — a
-        // rendering parameter. Drawing floor-valued muscles presents that
-        // artefact as though it were measured effort.
-        //
-        // So: drop anything not meaningfully above the floor, then keep only the
-        // strongest few. Ranking rather than thresholding also makes the display
-        // stable — with 139 near-identical floor values, which ones cleared a
-        // fixed cut flickered frame to frame, which is what read as twitching.
-        let floor = Float(muscle.rawActivations.values.min() ?? 0)
-        let ranked = muscle.rawActivations
-            .filter { Float($0.value) >= max(Self.pathRenderActivationThreshold, floor + Self.floorMargin) }
-            .sorted { $0.value > $1.value }
-            .prefix(Self.maxRenderedPathMuscles)
-
-        var activePathKeys: Set<String> = []
-        for (rawName, rawActivation) in ranked {
-            let displayName = Self.solverToDisplayAlias[rawName] ?? rawName
-            if Self.hardcodedDisplayNames.contains(displayName) { continue }
-            guard let path = muscle.paths[rawName] else { continue }
-            let length = simd_length(path.end - path.start)
-            guard length > 0.02 else { continue }  // skip degenerate/tiny muscles
-
-            // Radius scales with √F_max so big muscles (quad, glute) read
-            // thicker than small ones (intrinsic hand muscles). Clamped.
-            let fmax = Float(muscle.maxForces[rawName] ?? 500)
-            let radius = max(0.008, min(0.022, 0.0005 * sqrt(fmax)))
-
-            let key = "path_\(rawName)"
-            activePathKeys.insert(key)
-            updateCapsule(key: key,
-                          start: path.start,
-                          end: path.end,
-                          radius: radius,
-                          activation: rawActivation,
-                          kind: .path,
-                          anchor: anchor)
-        }
-
-        // Hide path entities that are no longer active.
-        for (key, state) in muscleEntities where state.kind == .path
-            && !activePathKeys.contains(key) {
-            state.entity.isEnabled = false
+        // A capsule whose joints dropped out this frame is hidden rather than
+        // left at its last position, where it would read as anatomy that is
+        // still being tracked.
+        for (name, entity) in muscleEntities where !drawn.contains(name) {
+            entity.isEnabled = false
         }
     }
 
-    private func updateCapsule(key: String,
-                               start: SIMD3<Float>,
-                               end: SIMD3<Float>,
-                               radius: Float,
-                               activation: Double,
-                               kind: MuscleState.Kind,
-                               anchor: AnchorEntity) {
-        let delta = end - start
+    private func updateCapsule(_ capsule: Capsule, anchor: AnchorEntity) {
+        let delta = capsule.end - capsule.start
         let length = simd_length(delta)
-        guard length > 0.01 else {
-            muscleEntities[key]?.entity.isEnabled = false
-            return
-        }
-
-        let bucket = min(Self.activationBuckets - 1,
-                         max(0, Int(Float(activation) * Float(Self.activationBuckets))))
 
         let entity: ModelEntity
-        if let existing = muscleEntities[key] {
-            entity = existing.entity
-            if existing.lastBucket != bucket {
-                entity.model?.materials = [Self.makeMaterial(activation)]
-                muscleEntities[key]?.lastBucket = bucket
-            }
+        if let existing = muscleEntities[capsule.name] {
+            entity = existing
             entity.isEnabled = true
         } else {
             let mesh = MeshResource.generateBox(
-                size: SIMD3(radius * 2, radius * 2, 1.0),
-                cornerRadius: radius
+                size: SIMD3(capsule.radius * 2, capsule.radius * 2, 1.0),
+                cornerRadius: capsule.radius
             )
-            entity = ModelEntity(mesh: mesh, materials: [Self.makeMaterial(activation)])
+            // The material is built once and never rebuilt: with a constant
+            // colour there is no per-frame value to re-bake, which is also why
+            // the old 64-bucket quantiser is gone.
+            entity = ModelEntity(mesh: mesh,
+                                 materials: [UnlitMaterial(color: Self.color(for: capsule))])
             anchor.addChild(entity)
-            muscleEntities[key] = MuscleState(entity: entity, lastBucket: bucket, kind: kind)
+            muscleEntities[capsule.name] = entity
         }
 
-        let midpoint = (start + end) / 2
+        let midpoint = (capsule.start + capsule.end) / 2
         entity.position = midpoint
         entity.scale = SIMD3(1, 1, length)
         let dir = delta / length
         let up: SIMD3<Float> = abs(dir.y) > 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
-        entity.look(at: end, from: midpoint, upVector: up, relativeTo: nil)
+        entity.look(at: capsule.end, from: midpoint, upVector: up, relativeTo: nil)
     }
 
     func setVisible(_ visible: Bool) {
-        for (_, state) in muscleEntities {
-            state.entity.isEnabled = visible
+        for (_, entity) in muscleEntities {
+            entity.isEnabled = visible
         }
     }
 
     /// Remove all muscle entities.
     func clear() {
-        for (_, state) in muscleEntities {
-            state.entity.removeFromParent()
+        for (_, entity) in muscleEntities {
+            entity.removeFromParent()
         }
         muscleEntities.removeAll()
     }
@@ -436,42 +390,15 @@ final class MuscleOverlay {
         return BodyFrame(right: right, up: up, forward: forward)
     }
 
-    // MARK: - Color Mapping
-
-    /// Remap raw activation via sqrt onto [0, 1] over the observable
-    /// physiological band [displayFloor, displaySaturation]. sqrt expands
-    /// the low end where normal postural tone lives.
-    private static func displayValue(_ activation: Double) -> Float {
-        let a = max(Float(activation), 0)
-        let lo = sqrt(displayFloor)
-        let hi = sqrt(displaySaturation)
-        let t = (sqrt(a) - lo) / max(hi - lo, 1e-6)
-        return min(max(t, 0), 1)
-    }
-
-    /// Blue → cyan → green → yellow → red over the already-normalized display value.
-    private static func activationColor(_ activation: Double) -> UIColor {
-        let t = displayValue(activation)
-        let r: Float, g: Float, b: Float
-        if t < 0.25 {
-            let u = t / 0.25;              r = 0;           g = u;          b = 1.0
-        } else if t < 0.5 {
-            let u = (t - 0.25) / 0.25;     r = 0;           g = 1.0;        b = 1.0 - u
-        } else if t < 0.75 {
-            let u = (t - 0.5) / 0.25;      r = u;           g = 1.0;        b = 0
-        } else {
-            let u = (t - 0.75) / 0.25;     r = 1.0;         g = 1.0 - u;    b = 0
-        }
-        // Alpha floor 0.45 keeps rest tone visible; scales to 0.95 at max
-        // effort so the colored capsule reads clearly against any camera feed.
-        let alpha = 0.45 + 0.50 * t
-        return UIColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: CGFloat(alpha))
-    }
-
-    /// UnlitMaterial bypasses scene lighting so muscle color reads correctly
-    /// in any environment; its `color: UIColor` initializer honors the
-    /// UIColor alpha for transparent blending.
-    private static func makeMaterial(_ activation: Double) -> Material {
-        UnlitMaterial(color: activationColor(activation))
-    }
+    // MARK: - Colour
+    //
+    // There is no colour MAPPING any more, and this is where it used to be: a
+    // sqrt-warped blue→cyan→green→yellow→red ramp over activation, with the
+    // alpha rising from 0.45 to 0.95 so that "max effort" also read as the most
+    // opaque thing on screen. Every one of those channels carried the same
+    // cross-muscle claim. `capsuleColor` replaced it — see the type doc.
+    //
+    // `UnlitMaterial` is kept because it bypasses scene lighting, so the
+    // capsules look the same against any camera feed and their appearance
+    // stays a constant rather than a function of the room.
 }

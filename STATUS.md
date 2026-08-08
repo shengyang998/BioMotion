@@ -50,6 +50,14 @@ biggest links were **not** where the effort had been going.
   screened pairs quoted at a per-comparison 95 %; family-wise, **zero claims survive on any pinned
   clip at any scatter level**. The running screen's surviving left/right finding is CONTACT TIME. See
   [Fifth round](#fifth-round-the-cancellation-was-an-identity-and-the-per-muscle-claim-is-retired-2026-08-08).
+- **The PICTURE was making the retired claim too, on both screens** (2026-08-08). `MuscleOverlay`
+  kept the strongest 24 activations and coloured every capsule from one shared blue→red ramp — the
+  cross-muscle ordering retired in round four, drawn where it reads as most authoritative and with
+  no number, caption or floor beside it — and the live screen carried a bar chart of twelve muscles'
+  activations in per cent under it. Both are gone. `update(joints:)` now takes **no muscle solve at
+  all**, so the renderer cannot re-acquire a magnitude; the capsules are the fixed 26-muscle
+  anatomical set in one constant colour; both screens carry `MuscleOverlay.anatomyOnlyNote`. See
+  [Sixth round](#sixth-round-the-same-claim-in-colour-2026-08-08).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -698,7 +706,16 @@ reproduced the failure. A visible skeleton says nothing about the solver — the
 drawn straight from `BodyFrame.joints`, while muscle output requires the whole IK → SG → ID →
 moment-arm → QP chain. Those two share no stage.
 
-### Muscle rendering: rank, never threshold (build 22)
+### Muscle rendering: rank, never threshold (build 22) — SUPERSEDED 2026-08-08
+
+⚠️ **The conclusion of this section shipped a cross-muscle claim, and the renderer it describes no
+longer exists.** Everything below about the DISTRIBUTION is still true and still worth reading — it
+is the measurement that shows the activations are degenerate. What is retired is the fix: "render
+only the strongest 24" solved the flicker by ranking muscles against each other, which is a
+comparison this model cannot support (see
+[Sixth round](#sixth-round-the-same-claim-in-colour-2026-08-08)). The overlay draws a fixed
+anatomical set in one constant colour and takes no activation input, so neither the flicker nor the
+threshold question arises.
 
 A fixed activation cut is wrong on a 520-muscle model, and the measured distribution says why:
 
@@ -1996,6 +2013,119 @@ to report anything at the scatter we have.
      sides.", "The strides were measured but no contact produced muscle output.") while every other
      refusal on the screen ends in an action.
 
+### Sixth round: the same claim, in colour (2026-08-08)
+
+Two adversarial lenses left 2 blockers and 5 majors. The blockers and four of the five majors were
+closed in [round five](#fifth-round-the-cancellation-was-an-identity-and-the-per-muscle-claim-is-retired-2026-08-08);
+this round closes the fifth, which is the one that had never been looked at, because it is not on the
+running panel at all.
+
+#### The finding: retiring a claim from a LIST is not retiring the claim
+
+`MuscleOverlay` filtered `rawActivations`, dropped everything near the solver's floor, sorted the
+rest descending and drew **the strongest 24**, colouring every capsule — both render passes — from
+one shared blue→cyan→green→yellow→red ramp whose alpha rose 0.45 → 0.95 alongside it. Both halves of
+that are the cross-muscle ordering retired in round four:
+
+* **Selection.** Beyond the 26 hardcoded anatomical capsules, which muscles EXISTED on screen at all
+  was a ranking by activation. A muscle whose unmodelled `PathWrap` under-states its moment arm has
+  its activation inflated by `1/k` for its own unknown, pose-dependent `k`, so it sorts into the top
+  24 ahead of a correctly-modelled muscle that is genuinely working harder.
+* **Colour.** Every capsule of BOTH passes — including the fixed 26, which were always drawn — was
+  then coloured by its activation, so the whole picture was ordered again, in hue and in opacity.
+
+It shipped on **two** surfaces and the reviews had covered neither. The offline 3-D view drew it
+beside the paragraph refusing the same comparison; the live ARKit screen drew it **and** carried
+`MuscleActivationBar` under it — twelve named muscles, bar height ∝ activation, a blue/green/yellow/
+red cut and `71 %` printed under each. That bar is the retired comparison in numbers *and* an
+absolute effort claim on a scale the model does not have.
+
+A picture makes this claim more loudly than a list, not less: no number to check, no floor quoted, no
+caption. That is why the same defect on the more authoritative surface outranks the one on the panel.
+
+#### What ships now
+
+* **`MuscleOverlay.update(joints:)` takes no muscle solve.** Not "ignores one" — the parameter is
+  gone, so the compiler refuses a magnitude at every call site. Deleted with it:
+  `pathRenderActivationThreshold`, `floorMargin`, `maxRenderedPathMuscles`, the 64-bucket activation
+  quantiser, `displayFloor`/`displaySaturation`, `displayValue`, `activationColor` and the local
+  alias table the ranked pass needed.
+* **The drawn set is the fixed 26-capsule anatomical list** (`muscleDefs`), minus any capsule whose
+  two joints are not both tracked this frame. `capsulePlan(joints:)` is the pure function that
+  produces it, split out so it is testable without RealityKit; `Capsule` has four fields — name,
+  start, end, radius — and no magnitude channel.
+* **One colour for the whole body**, `MuscleOverlay.capsuleColor`, deliberately off the retired ramp.
+* **`MuscleActivationBar` is deleted.** The live screen's engineering diagnostics (marker residual in
+  mm, `max |τ|/m` in Nm/kg, model mass, foot-load fractions, the N/kg frame check) are untouched:
+  each is labelled with its unit and none is a per-muscle claim.
+* **Both screens carry `MuscleOverlay.anatomyOnlyNote`** — one constant, so they cannot drift. It
+  states the absence first ("Muscle effort is not shown."), then what the capsules are, then why.
+  Live: under the diagnostics, whenever the layer is on. Offline: against the picture, at the bottom
+  of the 3-D view, exactly when capsules are on screen.
+* **The live toggle says `Anatomy ON/OFF`**, not `Muscles ON/OFF`, and the offline one is a labelled
+  `Anatomy` control rather than a bare `figure.run` glyph.
+
+**The offline clip-level gate did NOT change.** The overlay is still off on every analysed running
+clip. Its *reason* changed and is restated in `muscleMagnitudesArePublishable`: the old one (the
+capsules were a cross-muscle ordering) is gone with the ranking, and what survives is a coherence
+rule — the panel beside that view is headed "Muscle by muscle: not shown, and why", and putting
+muscle capsules next to it invites the reading that they are what the paragraph refused.
+
+#### What is actually verified, and what is not
+
+* **Structural, not numerical.** This round measured nothing about the body. The guarantee is a type
+  signature: with no activation in scope, neither the selection nor the colour of a capsule can
+  depend on one. Counted: ranked capsules 24 → 0, fixed anatomical capsules 26, activation bars
+  12 → 0, and the activation→appearance map (hue across r/g/b plus alpha 0.45 → 0.95, four channels)
+  → one constant.
+* `MuscleOverlayClaimTests` (5 tests) guards the seams a regression would have to come through: the
+  plan is the anatomical set and carries no `path_`-keyed entry; every capsule maps to ONE colour;
+  `Capsule`'s stored properties are exactly `[end, name, radius, start]` (asserted by `Mirror`, so
+  adding an `activation` field fails); a capsule with a missing joint is dropped without disturbing
+  the other side; the note states the absence first and contains no digit and no `%`.
+* **No device run and no screenshot.** Simulator only, and no UI test — what is asserted is the
+  string content and the plan, never the rendered appearance. Whether three lines of `caption2` sit
+  well on the live screen under the diagnostics is unverified.
+* **`BodyFrameOrientationTests` still passes unchanged**, so the capsule placement — the anatomy the
+  layer now exists for — is still pinned to anterior/posterior correctness.
+
+#### Known limitations, recorded rather than fixed
+
+These are the MINORs from the two review lenses that survive, plus one found on the way. Each is a
+statement the screen makes that is imprecise, not one that is false in a way a user can act on.
+
+1. **Pass-1 static-hold muscle output survives on frames the gait pass excluded.**
+   `OfflineResultStore.swift:310` merges `muscleResult ?? existing.muscleResult` and line 313
+   overwrites `isStaticHoldEstimate` to false, so a `.gaitOutsideAnalysis` frame keeps activations
+   solved with q̈ = 0 and loses the flag that says so. Its user-visible half is now doubly moot — the
+   overlay is off on analysed running clips, and the capsules carry no numbers anywhere — but the
+   provenance flag is still destroyed in the store.
+2. **`GaitLoadSummary.framesPerSecond` is the video track's NOMINAL rate** even when the sparse
+   `.fps` sampler ran (`OfflineSessionRunner.swift:307`), so `resolutionSentence` can name a rate the
+   run did not use and `frameRateNeeded` scales its advice off the same base. Still open, still
+   wrong. The refusal path is correct.
+3. **`OfflinePlaybackView.statusText` never consults `summary.arePublishable`.** A clip whose
+   vertical residual gate FAILED still gets per-frame badges implying a completed solve. Half-closed:
+   the badge no longer says "relative loads".
+4. **Two refusals state a fact and offer no lever** — `withheldReason`'s "No contact produced muscle
+   output on both sides." and the panel's ".analysed with no summary" branch — while every other
+   refusal on that screen ends in an action.
+5. **`peakForceRegimeSentence` still ends "subtract it, do not take a share of it".** The unit is
+   right (percentage POINTS, fixed in round five) and the fact is true of the internals, but there is
+   no per-muscle figure on the screen any more to subtract it FROM. The imperative is stale.
+6. **`NimbleEngine.displayMuscleResult` now has no consumer.** It is still `@Published` and still
+   rebuilt every live frame through `normalizeActivations`/`normalizeForces`. Dead weight, not a
+   false statement; removing it touches the solver publish path and was not worth the risk in a
+   round whose subject is what the screen says.
+
+#### What this stage did NOT do
+
+* No device run, no TestFlight upload, `CURRENT_PROJECT_VERSION` not bumped.
+* **It did not re-open the muscle claim anywhere.** Nothing in this round adds a reading; every
+  change removes one or labels an absence.
+* It did not touch `GaitLoadSummary`, the QP, the moment arms or any test that measures them.
+* The parent repo's `labs/BioMotion` gitlink is still behind.
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -2299,11 +2429,11 @@ arms must differ in the work that PRECEDES the mask.
 ### Newly opened by the 2026-08-08 muscle-claim scoping
 
 15. ~~**The 3-D muscle overlay still picks its strongest 24 muscles by the same uncalibrated
-    cross-muscle number.**~~ **Closed for the offline running path on 2026-08-08**: the overlay is
-    off on analysed running clips, and the `figure.run` toggle is hidden there rather than left
-    green and inert. **Still open for the LIVE ARKit path**, which shares `MuscleOverlay` verbatim
-    and is a product surface neither review covered. Deciding that one needs a preregistered
-    criterion for what the picture is claiming.
+    cross-muscle number.**~~ ~~Closed for the offline running path on 2026-08-08; still open for the
+    LIVE ARKit path, which shares `MuscleOverlay` verbatim.~~ **CLOSED on both paths, 2026-08-08.**
+    The renderer takes no muscle solve at all: fixed 26-capsule anatomical set, one constant colour,
+    a note on each screen. The live `MuscleActivationBar` — the same claim in numbers — is deleted.
+    See [Sixth round](#sixth-round-the-same-claim-in-colour-2026-08-08).
 16. ~~**The left/right claim depends on the two legs' moment-arm errors being IDENTICAL.**~~
     **Overtaken on 2026-08-08.** The claim needed more than that: it needed the two legs' TORQUES to
     be proportional, which is both unmeasured and — where it holds — fatal to the claim's content

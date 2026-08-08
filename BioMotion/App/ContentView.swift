@@ -9,7 +9,9 @@ struct ContentView: View {
     @State private var showIKPanel = false
     @State private var showCalibration = true
     @State private var showCharts = false
-    @State private var showMuscleOverlay = true
+    /// The 3-D muscle ANATOMY layer. It draws where the muscles are; it does
+    /// not encode effort — see `MuscleOverlay`.
+    @State private var showAnatomyOverlay = true
     @State private var showOfflineImport = false
 
     var body: some View {
@@ -78,8 +80,7 @@ struct ContentView: View {
                 session: bodyTracking.arSession,
                 currentFrame: $bodyTracking.currentFrame,
                 isTracking: bodyTracking.isTracking,
-                muscleOutput: nimble.displayMuscleResult,
-                showMuscles: showMuscleOverlay
+                showMuscles: showAnatomyOverlay
             )
             .ignoresSafeArea()
 
@@ -175,8 +176,32 @@ struct ContentView: View {
                 // === BOTTOM SECTION ===
 
                 // Data panels (only when tracking)
-                if let muscle = nimble.displayMuscleResult {
-                    MuscleActivationBar(muscle: muscle).padding(.horizontal, 12)
+                //
+                // **The muscle bar chart used to be here, and it made the claim
+                // the 3-D overlay was making in colour.** Twelve named muscles,
+                // bar height ∝ activation, a blue→red colour cut and "71 %"
+                // under each — a cross-muscle ranking AND an absolute effort
+                // figure, on numbers whose per-muscle scale is unknown: 66 of
+                // this model's muscles take a straight line where the tendon
+                // wraps around bone, so each activation is inflated by 1/k for
+                // its own pose-dependent k. Reading soleus 0.71 against vastus
+                // 0.34 is exactly what `MomentArmErrorCancellationTests` shows
+                // this model cannot support, and the offline panel retired the
+                // same comparison on 2026-08-08.
+                //
+                // What replaces it is the absence, stated. The engineering
+                // diagnostics above (marker residual, |τ|/kg, foot-load
+                // fractions, frame check) are unchanged: they are labelled with
+                // their units and none of them is a per-muscle claim.
+                if nimble.isModelLoaded && bodyTracking.isTracking && showAnatomyOverlay {
+                    Text(MuscleOverlay.anatomyOnlyNote)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.horizontal, 12)
                 }
                 if showIKPanel, let ik = nimble.lastIKResult {
                     IKReadoutPanel(ikResult: ik, idResult: nimble.lastIDResult).padding(.horizontal, 12)
@@ -193,13 +218,15 @@ struct ContentView: View {
                                 .padding(.horizontal, 10).padding(.vertical, 4)
                                 .background(.black.opacity(0.5), in: Capsule())
                         }
-                        Button { showMuscleOverlay.toggle() } label: {
+                        // "Muscles ON" promised a muscle reading. The layer is
+                        // anatomy — where they are — so the control says so.
+                        Button { showAnatomyOverlay.toggle() } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: showMuscleOverlay ? "figure.run" : "figure.stand")
-                                Text(showMuscleOverlay ? "Muscles ON" : "Muscles OFF")
+                                Image(systemName: "figure.stand")
+                                Text(showAnatomyOverlay ? "Anatomy ON" : "Anatomy OFF")
                             }
                             .font(.caption2)
-                            .foregroundStyle(showMuscleOverlay ? .green : .gray)
+                            .foregroundStyle(showAnatomyOverlay ? .green : .gray)
                             .padding(.horizontal, 10).padding(.vertical, 4)
                             .background(.black.opacity(0.5), in: Capsule())
                         }
@@ -448,57 +475,10 @@ struct IKReadoutPanel: View {
     }
 }
 
-struct MuscleActivationBar: View {
-    let muscle: NimbleEngine.MuscleOutput
-
-    // Show top activated muscles
-    private let keyMuscles = [
-        "soleus_r", "soleus_l", "gasmed_r", "gasmed_l",
-        "tibant_r", "tibant_l", "vasmed_r", "vasmed_l",
-        "recfem_r", "recfem_l", "glmax1_r", "glmax1_l",
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Muscle Activations")
-                .font(.caption2.bold())
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(keyMuscles, id: \.self) { name in
-                        if let activation = muscle.activations[name] {
-                            VStack(spacing: 2) {
-                                // Activation bar
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(activationColor(activation))
-                                    .frame(width: 20, height: CGFloat(activation * 40))
-                                    .frame(height: 40, alignment: .bottom)
-                                Text(shortMuscleName(name))
-                                    .font(.system(size: 7))
-                                Text(String(format: "%.0f%%", activation * 100))
-                                    .font(.system(size: 7, design: .monospaced))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .foregroundStyle(.white)
-        .padding(8)
-        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func activationColor(_ a: Double) -> Color {
-        if a < 0.3 { return .blue }
-        if a < 0.6 { return .green }
-        if a < 0.8 { return .yellow }
-        return .red
-    }
-
-    private func shortMuscleName(_ name: String) -> String {
-        name.replacingOccurrences(of: "_r", with: "R")
-            .replacingOccurrences(of: "_l", with: "L")
-    }
-}
+// `MuscleActivationBar` stood here until 2026-08-08. See the comment at its
+// call site in `trackingView` for why a chart of twelve muscles' activations,
+// ranked against each other and labelled in per cent, is not a reading this
+// model can produce.
 
 /// UIKit share sheet wrapper.
 struct ShareSheet: UIViewControllerRepresentable {
