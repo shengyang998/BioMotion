@@ -16,3 +16,13 @@ xcuserdata/
 
 # Core ML model (1.3 GB) — regenerate via labs/sam-3d-body/export/coreml/convert.py
 BioMotion/CoreML/*.mlpackage
+
+# OpenSim reference intermediates — ~110 MB of CSV, regenerated in ~6 min by
+# tools/opensim_ref/dump_reference.py. The committed artefact is the derived
+# fixture BioMotionTests/Fixtures/opensim_moment_arms.txt.
+tools/opensim_ref/out/
+tools/opensim_ref/.venv/
+
+# Python bytecode from tools/
+__pycache__/
+*.pyc

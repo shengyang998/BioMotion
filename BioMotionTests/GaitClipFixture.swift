@@ -257,34 +257,18 @@ enum GaitClipFixture {
 
     // MARK: - Strict scanners
 
-    /// The first byte outside printable ASCII, or nil.
+    /// The grammar moved to `FixtureScanner` when a second generated fixture
+    /// arrived, so the two cannot drift apart. These stay as the names the rest
+    /// of this file already reads.
     private static func firstNonASCIIByte(_ s: Substring) -> UInt8? {
-        s.utf8.first { $0 < 0x20 || $0 > 0x7E }
+        FixtureScanner.firstNonASCIIByte(s)
     }
 
-    /// `[0-9]+`, no sign, no leading zeros beyond `0` itself.
     private static func strictInt(_ s: Substring) -> Int? {
-        guard !s.isEmpty, s.utf8.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }) else { return nil }
-        if s.count > 1 && s.hasPrefix("0") { return nil }
-        return Int(s)
+        FixtureScanner.strictInt(s)
     }
 
-    /// `-?[0-9]+.[0-9]+`, then `Double(_:)`, then finite.
-    ///
-    /// The explicit grammar is the point: `Double("nan")`, `Double("inf")` and
-    /// `Double("0x1p3")` all succeed, and `Double("np.float64(3.0)")` is the
-    /// exact string that killed the previous fixture's whole test target.
     private static func strictDecimal(_ s: Substring) -> Double? {
-        var body = s
-        if body.hasPrefix("-") { body = body.dropFirst() }
-        guard let dot = body.firstIndex(of: ".") else { return nil }
-        let whole = body[body.startIndex..<dot]
-        let fraction = body[body.index(after: dot)...]
-        guard !whole.isEmpty, !fraction.isEmpty else { return nil }
-        let digits: (Substring) -> Bool = { $0.utf8.allSatisfy { $0 >= 0x30 && $0 <= 0x39 } }
-        guard digits(whole), digits(fraction) else { return nil }
-        if whole.count > 1 && whole.hasPrefix("0") { return nil }
-        guard let value = Double(s), value.isFinite else { return nil }
-        return value
+        FixtureScanner.strictDecimal(s)
     }
 }

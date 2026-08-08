@@ -137,6 +137,23 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 tools/run_tests.sh
 ```
 
+## Regenerating the OpenSim moment-arm reference
+
+`BioMotionTests/Fixtures/opensim_moment_arms.txt` is generated, not hand-written. It needs the
+OpenSim Python API, which installs from PyPI on Apple Silicon (no conda required):
+
+```bash
+cd tools/opensim_ref
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python opensim numpy
+
+./.venv/bin/python dump_reference.py        # ~5 min, writes ~98 MB of CSV to out/ (gitignored)
+./.venv/bin/python analyse.py --write-fixture   # report + the committed 2.5 MB fixture
+./.venv/bin/python pose_coverage.py         # what the pose grid covers, and what the clips say
+```
+
+Everything here is read-only against `BioMotion/Resources/FullBody.osim`.
+
 ## TestFlight upload
 
 ```bash
