@@ -192,6 +192,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readwrite) NSInteger movingPathPointsSkipped;
 @property (nonatomic, readwrite) NSInteger unknownPathPointElementsSkipped;
 @property (nonatomic, readwrite) NSInteger unmodelledPathWraps;
+@property (nonatomic, readwrite) NSArray<NSString *> *musclesWithUnmodelledPathWraps;
 @property (nonatomic, readwrite) NSArray<NSString *> *musclesWithDefaultedTendonSlackLength;
 @end
 
@@ -201,7 +202,10 @@ NS_ASSUME_NONNULL_END
 
 - (instancetype)init {
     self = [super init];
-    if (self) { _musclesWithDefaultedTendonSlackLength = @[]; }
+    if (self) {
+        _musclesWithDefaultedTendonSlackLength = @[];
+        _musclesWithUnmodelledPathWraps = @[];
+    }
     return self;
 }
 
@@ -326,6 +330,7 @@ NS_ASSUME_NONNULL_END
 
     MusclePathFidelityReport *report = [[MusclePathFidelityReport alloc] init];
     NSMutableArray<NSString *> *defaultedTendonSlack = [NSMutableArray array];
+    NSMutableArray<NSString *> *wrappedMuscles = [NSMutableArray array];
 
     // Resolve OpenSim coordinate names to skeleton DOF indices once. Both
     // ConditionalPathPoint gating and MovingPathPoint location functions are
@@ -533,6 +538,10 @@ NS_ASSUME_NONNULL_END
             report.movingPathPointsSkipped += nMovingSkipped;
             report.unknownPathPointElementsSkipped += nUnknown;
             report.unmodelledPathWraps += nWraps;
+            if (nWraps > 0) {
+                [wrappedMuscles
+                    addObject:[NSString stringWithUTF8String:mp.name.c_str()]];
+            }
             if (!tendonSlackParsed) {
                 [defaultedTendonSlack
                     addObject:[NSString stringWithUTF8String:mp.name.c_str()]];
@@ -542,6 +551,7 @@ NS_ASSUME_NONNULL_END
     }  // end muscle-class loop
 
     report.musclesWithDefaultedTendonSlackLength = [defaultedTendonSlack copy];
+    report.musclesWithUnmodelledPathWraps = [wrappedMuscles copy];
     _fidelityReport = report;
 
     // Validate that every PathPoint resolves to a real body in the
@@ -589,11 +599,13 @@ NS_ASSUME_NONNULL_END
 
     NSLog(@"MomentArmComputer: geometry fidelity — %@", report.summary);
     if (report.unmodelledPathWraps > 0) {
-        NSLog(@"MomentArmComputer: ⚠ %ld PathWrap references are NOT modelled. "
-              @"Those muscles take a straight-line shortcut where the real path "
-              @"wraps around bone, so their L_MT and moment arms are wrong "
-              @"(worst at flexed poses, where the sign can flip).",
-              (long)report.unmodelledPathWraps);
+        NSLog(@"MomentArmComputer: ⚠ %ld PathWrap references on %lu muscles are NOT "
+              @"modelled. Those muscles take a straight-line shortcut where the real "
+              @"path wraps around bone, so their L_MT and moment arms are wrong "
+              @"(worst at flexed poses, where the sign can flip). Affected: %@",
+              (long)report.unmodelledPathWraps,
+              (unsigned long)report.musclesWithUnmodelledPathWraps.count,
+              [report.musclesWithUnmodelledPathWraps componentsJoinedByString:@", "]);
     }
     if (report.movingPathPointsApproximated > 0) {
         NSLog(@"MomentArmComputer: ⚠ %ld MovingPathPoints evaluated by linear "

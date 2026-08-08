@@ -345,7 +345,13 @@ final class OfflineSessionRunner: ObservableObject {
         var earliest = Double.infinity
         var latest = -Double.infinity
 
-        for interval in intervals {
+        // The contact INDEX is stamped here, at the only place that knows where
+        // the detector put the boundaries, and travels with every frame from
+        // here on. Ordered by touchdown so the numbering is the clip's own
+        // chronology and does not depend on `stance.left + stance.right`.
+        for (contactIndex, interval) in intervals
+            .sorted(by: { $0.touchdown < $1.touchdown })
+            .enumerated() {
             let stamps = interval.sampleTimestamps
             let n = stamps.count
             guard n > 0 else { continue }
@@ -358,6 +364,7 @@ final class OfflineSessionRunner: ObservableObject {
                 entries[t] = .init(timestamp: t,
                                    verticalForceInBodyWeights: force,
                                    contactSide: side,
+                                   contactIndex: contactIndex,
                                    derivativeWindowInsideContact: k >= half && k <= n - 1 - half)
             }
             earliest = Swift.min(earliest, interval.touchdown)
@@ -370,6 +377,7 @@ final class OfflineSessionRunner: ObservableObject {
         while t <= latest + dt / 2 {
             if entries[t] == nil, !entries.keys.contains(where: { abs($0 - t) < dt / 2 }) {
                 entries[t] = .init(timestamp: t, verticalForceInBodyWeights: 0, contactSide: 0,
+                                   contactIndex: -1,
                                    derivativeWindowInsideContact: false)
             }
             t += dt

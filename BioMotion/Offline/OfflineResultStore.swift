@@ -244,6 +244,24 @@ final class OfflineResultStore: ObservableObject {
             if case .notAttempted = self { return false }
             return true
         }
+
+        /// **Whether the gait screen may take the posture findings' place.**
+        ///
+        /// Only an ANALYSED run may. A refusal means the running analysis
+        /// produced nothing, and it used to take the posture findings down with
+        /// it: `isAboutRunning` is true for every refusal, including
+        /// `.notRunning`, whose entire meaning is "this is not running". A user
+        /// filming themselves side-on holding a squat — the app's stated purpose
+        /// — got a panel headed "Running, but withheld" reading "only 0 complete
+        /// contacts", and the measurements they came for, which had been
+        /// computed and were sitting in this store, were simply not on screen.
+        /// A walking clip took the same path.
+        ///
+        /// So a refusal is now shown BESIDE the findings, not instead of them.
+        var replacesPostureFindings: Bool {
+            if case .analysed = self { return true }
+            return false
+        }
     }
 
     func setGait(_ outcome: GaitOutcome) { gait = outcome }

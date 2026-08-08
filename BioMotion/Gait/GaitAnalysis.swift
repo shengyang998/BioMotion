@@ -228,6 +228,75 @@ struct GaitReport {
                      + "Film at a higher frame rate"
             }
         }
+
+        /// **What to do differently, for THIS refusal.**
+        ///
+        /// One hard-coded sentence — "The strides in this clip are not alike
+        /// enough to model as a repeating cycle. Film a longer run at a steady
+        /// pace…" — used to be printed under every one of these. It names one
+        /// cause and one lever, and it is the wrong cause for five of the nine
+        /// cases. The two frame-rate refusals are the sharpest example: the app
+        /// already knows the exact rate that would fix them, and the user was
+        /// told to re-film a longer, steadier run at the same rate, which
+        /// produces byte-identical output.
+        ///
+        /// - Parameter framesPerSecond: the rate this clip was sampled at, so
+        ///   the rate refusals can quote the number rather than the direction.
+        func advice(framesPerSecond fps: Double) -> String {
+            /// The rate at which `have` frames per contact would become `need`.
+            func rateFor(need: Double, have: Double) -> String? {
+                guard fps > 0, have > 0, need > have else { return nil }
+                let rate = (fps * need / have).rounded(.up)
+                guard rate.isFinite, rate <= FrameSource.highestAnalysableFrameRate else {
+                    return nil
+                }
+                return String(format: "%.0f fps", rate)
+            }
+            switch self {
+            case .tooFewContacts:
+                return "Film a longer run: the analysis window needs at least "
+                     + "\(GaitAnalysis.minimumContactsPerSide) complete foot contacts on EACH "
+                     + "side, and it only counts contacts that start and end inside the window."
+            case .stridePeriodDisagreesBetweenLegs, .strideNotSteady:
+                return "Run at one steady pace through the whole clip. Accelerating, slowing or "
+                     + "turning makes one stride unlike the next, and the force model closes the "
+                     + "impulse over a stride by assuming they are alike."
+            case .contactSequenceNotPeriodic:
+                return "Film a stretch you are already up to pace in, side-on, so the feet "
+                     + "alternate cleanly. A missed or doubled contact in the middle of the clip "
+                     + "puts these two flight estimates apart."
+            case .notRunning:
+                return "This clip has no flight phase, so it is walking, standing or holding a "
+                     + "position — not running. The running model does not apply to it and "
+                     + "nothing here is withheld from you; the posture measurements below are "
+                     + "what this clip supports."
+            case .stanceBudgetInconsistent:
+                return "Film a longer stretch at one pace. The detector's estimate of the cycle "
+                     + "length and the contacts it then found do not describe the same run, so "
+                     + "the level it used to find those contacts was fitted over the wrong span."
+            case .contactTooShortToResolve(let have):
+                if let rate = rateFor(need: 3, have: have) {
+                    return "Film at \(rate) or faster. At this pace each contact lasts a fraction "
+                         + "of a frame more than the minimum, and no amount of extra running "
+                         + "length changes that — capture rate is the only lever."
+                }
+                return "This pace needs a faster camera than the analysis window can cover at "
+                     + "full length. Film a slower run, or a shorter clip at the highest rate "
+                     + "your camera offers."
+            case .droppedSamplesInContact:
+                return "The decoder lost frames inside a contact, which is usually light: film "
+                     + "brighter so the camera stops lengthening its exposure, and keep the "
+                     + "subject inside the frame for the whole clip."
+            case .contactTooShortForACleanDerivative(let median, let needed):
+                if let rate = rateFor(need: Double(needed), have: Double(median)) {
+                    return "Film at \(rate) or faster, so a contact holds the \(needed) frames a "
+                         + "smoothing window needs to fit inside it."
+                }
+                return "Contacts this short need a faster camera than the analysis window can "
+                     + "cover at full length. Film a slower run, or a shorter clip at the "
+                     + "highest rate your camera offers."
+            }
+        }
     }
 
     /// Something the user should be told that does not withhold the result.

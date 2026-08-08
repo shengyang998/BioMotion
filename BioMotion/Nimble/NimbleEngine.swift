@@ -310,6 +310,12 @@ final class NimbleEngine: ObservableObject {
         /// −1 left foot down, +1 right, 0 flight — from the KINEMATIC stance
         /// detector (pelvis-relative horizontal foot velocity).
         let contactSide: Int
+        /// Which contact of the clip this frame belongs to, straight from
+        /// `GaitPlan.Frame.contactIndex` — i.e. from the stance intervals the
+        /// detector found, not from the run of frames that happened to arrive.
+        /// Two frames carry the same value if and only if the same foot-strike
+        /// produced them. −1 outside a contact.
+        let contactIndex: Int
         /// What the ID solver's own GEOMETRIC contact detector saw (foot height
         /// versus the estimated ground plane). Two independent detectors on two
         /// different signals; when they disagree, one of them is wrong about
@@ -479,6 +485,20 @@ final class NimbleEngine: ObservableObject {
             let verticalForceInBodyWeights: Double
             /// −1 left foot down, +1 right foot down, 0 flight.
             let contactSide: Int
+            /// **Which contact this sample belongs to**, or −1 in flight.
+            ///
+            /// The authoritative boundary, taken from `GaitReport.stance` where
+            /// the detector put it — not re-derived downstream. `GaitLoadSummary`
+            /// used to recover contacts as maximal runs of consecutive stance
+            /// frames it had received, so any SOLVER-side hole (a non-converged
+            /// IK, a `submitAndWait` timeout, an unrouted solve) split one
+            /// physical contact into two and had each half contribute its own
+            /// off-mid-stance sample at double weight. Nothing could see it: no
+            /// frame number is missing, so `GaitAnalysis` raises no
+            /// `.droppedSamplesInContact`, and the missing frame is absent from
+            /// both sides of `usableStanceFraction`.
+            let contactIndex: Int
+
             /// True when a centred `filterTaps`-wide window around this sample
             /// lies entirely inside this contact.
             ///
@@ -534,7 +554,13 @@ final class NimbleEngine: ObservableObject {
 
     // Normalize model-specific muscle ids to the stable ids used by the
     // overlay and diagnostic bar.
-    private static let displayMuscleAliases: [String: String] = [
+    //
+    // Internal rather than private because it is the mapping between the
+    // SOLVER's muscle names and the names every display layer sees, so a test
+    // that checks a display-side table against the model file has to apply it.
+    // `GaitLoadSummary.musclesWithUnmodelledPaths` is written in the names on
+    // THIS side of it.
+    static let displayMuscleAliases: [String: String] = [
         "bflh140_r": "bflh_r",
         "bflh140_l": "bflh_l",
         "gaslat140_r": "gaslat_r",
@@ -913,6 +939,7 @@ final class NimbleEngine: ObservableObject {
             var publishedMotion = motion
             var plannedForce: Double?          // body weights, from timing alone
             var plannedSide = 0
+            var plannedContactIndex = -1
             var rootVerticalAccel = 0.0
             var plannedWindowIsClean = false
 
@@ -974,6 +1001,7 @@ final class NimbleEngine: ObservableObject {
                 // moment.
                 plannedForce = entry.verticalForceInBodyWeights
                 plannedSide = entry.contactSide
+                plannedContactIndex = entry.contactIndex
                 plannedWindowIsClean = entry.derivativeWindowInsideContact
                 publishedMotion = motion.replacingVerdict(.gaitStance)
             } else {
@@ -1176,6 +1204,7 @@ final class NimbleEngine: ObservableObject {
                     solvedVerticalForceInBodyWeights: solved,
                     residualInBodyWeights: abs(solved - planned),
                     contactSide: plannedSide,
+                    contactIndex: plannedContactIndex,
                     solverSawLeftContact: idOutput?.leftFootInContact ?? false,
                     solverSawRightContact: idOutput?.rightFootInContact ?? false,
                     rootVerticalAccelerationMetersPerSecondSquared: rootVerticalAccel,

@@ -73,6 +73,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// means the model is geometrically incomplete.
 @property (nonatomic, readonly) NSInteger unmodelledPathWraps;
 
+/// **Which muscles those wraps belong to**, in parse order. A count alone
+/// cannot answer the only question the UI has to answer — "is THIS muscle's
+/// number on a different scale from that one" — and the answer decides what a
+/// screen showing named muscles is allowed to claim. See
+/// `GaitLoadSummary.musclesWithUnmodelledPaths`, which is checked against this
+/// list by `MomentArmTests`.
+@property (nonatomic, readonly) NSArray<NSString *> *musclesWithUnmodelledPathWraps;
+
 /// Muscles whose `tendon_slack_length` was missing or unparseable and fell
 /// back to 0. Downstream that makes fiber length = L_MT / cos(α), which
 /// permanently mis-scales that muscle's force-length and force-velocity curves.

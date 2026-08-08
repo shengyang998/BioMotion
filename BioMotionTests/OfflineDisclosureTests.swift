@@ -174,17 +174,37 @@ final class OfflineDisclosureTests: XCTestCase {
 
     /// The sparse-sampling mode has its own budget and its own arithmetic, and
     /// the same rule decides the cause there.
-    func testTheSparseModeIsCappedByItsOwnBudget() {
+    /// **The sparse mode's banner, checked on the STRING and not only on the
+    /// cause.** This test asserted `notice?.cause` alone while both
+    /// native-window tests asserted their message, and the message it was not
+    /// asserting was false in both halves: `.fps` has no analysis window (the
+    /// cap is `maxFramesPerRun`) and its samples start at `t = 0` and step
+    /// forward, so they come from the BEGINNING and not the middle. A user with
+    /// a ten-minute clip and a held pose at minute four was told the middle had
+    /// been analysed, and trimmed the wrong end.
+    func testTheSparseModeIsCappedByItsOwnBudget() throws {
         let mode = FrameSource.SamplingMode.fps(10)
         let (timestamps, truncated) = FrameSource.sampleTimestamps(duration: 600, mode: mode)
         XCTAssertTrue(truncated)
         XCTAssertEqual(timestamps.count, FrameSource.maxFramesPerRun)
-        let notice = try? XCTUnwrap(FrameBudgetNotice.make(
+        XCTAssertEqual(timestamps.first ?? -1, 0.0, accuracy: 1e-12,
+                       "the sparse scan starts at the beginning of the clip")
+        let notice = try XCTUnwrap(FrameBudgetNotice.make(
             mode: mode, duration: 600, nominalFrameRate: 30,
             timestamps: timestamps, wasTruncated: truncated))
-        XCTAssertEqual(notice?.cause, .budgetCappedTheWindow)
-        XCTAssertEqual(notice?.framesUsed, FrameSource.maxFramesPerRun)
-        XCTAssertEqual(notice?.analysedSeconds ?? 0, 12.0, accuracy: 1e-9)
+        XCTAssertEqual(notice.cause, .budgetStoppedTheSparseScan)
+        XCTAssertEqual(notice.framesUsed, FrameSource.maxFramesPerRun)
+        XCTAssertEqual(notice.analysedSeconds, 12.0, accuracy: 1e-9)
+
+        let message = notice.message
+        print("UI-METRIC sparse_budget_notice=\(message)")
+        XCTAssertTrue(message.contains("FIRST"), "it names WHERE the frames came from: \(message)")
+        XCTAssertFalse(message.lowercased().contains("middle"),
+                       "and they did not come from the middle: \(message)")
+        XCTAssertFalse(message.lowercased().contains("analysis window"),
+                       "there is no analysis window in this mode: \(message)")
+        XCTAssertTrue(message.contains("12.0 s"), message)
+        XCTAssertTrue(message.contains("600.0 s"), "and the clip's real length: \(message)")
     }
 
     // MARK: - Fixtures
@@ -206,6 +226,7 @@ final class OfflineDisclosureTests: XCTestCase {
             solvedVerticalForceInBodyWeights: 2.1,
             residualInBodyWeights: 0.1,
             contactSide: contactSide,
+            contactIndex: contactSide < 0 ? 0 : 1,
             solverSawLeftContact: solverLeft,
             solverSawRightContact: solverRight,
             rootVerticalAccelerationMetersPerSecondSquared: 9.81,

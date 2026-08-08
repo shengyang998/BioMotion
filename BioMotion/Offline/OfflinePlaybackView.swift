@@ -109,25 +109,41 @@ struct OfflinePlaybackView: View {
                 }
             }
 
-            // On a running clip the gait panel replaces the posture findings:
-            // the findings are single-pose measurements and a runner has no
-            // single pose.
+            // On an ANALYSED running clip the gait panel replaces the posture
+            // findings: the findings are single-pose measurements and a runner
+            // has no single pose.
             //
-            // `.notAttempted` deliberately does NOT count — the gait pass runs
-            // on every clip and declines most of them, so treating "declined"
-            // as "this is a gait screen" would have replaced the findings panel
-            // on every photo in the app with a sentence about strides.
-            if let gait = resultStore.gait, gait.isAboutRunning {
+            // A REFUSAL does not replace them. `isAboutRunning` is true for
+            // every refusal including `.notRunning`, so a side-on squat or a
+            // walking clip was routed to a panel headed "Running, but withheld"
+            // and lost the measurements it could actually support. The refusal
+            // is now a banner above the findings, not a replacement for them.
+            //
+            // `.notAttempted` shows nothing at all — the gait pass runs on every
+            // clip and declines most of them, so treating "declined" as "this is
+            // a gait screen" would have put a sentence about strides in front of
+            // every photo in the app.
+            if let gait = resultStore.gait, gait.replacesPostureFindings {
                 GaitReportPanel(outcome: gait, summary: loadSummary)
                     .frame(maxHeight: 320)
-            } else if let findings {
+            } else {
+                // The refusal banner is NOT conditional on there being findings
+                // to sit above: `findings` is nil for a frame the body-size gate
+                // rejected, and a user scrubbed onto one of those would otherwise
+                // be told nothing at all about why the run was not measured.
+                if let gait = resultStore.gait, case .refused = gait {
+                    GaitReportPanel(outcome: gait, summary: nil)
+                        .frame(maxHeight: 150)
+                }
                 // Findings sit between the image and the transport controls, with
                 // no tap needed: for a single imported photo — the common case —
                 // this is the whole reason the user opened the app, so it must be
                 // on screen the moment the frame resolves. Capped so the photo
                 // above it stays visible; the panel scrolls inside its own bounds.
-                PostureFindingsPanel(report: findings)
-                    .frame(maxHeight: 300)
+                if let findings {
+                    PostureFindingsPanel(report: findings)
+                        .frame(maxHeight: 300)
+                }
             }
 
             controls

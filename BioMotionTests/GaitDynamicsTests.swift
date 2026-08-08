@@ -203,9 +203,9 @@ final class GaitDynamicsTests: XCTestCase {
         let dt = 1.0 / 30.0
         let plan = NimbleEngine.GaitPlan(
             frames: [.init(timestamp: 1.0, verticalForceInBodyWeights: 2.0, contactSide: 1,
-                           derivativeWindowInsideContact: true),
+                           contactIndex: 0, derivativeWindowInsideContact: true),
                      .init(timestamp: 1.0 + dt, verticalForceInBodyWeights: 1.0, contactSide: 1,
-                           derivativeWindowInsideContact: true)],
+                           contactIndex: 0, derivativeWindowInsideContact: true)],
             filterTaps: 5, sampleInterval: dt)
         XCTAssertNotNil(plan.entry(at: 1.0))
         XCTAssertNotNil(plan.entry(at: 1.0 + dt * 0.4))
@@ -356,7 +356,7 @@ final class GaitDynamicsTests: XCTestCase {
         // the UI reads, so this is the shipping behaviour and not a parallel path.
         let refused = Self.summary(maxResidual: violent)
         XCTAssertFalse(refused.residualGatePassed)
-        XCTAssertFalse(refused.permits(differencePercent: 90),
+        XCTAssertFalse(refused.permits(Self.load(left: 0.9, right: 0.1)),
                        "a failed gate must withhold even a huge left/right difference")
         XCTAssertTrue(refused.claim(for: Self.load(left: 0.9, right: 0.1)).contains("Withheld"))
     }
@@ -632,6 +632,10 @@ final class GaitDynamicsTests: XCTestCase {
         var entries: [NimbleEngine.GaitPlan.Frame] = []
         let contact = 5, flight = 4
         let cycle = contact + flight
+        // One index per foot-strike, so the summary groups by the plan's own
+        // boundaries rather than by which frames happened to arrive.
+        var contactIndex = -1
+        var wasInContact = false
         for i in sequence.indices {
             let t = Double(i) * dt
             let phaseIndex = i % (2 * cycle)
@@ -639,14 +643,19 @@ final class GaitDynamicsTests: XCTestCase {
             let inSecond = phaseIndex >= cycle && phaseIndex < cycle + contact
             if inFirst || inSecond {
                 let k = inFirst ? phaseIndex : phaseIndex - cycle
+                if !wasInContact { contactIndex += 1 }
+                wasInContact = true
                 let phase = (Double(k) + 0.5) / Double(contact)
                 entries.append(.init(timestamp: t,
                                      verticalForceInBodyWeights: peakBW * sin(.pi * phase),
                                      contactSide: inFirst ? -1 : 1,
+                                     contactIndex: contactIndex,
                                      derivativeWindowInsideContact:
                                         k >= taps / 2 && k <= contact - 1 - taps / 2))
             } else {
+                wasInContact = false
                 entries.append(.init(timestamp: t, verticalForceInBodyWeights: 0, contactSide: 0,
+                                     contactIndex: -1,
                                      derivativeWindowInsideContact: false))
             }
         }
@@ -656,27 +665,31 @@ final class GaitDynamicsTests: XCTestCase {
     private static func load(left: Double, right: Double) -> GaitLoadSummary.MuscleLoad {
         .init(id: "glmax1", displayName: "Glute max (upper)",
               leftLoad: left, rightLoad: right, leftContacts: 5, rightContacts: 5,
-              isSaturated: false)
+              isSaturated: false, isAtActivationFloor: false,
+              samplingUncertaintyPercent: 0, pathIsModelled: false)
     }
 
     private static func summary(maxResidual: Double) -> GaitLoadSummary {
-        GaitLoadSummary(ranked: [load(left: 0.9, right: 0.1)],
+        GaitLoadSummary(muscles: [load(left: 0.9, right: 0.1)],
                         resolvableAsymmetryPercent: 10,
                         quantisationFloorPercent: 10,
                         strideRepeatabilityPercent: 7,
                         measuredStrideRepeatabilityPercent: 7,
                         strideRepeatabilityBoundPercent: 5.56,
                         peakForceIsSharedBetweenLegs: true,
+                        contactTimeContributionPercent: 0,
                         framesPerContact: 5,
                         framesPerSecond: 30,
                         stanceFrameCount: 10,
                         claimedStanceFrameCount: 10,
                         saturatedMuscleCount: 0,
+                        flooredMuscleCount: 0,
                         maxVerticalForceResidualInBodyWeights: maxResidual,
                         medianVerticalForceResidualInBodyWeights: maxResidual,
                         residualFrameCount: 10,
                         residualGatePassed: maxResidual <= NimbleEngine.maxGaitForceResidualInBodyWeights,
                         contactDetectorDisagreements: 0,
+                        solverSawDoubleContactCount: 0,
                         framesWithoutACleanDerivativeWindow: 0,
                         leftStanceFrameCount: 5,
                         rightStanceFrameCount: 5,

@@ -38,6 +38,7 @@ final class GaitContactAgreementTests: XCTestCase {
             solvedVerticalForceInBodyWeights: 2.5,
             residualInBodyWeights: 0.0,
             contactSide: side,
+            contactIndex: 0,
             solverSawLeftContact: left,
             solverSawRightContact: right,
             rootVerticalAccelerationMetersPerSecondSquared: 14.7,
@@ -118,24 +119,31 @@ final class GaitContactAgreementTests: XCTestCase {
                        "every double contact must be counted as a disagreement")
         XCTAssertEqual(corruptedSummary.stanceFrameCount, 0,
                        "and none of them may contribute a peak")
-        XCTAssertTrue(corruptedSummary.ranked.isEmpty,
-                      "with no usable frame there is no ranked load to publish")
+        XCTAssertTrue(corruptedSummary.muscles.isEmpty,
+                      "with no usable frame there is no load to publish")
         XCTAssertFalse(corruptedSummary.contactGatePassed)
         XCTAssertFalse(corruptedSummary.arePublishable)
 
         // The control: the same frames with a clean single contact do publish,
         // and publish the symmetric truth. Without this the test above would
         // also pass if the gate refused everything.
+        // Six alternating contacts — three per side. Two per side is the
+        // minimum the contact gate accepts, because a side's step-to-step
+        // scatter cannot be estimated from one sample.
         let clean = (0..<6).map { i in
             Self.frame(id: i, side: i.isMultiple(of: 2) ? -1 : 1, activations: honest,
-                       solverLeft: i.isMultiple(of: 2), solverRight: !i.isMultiple(of: 2))
+                       solverLeft: i.isMultiple(of: 2), solverRight: !i.isMultiple(of: 2),
+                       contact: i)
         }
         let cleanSummary = try XCTUnwrap(
             GaitLoadSummary.make(frames: clean, report: report,
                                  framesPerSecond: 30, filterTaps: 5))
         XCTAssertEqual(cleanSummary.contactDetectorDisagreements, 0)
         XCTAssertEqual(cleanSummary.stanceFrameCount, 6)
-        let load = try XCTUnwrap(cleanSummary.ranked.first)
+        XCTAssertTrue(cleanSummary.arePublishable,
+                      "the control has to publish, or the assertion above passes for the "
+                      + "wrong reason: \(cleanSummary.withheldReason ?? "-")")
+        let load = try XCTUnwrap(cleanSummary.muscles.first)
         XCTAssertEqual(load.leftLoad, 0.60, accuracy: 1e-12)
         XCTAssertEqual(load.rightLoad, 0.60, accuracy: 1e-12)
         XCTAssertEqual(load.differencePercent, 0, accuracy: 1e-9,
@@ -148,7 +156,8 @@ final class GaitContactAgreementTests: XCTestCase {
         let fabricated = GaitLoadSummary.MuscleLoad(
             id: "glmax1", displayName: "Glute max (upper)",
             leftLoad: 0.30, rightLoad: 0.60, leftContacts: 6, rightContacts: 6,
-            isSaturated: false)
+            isSaturated: false, isAtActivationFloor: false,
+            samplingUncertaintyPercent: 0, pathIsModelled: false)
         print("GAIT-METRIC double_contact_fabricated_asymmetry_percent="
               + "\(fabricated.differencePercent) "
               + "resolution_percent=\(cleanSummary.resolvableAsymmetryPercent)")
@@ -286,15 +295,20 @@ final class GaitContactAgreementTests: XCTestCase {
         return report
     }
 
+    /// - Parameter contact: which foot-strike this frame belongs to. Frames
+    ///   sharing a value are ONE contact, whatever order they arrive in — the
+    ///   plan's own index, not adjacency. Defaults to one contact per side.
     private static func frame(id: Int, side: Int,
                               activations: [String: Double],
                               solverLeft: Bool,
-                              solverRight: Bool) -> OfflineResultStore.FrameResult {
+                              solverRight: Bool,
+                              contact: Int? = nil) -> OfflineResultStore.FrameResult {
         let outcome = NimbleEngine.GaitFrameOutcome(
             modelledVerticalForceInBodyWeights: 2.5,
             solvedVerticalForceInBodyWeights: 2.5,
             residualInBodyWeights: 0.0,
             contactSide: side,
+            contactIndex: contact ?? (side < 0 ? 0 : 1),
             solverSawLeftContact: solverLeft,
             solverSawRightContact: solverRight,
             rootVerticalAccelerationMetersPerSecondSquared: 14.7,

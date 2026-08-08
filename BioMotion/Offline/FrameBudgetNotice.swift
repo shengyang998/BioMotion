@@ -27,6 +27,18 @@ import Foundation
 /// `FrameSource`'s rules, free to drift from them. Instead the question is asked
 /// of the RESULT: if the run used every frame the clip has, the clip was the
 /// limit; otherwise a budget was. Both quantities are already in hand.
+///
+/// # …and the same defect then survived on the other sampling mode
+///
+/// The budget sentence above is written for `.nativeWindow`, which CENTRES its
+/// window. `.fps` has no analysis window at all — its cap is `maxFramesPerRun` —
+/// and it starts at `t = 0` and steps forward, so its frames come from the
+/// BEGINNING. A ten-minute clip sampled at 2 fps was told 120 frames "from the
+/// middle" were used when they cover the first minute, so a user whose held pose
+/// is at minute four trims the wrong end. It survived because
+/// `OfflineDisclosureTests` asserted only `notice?.cause` for that mode while
+/// both native-window tests asserted the message. Hence
+/// `.budgetStoppedTheSparseScan`, and a test that reads the string.
 struct FrameBudgetNotice: Equatable {
 
     enum Cause: Equatable {
@@ -34,8 +46,19 @@ struct FrameBudgetNotice: Equatable {
         /// was used, and the lever is a longer clip.
         case clipShorterThanTheWindow
         /// The clip is longer than what the frame budget covers at this rate, so
-        /// the middle of it was analysed.
+        /// the MIDDLE of it was analysed. `.nativeWindow` only — that mode
+        /// centres its window (`FrameSource.sampleTimestamps`).
         case budgetCappedTheWindow
+        /// **The sparse `.fps` scan ran out of frame budget.** A separate case
+        /// because both halves of the sentence above are false for it: there is
+        /// no analysis window in this mode (the cap is `maxFramesPerRun`), and
+        /// the samples start at `t = 0` and step forward, so they come from the
+        /// BEGINNING of the clip and not the middle.
+        ///
+        /// The one-sentence version of why this is its own case: a user whose
+        /// held pose is at minute four of a ten-minute clip was told the middle
+        /// had been analysed, and trimmed the wrong end.
+        case budgetStoppedTheSparseScan
     }
 
     let cause: Cause
@@ -60,6 +83,11 @@ struct FrameBudgetNotice: Equatable {
             return String(format: "This clip is longer than the analysis window, so %d frames "
                           + "(%.1f s) from the middle were used.",
                           framesUsed, analysedSeconds)
+        case .budgetStoppedTheSparseScan:
+            return String(format: "This clip is longer than one run's %d-frame budget at this "
+                          + "sampling rate, so only the FIRST %d frames (%.1f s of %.1f s) were "
+                          + "analysed. Trim the clip to the part you want measured.",
+                          FrameSource.maxFramesPerRun, framesUsed, analysedSeconds, clipSeconds)
         }
     }
 
@@ -75,23 +103,27 @@ struct FrameBudgetNotice: Equatable {
                      wasTruncated: Bool) -> FrameBudgetNotice? {
         guard wasTruncated, !timestamps.isEmpty, duration > 0 else { return nil }
         let step: Double
+        /// Which "a budget bound this" sentence applies. The two sampling modes
+        /// take their frames from different parts of the clip, so one sentence
+        /// cannot serve both.
+        let budgetCause: Cause
         switch mode {
         case .singleFrame:
             return nil
         case .fps(let fps):
             guard fps > 0 else { return nil }
             step = 1.0 / fps
+            budgetCause = .budgetStoppedTheSparseScan
         case .nativeWindow:
             step = 1.0 / FrameSource.sanitisedFrameRate(nominalFrameRate)
+            budgetCause = .budgetCappedTheWindow
         }
         // How many samples this clip could yield at this step at all. If the run
         // used them all, the CLIP was the limit; anything less and a budget was.
         let clipCapacity = Swift.max(1, Int(duration / step))
         let span = (timestamps.last ?? 0) - (timestamps.first ?? 0) + step
         return FrameBudgetNotice(
-            cause: timestamps.count >= clipCapacity
-                ? .clipShorterThanTheWindow
-                : .budgetCappedTheWindow,
+            cause: timestamps.count >= clipCapacity ? .clipShorterThanTheWindow : budgetCause,
             framesUsed: timestamps.count,
             analysedSeconds: span,
             clipSeconds: duration)

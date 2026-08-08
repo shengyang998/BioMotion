@@ -137,6 +137,25 @@ NS_ASSUME_NONNULL_BEGIN
 /// (different) visual floor instead of inheriting the optimizer's bound.
 @property (nonatomic, readonly) double minActivation;
 
+/// Upper bound imposed on every activation. A muscle at this value is CLIPPED:
+/// the QP has stopped being linear in the external load for it, which is the
+/// one place a common ground-force scale stops cancelling out of a ratio.
+@property (class, nonatomic, readonly) double maxActivation;
+
+/// **How far below `maxActivation` a genuinely clipped activation can come
+/// back.** Test for saturation with `a >= maxActivation - this`, never with a
+/// finer band.
+///
+/// OSQP terminates on a tolerance, not at the exact vertex: the primal check is
+/// `eps_abs + eps_rel·max(‖Ax‖∞, ‖z‖∞)`, and with `A = I` and `z ∈ [aMin, 1]`
+/// that is `eps_abs + eps_rel`. This solver also accepts
+/// `OSQP_SOLVED_INACCURATE`, which is the same check with both tolerances
+/// multiplied by ten, and it runs with `polishing = false` so nothing snaps the
+/// solution back onto the active set. Published rather than restated at the
+/// call site because a display layer that hard-codes its own band drifts from
+/// the solver the moment either tolerance moves.
+@property (class, nonatomic, readonly) double saturationActivationTolerance;
+
 /// Coordinates the loaded model declares `<locked>true</locked>`. Empty until
 /// `loadMusclesFromOsimPath:` succeeds. 54 for `FullBody.osim`.
 @property (nonatomic, readonly) NSArray<NSString *> *lockedCoordinateNames;

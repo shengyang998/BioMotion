@@ -39,7 +39,7 @@ final class GaitLoadStatisticTests: XCTestCase {
 
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
                                                    framesPerSecond: 30, filterTaps: 5))
-        let load = try XCTUnwrap(s.ranked.first { $0.id == "glmax1" })
+        let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         // A → 0.80 (middle of three), B → 0.25 (mean of the two middle).
         XCTAssertEqual(load.leftLoad, 0.5 * (0.80 + 0.25), accuracy: 1e-12)
         XCTAssertEqual(load.rightLoad, 0.50, accuracy: 1e-12)
@@ -53,16 +53,12 @@ final class GaitLoadStatisticTests: XCTestCase {
         XCTAssertEqual(load.differencePercent, 100 * (0.525 - 0.50) / 0.5125, accuracy: 1e-9)
     }
 
-    /// A contact is a maximal run of consecutive stance frames on ONE side.
-    /// Flight — or any frame the plan does not call stance — ends it, and so
-    /// does the other foot landing.
-    func testAContactEndsAtFlightAndAtTheOtherFoot() throws {
+    /// **A contact is the one the stance detector found, carried down on every
+    /// frame as `GaitFrameOutcome.contactIndex`** — not a maximal run of
+    /// consecutive stance frames in whatever array reached the summary.
+    func testAContactIsThePlansContactAndNotARunOfFramesThatArrived() throws {
         let report = try Self.usableReport(bundle: bundle)
-        // Two left contacts separated by a flight frame: 0.20 and 0.60. If the
-        // flight frame did not split them, the statistic would take the middle
-        // of one four-frame run (0.20, 0.20, 0.60, 0.60) → 0.40, which is the
-        // same number by symmetry, so the values are chosen to differ: one run
-        // of [0.10, 0.20, 0.90] vs two runs of [0.10] and [0.20, 0.90].
+        // Two left contacts separated by a flight frame: 0.10, and [0.20, 0.90].
         let split = Self.contact(side: -1, firstID: 0, values: [0.10])
             + [Self.flight(id: 5)]
             + Self.contact(side: -1, firstID: 10, values: [0.20, 0.90])
@@ -70,15 +66,81 @@ final class GaitLoadStatisticTests: XCTestCase {
             + Self.contact(side: 1, firstID: 30, values: [0.50])
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: split, report: report,
                                                    framesPerSecond: 30, filterTaps: 5))
-        let load = try XCTUnwrap(s.ranked.first { $0.id == "glmax1" })
+        let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         // Two left contacts: 0.10, and mean(0.20, 0.90) = 0.55 → 0.325.
         XCTAssertEqual(load.leftLoad, 0.5 * (0.10 + 0.55), accuracy: 1e-12)
         XCTAssertEqual(load.leftContacts, 2)
-        // The two right runs are adjacent in time but on the same side with no
-        // frame between them, so they ARE one contact — the array is the only
-        // record of the boundary and it says they are contiguous.
-        XCTAssertEqual(load.rightContacts, 1)
-        XCTAssertEqual(s.rightContactCount, 1)
+        // Two right foot-strikes with nothing between them in the array are
+        // still TWO contacts, because the plan says so. Adjacency in the array
+        // is not evidence about the ground.
+        XCTAssertEqual(load.rightContacts, 2)
+        XCTAssertEqual(s.rightContactCount, 2)
+    }
+
+    /// **The defect adjacency-based grouping caused, and the fix, on the
+    /// shipping path.**
+    ///
+    /// A solver-side hole — an IK that hit `guard ikResult.converged`, a
+    /// `submitAndWait` that timed out, a solve that was never routed — leaves no
+    /// gap in the frame numbering and raises no `.droppedSamplesInContact`,
+    /// because the BODY frame was fine. Recovering contacts as maximal runs of
+    /// consecutive stance frames therefore split one physical contact into two,
+    /// each contributing its own off-mid-stance sample, and the pair was
+    /// double-weighted in the mean.
+    ///
+    /// Here one seven-frame left contact loses its middle frame. Grouped by the
+    /// plan's index it stays ONE contact and contributes ONE sample; grouped by
+    /// adjacency it would be two, and the left figure would move by more than
+    /// the clip's own publication floor.
+    func testASolverHoleInsideAContactDoesNotSplitItInTwo() throws {
+        let report = try Self.usableReport(bundle: bundle)
+        let values = [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70]
+        var left = Self.contact(side: -1, firstID: 0, values: values)
+        left.remove(at: 3)                       // the solve for this frame never arrived
+        let frames = left
+            + Self.contact(side: -1, firstID: 10, values: values)
+            + Self.contact(side: 1, firstID: 20, values: values)
+            + Self.contact(side: 1, firstID: 30, values: values)
+
+        let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
+                                                   framesPerSecond: 30, filterTaps: 5))
+        let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
+        XCTAssertEqual(load.leftContacts, 2, "one hole is not a second foot-strike")
+        XCTAssertEqual(s.leftContactCount, 2)
+
+        // The holed contact keeps six samples, so its contribution is the mean
+        // of the two middle ones: (0.30 + 0.50)/2 = 0.40. The intact one gives
+        // 0.40 as well, so the side reads 0.40 — exactly the right leg's value.
+        XCTAssertEqual(load.leftLoad, 0.40, accuracy: 1e-12)
+        XCTAssertEqual(load.rightLoad, 0.40, accuracy: 1e-12)
+        XCTAssertEqual(load.differencePercent, 0, accuracy: 1e-9)
+
+        // What adjacency grouping would have produced, computed here so the
+        // size of the removed error is a number and not an adjective: runs of
+        // [0.10,0.20,0.30] → 0.20 and [0.50,0.60,0.70] → 0.60, i.e. three left
+        // "contacts" (0.20, 0.60, 0.40) averaging 0.40 — the same by symmetry —
+        // but with the count inflated to 3. The asymmetric case is the one that
+        // bites, so drop the last frame too: runs [0.10,0.20,0.30] → 0.20 and
+        // [0.50,0.60] → 0.55.
+        var lopsided = Self.contact(side: -1, firstID: 0, values: values)
+        lopsided.removeLast()
+        lopsided.remove(at: 3)
+        let asymmetric = try XCTUnwrap(GaitLoadSummary.make(
+            frames: lopsided + Self.contact(side: -1, firstID: 10, values: values)
+                + Self.contact(side: 1, firstID: 20, values: values)
+                + Self.contact(side: 1, firstID: 30, values: values),
+            report: report, framesPerSecond: 30, filterTaps: 5))
+        let asymmetricLoad = try XCTUnwrap(asymmetric.muscles.first { $0.id == "glmax1" })
+        XCTAssertEqual(asymmetricLoad.leftContacts, 2)
+        // Five surviving samples → the middle one, 0.30. Side mean (0.30+0.40)/2.
+        XCTAssertEqual(asymmetricLoad.leftLoad, 0.35, accuracy: 1e-12)
+        let adjacencySplitLeft = (0.20 + 0.55 + 0.40) / 3
+        let fabricated = 100 * abs(adjacencySplitLeft - asymmetricLoad.leftLoad)
+            / (0.5 * (adjacencySplitLeft + asymmetricLoad.leftLoad))
+        print("GAIT-METRIC solver_hole_contact_split fabricated_percent=\(fabricated) "
+              + "resolution_percent=\(s.resolvableAsymmetryPercent)")
+        XCTAssertGreaterThan(fabricated, 0,
+                             "adjacency grouping really does move the number it reports")
     }
 
     // MARK: - The bias, measured
@@ -113,7 +175,7 @@ final class GaitLoadStatisticTests: XCTestCase {
             }
             let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
                                                        framesPerSecond: 30, filterTaps: 5))
-            let load = try XCTUnwrap(s.ranked.first { $0.id == "glmax1" })
+            let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
             XCTAssertEqual(load.leftContacts, 6)
             XCTAssertEqual(load.rightContacts, 6)
             newPercents.append(load.differencePercent)
@@ -182,7 +244,7 @@ final class GaitLoadStatisticTests: XCTestCase {
             }
             let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
                                                        framesPerSecond: 30, filterTaps: 5))
-            newPercents.append(try XCTUnwrap(s.ranked.first { $0.id == "glmax1" }).differencePercent)
+            newPercents.append(try XCTUnwrap(s.muscles.first { $0.id == "glmax1" }).differencePercent)
             let old = Self.oldMaxStatistic(frames)
             oldPercents.append(200 * (old.left - old.right) / (old.left + old.right))
         }
@@ -201,9 +263,9 @@ final class GaitLoadStatisticTests: XCTestCase {
             + Self.contact(side: 1, firstID: 30, values: [0.50, 0.50])
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: stronger, report: report,
                                                    framesPerSecond: 30, filterTaps: 5))
-        let load = try XCTUnwrap(s.ranked.first { $0.id == "glmax1" })
+        let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         XCTAssertEqual(load.differencePercent, 100 * 0.30 / 0.65, accuracy: 1e-9)
-        XCTAssertTrue(s.permits(differencePercent: load.differencePercent))
+        XCTAssertTrue(s.permits(load))
         XCTAssertTrue(s.claim(for: load).contains("harder on the left"))
     }
 
@@ -292,20 +354,26 @@ final class GaitLoadStatisticTests: XCTestCase {
     /// One contact: consecutive stance frames on `side`, each carrying its own
     /// activation for both `glmax1_l` and `glmax1_r` (only the stance side's is
     /// ever credited, which is itself asserted elsewhere).
+    /// A contact's identity is the PLAN's index, not adjacency in the array —
+    /// so one call here is one foot-strike however its frames are interleaved,
+    /// and a solver-side hole in the middle of it cannot split it in two.
+    /// `firstID / 10` because the callers space their ids ten apart.
     static func contact(side: Int, firstID: Int, values: [Double])
         -> [OfflineResultStore.FrameResult] {
         values.enumerated().map { offset, value in
-            stanceFrame(id: firstID + offset, side: side, activation: value)
+            stanceFrame(id: firstID + offset, side: side, activation: value,
+                        contactIndex: firstID / 10)
         }
     }
 
-    static func stanceFrame(id: Int, side: Int, activation: Double)
+    static func stanceFrame(id: Int, side: Int, activation: Double, contactIndex: Int = 0)
         -> OfflineResultStore.FrameResult {
         let outcome = NimbleEngine.GaitFrameOutcome(
             modelledVerticalForceInBodyWeights: 2.0,
             solvedVerticalForceInBodyWeights: 2.1,
             residualInBodyWeights: 0.1,
             contactSide: side,
+            contactIndex: contactIndex,
             solverSawLeftContact: side < 0,
             solverSawRightContact: side > 0,
             rootVerticalAccelerationMetersPerSecondSquared: 9.81,

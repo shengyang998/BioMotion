@@ -294,6 +294,23 @@ static CoordinateClasses parseCoordinateClassesFromOsim(const std::string& path)
 // This is an optimizer bound, not a display choice; see `minActivation`.
 static const double kMuscleMinActivation = 0.02;
 
+// Upper bound on every activation: a muscle cannot be more than fully active.
+static const double kMuscleMaxActivation = 1.0;
+
+// OSQP's termination tolerances, hoisted out of the solve so the DISPLAY layer
+// can read the same numbers rather than keep a second copy of them.
+//
+// OSQP stops when the primal residual is below
+// `eps_abs + eps_rel · max(‖Ax‖∞, ‖z‖∞)`. Here `A = I` and `z ∈ [aMin, 1]`, so
+// that bound is `eps_abs + eps_rel·1`. And `OSQP_SOLVED_INACCURATE` — which
+// this solver accepts as converged — is the same check with BOTH tolerances
+// multiplied by 10. So an activation genuinely sitting on the `a ≤ 1` bound can
+// come back as low as `1 − 10·(eps_abs + eps_rel)`, and any test for saturation
+// finer than that misses it. See `saturationActivationTolerance`.
+static const double kOSQPEpsAbs = 1e-3;
+static const double kOSQPEpsRel = 1e-3;
+static const double kOSQPInaccurateToleranceFactor = 10.0;
+
 // A coordinate enters the torque-matching penalty only if some muscle has a
 // moment arm above this about it (metres for a rotational coordinate,
 // dimensionless for a translational one).
@@ -442,6 +459,15 @@ static const double kMomentArmFloor = 1e-6;
 
 - (double)minActivation {
     return kMuscleMinActivation;
+}
+
++ (double)maxActivation {
+    return kMuscleMaxActivation;
+}
+
++ (double)saturationActivationTolerance {
+    return kOSQPInaccurateToleranceFactor
+         * (kOSQPEpsAbs + kOSQPEpsRel * kMuscleMaxActivation);
 }
 
 // MARK: - Production solver (real moment arms, soft equality, real Hill)
@@ -695,7 +721,7 @@ static const double kMomentArmFloor = 1e-6;
     // stance muscles maintain ~2-5% activation at rest, so zero activation
     // is not a state a loaded muscle occupies.
     const double aMin = kMuscleMinActivation;
-    const double aMax = 1.0;
+    const double aMax = kMuscleMaxActivation;
 
     // --- 3. OSQP setup or in-place update (workspace reuse) ---
     //
@@ -763,8 +789,8 @@ static const double kMomentArmFloor = 1e-6;
         OSQPSettings settings;
         osqp_set_default_settings(&settings);
         settings.max_iter = 200;
-        settings.eps_abs = 1e-3;
-        settings.eps_rel = 1e-3;
+        settings.eps_abs = kOSQPEpsAbs;
+        settings.eps_rel = kOSQPEpsRel;
         settings.verbose = false;
         settings.warm_starting = true;
         settings.polishing = false;

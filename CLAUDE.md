@@ -109,6 +109,42 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   IKConvergence 91 s, ShoulderRotMask 51 s, StaticHold 48 s, MuscleQPUnits 41 s,
   IKSolverInternals 33 s), so "the kill landed just after X" is almost always a statement about the
   schedule, not about X.
+- **A moment arm the loader itself calls wrong is a PER-MUSCLE SCALE — so it cancels out of a
+  LEFT/RIGHT ratio and does not cancel between two muscles.** `MomentArmComputer` logs
+  `⚠ 76 PathWrap references on 66 muscles are NOT modelled` for `FullBody.osim`, and that set is
+  essentially every lower-limb muscle a runner would recognise. Measured on the shipping OSQP solver
+  (`MomentArmErrorCancellationTests`, bilateral rig with a known analytic answer): scaling one
+  muscle's moment arm by 0.6 on BOTH sides moves the worst left/right figure by **1.04 pp** — less
+  than the **1.52 pp** the solver's own `eps = 1e-3` tolerance already moves it — while moving the
+  cross-muscle key by **+80.9 %** and reordering the list. Scaling ONE side moves the left/right
+  figure by **23.8 pp**. So a per-muscle ranking is not a measurement in this build and is not
+  published; the left/right comparison is, and it depends on the two sides being modelled
+  identically.
+- **`isSaturated` is not "the QP is in its linear regime" — the box has TWO bounds.** The
+  cancellation above holds only in the interior. A muscle whose modelled path has the wrong sign is
+  not rescaled: the QP refuses to recruit it and pins it to `a ≥ aMin = 0.02` on BOTH sides, where it
+  reads **exactly 0.0 %** left/right against a true 22.7 % — a finding destroyed and presented as
+  "even". This cost a wrong test assumption on 2026-08-08. Read `isAtActivationFloor` beside
+  `isSaturated`, and derive both thresholds from `MuscleSolver.saturationActivationTolerance`
+  (0.02, i.e. `10·(eps_abs + eps_rel)` because `OSQP_SOLVED_INACCURATE` is accepted) — a 0.999 test
+  for the upper bound missed every clipped muscle, since a clipped activation returns as low as 0.98.
+- **An UNBIASED statistic is not a CERTAIN one, and the gate only ever saw the bias.** The
+  2026-08-08 repair moved the load statistic's mean asymmetry on a symmetric runner from +8.07 % to
+  −0.19 %, and the publication gate (`resolvableAsymmetryPercent`) is built from frames per contact
+  and the stride period — timing only. The per-clip STANDARD DEVIATION is **9.47 %** against
+  `video_012`'s 10.145 % floor, so roughly one displayed muscle in four still read a false finding
+  with every clip-level gate green. Any claim must clear `MuscleLoad.samplingUncertaintyPercent`
+  (Student-t, not 1.96 — a clip has 4-6 contacts a side) as well as the timing floor.
+- **"A contact is a run of consecutive stance frames" is false downstream of the solver.** A
+  non-converged IK, a `submitAndWait` timeout or an unrouted solve leaves NO gap in the frame
+  numbering and raises no `.droppedSamplesInContact`, because the body frame was fine — so
+  adjacency-based grouping split one foot-strike into two and double-weighted the pair. Measured
+  **9.09 %** of fabricated left-side asymmetry from one missing frame in a seven-frame contact.
+  Contact identity is `GaitFrameOutcome.contactIndex`, carried from `GaitReport.stance`.
+- **`GaitOutcome.isAboutRunning` is true for `.notRunning`.** It is true for everything except
+  `.notAttempted`, so a refusal whose entire meaning is "this is not running" counted as "this is a
+  gait screen" and took the posture findings off the screen with it. Ask
+  `replacesPostureFindings`, which is true only for `.analysed`.
 - **`NimbleIDResult.jointTorques.head<6>()` is a hard-coded zero.** `Skeleton.cpp:10365` does `setZero()` unconditionally and its assert is compiled out of the Release static libs. `rootResidualNorm` is now a real linear-momentum residual in **newtons** — a frame-consistency check, never a balance check.
 - **`NimbleIKResult.error` is nimble's LOSS** (`Σ wᵢ²‖Δpᵢ‖²`, in m²), not an RMS and not in metres. Read `markerRMSMeters` for accuracy. `NimbleEngine.IKOutput` exposes both as `ikLossSquaredMeters` and `markerRMSMeters` for the same reason.
 - **"Torque decreases distally" is not a law.** In single-leg stance the free leg decreases distally while the loaded leg increases toward the contact. Both are correct.

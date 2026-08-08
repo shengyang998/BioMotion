@@ -233,6 +233,66 @@ final class MomentArmTests: XCTestCase {
 
     // MARK: - Helpers
 
+    /// **The display layer's list of muscles whose paths are not modelled has to
+    /// be the parser's list.**
+    ///
+    /// `GaitLoadSummary.musclesWithUnmodelledPaths` decides what the running
+    /// screen says about which numbers share a scale, and it is a hard-coded
+    /// table. This checks it against what `MomentArmComputer` actually reports
+    /// after parsing each shipped model, so swapping or editing a model cannot
+    /// leave the screen quietly claiming a comparison it no longer supports.
+    ///
+    /// The table is written in the names that reach the display layer, i.e.
+    /// after `NimbleEngine.displayMuscleAliases` merges `vaslat140 → vaslat` and
+    /// `gaslat140 → gaslat`, so the same mapping is applied here.
+    func testTheUnmodelledWrapTableMatchesTheShippedModels() throws {
+        /// Solver muscle names → display base names, side stripped.
+        func displayBases(_ names: [String]) -> Set<String> {
+            Set(names.compactMap { name -> String? in
+                let display = NimbleEngine.displayMuscleAliases[name] ?? name
+                return GaitLoadSummary.split(display)?.base
+            })
+        }
+
+        var union: Set<String> = []
+        for model in ["FullBody", "Rajagopal2016"] {
+            guard let path = osimPath(named: model) else {
+                throw XCTSkip("\(model).osim is not reachable from the test bundle")
+            }
+            let bridge = NimbleBridge()
+            let computer = MomentArmComputer()
+            XCTAssertTrue(bridge.loadModel(fromPath: path), "\(model) failed to load")
+            XCTAssertTrue(computer.parseMusclePaths(fromOsimPath: path, from: bridge))
+            let report = computer.fidelityReport
+            let wrapped = report.musclesWithUnmodelledPathWraps
+            XCTAssertFalse(wrapped.isEmpty, "\(model) reports wrap references but names none")
+            XCTAssertLessThanOrEqual(wrapped.count, report.unmodelledPathWraps,
+                                     "a muscle may carry more than one wrap, never fewer")
+            let bases = displayBases(wrapped)
+            print("MOMENT-ARM-METRIC \(model) wrapped_muscles=\(wrapped.count) "
+                  + "wrap_refs=\(report.unmodelledPathWraps) bases=\(bases.sorted())")
+            XCTAssertTrue(bases.isSubset(of: GaitLoadSummary.musclesWithUnmodelledPaths),
+                          "\(model) wraps muscles the display table does not list: "
+                          + "\(bases.subtracting(GaitLoadSummary.musclesWithUnmodelledPaths).sorted())")
+            union.formUnion(bases)
+        }
+        XCTAssertEqual(union, GaitLoadSummary.musclesWithUnmodelledPaths,
+                       "the table must be exactly the union over the shipped models — extra "
+                       + "entries would flag a muscle whose path IS modelled: "
+                       + "\(GaitLoadSummary.musclesWithUnmodelledPaths.subtracting(union).sorted())")
+
+        // The named list has to include the muscles the running screen actually
+        // shows, or the flag would be decoration.
+        for base in ["glmax1", "glmax2", "recfem", "vasmed", "vaslat", "gasmed", "gaslat",
+                     "semimem", "semiten", "psoas", "iliacus", "addlong", "grac"] {
+            XCTAssertTrue(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base), base)
+        }
+        // And exclude ones that really are modelled, so it is not a blanket.
+        for base in ["soleus", "tibant", "tibpost", "glmed1", "glmin1", "tfl", "sart", "piri"] {
+            XCTAssertFalse(GaitLoadSummary.musclesWithUnmodelledPaths.contains(base), base)
+        }
+    }
+
     private func osimPath(named name: String) -> String? {
         for bundle in [Bundle(for: type(of: self)), Bundle.main] {
             if let p = bundle.path(forResource: name, ofType: "osim") { return p }
