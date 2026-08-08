@@ -676,6 +676,8 @@ final class GaitDynamicsTests: XCTestCase {
                         strideRepeatabilityPercent: 7,
                         measuredStrideRepeatabilityPercent: 7,
                         strideRepeatabilityBoundPercent: 5.56,
+                        contactClaimFloorPercent: 10,
+                        contactSamplingUncertaintyPercent: 0,
                         peakForceIsSharedBetweenLegs: true,
                         contactTimeContributionPercent: 0,
                         framesPerContact: 5,

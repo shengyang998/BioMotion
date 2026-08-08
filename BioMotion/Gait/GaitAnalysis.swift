@@ -1,9 +1,21 @@
 import Foundation
 
-/// What this clip can and cannot resolve, computed from the clip itself.
+/// What this clip's TIMING can and cannot resolve, computed from the clip
+/// itself.
 ///
-/// The binding limit on every left/right claim this product makes is FRAMES PER
-/// CONTACT, not the detector and not the pose model. A contact sampled `N` times
+/// ⚠️ **This is one of the two terms in a contact-time claim's floor, not the
+/// floor.** This doc used to open "the binding limit on every left/right claim
+/// this product makes", and the code agreed with it: `asymmetryClaim` published
+/// on `resolvableAsymmetryPercent` alone. That is quantisation plus STRIDE-PERIOD
+/// scatter, and the claim is a difference of two means of CONTACT DURATIONS —
+/// a different variance, measured separately in `contactVariationPercent` and
+/// never consumed. The other term is `GaitReport.contactSamplingUncertaintyPercent`
+/// and on a 30 fps clip it is the one that binds. Read
+/// `GaitReport.contactClaimFloorPercent`; nothing may gate a claim on this type
+/// alone.
+///
+/// The limit this type does describe is FRAMES PER CONTACT, not the detector and
+/// not the pose model. A contact sampled `N` times
 /// has its two edges located to ±½ frame each, so its duration carries a
 /// quantisation error of about `0.5/N` in relative terms. Measured against
 /// stride-to-stride scatter across the three pinned clips the two track each
@@ -33,8 +45,17 @@ import Foundation
 /// 2.56 % (touchdown gaps 19,19,20,19,19). Feeding the first number in made the
 /// app tell a `video_015` user that the runner was the limit and a faster
 /// camera could not help — on the best of the three clips, and wrongly, because
-/// at 6.18 samples per contact one frame IS 16 % and most of that 11 % was the
+/// at 6.18 samples per contact one frame IS 16 % and part of that 11 % was the
 /// quantisation being counted a second time.
+///
+/// ⚠️ **"Most of it" was wrong, and it is the sentence that cost the contact
+/// claim its floor.** Two independent ±½-frame edges give a duration sd of
+/// `√(2/12) = 0.408` frames, i.e. `0.408/6.1833 = 6.60 %` of CV on `video_015` —
+/// against 11.144 % measured. In quadrature that leaves 8.98 pp, so **65 % of
+/// the contact-duration VARIANCE is not edge jitter** and no quantisation floor
+/// counts it. That residue is the runner varying his own contact times, it is
+/// the dominant term in this claim's uncertainty, and a faster camera does not
+/// move it.
 ///
 /// The published resolution changes accordingly: `video_015` 11.14 % → 8.09 %
 /// (its floor), `video_013` 43.28 % → 18.91 %, `video_012` unchanged at
@@ -104,8 +125,11 @@ struct GaitResolution: Equatable {
         resolvableAsymmetryPercent = Swift.max(floor, repeatability)
     }
 
-    /// The gate every asymmetry claim has to pass. A difference finer than the
-    /// clip's own resolution is refused rather than shown with a caveat.
+    /// **The TIMING half of the gate**, not the gate. A difference finer than
+    /// the clip's own timing resolution is refused rather than shown with a
+    /// caveat — but clearing this is necessary, not sufficient, and callers that
+    /// treat it as sufficient are the defect this comment exists to prevent.
+    /// The whole gate is `GaitReport.contactClaimFloorPercent`.
     func permitsAsymmetryClaim(ofPercent percent: Double) -> Bool {
         percent.isFinite && abs(percent) >= resolvableAsymmetryPercent
     }
@@ -303,6 +327,11 @@ struct GaitReport {
     enum Flag: Equatable, CustomStringConvertible {
         case droppedFrames(count: Int, largestGapInFrames: Int)
         case edgeClippedRunsExcluded(count: Int)
+        /// `resolvablePercent` is the WHOLE floor — `contactClaimFloorPercent`,
+        /// not `resolution.resolvableAsymmetryPercent`. The two used to be the
+        /// same number and the flag was built from the second, so once the
+        /// sampling term was added a clip could be refused a claim and get no
+        /// flag either, i.e. lose the claim silently.
         case asymmetryBelowResolution(measuredPercent: Double, resolvablePercent: Double)
 
         var description: String {
@@ -339,6 +368,14 @@ struct GaitReport {
     let edgeClipped: Bilateral<[StanceInterval]>
     let contactSeconds: Bilateral<Double>
     let contactFrames: Bilateral<Double>
+    /// The coefficient of variation of each side's own contact DURATIONS.
+    ///
+    /// ⚠️ Until 2026-08-08 this had **no consumer at all** outside its own
+    /// assignment: it was measured, printed in tests, and never gated on, while
+    /// the claim it belongs to was gated on stride-period scatter instead. It
+    /// is now an input to `contactSamplingUncertaintyPercent` through the raw
+    /// per-contact durations, and is kept in its own right because the CV is
+    /// what a reader checks the half-width against.
     let contactVariationPercent: Bilateral<Double>
     let strideSeconds: Bilateral<Double>
     let strideVariationPercent: Bilateral<Double>
@@ -418,21 +455,71 @@ struct GaitReport {
     var isUsable: Bool { refusals.isEmpty }
 
     /// The measured left/right difference in contact time, as a percentage of
-    /// their mean. **Only meaningful when `resolution.permitsAsymmetryClaim`
-    /// says so** — read `asymmetryClaim` instead of this.
+    /// their mean. **Only meaningful when it clears `contactClaimFloorPercent`**
+    /// — read `asymmetryClaim` instead of this.
     var contactAsymmetryPercent: Double {
         let m = 0.5 * (contactSeconds.left + contactSeconds.right)
         guard m > 0 else { return .nan }
         return 100 * (contactSeconds.left - contactSeconds.right) / m
     }
 
+    /// **The sampling half-width of `contactAsymmetryPercent` itself**, from the
+    /// per-contact durations this clip actually measured.
+    ///
+    /// # This is the term the gate was missing, and it is the whole gate now
+    ///
+    /// `contactAsymmetryPercent` is the difference of two MEANS OF CONTACT
+    /// DURATIONS. `resolution.resolvableAsymmetryPercent` is built from
+    /// `50/framesPerContact` and the STRIDE-PERIOD scatter — quantisation plus a
+    /// different quantity's variance. Neither input is the contact durations'
+    /// own scatter, which this file measured all along as
+    /// `contactVariationPercent` and never consumed. `video_015` scatters
+    /// **11.144 %** against its **8.086 %** floor, and half-frame edge
+    /// quantisation accounts for only about 6.6 pp of that, so the comment that
+    /// used to justify the omission ("mostly detector edge jitter, which the
+    /// quantisation floor already counts") was falsified by this file's own
+    /// measurement.
+    ///
+    /// **Measured cost of the omission:** a perfectly symmetric runner, 5
+    /// contacts a side, contact durations scattering at 11.144 %, published a
+    /// left/right contact-time finding on **25.3 %** of clips. With this term in
+    /// the floor it publishes on **2.4 %**, against a 5 % nominal — conservative
+    /// because the degrees of freedom are `min(n_L, n_R) − 1` rather than
+    /// Welch's, which lands at 4.0 %. All three figures are pinned in
+    /// `GaitContactClaimTests`.
+    ///
+    /// **This is ONE comparison, so there is no family correction.** The
+    /// contact-time claim is the only left/right statement the running screen
+    /// makes; if a second timing claim is ever published beside it, this becomes
+    /// a family of two and the α has to be split — the machinery is already
+    /// there (`MeanDifferenceUncertainty.halfWidthPercent(comparisons:)`), and
+    /// the muscle path is what it was added for.
+    ///
+    /// Infinite when either side has fewer than two contacts. A single contact
+    /// has no scatter, and the report already refuses below three.
+    let contactSamplingUncertaintyPercent: Double
+
+    /// **Everything a contact-time claim has to clear**: the larger of what the
+    /// clip's timing resolves and what its own contact-to-contact scatter
+    /// resolves. Both are lower bounds on a distinguishable difference, so the
+    /// binding one is the larger.
+    ///
+    /// On a 30 fps clip with 5-6 contacts a side the second term is the one that
+    /// binds — measured, the timing floor is the larger on 0.5 % of symmetric
+    /// draws at `video_015`'s configuration. Which means the app's remaining
+    /// claim is limited by the RUNNER's step-to-step variability, not by the
+    /// camera, and no frame rate moves it.
+    var contactClaimFloorPercent: Double {
+        Swift.max(resolution.resolvableAsymmetryPercent, contactSamplingUncertaintyPercent)
+    }
+
     /// The user-facing answer to "am I even?" — `nil` when the clip cannot
     /// resolve the difference it measured, which is the honest answer far more
     /// often than not at 30 fps.
     var asymmetryClaim: Double? {
-        guard isUsable,
-              resolution.permitsAsymmetryClaim(ofPercent: contactAsymmetryPercent) else { return nil }
-        return contactAsymmetryPercent
+        let d = contactAsymmetryPercent
+        guard isUsable, d.isFinite, abs(d) >= contactClaimFloorPercent else { return nil }
+        return d
     }
 
     /// Samples in the shortest and the median contact of this clip. Measured:
@@ -489,6 +576,11 @@ enum GaitAnalysis {
     /// Both falsifiers are compared against one sampling interval: it is the
     /// finest disagreement this clip could have detected at all.
     static let maximumDisagreementFrames = 1.0
+    /// The two-sided error rate the CONTACT-TIME claim's interval is built at.
+    /// One comparison, so this is both the per-comparison and the family-wise
+    /// rate; the muscle path's `GaitLoadSummary.familyWiseErrorRate` is the same
+    /// number split across ~175.
+    static let contactClaimErrorRate = 0.05
 
     static func analyse(frames: [BodyFrame]) throws -> GaitReport {
         let signal = try GaitSignal.build(frames: frames)
@@ -540,15 +632,30 @@ enum GaitAnalysis {
         let force = GaitForceModel(contactSeconds: meanContact, flightSeconds: modelledFlight)
 
         let framesPerContact = 0.5 * (contactFrames.left + contactFrames.right)
-        // The RUNNER's own repeatability is the scatter of the STRIDE PERIOD.
-        // Contact-duration scatter is mostly detector edge jitter, which the
-        // quantisation floor already counts — see `GaitResolution`.
+        // The RESOLUTION's repeatability input is the scatter of the STRIDE
+        // PERIOD: it answers "how repeatable is this runner's cycle", which is
+        // what a peak-force model closed over a stride needs.
+        //
+        // ⚠️ It is NOT what the contact-time CLAIM needs, and a comment here
+        // used to say it was ("contact-duration scatter is mostly detector edge
+        // jitter, which the quantisation floor already counts"). It is not:
+        // `video_015` scatters 11.144 % of contact duration against an 8.086 %
+        // quantisation floor. The claim's own scatter is computed below, from
+        // the contact durations themselves — see
+        // `GaitReport.contactSamplingUncertaintyPercent`.
         let repeatability = largerFinite(strideVariation.left, strideVariation.right)
         let resolution = GaitResolution(framesPerContact: framesPerContact,
                                         strideRepeatabilityPercent: repeatability,
                                         stridePeriodFrames: detected.stridePeriodFrames)
         let steadiness = GaitSteadiness(strideVariationPercent: strideVariation,
                                         stridePeriodFrames: detected.stridePeriodFrames)
+        // The claim's OWN scatter, from the durations that make it up. Same
+        // estimator as the muscle path's `samplingUncertaintyPercent`, at
+        // `comparisons: 1` because this is the screen's only left/right claim.
+        let contactUncertainty = MeanDifferenceUncertainty.halfWidthPercent(
+            left: detected.stance.left.map(\.seconds),
+            right: detected.stance.right.map(\.seconds),
+            alpha: contactClaimErrorRate)
         // Each leg's peak is closed on ITS OWN contact time — but only where
         // this clip can resolve the contact difference that separates them. See
         // `GaitForceModel.perLegPeaksInBodyWeights`.
@@ -624,9 +731,10 @@ enum GaitAnalysis {
             flags.append(.edgeClippedRunsExcluded(count: clippedCount))
         }
         let asymmetry = 100 * (contactSeconds.left - contactSeconds.right) / meanContact
-        if refusals.isEmpty, !resolution.permitsAsymmetryClaim(ofPercent: asymmetry) {
+        let claimFloor = Swift.max(resolution.resolvableAsymmetryPercent, contactUncertainty)
+        if refusals.isEmpty, !(asymmetry.isFinite && abs(asymmetry) >= claimFloor) {
             flags.append(.asymmetryBelowResolution(measuredPercent: asymmetry,
-                                                   resolvablePercent: resolution.resolvableAsymmetryPercent))
+                                                   resolvablePercent: claimFloor))
         }
 
         return GaitReport(frameCount: signal.frameCount,
@@ -657,6 +765,7 @@ enum GaitAnalysis {
                           steadiness: steadiness,
                           refusals: refusals,
                           flags: flags,
+                          contactSamplingUncertaintyPercent: contactUncertainty,
                           shortestContactSamples: shortestContact,
                           medianContactSamples: medianContact,
                           derivativeFilterTaps: taps)

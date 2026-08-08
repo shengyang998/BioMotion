@@ -1076,7 +1076,13 @@ final class GaitLoadSummaryTests: XCTestCase {
                         residual: Double = 0.1,
                         residualFrameCount: Int = 10,
                         uncertainty: Double = 0,
-                        contactTimeContribution: Double = 0) -> GaitLoadSummary {
+                        contactTimeContribution: Double = 0,
+                        // Defaults to "the contact durations added nothing", so
+                        // every string assertion written before the contact
+                        // sampling term existed still exercises the branch it
+                        // was written for. Tests that care pass them.
+                        contactClaimFloor: Double? = nil,
+                        contactUncertainty: Double = 0) -> GaitLoadSummary {
         GaitLoadSummary(
             muscles: [
                 .init(id: "glmax1", displayName: "Glute max (upper)",
@@ -1093,6 +1099,8 @@ final class GaitLoadSummaryTests: XCTestCase {
             strideRepeatabilityPercent: repeatability,
             measuredStrideRepeatabilityPercent: measuredRepeatability ?? repeatability,
             strideRepeatabilityBoundPercent: repeatabilityBound,
+            contactClaimFloorPercent: contactClaimFloor ?? resolvable,
+            contactSamplingUncertaintyPercent: contactUncertainty,
             peakForceIsSharedBetweenLegs: sharedPeak,
             contactTimeContributionPercent: contactTimeContribution,
             framesPerContact: framesPerContact,

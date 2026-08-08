@@ -27,8 +27,35 @@ final class NimbleEngine: ObservableObject {
     @Published var totalMassKg: Double = 0
     /// Left/right foot vertical GRF as fractions of body weight (0-1.x typically).
     /// Sum should be ~1.0 in steady stance, 0 in flight, 1.0-3.0 during impact.
+    ///
+    /// # ⚠️ The SUM is a check. The SPLIT is not a measurement — do not draw it
+    ///
+    /// The near-CoP solver's constraint fixes `F_L,y + F_R,y` exactly, and
+    /// CLAUDE.md's readings-that-lie list records the consequence: "a 50/50
+    /// split between the feet and a 100/0 split give the identical residual".
+    /// Nothing downstream examines the split. Where it comes from is worse than
+    /// unchecked — `NimbleBridge.mm:1499` seeds the solve with a hardcoded
+    /// 50/50 wrench guess whenever both feet are down, so the displayed split is
+    /// that prior plus whatever the near-CoP objective drifted it to. STATUS
+    /// sizes the double-support indeterminacy at ±18 pp with a PERFECTLY known
+    /// CoM, against a ~10 pp clinically meaningful threshold: the instrument
+    /// cannot resolve the effect it would be measuring.
+    ///
+    /// The live screen printed `%.2f|%.2f` from these two for the whole life of
+    /// the project, with a green/amber indicator keyed to the sum. It shows the
+    /// sum now, with `footLoadSplitIsNotMeasuredNote` beside it.
     @Published var leftFootLoadFraction: Double = 0
     @Published var rightFootLoadFraction: Double = 0
+
+    /// The caption that makes the GRF badge a diagnostic instead of a finding.
+    ///
+    /// Rendered under the badge on exactly the same condition that draws it, so
+    /// the number cannot appear without it — the live path already shipped one
+    /// picture whose caption had a different gate.
+    static let footLoadSplitIsNotMeasuredNote =
+        "GRF sum is a consistency check on the contact solve, not a balance score. How the load "
+        + "splits between your two feet is NOT measured: standing on both feet, that split is "
+        + "not determined by the pose at all, and the solver starts from a 50/50 assumption."
     /// Linear-momentum residual after the GRF solve, in NEWTONS per kg:
     /// ‖ΣF_contact + m·g − m·a_com‖ / m. A correct pipeline reports ~0 every
     /// frame — it is a consistency check on the contact-wrench readback, not a

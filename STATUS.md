@@ -58,6 +58,21 @@ biggest links were **not** where the effort had been going.
   all**, so the renderer cannot re-acquire a magnitude; the capsules are the fixed 26-muscle
   anatomical set in one constant colour; both screens carry `MuscleOverlay.anatomyOnlyNote`. See
   [Sixth round](#sixth-round-the-same-claim-in-colour-2026-08-08).
+- **The SURVIVING claim was gated on the wrong variance too, and its honest floor is roughly
+  DOUBLE what shipped** (2026-08-08). `asymmetryClaim` published on
+  `resolution.resolvableAsymmetryPercent` — quantisation plus STRIDE-PERIOD scatter — while the
+  statistic is the difference of two means of ~5 CONTACT DURATIONS, whose own scatter was measured
+  (`contactVariationPercent`) and consumed by nothing. Monte-Carlo, symmetric runner, 5 contacts a
+  side at `video_015`'s measured 11.144 % contact scatter: the shipped gate published a left/right
+  finding on **25.3 % of clips**; with the sampling half-width in the floor it publishes on 2.4 %
+  against a 5 % nominal. **No pinned clip publishes a contact-time claim, and none did before
+  either** — `video_012` 2.90 % against a 10.145 % floor, `video_015` −0.54 % against a floor that
+  rises 8.086 → **16.464 %**, `video_013` refused. The claim can honestly find a 20-25 % left/right
+  contact difference on a 4 s clip and not much finer. The LIVE screen's undisclosed "L/R load"
+  badge is a `GRF sum` diagnostic now, the muscle block states the model's permanent limit before
+  any clip refusal, and the solver's saturated/floored counts are no longer printed as facts about
+  a body. See
+  [Seventh round](#seventh-round-the-surviving-claim-was-gated-on-the-wrong-variance-too-2026-08-08).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -141,7 +156,7 @@ optimizer bound by colormap appearance; dead `maxMuscleForceAtState` and the leg
 | | 2026-08-06 start | after Phase 0 | 2026-08-07 | 2026-08-08 |
 |---|---|---|---|---|
 | Test target | **did not compile** (`MomentArmTests.swift:124` used a stale signature) | builds | builds | builds |
-| Tests | 0 runnable | 88 total, 87 pass | 219 total, 219 pass | **380 total, 380 pass, 0 crash-restarts** |
+| Tests | 0 runnable | 88 total, 87 pass | 219 total, 219 pass | **398 total, 398 pass, 0 crash-restarts** |
 
 `E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
 fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
@@ -160,22 +175,23 @@ a private device, refuses to start if another run holds it, and prints the only 
 decide whether a run means anything: the executed count, the restart count, and the final verdict.
 It exits non-zero unless all three are right.
 
-Per class (2026-08-08, 371 total): GaitLoadSummaryTests 38 · PostureFindingsTests 26 ·
+Per class (2026-08-08, 398 total): GaitLoadSummaryTests 39 · PostureFindingsTests 26 ·
 NimbleBridgeTests 22 · GaitClipFixtureTests / GaitReportTests 20 · StaticHoldTests 19 ·
 TRCExporterTests 14 · IKConvergenceTests / MuscleSolverTests 13 · MomentArmTests 12 ·
 BodyPlausibilityTests / CalibrationTests / GaitDynamicsTests / NativeWindowSamplingTests 11 ·
-MotionRecorderTests 10 · BodyJointTests / DOFMaskTests / DerivativeWindowTests /
-GaitStanceDetectionTests 9 · OfflineDisclosureTests / IKSolverInternalsTests 8 ·
-StaticEquilibriumBenchmarkTests 7 · GaitLoadStatisticTests / IKDriftDiagnosticsTests /
-MuscleQPUnitsTests / RootTranslationTests 6 · MomentArmErrorCancellationTests /
-ShoulderRotMaskTests 5 · DecodedFrameMemoryTests / GaitConstantSensitivityTests /
-GaitContactAgreementTests / PostureFindingsRealPoseTests 4 · BodyFrameOrientationTests /
-PersonBoxTests / ShoulderRotObservabilityTests 3 · OfflineMuscleChainTests /
-OfflineOrchestrationTests 1.
+MomentArmErrorCancellationTests / MotionRecorderTests 10 · BodyJointTests / DOFMaskTests /
+DerivativeWindowTests / GaitStanceDetectionTests 9 · GaitContactClaimTests /
+OfflineDisclosureTests / IKSolverInternalsTests 8 · StaticEquilibriumBenchmarkTests 7 ·
+GaitLoadStatisticTests / IKDriftDiagnosticsTests / MuscleQPUnitsTests / RootTranslationTests 6 ·
+ClaimSurfaceTests / MuscleOverlayClaimTests / ShoulderRotMaskTests 5 · DecodedFrameMemoryTests /
+GaitConstantSensitivityTests / GaitContactAgreementTests / PostureFindingsRealPoseTests 4 ·
+BodyFrameOrientationTests / GaitClaimSurvivalTests / PersonBoxTests /
+ShoulderRotObservabilityTests 3 · OfflineMuscleChainTests / OfflineOrchestrationTests 1.
 
-Six suites carry 95% of the 668 s wall clock: GaitDynamicsTests 369 s · IKConvergenceTests 91 s ·
+Six suites carry 93% of the 707 s wall clock: GaitDynamicsTests 369 s · IKConvergenceTests 91 s ·
 ShoulderRotMaskTests 51 s · StaticHoldTests 48 s · MuscleQPUnitsTests 41 s ·
-IKSolverInternalsTests 33 s. That distribution matters for reading a crash report — see below.
+GaitContactClaimTests 39 s · IKSolverInternalsTests 33 s. That distribution matters for reading a
+crash report — see below.
 
 ### The commit gate: what green means, and what it does not (2026-08-08)
 
@@ -2126,6 +2142,185 @@ statement the screen makes that is imprecise, not one that is false in a way a u
 * It did not touch `GaitLoadSummary`, the QP, the moment arms or any test that measures them.
 * The parent repo's `labs/BioMotion` gitlink is still behind.
 
+### Seventh round: the surviving claim was gated on the wrong variance too (2026-08-08)
+
+Two reviewers left **1 blocker, 3 majors, 9 minors** on the state
+[round six](#sixth-round-the-same-claim-in-colour-2026-08-08) shipped. The blocker and the three
+majors are closed here; the nine minors are recorded below rather than fixed.
+
+#### The blocker: the contact-time floor did not contain the contact-time scatter
+
+`asymmetryClaim` published when `|contactAsymmetryPercent| >= resolution.resolvableAsymmetryPercent`,
+and that floor is `max(50/framesPerContact, max(stride-period CV, 100/stridePeriodFrames))` —
+quantisation plus STRIDE-PERIOD scatter. The statistic is the difference of two MEANS OF CONTACT
+DURATIONS. Contact-duration scatter was measured all along (`contactVariationPercent`) and consumed
+by **nothing**.
+
+This is exactly the defect that killed the muscle claim one round earlier, on the claim that
+survived it. `CLAUDE.md` already carried the principle — "An UNBIASED statistic is not a CERTAIN one,
+and the gate only ever saw the bias" — and the same arithmetic had not been applied to the survivor.
+
+**Measured, 20 000 seeded trials, a perfectly symmetric runner at `video_015`'s own configuration**
+(5 contacts a side, contact durations scattering at its measured 11.144 %, timing floor 8.086 %):
+
+| gate | publishes a left/right contact finding on |
+|---|---|
+| timing floor alone (what shipped) | **25.3 % of clips** |
+| `max(timing floor, sampling half-width)` | **2.4 % of clips** |
+| the same with Welch–Satterthwaite df | 4.0 % |
+
+against a 5 % nominal. The shipped rule uses `min(n_L, n_R) − 1` degrees of freedom, matching the
+muscle path, which is why it lands *below* nominal rather than at it — the conservatism is measured
+and pinned rather than assumed
+(`GaitContactClaimTests.testTheDegreesOfFreedomChoiceIsConservativeNotNominal`).
+
+The in-code justification for the omission was falsified by this repo's own numbers. `GaitResolution`
+said contact-duration scatter is "mostly detector edge jitter, which the quantisation floor already
+counts". Two independent ±½-frame edges give a duration sd of `√(2/12) = 0.408` frames, i.e.
+`0.408 / 6.1833 = 6.60 %` of CV on `video_015` against **11.144 %** measured — in quadrature, **65 %
+of the variance is not edge jitter**, and no frame rate removes it.
+
+**What ships**
+
+* `GaitReport.contactSamplingUncertaintyPercent` — the Student-t half-width of the difference of two
+  means, from the clip's own per-contact durations, at `α = 0.05` with ONE comparison (this is the
+  screen's only left/right claim; if a second is ever added it becomes a family and the α splits).
+* `GaitReport.contactClaimFloorPercent = max(timing floor, that half-width)`. `asymmetryClaim` and
+  the `.asymmetryBelowResolution` flag are both built from it, so a clip cannot lose its claim
+  without also getting the sentence that explains why.
+* **One estimator, two consumers.** `MeanDifferenceUncertainty.halfWidthPercent` is new
+  (`BioMotion/Gait/`), `GaitLoadSummary.samplingUncertaintyPercent` delegates to it, and `StudentT`
+  moved there with it. The muscle path's numbers are unchanged — `GaitLoadSummaryTests`' t-multiplier
+  table and `GaitClaimSurvivalTests` pass untouched.
+* The panel prints each side's contact scatter beside its mean (`Left 206 ms ±11 %`), names both
+  terms of the floor when it refuses, and quotes the floor when it publishes. `resolutionSentence`
+  no longer says the timing figure is what the comparison has to clear, and **withholds the
+  frame-rate promise entirely when the contact scatter is what binds** — a faster camera cannot
+  deliver a floor it does not set.
+
+#### ⚠️ THE DELIVERABLE IS EMPTY ON ALL THREE PINNED CLIPS, AND WAS BEFORE THIS CHANGE
+
+| clip | measured | timing floor | sampling half-width | claim floor | claim |
+|---|---|---|---|---|---|
+| `video_012` | 2.90 % | 10.145 % | 7.451 % | 10.145 % | **none** |
+| `video_015` | −0.54 % | 8.086 % | **16.464 %** | **16.464 %** | **none** |
+| `video_013` | 5.57 % | 18.909 % | 62.031 % | 62.031 % | refused (unusable) |
+
+The correction takes no claim away from these clips — their measured asymmetries were far under even
+the old floor. What it removes is the one-in-four false finding on clips this fixture does not
+contain, and what it reveals is that `video_015`'s honest floor is **double** what the screen was
+printing: 16.5 %, not 8.1 %.
+
+**The sensitivity, stated so the owner can judge the product.** At 5 contacts a side and this
+runner's contact scatter, the corrected gate publishes a true 10 % asymmetry on 14 % of clips, a
+true 25 % on 76 % and a true 40 % on 99 %. So the remaining claim can honestly find a **20-25 %**
+left/right contact difference on a 4 s clip and not much finer. Longer clips are the only lever that
+moves it and it moves as `1/√n`: the term is `t·√(s²_L/n_L + s²_R/n_R)`, so halving the floor needs
+roughly four times the contacts — about 20 a side, i.e. a ~16 s steady run.
+
+#### M1 — the LIVE screen's undisclosed left/right load claim: it is a diagnostic now
+
+`ContentView` drew `AccuracyBadge(label: "L/R load", value: "0.62|0.38")` with no caption and no
+floor, on the app's most-used screen, in the exact framing the offline path spent four rounds
+retiring. Its `good` indicator was `abs(total − 1.0) < 0.3` — keyed to the SUM, which the near-CoP
+solver constrains exactly — while the VALUE showed the split, which nothing checks.
+
+**Decision: show the sum, do not show the split.** There is no discipline that could have rescued
+it. `NimbleBridge.mm:1499` seeds the solve with a hardcoded 50/50 wrench guess whenever both feet are
+down, and this file already records the double-support split as statically indeterminate at ±18 pp
+with a perfectly known CoM against a ~10 pp clinically meaningful threshold. It is an artifact with a
+plausible shape. The badge reads `GRF sum 1.00 BW`, its label and its indicator now measure the same
+quantity, and `NimbleEngine.footLoadSplitIsNotMeasuredNote` sits under it on **the same `if`** as the
+badges — the live path had already shipped one picture whose caption had a different gate.
+
+#### M2 — a data-gate failure sold a re-shoot that cannot help
+
+`loadBlock` was an `if/else` on `withheldReason`, so a clip whose DATA gate failed saw only the data
+refusal — "…film a steadier, straighter run" — under a header reading "Muscle by muscle: not shown,
+and why". Every lever in `withheldReason` was written when passing that gate produced eight rows;
+since `perMuscleLeftRightClaimIsSupported = false`, passing it produces a paragraph. The user
+re-films, the gate passes, and the answer changes to "it was never possible".
+
+`perMuscleRetirementSentence` now prints on **every** branch, the data refusal prints after it as a
+separate statement about a separate subject, and `muscleRowsUnaffectedByRefilmingSentence` scopes the
+lever — it is nil the moment a per-muscle claim is supported again, so it cannot outlive its truth.
+
+#### M3 — solver stopping points printed as facts about the user's muscles
+
+The honesty block printed "N muscle(s) reached full effort and M sat on the resting-tone floor, out
+of S pairs the solver kept between the two". Three defects in one sentence, and **fixing it closes
+minors 2 and 4 as well**:
+
+1. N and M measure where OSQP stopped. This file's own λ sweep at FIXED inputs reads 19, 11, 22, 18,
+   20 saturated and 219, 189, 344, 170, 282 floored, with no trend.
+2. The trailing disclaimer covered the ACTIVATION at the bound, not the COUNT — and the count was the
+   part rendered as a number about a body.
+3. The denominator cannot contain its numerators: `screenedComparisonCount` is built with
+   `guard !saturatedBases.contains(base), !flooredBases.contains(base)`, disjoint from both by
+   construction. `ClaimSurfaceTests.testTheFlooredCountCanExceedTheScreenedCountSoTheyAreNotAFraction`
+   constructs it: floored 3, screened 1.
+
+What replaces it states the mechanism, which is stable and checkable: this QP answers with a bound
+for most of 520 redundant muscles, and a bound is not a measurement. No count of the reader's muscles
+appears. `saturatedMuscleCount` / `flooredMuscleCount` remain as data with their own tests.
+
+#### Tests
+
+`GaitContactClaimTests` (8) and `ClaimSurfaceTests` (5) are new; `tools/run_tests.sh` `MIN_TESTS`
+385 → 398. The Monte-Carlo runs on contact DURATIONS rather than synthetic `BodyFrame`s on purpose —
+the question is the gate's error rate at a stated scatter, and putting a stance detector in front of
+it would make the answer a statement about the detector. `testThePublishedHalfWidthIsTheShared…` is
+what ties that arithmetic back to what `GaitReport` publishes, on the real clips.
+
+#### The nine minors, recorded rather than fixed
+
+Numbered as the reviews numbered them. Minors 2 and 4 are the M3 sentence and are closed by that fix;
+the rest stand.
+
+1. **`GaitLoadSummary.framesPerSecond` is the video track's NOMINAL rate** even when the sparse
+   `.fps` sampler ran (`OfflineSessionRunner.swift:645-646`, passed at `:307`), so `resolutionSentence`
+   can name a rate the run did not use and `frameRateNeeded` scales its advice off the same base. A
+   10 fps run reaching `.analysed` prints "…2.0 frames per contact at 30 fps", which is internally
+   inconsistent. The refusal path is correct — it reads `report.framesPerSecond`, derived from real
+   timestamps. **Third round in a row this has been deferred.**
+2. **The honesty block's three counts in one sentence with a denominator excluding its numerators.**
+   CLOSED by M3 — the sentence no longer prints any of the three.
+3. **`peakForceRegimeSentence` still ends "subtract it, do not take a share of it".** The unit is
+   right and the fact is true of the internals, but there is no per-muscle figure on screen to
+   subtract it from. The imperative implies a number that is not there.
+4. **The same sentence's "out of N pairs" could not contain its numerators.** CLOSED by M3.
+5. **`FrameBudgetNotice.budgetCappedTheWindow` names the wrong cause at 240 fps** — exactly the rate
+   `resolutionSentence` is allowed to recommend. A 4.0 s clip against a 4.0 s window wants 960
+   samples, `maxNativeWindowFrames` caps at 601, and the banner says the clip "is longer than the
+   analysis window" when the window is 4.0 s. Acting on it (trimming to 2 s) trips
+   `clipShorterThanTheWindow` and the run is refused for too few contacts.
+6. **A doc comment cites a test suite that does not exist.** `GaitLoadSummary.tMultiplier`'s doc names
+   `MuscleUncertaintyTests`; `grep` returns only that line. The guarantee holds under another name
+   (`GaitLoadSummaryTests.testTheUncertaintyMultiplierIsStudentTAtSmallCounts`), so the citation is
+   stale rather than empty — but a reader greping for the named guard finds nothing.
+7. **Two code comments assert the identity `CLAUDE.md` exists to deny.** `NimbleEngine.swift:1195` and
+   the derivation at `:263-268` say the residual's difference is `‖a_artic‖/g`. The shipping
+   computation is `leftFootForce.y + rightFootForce.y` — one axis. The user-facing sentence gets this
+   right (`verticalFalsifierSentence`); only the internals still say the retired thing.
+8. **On the LIVE screen the anatomy capsules and their caption have different gates.**
+   `SkeletonARView.updateUIView` draws capsules on `isTracking && showMuscles`;
+   `MuscleOverlay.anatomyOnlyNote` shows on `nimble.isModelLoaded && …`. If the .osim fails to load,
+   26 muscle-shaped capsules are drawn with no sentence. The offline path deliberately collapsed this
+   into one property; the live path was left with two. (The new GRF caption in M1 does NOT repeat
+   this — it is inside the same `if` as its badge.)
+9. **An analysed clip with no muscle output loses the CONTACT-TIME finding too.** `GaitReportPanel`'s
+   `.analysed` branch with `summary == nil` renders one sentence and skips `resolutionBlock` and
+   `contactBlock`, both of which read from `report` and need no muscle solve — while
+   `replacesPostureFindings` has already taken the posture findings off the screen. **This is the one
+   to fix first next round:** it is the surviving claim, computed and in hand, dropped on a branch.
+
+#### What this round did NOT do
+
+* No device run, no TestFlight upload, `CURRENT_PROJECT_VERSION` not bumped.
+* It did not touch the QP, the moment arms, the solver or any test that measures them.
+* It did not re-open any retired claim. The contact-time claim is narrower than it was, not wider.
+* The parent repo's `labs/BioMotion` gitlink is still behind.
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -2460,6 +2655,26 @@ arms must differ in the work that PRECEDES the mask.
     Every survival number in `GaitClaimSurvivalTests` sweeps it because of that. Real per-muscle
     contact-to-contact scatter needs a clip that reaches the muscle solver — i.e. the 20-marker
     offline path on real video, not the five-joint gait fixtures.
+
+### Newly opened by the 2026-08-08 contact-claim repair (seventh round)
+
+20. **Restore the contact-time finding on `.analysed` with no summary.** `GaitReportPanel`'s
+    `summary == nil` branch skips `resolutionBlock` and `contactBlock`, both of which read from
+    `report` and need no muscle solve, while `replacesPostureFindings` has already removed the
+    posture findings. So a clean run whose QP failed on every stance frame shows one sentence and
+    nothing else — the product's only surviving claim, computed and in hand, dropped on a branch.
+    **First thing to fix next round.** (Minor 9.)
+21. **Longer clips are the only lever on the contact-claim floor, and it is `1/√n`.** The sampling
+    half-width is `t·√(s²_L/n_L + s²_R/n_R)`, so halving `video_015`'s 16.5 % needs ~4× the
+    contacts — about 20 a side, a ~16 s steady run against the current 4 s window and the 601-frame
+    `maxNativeWindowFrames` budget. Whether the window can be extended without breaking the frame
+    budget, and what that costs in memory, is unmeasured. This is the only route to a claim finer
+    than ~20 % that does not need a new statistic.
+22. **The eight remaining minors** are listed in
+    [Seventh round](#seventh-round-the-surviving-claim-was-gated-on-the-wrong-variance-too-2026-08-08)
+    (minors 1, 3, 5, 6, 7, 8, 9 plus the round-six list). Minor 1 — `framesPerSecond` being the
+    NOMINAL rate under the sparse sampler — has now been deferred three rounds running and is the
+    only one that puts a wrong number in front of the user.
 
 ### Newly opened by the cam_t measurement (2026-08-07)
 

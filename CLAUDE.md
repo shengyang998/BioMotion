@@ -63,6 +63,8 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK → SG → ID → moment arms → muscle on a background queue; owns `staticHoldGating` |
 | `BioMotion/Offline/` | The photo/video path: `FrameSource` (decode), `SAM3DPoseEstimator` (Core ML), `MHRRetarget` (127 MHR joints → 20 markers + the body-size gate), `OfflineSessionRunner` (batch + SG edge padding), `OfflineResultStore`, `OfflinePlaybackView` / `PhotoOverlayView` |
 | `BioMotion/Findings/` | `PostureFindings` + `PostureFindingsPanel` — kinematics-only posture measurements with view gating. **No clinical thresholds, no verdicts.** |
+| `BioMotion/Gait/GaitAnalysis.swift` | Pure frames-in/report-out gait pass. Owns the product's ONE surviving left/right claim: `contactClaimFloorPercent` = `max(timing resolution, contact-duration sampling half-width)`. Never gate a claim on `GaitResolution` alone |
+| `BioMotion/Gait/MeanDifferenceUncertainty.swift` | The single Student-t half-width of a difference of two means, plus `StudentT`. Both the contact-time claim and the muscle path call it — a third claim must not reimplement it |
 | `BioMotion/CoreML/`, `BioMotion/AssetPack/` | Core ML model loading and the Apple-Hosted Background Asset that delivers it (the 1.3 GiB model is NOT in the app bundle; archived payload is 8 MB) |
 | `BioMotion/Recording/TRCExporter.swift` | OpenSim .trc export |
 | `BioMotion/App/CalibrationView.swift` | T-pose calibration with live camera (live path only — the offline path scales from one frame's chain sums, see `MHRRetarget.segmentScaleMarkers`) |
@@ -156,6 +158,42 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   `isSaturated`, and derive both thresholds from `MuscleSolver.saturationActivationTolerance`
   (0.02, i.e. `10·(eps_abs + eps_rel)` because `OSQP_SOLVED_INACCURATE` is accepted) — a 0.999 test
   for the upper bound missed every clipped muscle, since a clipped activation returns as low as 0.98.
+- **A FLOOR BUILT FROM TIMING DOES NOT CONTAIN A DIFFERENCE OF TWO MEANS — and this cost the
+  product's LAST claim its gate, one round after the same defect cost it the muscle claim.**
+  `asymmetryClaim` published whenever `|contactAsymmetryPercent| >=
+  resolution.resolvableAsymmetryPercent`, i.e. `max(50/framesPerContact, max(stride-period CV,
+  100/stridePeriodFrames))`. The statistic is the difference of two MEANS OF ~5 CONTACT DURATIONS.
+  Contact-duration scatter was measured all along as `contactVariationPercent` and had **zero
+  consumers**. Measured, 20 000 seeded trials, symmetric runner at `video_015`'s own configuration
+  (5 contacts a side, 11.144 % contact scatter, 8.086 % timing floor): the shipped gate printed
+  "Contact time is 9 % longer on the left", unhedged and in orange, on **25.3 % of clips**. With
+  `GaitReport.contactSamplingUncertaintyPercent` in the floor it publishes on **2.4 %** against a
+  5 % nominal (Welch df would give 4.0 %; `min(n)−1` is the conservative choice, pinned). The
+  in-code justification — "contact-duration scatter is mostly detector edge jitter, which the
+  quantisation floor already counts" — was false by this repo's own arithmetic: two ±½-frame edges
+  give `√(2/12)/6.1833 = 6.60 %` of CV against 11.144 % measured, so **65 % of the variance is not
+  edge jitter**. Consequences: `video_015`'s floor doubles to 16.5 %, no pinned clip publishes a
+  contact-time claim (none did before either), and the claim's honest sensitivity is a 20-25 %
+  left/right difference on a 4 s clip. Read `contactClaimFloorPercent`, never
+  `resolution.resolvableAsymmetryPercent`, and use `MeanDifferenceUncertainty.halfWidthPercent` —
+  one estimator, so a third claim cannot get this wrong in a different file
+  (`GaitContactClaimTests`).
+- **A COUNT of muscles at a solver bound is not a fact about a body, and its denominator excluded
+  its own numerators.** The honesty block printed "N muscle(s) reached full effort and M sat on the
+  resting-tone floor, out of S pairs the solver kept between the two". `screenedComparisonCount` is
+  built with `guard !saturatedBases.contains(base), !flooredBases.contains(base)` — disjoint from
+  both by construction, so "140 out of 30" is what it produced (constructed: floored 3, screened 1,
+  `ClaimSurfaceTests`). And the trailing "at either bound the answer is the bound" disclaimed the
+  ACTIVATION, not the COUNT, which was the part rendered as a number about the reader. The sentence
+  states the mechanism now and prints no count. Same list, entry below: the counts read 19, 11, 22,
+  18, 20 across a λ sweep at fixed inputs.
+- **A GATE THAT CANNOT DELIVER IS NOT A LEVER.** `GaitReportPanel.loadBlock` was an `if/else` on
+  `withheldReason`, so a clip failing the DATA gate saw only "…film a steadier, straighter run"
+  under a header reading "Muscle by muscle: not shown, and why" — while
+  `perMuscleLeftRightClaimIsSupported = false` means no clip, however clean, produces a muscle row.
+  Every lever in `withheldReason` was written when passing the gate produced eight rows. The
+  permanent reason prints on every branch now, and `muscleRowsUnaffectedByRefilmingSentence` scopes
+  the lever and disappears on its own if a per-muscle claim ever comes back.
 - **An UNBIASED statistic is not a CERTAIN one, and the gate only ever saw the bias.** The
   2026-08-08 repair moved the load statistic's mean asymmetry on a symmetric runner from +8.07 % to
   −0.19 %, and the publication gate (`resolvableAsymmetryPercent`) is built from frames per contact
@@ -177,6 +215,16 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 - **`NimbleIKResult.error` is nimble's LOSS** (`Σ wᵢ²‖Δpᵢ‖²`, in m²), not an RMS and not in metres. Read `markerRMSMeters` for accuracy. `NimbleEngine.IKOutput` exposes both as `ikLossSquaredMeters` and `markerRMSMeters` for the same reason.
 - **"Torque decreases distally" is not a law.** In single-leg stance the free leg decreases distally while the loaded leg increases toward the contact. Both are correct.
 - **Saturated-muscle count is not a metric.** Across a λ sweep at fixed inputs it reads 19, 11, 22, 18, 20 with no trend — it measures where OSQP stopped.
+- **`leftFootLoadFraction`/`rightFootLoadFraction` are a SUM you may read and a SPLIT you may not,
+  and the live screen printed the split for the life of the project.** `AccuracyBadge(label:
+  "L/R load", value: "0.62|0.38")` had no caption, no floor and nothing validating it, on the app's
+  most-used surface, in the exact framing the offline path spent four rounds retiring — and its
+  green indicator was `abs(total − 1.0) < 0.3`, keyed to the sum alone. The split is not merely
+  unchecked: `NimbleBridge.mm:1499` seeds the solve with a hardcoded 50/50 wrench guess whenever
+  both feet are down, and double support is statically indeterminate at ±18 pp with a perfectly
+  known CoM against a ~10 pp meaningful threshold. The badge reads `GRF sum … BW` now, with
+  `NimbleEngine.footLoadSplitIsNotMeasuredNote` under it on the SAME `if` (the live path had
+  already shipped one picture whose caption had a different gate — that one is still open, minor 8).
 - **The gait residual is blind to WHICH foot carries the load.** `GaitFrameOutcome.residualInBodyWeights` is built from `leftFootForce.y + rightFootForce.y`, and the near-CoP solver's constraint fixes that SUM exactly — so a 50/50 split between the feet and a 100/0 split give the identical residual while halving one leg's torques. Only `contactDetectorsAgree` can see the split. A residual that passed says nothing about the left/right claim.
 - **That same residual is VERTICAL ONLY, and it is not `‖a_artic‖/g`.** `leftFootForce.x/.z` exist in the bridge's output (`NimbleBridge.h`: `[fx, fy, fz] N`) and are discarded. The fore-aft braking/push-off term STATUS sizes at 0.2-0.35 BW is 10-17× the measured vertical residual, is phase-dependent, and does NOT cancel out of a muscle-to-muscle ratio — and no check in this pipeline examines it. Read `GaitLoadSummary.maxVerticalForceResidualInBodyWeights`, whose name says so.
 - **A "peak" over a side's frames is not a left/right statistic.** The two legs contribute different numbers of usable frames (a contact one sample longer yields twice as many at `taps = 5`), and `E[max of n]` grows with `n` — measured at **+8.07 %** of fabricated left-high asymmetry on a symmetric runner, 80 % of `video_012`'s own 10.14 % publication floor. Any statistic over per-side frames must have an expectation independent of the count; `GaitLoadSummary.MuscleLoad` uses one sample per contact, averaged over contacts.

@@ -147,10 +147,32 @@ struct ContentView: View {
                             Spacer()
                         }
                         HStack(spacing: 6) {
+                            // **This badge used to print the LEFT/RIGHT SPLIT,
+                            // and it was the app's most-used screen making the
+                            // exact claim the offline path spent four rounds
+                            // retiring — with no caption, no floor and nothing
+                            // validating it.**
+                            //
+                            // It is a diagnostic now, and it shows the quantity
+                            // its own indicator has always checked: the SUM.
+                            // `good` was `abs(total - 1.0) < 0.3`, keyed to the
+                            // sum alone, while the value read "0.62|0.38".
+                            //
+                            // There is no discipline that could have rescued the
+                            // split instead. `NimbleBridge.mm:1499` seeds the
+                            // near-CoP solver with a hardcoded 50/50 wrench
+                            // guess when both feet are down, and the solver's
+                            // constraint fixes ΣF exactly while leaving each
+                            // foot's CoP free inside its own polygon — so the
+                            // split is statically indeterminate (STATUS sizes it
+                            // at ±18 pp with a perfectly known CoM against a
+                            // ~10 pp clinical threshold) AND anchored to a
+                            // prior. It is an artifact with a plausible shape,
+                            // which is the worst kind of number to draw.
                             let totalLoad = nimble.leftFootLoadFraction + nimble.rightFootLoadFraction
                             AccuracyBadge(
-                                label: "L/R load",
-                                value: String(format: "%.2f|%.2f", nimble.leftFootLoadFraction, nimble.rightFootLoadFraction),
+                                label: "GRF sum",
+                                value: String(format: "%.2f BW", totalLoad),
                                 good: abs(totalLoad - 1.0) < 0.3 || totalLoad < 0.1
                             )
                             // N/kg, not Nm/kg: this is now a linear-momentum
@@ -165,6 +187,14 @@ struct ContentView: View {
                             )
                             Spacer()
                         }
+                        // Same `if` as the badges above it, deliberately: a
+                        // number and the sentence that scopes it must not be
+                        // gated on different conditions.
+                        Text(NimbleEngine.footLoadSplitIsNotMeasuredNote)
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.75))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.horizontal, 12)
                     .padding(.top, 2)

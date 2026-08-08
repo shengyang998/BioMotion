@@ -280,6 +280,17 @@ struct GaitLoadSummary {
     let measuredStrideRepeatabilityPercent: Double
     /// One sampling interval as a fraction of the stride period.
     let strideRepeatabilityBoundPercent: Double
+    /// **What the CONTACT-TIME claim has to clear** — copied from
+    /// `GaitReport.contactClaimFloorPercent`, which is
+    /// `max(resolvableAsymmetryPercent, contactSamplingUncertaintyPercent)`.
+    ///
+    /// It is here so `resolutionSentence` can stop telling the user that the
+    /// timing figure is the one the comparison below has to clear. It was not,
+    /// and on a 30 fps clip it is the smaller of the two.
+    let contactClaimFloorPercent: Double
+    /// The contact durations' own sampling half-width — the term the timing
+    /// floor never contained. See `GaitReport.contactSamplingUncertaintyPercent`.
+    let contactSamplingUncertaintyPercent: Double
     /// True when both legs' `Fmax` was closed on the MEAN contact time because
     /// the clip could not resolve the difference between them.
     let peakForceIsSharedBetweenLegs: Bool
@@ -450,8 +461,30 @@ struct GaitLoadSummary {
     /// is false — they all rest on the same assumptions.
     var arePublishable: Bool { residualGatePassed && contactGatePassed && !muscles.isEmpty }
 
+    /// **What re-filming does NOT buy**, stated on the same screen as the
+    /// refusal that offers it. Nil once a per-muscle claim is supported again,
+    /// at which point every lever in `withheldReason` can deliver rows and the
+    /// sentence would be false.
+    ///
+    /// It exists because `withheldReason`'s levers are all real levers for the
+    /// DATA and none of them is a lever for the ROWS: `arePublishable` gates
+    /// nothing else the user can see, so passing the gate changes one paragraph.
+    /// Offering "film a steadier, straighter run" without this is selling a
+    /// re-shoot against a limit no shoot can move.
+    var muscleRowsUnaffectedByRefilmingSentence: String? {
+        Self.perMuscleLeftRightClaimIsSupported
+            ? nil
+            : "Filming again would fix the measurement in that line. It would not produce the "
+            + "muscle comparison — that limit is the model's, not this clip's, and it is the "
+            + "paragraph above."
+    }
+
     /// Why the loads are withheld, naming the measurement AND the lever. Nil
     /// when they are not.
+    ///
+    /// ⚠️ **The lever here is a lever for the DATA.** It is not a lever for the
+    /// per-muscle rows, and the panel must not present it as one — see
+    /// `muscleRowsUnaffectedByRefilmingSentence` and `GaitReportPanel.loadBlock`.
     var withheldReason: String? {
         guard !arePublishable else { return nil }
         if muscles.isEmpty {
@@ -609,20 +642,40 @@ struct GaitLoadSummary {
     /// And the shipped sampler holds a FRAME budget, so at 120 fps the analysis
     /// window would have collapsed from 4 s to 1 s and the clip would have been
     /// refused for too few contacts. Both are checked here now.
+    ///
+    /// # It no longer says the timing figure is what the comparison must clear
+    ///
+    /// It did, and that was the user-facing half of the blocker: the sentence
+    /// pointed at ±8 % while `asymmetryClaim` published against ±8 % and the
+    /// statistic's own scatter was ±20 %. The timing number is still first,
+    /// because it is the only one with a camera attached; the floor that
+    /// actually governs is named beside it whenever the two differ.
     var resolutionSentence: String {
         let base = String(format: "This clip's timing resolves left/right to about ±%.0f%% "
-                          + "(%.1f frames per contact at %.0f fps). That is what the CONTACT-TIME "
-                          + "comparison below has to clear.",
+                          + "(%.1f frames per contact at %.0f fps).",
                           resolvableAsymmetryPercent, framesPerContact, framesPerSecond)
+        // The camera advice below is about the QUANTISATION FLOOR. When the
+        // contact durations' own scatter is what binds, a faster camera cannot
+        // deliver the claim, so the promise is withheld and the reason named —
+        // the same rule the refusals follow: only offer a lever when one exists.
+        guard contactClaimFloorPercent <= resolvableAsymmetryPercent + 0.5 else {
+            return base + String(format: " But the contact-time comparison below has to clear "
+                                 + "±%.0f%%: your own contact times varied from step to step by "
+                                 + "more than the sampling grid explains, that variation is inside "
+                                 + "the difference being measured, and no frame rate removes it.",
+                                 contactClaimFloorPercent)
+        }
+        let withFloor = base + " That is what the CONTACT-TIME comparison below has to clear."
         let target = Swift.max(5.0, bestAchievablePercentAtAnyFrameRate)
-        guard target.isFinite, resolvableAsymmetryPercent > target else { return base }
+        guard target.isFinite, resolvableAsymmetryPercent > target else { return withFloor }
         let needed = frameRateNeeded(forPercent: target)
         guard needed.isFinite, needed > framesPerSecond,
               needed <= FrameSource.highestAnalysableFrameRate else {
-            return base + " A higher frame rate is the only lever, and this clip is already at "
-                 + "what the analysis window can cover."
+            return withFloor + " A higher frame rate is the only lever, and this clip is already "
+                 + "at what the analysis window can cover."
         }
-        return base + String(format: " Filming at %.0f fps would resolve ±%.0f%%.", needed, target)
+        return withFloor + String(format: " Filming at %.0f fps would resolve ±%.0f%%.",
+                                  needed, target)
     }
 
     /// What the sampling grid cannot see versus what the runner actually varied
@@ -895,6 +948,8 @@ struct GaitLoadSummary {
             measuredStrideRepeatabilityPercent: report.resolution
                 .measuredStrideRepeatabilityPercent,
             strideRepeatabilityBoundPercent: report.resolution.strideRepeatabilityBoundPercent,
+            contactClaimFloorPercent: report.contactClaimFloorPercent,
+            contactSamplingUncertaintyPercent: report.contactSamplingUncertaintyPercent,
             peakForceIsSharedBetweenLegs: report.peakVerticalForceIsSharedBetweenLegs,
             contactTimeContributionPercent: report.peakVerticalForceIsSharedBetweenLegs
                 ? 0 : contactTimeContribution,
@@ -969,17 +1024,16 @@ struct GaitLoadSummary {
     /// - Parameter comparisons: `screenedComparisonCount`. One means "this is
     ///   the only comparison being made", which is the assumption the shipped
     ///   code used to make silently while screening ~175 of them.
+    /// The estimator itself lives in `MeanDifferenceUncertainty`, because the
+    /// CONTACT-TIME claim needs the identical quantity and was shipped for two
+    /// days without it — gated on this clip's timing while its own statistic is
+    /// a difference of two means of contact durations. One implementation, two
+    /// consumers.
     static func samplingUncertaintyPercent(left: [Double], right: [Double],
                                            comparisons: Int = 1) -> Double {
-        let nL = left.count, nR = right.count
-        guard nL >= 2, nR >= 2 else { return .infinity }
-        let mL = mean(left), mR = mean(right)
-        let m = 0.5 * (mL + mR)
-        guard m > 0 else { return .infinity }
-        let standardError = (variance(left) / Double(nL) + variance(right) / Double(nR))
-            .squareRoot()
-        return tMultiplier(degreesOfFreedom: Swift.min(nL, nR) - 1, comparisons: comparisons)
-            * 100 * standardError / m
+        MeanDifferenceUncertainty.halfWidthPercent(left: left, right: right,
+                                                   comparisons: comparisons,
+                                                   alpha: familyWiseErrorRate)
     }
 
     /// **Two-sided Student-t multiplier, Bonferroni-corrected over
@@ -999,23 +1053,18 @@ struct GaitLoadSummary {
     /// four times what a 4 s clip carries — and clamping keeps this function
     /// from returning anything NARROWER than the table it replaces.
     static func tMultiplier(degreesOfFreedom df: Int, comparisons: Int = 1) -> Double {
-        guard df >= 1 else { return .infinity }
-        let n = Swift.max(1, comparisons)
-        let alpha = familyWiseErrorRate / Double(n)
-        return StudentT.twoSidedQuantile(alpha: alpha,
-                                         degreesOfFreedom: Swift.min(df, 15))
+        MeanDifferenceUncertainty.tMultiplier(degreesOfFreedom: df, comparisons: comparisons,
+                                              alpha: familyWiseErrorRate)
     }
 
     static func mean(_ values: [Double]) -> Double {
-        values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+        MeanDifferenceUncertainty.mean(values)
     }
 
     /// Sample variance, `n − 1` denominator. Zero for fewer than two samples,
     /// which callers must not read as "no scatter" — they check the count.
     static func variance(_ values: [Double]) -> Double {
-        guard values.count > 1 else { return 0 }
-        let m = mean(values)
-        return values.map { ($0 - m) * ($0 - m) }.reduce(0, +) / Double(values.count - 1)
+        MeanDifferenceUncertainty.variance(values)
     }
 
     /// The activation at which the QP's `a ≤ 1` bound is treated as reached,
@@ -1115,90 +1164,5 @@ struct GaitLoadSummary {
 
     static func prettyName(_ base: String) -> String {
         displayNames[base] ?? base
-    }
-}
-
-/// Student-t quantiles, **computed rather than tabulated**.
-///
-/// A table works while the tail is a fixed 2.5 %. It stops working the moment
-/// the level has to be corrected for how many comparisons a clip screened,
-/// because that count is a property of the clip — `GaitLoadSummary` asks for
-/// `α / N` with `N` around 175, i.e. the 99.986th percentile, which no
-/// hand-copied table in this repo would have carried.
-enum StudentT {
-
-    /// The `t` with `P(|T| ≤ t) = 1 − alpha`, i.e. `alpha` split between the two
-    /// tails.
-    ///
-    /// Found by bisection on `cdf`, which is monotone, so the bracket cannot be
-    /// wrong — 200 halvings of `[0, 1e6]` puts the answer inside 1e-294 of its
-    /// true value long before the loop ends, and the loop is bounded so a
-    /// pathological input cannot hang the run.
-    static func twoSidedQuantile(alpha: Double, degreesOfFreedom df: Int) -> Double {
-        guard df >= 1 else { return .infinity }
-        guard alpha > 0, alpha < 1 else { return alpha <= 0 ? .infinity : 0 }
-        let target = 1 - alpha / 2
-        var lo = 0.0, hi = 1e6
-        for _ in 0..<200 {
-            let mid = 0.5 * (lo + hi)
-            if cdf(mid, degreesOfFreedom: df) < target { lo = mid } else { hi = mid }
-        }
-        return 0.5 * (lo + hi)
-    }
-
-    /// `P(T ≤ t)` for `t` real, via the regularized incomplete beta.
-    static func cdf(_ t: Double, degreesOfFreedom df: Int) -> Double {
-        guard df >= 1, t.isFinite else { return t > 0 ? 1 : 0 }
-        let v = Double(df)
-        let x = v / (v + t * t)
-        let tail = 0.5 * regularizedIncompleteBeta(x, 0.5 * v, 0.5)
-        return t >= 0 ? 1 - tail : tail
-    }
-
-    /// `I_x(a, b)`. Numerical Recipes' `betai`: the continued fraction converges
-    /// fast on one side of `(a+1)/(a+b+2)` and the symmetry
-    /// `I_x(a,b) = 1 − I_{1−x}(b,a)` covers the other.
-    static func regularizedIncompleteBeta(_ x: Double, _ a: Double, _ b: Double) -> Double {
-        guard x > 0 else { return 0 }
-        guard x < 1 else { return 1 }
-        let logBeta: Double = lgamma(a + b) - lgamma(a) - lgamma(b)
-        let logPower: Double = a * log(x) + b * log(1 - x)
-        let front: Double = exp(logBeta + logPower)
-        return x < (a + 1) / (a + b + 2)
-            ? front * continuedFraction(x, a, b) / a
-            : 1 - front * continuedFraction(1 - x, b, a) / b
-    }
-
-    /// The modified Lentz evaluation of the beta continued fraction.
-    private static func continuedFraction(_ x: Double, _ a: Double, _ b: Double) -> Double {
-        let tiny = 1e-300, epsilon = 1e-15
-        let qab = a + b, qap = a + 1, qam = a - 1
-        var c = 1.0
-        var d = 1 - qab * x / qap
-        if abs(d) < tiny { d = tiny }
-        d = 1 / d
-        var h = d
-        for m in 1...300 {
-            let mD = Double(m), m2 = Double(2 * m)
-            // Even step.
-            var numerator = mD * (b - mD) * x / ((qam + m2) * (a + m2))
-            d = 1 + numerator * d
-            if abs(d) < tiny { d = tiny }
-            c = 1 + numerator / c
-            if abs(c) < tiny { c = tiny }
-            d = 1 / d
-            h *= d * c
-            // Odd step.
-            numerator = -(a + mD) * (qab + mD) * x / ((a + m2) * (qap + m2))
-            d = 1 + numerator * d
-            if abs(d) < tiny { d = tiny }
-            c = 1 + numerator / c
-            if abs(c) < tiny { c = tiny }
-            d = 1 / d
-            let delta = d * c
-            h *= delta
-            if abs(delta - 1) < epsilon { break }
-        }
-        return h
     }
 }
