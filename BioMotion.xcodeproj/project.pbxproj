@@ -35,6 +35,7 @@
 		41CA409DD6CBEBF78E2B0EEE /* GaitSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DD62C1285CC0A293F53014 /* GaitSignal.swift */; };
 		440AB016E47D178EFB6CA14F /* OfflineImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 809295CEBE3A3EE0C68051A9 /* OfflineImportView.swift */; };
 		469D5E7D0D00332AACFF1224 /* OpenSimReferenceFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BF52FB3C8BA65005EACE6F3 /* OpenSimReferenceFixture.swift */; };
+		48CD1D0034287855D0319D28 /* BoxQPTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6714B170D3735DD500D2ADE4 /* BoxQPTests.swift */; };
 		4E7BB08733F58643DA1F0946 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 548ECA121A57E096D1964D0B /* README.md */; };
 		58D9B346925617BEEE77A5D3 /* FullBodyDOFFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E68C0715E9D9E407234A2F8 /* FullBodyDOFFixture.swift */; };
 		59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */; };
@@ -86,6 +87,7 @@
 		D0CA7F6666EE286577915C91 /* BodyFrameOrientationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */; };
 		D5042C5568E0CC26BBB00D03 /* ShoulderRotMaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */; };
 		D6ACBD79AA382B7E59CAF0A3 /* MomentArmComputer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7CC0C79CED5BDA3ECDCC98F2 /* MomentArmComputer.mm */; };
+		D93F39685ED3B9E9D8219071 /* WrappedMomentArmLeakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5228395220C31B9ECF44A0CE /* WrappedMomentArmLeakTests.swift */; };
 		DE75B8575F912B5A02976E0B /* MHRRetarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2A4C75E6AA932E8711E81C0 /* MHRRetarget.swift */; };
 		E125B69E6C815538A4DA62A7 /* GaitClipFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BF7FEBED56390D642A6136 /* GaitClipFixture.swift */; };
 		E1C04472A89C653399F92677 /* BioMotionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61281090913631B0CE9A7C73 /* BioMotionApp.swift */; };
@@ -96,6 +98,7 @@
 		ED327C5D32C21DB76E6D959B /* DOFMaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C045D7AC2489DE3CE71516B6 /* DOFMaskTests.swift */; };
 		EDA3373BCD3746A22F7CD272 /* NimbleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BCF8A0B85EADE0EACE2E91D /* NimbleEngine.swift */; };
 		EFDB7E94C87B175ECC83B78E /* SavitzkyGolayFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069BD05C894EA1A3D4B71811 /* SavitzkyGolayFilter.swift */; };
+		F49FD7115442BA7D6C6E79FA /* BoxQP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6655F1FDE0BBF68E3191CA2C /* BoxQP.swift */; };
 		F5D3FF290D1F2FC2D53CD448 /* osqp_interrupt_stub.c in Sources */ = {isa = PBXBuildFile; fileRef = 61F7A23E87AFC3190713C1D6 /* osqp_interrupt_stub.c */; };
 		F6208E01FDB4179EEF721B39 /* OfflineSessionRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B380AE0D8895B17AF002FC4 /* OfflineSessionRunner.swift */; };
 		F879356CA878DC33DEF470D4 /* TRCExporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */; };
@@ -169,6 +172,7 @@
 		4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TRCExporterTests.swift; sourceTree = "<group>"; };
 		4B51E2644E744BA3FADE38F5 /* BodyPlausibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyPlausibilityTests.swift; sourceTree = "<group>"; };
 		4B9713307F6A75E4289F37D8 /* FullBody.osim */ = {isa = PBXFileReference; path = FullBody.osim; sourceTree = "<group>"; };
+		5228395220C31B9ECF44A0CE /* WrappedMomentArmLeakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WrappedMomentArmLeakTests.swift; sourceTree = "<group>"; };
 		52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitClipFixtureTests.swift; sourceTree = "<group>"; };
 		548ECA121A57E096D1964D0B /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoulderRotMaskTests.swift; sourceTree = "<group>"; };
@@ -183,6 +187,8 @@
 		63E261BAC88A15FDC743D492 /* AssetPackDownloader.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = AssetPackDownloader.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		640BA97ED28345730C5FFFB8 /* BioMotionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BioMotionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6518DB5CBEDA2DA4D714B81B /* NativeWindowSamplingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWindowSamplingTests.swift; sourceTree = "<group>"; };
+		6655F1FDE0BBF68E3191CA2C /* BoxQP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoxQP.swift; sourceTree = "<group>"; };
+		6714B170D3735DD500D2ADE4 /* BoxQPTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoxQPTests.swift; sourceTree = "<group>"; };
 		675A6A481192DE8527711A02 /* BodyTrackingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyTrackingSession.swift; sourceTree = "<group>"; };
 		67BF7FEBED56390D642A6136 /* GaitClipFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitClipFixture.swift; sourceTree = "<group>"; };
 		6812C3DE8176C6B95FB8FFB6 /* GaitReportPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitReportPanel.swift; sourceTree = "<group>"; };
@@ -290,6 +296,8 @@
 				2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */,
 				39C64A42A229077EC3CF47FD /* BodyJointTests.swift */,
 				4B51E2644E744BA3FADE38F5 /* BodyPlausibilityTests.swift */,
+				6655F1FDE0BBF68E3191CA2C /* BoxQP.swift */,
+				6714B170D3735DD500D2ADE4 /* BoxQPTests.swift */,
 				3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */,
 				A72797213E433B0F010275E7 /* ClaimSurfaceTests.swift */,
 				6A5EB41D08E94B6C5FFAA7BD /* CylinderWrapValidationTests.swift */,
@@ -340,6 +348,7 @@
 				A2B85FE37CE702C7D8D14A08 /* StaticHoldTests.swift */,
 				F418BB721F83050352688C5E /* StraightLinePathErrorTests.swift */,
 				4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */,
+				5228395220C31B9ECF44A0CE /* WrappedMomentArmLeakTests.swift */,
 				BACD186A3DDDF60731094EA1 /* WrapValidationHarness.swift */,
 			);
 			path = BioMotionTests;
@@ -668,6 +677,8 @@
 				D0CA7F6666EE286577915C91 /* BodyFrameOrientationTests.swift in Sources */,
 				32F526B0CAC7BDF4677DC5BF /* BodyJointTests.swift in Sources */,
 				C75C2BE5D8B1D4D7FC19605E /* BodyPlausibilityTests.swift in Sources */,
+				F49FD7115442BA7D6C6E79FA /* BoxQP.swift in Sources */,
+				48CD1D0034287855D0319D28 /* BoxQPTests.swift in Sources */,
 				5EAF2F8A2F45C0B4C65E83C0 /* CalibrationTests.swift in Sources */,
 				86CC439C0B44FFAC6F3D2391 /* ClaimSurfaceTests.swift in Sources */,
 				C81441E9C789EDE444C59DD0 /* CylinderWrapValidationTests.swift in Sources */,
@@ -719,6 +730,7 @@
 				8CF37DE4171D50EAADF24A4D /* StraightLinePathErrorTests.swift in Sources */,
 				F879356CA878DC33DEF470D4 /* TRCExporterTests.swift in Sources */,
 				E56CA053FF7319E606DF8BA4 /* WrapValidationHarness.swift in Sources */,
+				D93F39685ED3B9E9D8219071 /* WrappedMomentArmLeakTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

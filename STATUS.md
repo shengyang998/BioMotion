@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-08.
+Last updated: 2026-08-09.
 
 ---
 
@@ -114,6 +114,21 @@ biggest links were **not** where the effort had been going.
   `MovingPathPoint` linear interpolation, not the wrap. The per-muscle left/right claim is
   STILL NOT reopened.
   [Ellipsoid wrapping](#ellipsoid-path-wrapping-ships--every-pathwrap-in-the-model-is-solved-2026-08-08).
+- **THE RE-MEASUREMENT IS DONE. The moment arms are fixed; the claim still cannot come back, and the
+  reason is no longer the moment arms** (2026-08-09). Re-run on REAL geometry — 40 right-leg muscles
+  of `FullBody.osim`, mirrored into a bilateral rig so the modelling error is bilateral by
+  construction, 31 poses × 5 torque shapes × 3 effort levels × both OpenSim reference definitions,
+  582 readable cells. The wrap solver did what it was for: the median moment-arm leak is **0.977 pp**
+  against the straight line's **7.939 pp** on the identical rig, and the original three-muscle rig
+  re-run with the perturbation resized from the guessed `×0.6` to the MEASURED p99 residual (1.114 %)
+  reads **0.568 pp** where it read **9.92 pp**. But a second error was found that is larger than the
+  first and is not about geometry at all: with the arms held FIXED, OSQP's answer differs from the
+  exact minimiser of the SAME objective by a median of **14.88 pp** and a max of **100.98 pp**,
+  against an 8.086 % publication floor. `MuscleSolver` runs at `eps_abs = eps_rel = 1e-3` with
+  polishing off and accepts `OSQP_SOLVED_INACCURATE`, i.e. 0.02 of ABSOLUTE activation slack, and a
+  left/right PERCENTAGE built from two such numbers at a median activation of 0.132 carries
+  `100·2·0.02/0.132 = 30 pp`. `perMuscleLeftRightClaimIsSupported` stays `false`. See
+  [the re-measurement](#the-re-measurement-the-moment-arms-are-fixed-and-the-claim-still-cannot-come-back-2026-08-09).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -213,6 +228,13 @@ its own scale trap), `EllipsoidWrapValidationTests` 11 new, and
 `CylinderWrapValidationTests` 11 → 10 (the "ellipsoid muscles are reported and not
 claimed" test moved and became a claim). Floor **459** — see
 [ellipsoid wrapping](#ellipsoid-path-wrapping-ships--every-pathwrap-in-the-model-is-solved-2026-08-08).
+The +15 after that are the re-measurement: `WrappedMomentArmLeakTests` 10 (the real-geometry
+mirrored rig, the exact-solver check, the straight-line control, the solver-slack finding
+and the decision tripwire), `BoxQPTests` 4 (the exact QP against a closed form, a dense
+direct solve, coordinate descent and a direct optimality test) and
+`MomentArmErrorCancellationTests` 10 → 11 (the original rig re-run at the MEASURED
+residual instead of the guessed `×0.6`). Floor **474** — see
+[the re-measurement](#the-re-measurement-the-moment-arms-are-fixed-and-the-claim-still-cannot-come-back-2026-08-09).
 
 `E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
 fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
@@ -2959,6 +2981,156 @@ flips above the 3.758 mm control floor, control unchanged at max 3.758 mm.
   for every muscle in both shipped models.
 
 
+## The re-measurement: the moment arms are fixed and the claim still cannot come back (2026-08-09)
+
+This is the measurement the retirement registered as its own falsifier, and the answer is **no, with
+a different reason than the one that closed it**. `perMuscleLeftRightClaimIsSupported` stays `false`.
+Nothing the user sees changed. `WrappedMomentArmLeakTests` + `BoxQPTests` + one new test in
+`MomentArmErrorCancellationTests`.
+
+### The rig: real geometry, not three synthetic muscles
+
+`MomentArmErrorCancellationTests` perturbs one invented muscle by `×0.6`, a number somebody chose to
+stand for "this path is a straight line where the real one wraps". Since 2026-08-08 that is not what
+the code does, so the 9.92 pp it measures is a measurement of a defect that no longer exists.
+
+The new rig perturbs nothing. It takes the moment arms this build computes and the arms OpenSim 4.6
+computes for the same model at the same pose, and solves the shipping QP twice.
+
+* **Geometry** — the 40 right-leg muscles of `FullBody.osim` that structurally span at least one of
+  the six unlocked right-leg coordinates (`mtp_angle_*` is locked, and a locked coordinate's
+  `computeMomentArm` is a refusal, not a measurement). 39 of the 40 are in
+  `GaitLoadSummary.displayNames`.
+* **Bilateral by construction** — the left leg IS the right leg, mirrored onto the six left
+  coordinates. That is what the cancellation argument was about, and it is asserted against the
+  matrix the solver is handed rather than stated in a comment.
+* **Shape-asymmetric torque** — the left leg's joint torques are the right's with a per-joint scale,
+  five shapes around the `hip 0.80 / knee 1.00` case that retired the claim. Inverse dynamics never
+  touches a moment arm, so `τ` is IDENTICAL in the two solves; the only thing that differs is `A`.
+* **Isometric force scale** — every muscle sits at its own `l_opt + l_Ts` with zero pennation and
+  zero velocity, so `f_AL = f_FV = cos α = 1` and `A = R·diag(F_max)` exactly. Checked against the
+  solver's own returned forces: worst relative departure **1.5e-15**.
+* 31 poses × 2 reference definitions × 5 shapes × 3 effort levels = 930 cells, 582 of them readable
+  (≥20 muscles interior in the exact solution).
+
+### The instrument had to be built first, and the first three attempts at it were wrong
+
+Three instrument failures, each recorded because each produced a plausible number:
+
+1. **A "solver noise floor" that was measuring the ACTIVE SET.** Solving the same arms under a
+   PROPORTIONAL torque and comparing against the analytic `100(c−1)/(0.5(1+c))` is only valid while
+   no activation sits on a bound. In an 80-muscle rig most sit on `aMin`, and a clamped muscle's
+   contribution does not scale with `τ`, so the interior muscles compensate differently at different
+   torque scales. It reported 18–45 pp of "noise" that was a genuine nonlinearity of the QP.
+2. **A sign error inside that instrument** — it compared against `+100(1−c)/(0.5(1+c))` while the rig
+   scales the LEFT leg. ~44 pp of pure sign.
+3. **A KKT residual normalised by the gradient**, which reads exactly **1.0** at a perfect interior
+   solution, where every gradient component is legitimately at rounding level. It sent a correct
+   answer back as a total failure. The denominator has to be the largest TERM entering the gradient,
+   not the gradient.
+
+What replaced them is `BoxQP`: the same objective `MuscleSolver.mm` builds
+(`min ½aᵀ(εI + λAᵀA)a − λτᵀAa`, `ε = 0.01`, `λ = 100`, `a ∈ [0.02, 1]`), solved to machine precision
+by a primal active-set method. Two implementation notes, both measured rather than assumed:
+
+* **Woodbury, not a dense factorisation.** `A` has only 12 rows, so the free-set solve collapses to a
+  12×12 Cholesky through `(εI + λBᵀB)⁻¹b = (b − Bᵀ((ε/λ)I + BBᵀ)⁻¹Bb)/ε`. But `b = λAᵀτ` is of order
+  1e7 while `εx` is of order 1e-2, so that subtraction cancels about NINE decimal digits; three steps
+  of iterative refinement recover them. Without refinement the KKT residual was 1.0.
+* **A step-length rule, not a clamp.** The obvious loop — solve on the free set, clamp whatever comes
+  back out of bounds, release every wrong-signed multiplier — cycles, because a clamp is not a
+  descent step. The loop now takes the longest feasible step toward the free-set solution and
+  releases exactly ONE constraint per iteration, so each iteration strictly decreases a strictly
+  convex objective and no active set can repeat.
+
+`BoxQPTests` checks it against a closed form, a dense Gaussian-elimination solve, cyclic coordinate
+descent, and a direct optimality test (300 feasible perturbations, largest objective improvement
+**0.0**). Worst KKT residual over all 930 real cells: **9.7e-13**.
+
+### What the measurement says
+
+Three quantities, separated, because the first attempt confounded them:
+
+| | median | p90/p99 | max |
+|---|---|---|---|
+| Moment arms alone, `\|d(ours,exact) − d(truth,exact)\|` | **0.977 pp** | p99 85.70 | 123.10 |
+| … the same, straight-line arms (the CONTROL) | **7.939 pp** | — | 66.88 |
+| The shipping solver alone, `\|d(ours,OSQP) − d(ours,exact)\|` | **14.88 pp** | p90 37.83 | **100.98** |
+| Both together, `\|d(ours,OSQP) − d(truth,exact)\|` | 14.42 pp | — | 63.28 |
+
+* **The wrap work bought a factor of 8.1 in the median** (0.977 against 7.939 pp on the identical
+  rig), and the original three-muscle rig re-run with the perturbation resized from `×0.6` to the
+  measured p99 residual reads **0.568 pp** where it read **9.92 pp**. That is the answer to "did
+  fixing the moment arms fix the leak": for the typical muscle at the typical pose, yes.
+* **The tail did not close.** Against OpenSim's ANALYTIC column the worst is 42.46 pp (`glmed3` at
+  `run_4_mid_swing`, p99 9.94, median 0.41); against its own CENTRAL DIFFERENCE the worst is
+  123.10 pp (`piri` at `grid_h060_k000_a+00`, p99 104.54, median 7.09). Those two columns disagree
+  with each other by more than the gates allow, so **how much of that tail is this build's residual
+  and how much is the reference's own inconsistency is NOT settled here.** Either way it is above the
+  8.086 % floor, and R1 fails.
+* **The binding constraint is now the solver, and it is not about geometry at all.** With the arms
+  held fixed, OSQP's answer differs from the exact minimiser of the same objective by a median of
+  14.88 pp. `MuscleSolver` runs OSQP at `eps_abs = eps_rel = 1e-3`, polishing off, and accepts
+  `OSQP_SOLVED_INACCURATE` — `saturationActivationTolerance` is the project's own name for the
+  resulting **0.02 of absolute activation slack**. At the rig's median activation of 0.132 the
+  arithmetic is `100·2·0.02/0.132 = 30 pp`, which is the order of what was measured. An ABSOLUTE
+  tolerance on `a` becomes a RELATIVE error in `100·(a_l − a_r)/mean`.
+* **The retirement's SECOND argument is defeated, and it matters.** "The regime where the error
+  cancels is the regime where every muscle reads the same number, so there is no regime that is both
+  safe and informative" is a claim about a ratio. Measured: the spread of the true left/right figures
+  across muscles is **48.5×** the moment-arm error in them, and only **2.90×** the error the product
+  would actually print. The rows carry real per-muscle information; it is drowned by the solver, not
+  by the geometry.
+
+### Also answered, because the stage asked
+
+**Zero muscles have unmodelled paths.** `MomentArmComputer`'s own fidelity report, read at runtime
+rather than from the hand-written table: FullBody 76 solved / **0** unmodelled, Rajagopal2016 46
+solved / **0** unmodelled, `musclesWithUnmodelledPathWraps` empty on both. **No muscle in
+`GaitLoadSummary.displayNames` has an unmodelled path** — the intersection is empty because the
+unmodelled set is.
+
+### Pre-registered gates, and how they landed
+
+Written before any number was read. `floor` = 8.086 %, the smallest `resolvableAsymmetryPercent` any
+usable pinned clip achieves, read from the clips. `floor/5` is the reopening bar, on the argument
+that the floor is a 95 % half-width on RANDOM error while a leak is a BIAS: in a normal approximation
+a bias of `h/5` moves a nominal 5 % false-positive rate to 6.8 %, and `h/3` doubles it to 10.0 %.
+
+| Gate | Requires | Measured | |
+|---|---|---|---|
+| R1 | moment-arm leak < 1.617 pp | 123.10 pp (max) | ❌ |
+| R2 | printed-number error < 1.617 pp | 63.28 pp (max) | ❌ |
+| R3 | three-muscle rig at the measured residual < 1.617 pp | 0.568 pp | ✅ |
+| R4 | 0 unmodelled `PathWrap`s, none displayed | 0 / 0 | ✅ |
+| R5 | straight-line CONTROL leaks > floor | 66.88 pp, 271/549 cells over it | ✅ |
+| R6 | ≥20 muscles and ≥30 cells | 21 at the worst cell, 582 cells | ✅ |
+| R7 | spread / printed error > 4 | 2.90 (48.5 against moment-arm error) | ❌ |
+
+One amendment, disclosed with its mechanism: **R2 was registered as `leak + 2·noise < floor`** using
+the instrument that turned out to be measuring the active set. With that withdrawn, R2 became a
+DIRECT measurement of the solver's contribution against a machine-precision solve, at the same
+`floor/5` bar — strictly stronger than what was registered, since the original admitted a leak up to
+the full floor.
+
+### What this did NOT do
+
+* It did not touch the product. `perMuscleLeftRightClaimIsSupported` is still `false`, `permits(_:)`
+  still returns false for every muscle on every clip, and no screen changed.
+* It did not fix the solver tolerance. Tightening `eps_abs`/`eps_rel`, enabling polishing, or
+  refusing `OSQP_SOLVED_INACCURATE` are all one-line changes with a per-frame cost that has not been
+  measured, and any of them changes every activation the app has ever produced.
+* It did not settle the moment-arm tail. `piri`/123 pp and `glmed3`/42 pp are attributed to "one of
+  our residual or OpenSim's two mutually-inconsistent columns" and no further.
+* It did not measure the real 520-muscle × 169-coordinate problem. The rig is 80 × 12. The MECHANISM
+  is scale-free and the shipping activations are the same magnitude, but the shipping problem's own
+  slack was not measured.
+* Nothing ran in a Release build or on the phone.
+* The stride case is untouched: this rig mirrors ONE pose, so both legs carry the same modelling
+  error. A real clip samples each side at its own mid-contact, which is the one-sided bound (23.8 pp
+  with the old arms) and is a different measurement.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -3294,11 +3466,14 @@ arms must differ in the work that PRECEDES the mask.
     the remaining 12, single-wrap max 4.414 mm against OpenSim's own derivative, engagement 600/600,
     sign flips 135 → 0). `unmodelledPathWraps` is 0 and
     `GaitLoadSummary.musclesWithUnmodelledPaths` is empty. **What remains on this line, in the order
-    it matters:** (a) **THE re-measurement, and it is the only thing that reopens the claim** —
-    re-run `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` with the corrected arms and
-    require the leak below 8.086 %. It HAS NOT BEEN DONE, which is why
-    `perMuscleLeftRightClaimIsSupported` is still `false`, and it is now unblocked: the wrap
-    condition it was waiting on is met; (b) the cost in a RELEASE build on the phone, which was
+    it matters:** (a) ~~**THE re-measurement**~~ **DONE 2026-08-09** — see
+    [the re-measurement](#the-re-measurement-the-moment-arms-are-fixed-and-the-claim-still-cannot-come-back-2026-08-09).
+    Median moment-arm leak **0.977 pp** against the straight line's **7.939 pp**, and the
+    three-muscle rig at the measured p99 residual reads **0.568 pp** where it read 9.92 pp — but the
+    claim STAYS retired, because the tail is still 42–123 pp and because a second error was found
+    that is larger and is not geometric: the shipping OSQP tolerance alone moves a published
+    left/right figure by a median of **14.88 pp**. `perMuscleLeftRightClaimIsSupported` is still
+    `false`; (b) the cost in a RELEASE build on the phone, which was
     extrapolated (~36 ms for the cylinders, +1.28× for the ellipsoids in Debug) and never measured,
     and where the two-wrap cylinder solve is 80× the one-wrap solve and one engaged ellipsoid solve
     is 130–450× it; (c) the `MovingPathPoint` linear interpolation, which is now the largest
@@ -3354,6 +3529,38 @@ arms must differ in the work that PRECEDES the mask.
     (minors 1, 3, 5, 6, 7, 8, 9 plus the round-six list). Minor 1 — `framesPerSecond` being the
     NOMINAL rate under the sparse sampler — has now been deferred three rounds running and is the
     only one that puts a wrong number in front of the user.
+
+### Newly opened by the 2026-08-09 re-measurement (eighth round)
+
+23. **THE MUSCLE CLAIM'S NEW BLOCKER IS THE OSQP TOLERANCE, and it is a one-line change with an
+    unmeasured cost.** `MuscleSolver.mm` sets `eps_abs = eps_rel = 1e-3`, `polishing = false`, and
+    treats `OSQP_SOLVED_INACCURATE` as converged — worth 0.02 of absolute activation slack, i.e. a
+    median of **14.88 pp** and a max of **100.98 pp** on a published left/right percentage, against
+    an 8.086 % floor. Three levers, in increasing order of cost: refuse `OSQP_SOLVED_INACCURATE`
+    (free, but some frames then return nothing); enable `polishing` (one exact solve on the final
+    active set — usually cheap and usually enough); tighten `eps_abs`/`eps_rel` (iterations grow).
+    **Pre-register the gates before touching it**: the falsifier is `WrappedMomentArmLeakTests`'
+    `testTheShippingSolversOwnSlackIsLargerThanThePublicationFloor`, which asserts the defect and
+    must be re-read rather than deleted if it stops failing. Two things this MUST measure that the
+    re-measurement did not: the per-frame COST on the 520-muscle × 169-coordinate problem (the chain
+    is already ~200 ms/frame), and the fact that any of these changes moves EVERY activation the app
+    has ever produced, including the ones behind the shipped anatomy overlay's gating.
+24. **Settle the moment-arm tail, or stop quoting it as one number.** `piri` reads 123 pp against
+    OpenSim's central difference and `glmed3` 42 pp against its analytic column, at cells where the
+    median is 0.4–7 pp. Those two OpenSim columns are not the same quantity (see the "readings that
+    lie" entry in `CLAUDE.md`), so a tail that appears against one and not the other is unattributed.
+    The cheap discriminator is to dump, for the worst cells, the underlying `|ours − reference|` in
+    METRES beside the leak in pp — a moment arm disagreeing by 2 mm on a 5 mm arm is a different
+    finding from one disagreeing by 20 mm on a 50 mm arm.
+25. **The real problem is 520 × 169 and the rig is 80 × 12.** The solver-slack mechanism is
+    scale-free and the shipping activations are the same magnitude, but the shipping problem's own
+    slack has not been measured. `BoxQP` scales to it — the Woodbury step becomes a 169×169 Cholesky
+    — so this is an afternoon, not a project, and it would replace an inference with a number.
+26. **The STRIDE case is still unmeasured.** This rig mirrors ONE pose, so both legs carry the same
+    modelling error by construction. A real clip samples each side at its own mid-contact and nothing
+    checks that those two poses are comparable; with the OLD arms that one-sided case cost 23.8 pp.
+    It needs the two mirrored run poses (`run_1_midstance` / `run_4_mid_swing` are an exact pair in
+    the fixture) and a statistic taken across two solves rather than within one.
 
 ### Newly opened by the cam_t measurement (2026-08-07)
 

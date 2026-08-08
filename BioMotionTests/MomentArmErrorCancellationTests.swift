@@ -377,6 +377,82 @@ final class MomentArmErrorCancellationTests: XCTestCase {
                              "and away from that point it is an order of magnitude larger")
     }
 
+    /// **THE SAME EXPERIMENT, WITH THE PERTURBATION RESIZED TO WHAT THIS BUILD
+    /// ACTUALLY GETS WRONG.** Gate R3 of `WrappedMomentArmLeakTests`.
+    ///
+    /// The `×0.6` above is a stand-in for "this muscle's path is a straight line
+    /// where the real one wraps around bone". Since 2026-08-08 that is not what
+    /// the code does — every `PathWrap` in `FullBody.osim` is solved — so the
+    /// honest re-run changes ONE number: the perturbation becomes the residual
+    /// disagreement with OpenSim 4.6 that this build still carries, measured
+    /// rather than assumed.
+    ///
+    /// **How that residual is measured, decided before it was read.** The rig's
+    /// `gamma` has 30 mm and 50 mm moment arms, so the residual fed to it is
+    /// taken over pairs whose REFERENCE arm is at least 20 mm — a relative error
+    /// on a 1 mm arm is not a relative error on a 30 mm one, and a muscle with no
+    /// leverage at a joint carries no torque there either. It is a p99 and not a
+    /// max because the rig has ONE perturbed muscle while the pool has tens of
+    /// thousands of pairs, and the max of a large pool is an order statistic; the
+    /// max case is computed and printed beside it so nothing is hidden. Both
+    /// definitions of the OpenSim reference are pooled, so the worse one counts.
+    ///
+    /// This is a CROSS-CHECK, not the measurement. The measurement is
+    /// `WrappedMomentArmLeakTests`, which perturbs nothing and uses each muscle's
+    /// own error on its own arms.
+    func testTheShapeAsymmetryLeakWithTheResidualThisBuildLeaves() throws {
+        try WrapValidationHarness.build(bundle: Bundle(for: type(of: self)))
+        if let failure = WrapValidationHarness.setupFailure { throw XCTSkip(failure) }
+        let named = Set(GaitLoadSummary.displayNames.keys)
+        var pooled: [Double] = []
+        var excluded = 0
+        for definitionMatched in [true, false] {
+            let measured = WrapValidationHarness.relativeMomentArmResiduals(
+                bases: named, minimumReferenceMetres: 0.020,
+                definitionMatched: definitionMatched)
+            pooled += measured.ratios
+            excluded += measured.excludedBelowMinimum
+        }
+        XCTAssertGreaterThan(pooled.count, 1000,
+                             "the residual must be measured over a population, not a handful")
+        let p99 = WrapValidationHarness.percentile(pooled, 0.99)
+        let maximum = pooled.max() ?? 0
+        let floor = try smallestPublicationFloorOnThePinnedClips()
+        let noise = try solverNoiseFloor()
+
+        var rows: [String] = []
+        var worstAtP99 = 0.0
+        var worstAtMax = 0.0
+        for (label, residual) in [("p99", p99), ("max", maximum)] {
+            var worst = 0.0
+            for kneeScale in [0.6, 0.7, 0.8, 0.9, 0.95, 1.0] {
+                let torques = Rig.torques(hipScale: 0.8, kneeScale: kneeScale)
+                let truth = try solve(torques: torques)
+                let wrong = try solve(torques: torques, scale: ["gamma": 1 - residual])
+                for (base, _, _, _) in Rig.muscles {
+                    worst = Swift.max(worst, abs(try differencePercent(wrong, base)
+                                                 - (try differencePercent(truth, base))))
+                }
+            }
+            rows.append(String(format: "%@ residual=%.6f perturbation=x%.6f worst_shift_pp=%.4f",
+                               label, residual, 1 - residual, worst))
+            if label == "p99" { worstAtP99 = worst } else { worstAtMax = worst }
+        }
+        print("MOMENT-ARM-METRIC residual_sized_leak pairs=\(pooled.count) "
+              + "excluded_below_20mm=\(excluded) "
+              + "median_residual=\(WrapValidationHarness.percentile(pooled, 0.5)) "
+              + "p99_residual=\(p99) max_residual=\(maximum) \(rows.joined(separator: " ")) "
+              + "noise_pp=\(noise) floor_percent=\(floor) "
+              + "threshold_pp=\(floor * WrappedMomentArmLeakTests.reopenFractionOfFloor) "
+              + "old_measurement_pp=9.92")
+
+        XCTAssertLessThan(worstAtP99,
+                          floor * WrappedMomentArmLeakTests.reopenFractionOfFloor,
+                          "R3: with the perturbation resized from the guessed x0.6 to the "
+                          + "measured residual the leak is \(worstAtP99) pp; the max-residual "
+                          + "variant is \(worstAtMax) pp")
+    }
+
     /// **The cross-muscle ordering, still not a measurement.** Kept from the
     /// round that retired it: the bilateral perturbation moves the absolute
     /// activations by tens of percent and reorders the list, on the same rig

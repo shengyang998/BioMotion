@@ -222,6 +222,38 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   analysed running clips, and the surviving left/right finding on that screen is CONTACT TIME, which
   touches neither a moment arm nor the QP. A one-sided error still costs **23.8 pp**; a sign-flipped
   one still pins both sides to `aMin` and reads exactly 0.0 % against a true 22.7 %.
+  **Re-measured 2026-08-09 with the wraps solved, and the 9.92 pp is now a number about a defect that
+  no longer exists.** `×0.6` was a stand-in for the straight-line path; the MEASURED p99 residual on
+  the muscles the product names, at reference arms ≥20 mm, is **1.114 %**, and the same rig at that
+  perturbation reads **0.568 pp**. On real geometry (`WrappedMomentArmLeakTests`, 40 right-leg
+  muscles mirrored into a bilateral rig, 582 readable cells) the median moment-arm leak is
+  **0.977 pp** against the straight line's **7.939 pp**. The claim still does not come back — see the
+  entry below, which is now the binding one.
+- **AN OSQP TOLERANCE IS ABSOLUTE AND A LEFT/RIGHT PERCENTAGE IS RELATIVE, and on a realistic muscle
+  set the solver alone is worth more than the entire moment-arm error.** `MuscleSolver` runs OSQP at
+  `eps_abs = eps_rel = 1e-3`, `polishing = false`, and accepts `OSQP_SOLVED_INACCURATE` — which is
+  what `saturationActivationTolerance = 0.02` already names, for the upper bound. The same 0.02
+  lands on EVERY activation, so `100·(a_l − a_r)/mean` carries `≈ 100·2·0.02/ā`: **30 pp** at the
+  rig's median activation of 0.132. Measured against a machine-precision solve of the SAME objective
+  with the SAME arms (`BoxQP`, active-set + Woodbury + iterative refinement, KKT residual 9.7e-13
+  over 930 cells): median **14.88 pp**, p90 37.83, max **100.98 pp**, against an 8.086 % publication
+  floor. Nothing here is a moment arm — the geometry is held fixed. The three-muscle rig in
+  `MomentArmErrorCancellationTests` measures 1.52 pp for the same quantity and is not wrong; it is
+  small enough that OSQP solves it accurately, which is exactly why a small rig cannot certify a
+  claim about a 520-muscle solve. Corollary for anyone re-opening the per-muscle claim: fixing the
+  moment arms was necessary and is done; the tolerance is now the blocker, and changing it changes
+  every activation the app has ever produced.
+- **A KKT RESIDUAL NORMALISED BY THE GRADIENT READS 1.0 AT A PERFECT ANSWER.** At an interior optimum
+  every gradient component is at rounding level, so dividing the worst violation by `max|∇f|` divides
+  noise by noise. `BoxQP` normalises by the largest TERM entering the gradient
+  (`ε|a| + λ|Aᵀ(Aa)| + |g|`) instead. Two sibling traps in the same file, both measured: solving
+  `(εI + λBᵀB)x = b` by Woodbury cancels ~9 decimal digits when `b ~ 1e7` and `εx ~ 1e-2` (three
+  steps of iterative refinement recover them; without it the residual was 1.0), and a "solve on the
+  free set, then CLAMP" active-set loop cycles forever because a clamp is not a descent step — take
+  the longest feasible step and release ONE constraint per iteration. Also: an instrument that solves
+  the same arms under a PROPORTIONAL torque and compares against `100(c−1)/(0.5(1+c))` is only valid
+  while NO activation is on a bound; in an 80-muscle rig it measures the ACTIVE SET and reported
+  18–45 pp of "solver noise" that was a real nonlinearity of the QP.
 - **A PICTURE makes the ranking claim more loudly than a list, and it outlived the round that killed
   the list.** `MuscleOverlay` filtered `rawActivations`, kept the strongest 24 and coloured every
   capsule from one shared blue→red ramp with alpha rising 0.45 → 0.95 — so BOTH which muscles

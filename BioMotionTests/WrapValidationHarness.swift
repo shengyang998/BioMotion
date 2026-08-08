@@ -73,6 +73,18 @@ enum WrapValidationHarness {
         var withoutEllipsoids: [Double] = []
     }
 
+    /// The Hill-model constants the muscle QP needs, read from the SAME parse
+    /// the moment arms came from. They are here rather than re-parsed by a
+    /// consumer because a second `MomentArmComputer` would be a second model
+    /// load, and because a leak measurement that changed `F_max` between its
+    /// two solves would not be measuring the moment arm.
+    struct MuscleParameters {
+        let maxForce: Double
+        let optimalFiberLength: Double
+        let tendonSlackLength: Double
+        let pennationAngle: Double
+    }
+
     /// The SAME (pose, muscle, coordinate) solved twice — with the ellipsoids
     /// active and with them deactivated — so "did the ellipsoid solver help"
     /// and "which residuals pre-date it" are answered against THIS code rather
@@ -101,6 +113,7 @@ enum WrapValidationHarness {
     private(set) static var ellipsoidNumericalRefusals: Int = 0
     private(set) static var costAB = CostAB()
     private(set) static var ablation: [AblationSample] = []
+    private(set) static var muscleParameters: [String: MuscleParameters] = [:]
 
     /// Poses the A/B runs at, on top of the accuracy sweep. Six, not 60: each
     /// one costs TWO full solves. Three whole-body poses and three arm
@@ -136,6 +149,20 @@ enum WrapValidationHarness {
 
         let muscleIndex = Dictionary(uniqueKeysWithValues:
             (computer.muscleNames as [String]).enumerated().map { ($0.element, $0.offset) })
+
+        let fmax = computer.maxIsometricForces as [NSNumber]
+        let lopt = computer.optimalFiberLengths as [NSNumber]
+        let lts = computer.tendonSlackLengths as [NSNumber]
+        let penn = computer.pennationAngles as [NSNumber]
+        var parameters: [String: MuscleParameters] = [:]
+        for (name, row) in muscleIndex where row < fmax.count && row < lopt.count
+            && row < lts.count && row < penn.count {
+            parameters[name] = MuscleParameters(maxForce: fmax[row].doubleValue,
+                                                optimalFiberLength: lopt[row].doubleValue,
+                                                tendonSlackLength: lts[row].doubleValue,
+                                                pennationAngle: penn[row].doubleValue)
+        }
+        muscleParameters = parameters
         let coordinateColumn = Dictionary(uniqueKeysWithValues:
             table.coordinateNames.enumerated().map { ($0.element, $0.offset) })
 
@@ -322,6 +349,42 @@ enum WrapValidationHarness {
         return String(format: "%@: n=%d  median %.6f m  p90 %.6f  p99 %.6f  max %.6f",
                       label, values.count, percentile(values, 0.5), percentile(values, 0.9),
                       percentile(values, 0.99), values.max() ?? 0)
+    }
+
+    /// **The RELATIVE moment-arm error this build still carries**, as a
+    /// fraction of the reference's own value — the quantity a per-muscle scale
+    /// error is expressed in, and therefore the one that can be dropped into a
+    /// synthetic rig in place of a guessed `×0.6`.
+    ///
+    /// - Parameter bases: solver base names (no side suffix) to include.
+    /// - Parameter poses: pose ids to include; empty means every pose.
+    /// - Parameter minimumReferenceMetres: pairs whose reference arm is smaller
+    ///   than this are EXCLUDED and counted separately. A 0.2 mm reference arm
+    ///   divides a 0.2 mm disagreement into 100 %, and a muscle with no leverage
+    ///   at a joint carries no torque there either — the same exclusion the
+    ///   2026-08-08 straight-line measurement used, at the same 1 mm.
+    /// - Parameter definitionMatched: use OpenSim's own central difference of
+    ///   its own length where the fixture has one (it covers only muscles that
+    ///   carry a `PathWrap`), falling back to the analytic column. `false` uses
+    ///   the analytic column throughout.
+    /// - Returns: the relative errors, and how many pairs were excluded.
+    static func relativeMomentArmResiduals(bases: Set<String>,
+                                           poses: Set<String> = [],
+                                           minimumReferenceMetres: Double = 0.001,
+                                           definitionMatched: Bool)
+        -> (ratios: [Double], excludedBelowMinimum: Int) {
+        var ratios: [Double] = []
+        var excluded = 0
+        for sample in samples {
+            guard poses.isEmpty || poses.contains(sample.pose) else { continue }
+            guard let split = GaitLoadSummary.split(sample.muscle),
+                  bases.contains(split.base) else { continue }
+            let reference = definitionMatched ? (sample.centralDifference ?? sample.wrapOn)
+                                              : sample.wrapOn
+            guard abs(reference) >= minimumReferenceMetres else { excluded += 1; continue }
+            ratios.append(abs(sample.ours - reference) / abs(reference))
+        }
+        return (ratios, excluded)
     }
 
     static func worstOffenders(in pool: [Sample], by metric: (Sample) -> Double,

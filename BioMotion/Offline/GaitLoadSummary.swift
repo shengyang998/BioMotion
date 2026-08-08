@@ -14,15 +14,28 @@ import Foundation
 ///
 /// # Why — the cancellation argument was circular, and its replacement fails
 ///
-/// **The wrap half of this argument was fixed on 2026-08-08 and the conclusion
-/// did not change.** `MomentArmComputer` used to log that 76 `PathWrap`
-/// references on 66 of `FullBody.osim`'s 520 muscles were not modelled — every
-/// muscle a runner would recognise. Cylinder wrapping shipped first (64 of the
-/// 76), then ellipsoid wrapping (the remaining 12), so all 76 are solved and
-/// `musclesWithUnmodelledPaths` is empty. What follows is why that is NOT enough
-/// to reopen the claim: the cancellation argument was circular independently of
-/// how wrong the moment arms were, and re-measuring the 9.92 pp synergist leak
-/// against the corrected arms is its own piece of work that has not been done.
+/// **The wrap half of this argument was fixed on 2026-08-08, the leak was
+/// re-measured on 2026-08-09, and the conclusion did not change — but the REASON
+/// did.** `MomentArmComputer` used to log that 76 `PathWrap` references on 66 of
+/// `FullBody.osim`'s 520 muscles were not modelled — every muscle a runner would
+/// recognise. Cylinder wrapping shipped first (64 of the 76), then ellipsoid
+/// wrapping (the remaining 12), so all 76 are solved and
+/// `musclesWithUnmodelledPaths` is empty.
+///
+/// `WrappedMomentArmLeakTests` then re-ran the experiment on real geometry: the
+/// median moment-arm leak is **0.977 pp** where the straight line's was
+/// **7.939 pp** on the identical rig, and the three-muscle rig at the MEASURED
+/// residual reads **0.568 pp** where it read 9.92 pp. The moment arms are no
+/// longer the reason. Two things still block the claim, and both are measured:
+/// the moment-arm TAIL is 42–123 pp at the worst cell (and OpenSim's own two
+/// reference columns disagree by more than the gate allows, so its attribution
+/// is open), and — larger — **the shipping solver's own termination slack moves a
+/// published left/right figure by a median of 14.88 pp** with the geometry held
+/// fixed, against an 8.086 % publication floor. That is `eps_abs = eps_rel =
+/// 1e-3` with polishing off and `OSQP_SOLVED_INACCURATE` accepted, i.e. 0.02 of
+/// ABSOLUTE activation slack turning into a RELATIVE percentage. See
+/// `BoxQP`, which solves the same objective to machine precision so the two
+/// causes can be separated at all.
 ///
 /// The historical statement, kept because the reasoning below refers to it: an
 /// unmodelled path takes a straight line where the real tendon wraps around
@@ -1160,10 +1173,11 @@ struct GaitLoadSummary {
     /// to 4.4 mm of moment arm on `BIClong_*`/`BICshort_*` about `pro_sup_*`
     /// (`EllipsoidWrapValidationTests`).
     ///
-    /// Emptying this list does NOT reopen the per-muscle left/right claim:
-    /// `perMuscleLeftRightClaimIsSupported` is a separate decision that needs
-    /// its own measurement (the 9.92 pp leak in `MomentArmErrorCancellationTests`
-    /// was measured with the OLD arms and has not been re-run).
+    /// Emptying this list did NOT reopen the per-muscle left/right claim.
+    /// `perMuscleLeftRightClaimIsSupported` is a separate decision with its own
+    /// measurement, and on 2026-08-09 that measurement was made: the moment-arm
+    /// leak fell 8.1× but the claim stays retired, now on the solver's own
+    /// tolerance rather than on the geometry (`WrappedMomentArmLeakTests`).
     static let musclesWithUnmodelledPaths: Set<String> = []
 
     /// Names for the muscles a runner would recognise. Anything not here keeps
