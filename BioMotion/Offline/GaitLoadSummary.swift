@@ -659,10 +659,17 @@ struct GaitLoadSummary {
         // deliver the claim, so the promise is withheld and the reason named —
         // the same rule the refusals follow: only offer a lever when one exists.
         guard contactClaimFloorPercent <= resolvableAsymmetryPercent + 0.5 else {
+            // State only what the two numbers show: the floor is set by the
+            // spread of the contact times themselves, and the frame rate moves
+            // the other term. The earlier wording went further and told the user
+            // their steps "varied by more than the sampling grid explains" —
+            // a variance ATTRIBUTION the app never computes. That comparison was
+            // made once, in a test, on one clip; it is not a fact about this one.
             return base + String(format: " But the contact-time comparison below has to clear "
-                                 + "±%.0f%%: your own contact times varied from step to step by "
-                                 + "more than the sampling grid explains, that variation is inside "
-                                 + "the difference being measured, and no frame rate removes it.",
+                                 + "±%.0f%%, which is set by how much your contact times differ "
+                                 + "from step to step rather than by the sampling grid — so a "
+                                 + "faster camera does not lower it. More steps do: the figure "
+                                 + "falls as the square root of the number of contacts.",
                                  contactClaimFloorPercent)
         }
         let withFloor = base + " That is what the CONTACT-TIME comparison below has to clear."
@@ -682,17 +689,25 @@ struct GaitLoadSummary {
     /// — kept apart, because only the first is the camera's fault.
     var resolutionBreakdownSentence: String {
         let grid = String(format: "Sampling grid ±%.0f%%; ", quantisationFloorPercent)
+        // These two terms make the TIMING resolution. They are not the claim
+        // floor: that is this pair against the contact durations' own sampling
+        // scatter, whichever is larger. Naming the pair as the floor understated
+        // it by a factor of two on video_015 (8.1% printed, 16.5% governing) —
+        // the same wrong-variance defect this round exists to close, restated
+        // one line lower.
+        let closing = String(format: " Against the contact times' own spread ±%.0f%%, the claim "
+                             + "floor is ±%.0f%%.",
+                             contactSamplingUncertaintyPercent, contactClaimFloorPercent)
         if measuredStrideRepeatabilityPercent < strideRepeatabilityBoundPercent {
             return grid + String(format: "this runner's strides varied by less than the ±%.1f%% "
                                  + "this clip could have seen (measured ±%.1f%% on whole-frame "
-                                 + "touchdowns), so ±%.1f%% is what may be assumed. The claim "
-                                 + "floor is the larger of the two.",
+                                 + "touchdowns), so ±%.1f%% is what may be assumed.",
                                  strideRepeatabilityBoundPercent,
                                  measuredStrideRepeatabilityPercent,
-                                 strideRepeatabilityPercent)
+                                 strideRepeatabilityPercent) + closing
         }
-        return grid + String(format: "this runner's own stride-to-stride variation ±%.0f%%. "
-                             + "The claim floor is the larger.", strideRepeatabilityPercent)
+        return grid + String(format: "this runner's own stride-to-stride variation ±%.0f%%.",
+                             strideRepeatabilityPercent) + closing
     }
 
     /// **What is NOT measured on the fore-aft axis — which is not the same as

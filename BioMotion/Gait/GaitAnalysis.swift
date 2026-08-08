@@ -659,10 +659,18 @@ enum GaitAnalysis {
         // Each leg's peak is closed on ITS OWN contact time — but only where
         // this clip can resolve the contact difference that separates them. See
         // `GaitForceModel.perLegPeaksInBodyWeights`.
+        //
+        // This must be the WHOLE floor, not `resolution.resolvableAsymmetryPercent`.
+        // The two used to be the same number; once the claim gate gained the
+        // contact durations' own sampling scatter, passing the timing half here
+        // would split the peaks left/right on a difference the claim itself
+        // refuses to state — the caller-treats-a-necessary-condition-as-sufficient
+        // defect that `permitsAsymmetryClaim`'s doc comment exists to prevent.
         let peaks = GaitForceModel.perLegPeaksInBodyWeights(
             contactSeconds: contactSeconds,
             flightSeconds: modelledFlight,
-            resolvableAsymmetryPercent: resolution.resolvableAsymmetryPercent)
+            resolvableAsymmetryPercent: Swift.max(resolution.resolvableAsymmetryPercent,
+                                                  contactUncertainty))
 
         let measuredStanceFrames = allStanceFrames.isEmpty ? 0 : Int(median(allStanceFrames).rounded())
         let shortestContact = allStanceFrames.min().map { Int($0) } ?? 0
