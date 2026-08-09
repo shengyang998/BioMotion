@@ -147,7 +147,7 @@ final class MomentArmTests: XCTestCase {
     /// FullBody.osim is what ships as production. Before document-order parsing
     /// every one of its 418 ConditionalPathPoints was dropped, so its lumbar and
     /// abdominal muscles cut straight through the spine.
-    func testFullBodyParsesConditionalPathPoints() throws {
+    func testFullBodyPathFidelityIncludesExactMovingSplines() throws {
         guard let path = osimPath(named: "FullBody") else {
             throw XCTSkip("FullBody.osim is not reachable from the test bundle")
         }
@@ -160,10 +160,12 @@ final class MomentArmTests: XCTestCase {
         XCTAssertEqual(report.conditionalPathPointsSkipped, 0,
                        "No ConditionalPathPoint may be dropped; \(report.summary)")
         XCTAssertEqual(report.pathPointsParsed, 1444)
-        // A MovingPathPoint whose driving coordinate does not resolve to a
-        // skeleton DOF is dropped rather than evaluated at an invented value,
-        // so assert the total is accounted for rather than that all 4 survive.
-        XCTAssertEqual(report.movingPathPointsParsed + report.movingPathPointsSkipped, 4)
+        XCTAssertEqual(report.movingPathPointsParsed, 4,
+                       "FullBody's four MovingPathPoints must all survive parsing")
+        XCTAssertEqual(report.movingPathPointsApproximated, 0,
+                       "FullBody's SimmSpline MovingPathPoints must use the same cubic "
+                       + "function as OpenSim, not a line through its knots")
+        XCTAssertEqual(report.movingPathPointsSkipped, 0)
         XCTAssertEqual(report.unknownPathPointElementsSkipped, 0)
         // All 76 of FullBody's PathWrap references are solved: 64 name a
         // WrapCylinder and 12 a WrapEllipsoid, and both solvers ship. Both
@@ -175,6 +177,14 @@ final class MomentArmTests: XCTestCase {
         XCTAssertEqual(report.wrapObjectsParsed, 69)
         XCTAssertEqual(report.wrapObjectsRejected, 0,
                        "a rejected WrapObject silently stops its PathWraps wrapping")
+
+        _ = computer.computeMomentArms(withJointAngles: [NSNumber(value: 0.0)],
+                                       dofNames: ["pro_sup_l"])
+        let biceps = try XCTUnwrap(computer.musclePathData(forName: "BICshort_l"))
+        let moving = try XCTUnwrap(biceps.pathPoints.dropLast().last,
+                                   "BICshort_l's penultimate point is the MovingPathPoint")
+        XCTAssertEqual(moving.z, -0.0135667107416569, accuracy: 1e-12,
+                       "FullBody's three-knot z location must match its SimmSpline at q=0")
     }
 
     /// Path points are polyline vertices: a via point at the wrong index is
@@ -190,9 +200,10 @@ final class MomentArmTests: XCTestCase {
         XCTAssertEqual(report.conditionalPathPointsUnresolvedCoordinate, 0,
                        "ankle_angle_r must resolve to a skeleton DOF")
         XCTAssertEqual(report.movingPathPointsParsed, 1)
-        XCTAssertEqual(report.movingPathPointsApproximated, 1,
-                       "the 3-knot SimmSpline axis is linearly interpolated")
-        XCTAssertEqual(report.movingPathPointsSkipped, 0)
+        XCTAssertEqual(report.movingPathPointsApproximated, 0,
+                       "the 3-knot SimmSpline axis must be evaluated as a spline")
+        XCTAssertEqual(report.movingPathPointsSkipped, 1,
+                       "a non-increasing SimmSpline knot sequence must be rejected")
         XCTAssertEqual(report.unknownPathPointElementsSkipped, 1)
         XCTAssertEqual(report.musclesWithDefaultedTendonSlackLength, ["notendon_r"])
 
@@ -207,14 +218,38 @@ final class MomentArmTests: XCTestCase {
         XCTAssertEqual(ordered.pathPoints.count, 5,
                        "3 PathPoint + 1 ConditionalPathPoint + 1 MovingPathPoint")
         // Document order is 0.0 (plain), 0.1 (conditional), 0.2 (plain),
-        // 0.6 (moving, spline midpoint at q=0), 0.3 (plain).
+        // 0.6 (moving, spline knot at q=0), 0.3 (plain).
         let xs = ordered.pathPoints.map { $0.x }
         XCTAssertEqual(xs[0], 0.0, accuracy: 1e-9)
         XCTAssertEqual(xs[1], 0.1, accuracy: 1e-9)
         XCTAssertEqual(xs[2], 0.2, accuracy: 1e-9)
         XCTAssertEqual(xs[3], 0.6, accuracy: 1e-9,
-                       "MovingPathPoint x = linear interp of SimmSpline at q=0")
+                       "MovingPathPoint x = the two-knot SimmSpline at q=0")
         XCTAssertEqual(xs[4], 0.3, accuracy: 1e-9)
+        XCTAssertEqual(ordered.pathPoints[3].y, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(ordered.pathPoints[3].z, 0.1, accuracy: 1e-9,
+                       "the moving point must land on the middle SimmSpline knot")
+
+        // Between knots the cubic is not the straight chord. For
+        // (-1,0), (0,0.1), (1,0), OpenSim/SIMM evaluates z(0.5) = 0.075;
+        // the old approximation returned 0.05. Re-running the affected sweep
+        // after this exact evaluator landed reduced its maximum 4.414→2.679 mm.
+        _ = computer.computeMomentArms(withJointAngles: [NSNumber(value: 0.5)],
+                                       dofNames: ["ankle_angle_r"])
+        let curved = try XCTUnwrap(computer.musclePathData(forName: "ordered_r"))
+        XCTAssertEqual(curved.pathPoints[3].x, 0.65, accuracy: 1e-9)
+        XCTAssertEqual(curved.pathPoints[3].y, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(curved.pathPoints[3].z, 0.075, accuracy: 1e-9,
+                       "MovingPathPoint must evaluate the SimmSpline between knots")
+
+        // SimmSpline extrapolates along the endpoint tangent. The old
+        // hand-written evaluator clamped both spline axes at q=1.
+        _ = computer.computeMomentArms(withJointAngles: [NSNumber(value: 2.0)],
+                                       dofNames: ["ankle_angle_r"])
+        let outside = try XCTUnwrap(computer.musclePathData(forName: "ordered_r"))
+        XCTAssertEqual(outside.pathPoints[3].x, 0.8, accuracy: 1e-9)
+        XCTAssertEqual(outside.pathPoints[3].y, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(outside.pathPoints[3].z, -0.2, accuracy: 1e-9)
     }
 
     /// A ConditionalPathPoint outside its `<range>` must leave the polyline.
@@ -410,13 +445,26 @@ final class MomentArmTests: XCTestCase {
                         <Constant><value>0</value></Constant>
                       </y_location>
                       <z_location>
-                        <SimmSpline><x> -1 0 1</x><y> 0 0 0</y></SimmSpline>
+                        <SimmSpline><x> -1 0 1</x><y> 0 0.1 0</y></SimmSpline>
                       </z_location>
                     </MovingPathPoint>
                     <PathPoint name="p4">
                       <socket_parent_frame>/bodyset/femur_r</socket_parent_frame>
                       <location>0.3 0 0</location>
                     </PathPoint>
+                    <MovingPathPoint name="bad_knots">
+                      <socket_parent_frame>/bodyset/femur_r</socket_parent_frame>
+                      <socket_x_coordinate>/jointset/ankle_r/ankle_angle_r</socket_x_coordinate>
+                      <x_location>
+                        <SimmSpline><x> -1 1 0</x><y> 0.4 0.5 0.6</y></SimmSpline>
+                      </x_location>
+                      <y_location>
+                        <Constant><value>0</value></Constant>
+                      </y_location>
+                      <z_location>
+                        <Constant><value>0</value></Constant>
+                      </z_location>
+                    </MovingPathPoint>
                     <UnsupportedFuturePathPoint name="weird">
                       <socket_parent_frame>/bodyset/femur_r</socket_parent_frame>
                       <location>9 9 9</location>

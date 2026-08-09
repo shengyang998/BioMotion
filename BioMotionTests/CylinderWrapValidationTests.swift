@@ -3,7 +3,7 @@ import XCTest
 
 /// Does the ported cylinder wrap solver reproduce OpenSim's moment arms?
 ///
-/// # THE PRE-REGISTRATION
+/// # ORIGINAL PRE-REGISTRATION (historical; A4 below is current)
 ///
 /// Written before a single number was read, and not edited afterwards. The
 /// reference is `BioMotionTests/Fixtures/opensim_moment_arms.txt` — OpenSim 4.6
@@ -34,7 +34,8 @@ import XCTest
 ///   faithful wrap solver is the same FK / spline / finite-difference gap that
 ///   was already there, not a new one.
 /// - **C2** `p99 |ours − reference| ≤ 4.0 mm` on SOLVED muscles (was 3.79 mm).
-/// - **C3** zero sign disagreements on SOLVED muscles where `|reference| ≥ 1 mm`.
+/// - **C3** zero sign disagreements on SOLVED muscles where `|reference| ≥ 1 mm`
+///   (restored as the fixed regression tripwire by A4).
 /// - **C4** the CONTROL is unchanged: `max |ours − reference| ≤ 5.0 mm` on
 ///   muscles with no `PathWrap`, which is where it already was.
 /// - **C5** path LENGTH: `max |ours − reference length| ≤ 5.0 mm` on SOLVED.
@@ -64,10 +65,11 @@ import XCTest
 /// # AMENDMENTS, and the evidence for each
 ///
 /// The first run failed C1 (8.07 mm), C5 (8.75 mm) and C3/W2 (4 sign flips).
-/// Both failures were traced to properties of the REFERENCE, not of the port.
-/// The thresholds above are unchanged; what changed is which column they are
-/// applied to and over which muscles. Both amendments were written down before
-/// the amended numbers were read.
+/// A1 and A2 traced those results to properties of the REFERENCE rather than of
+/// the port. A3 later recorded a runtime threshold that moved when an unrelated
+/// SimmSpline defect was fixed; A4 retires that self-calibration and restores
+/// the original fixed 1 mm regression tripwire. Each amendment records the
+/// evidence and timing that led to it.
 ///
 /// **A1 — the analytic column is not `dL/dq`.** `GeometryPath::computeMomentArm`
 /// asks `MomentArmSolver` for the generalized force a unit tension along the
@@ -280,55 +282,50 @@ final class CylinderWrapValidationTests: XCTestCase {
     /// definition-matched column. A sign flip against OpenSim's own derivative
     /// means the path ran round the other side of the bone.
     ///
-    /// # AMENDMENT A3: the inclusion threshold is MEASURED, not chosen
+    /// # AMENDMENT A3 (historical): the inclusion threshold was measured
     ///
-    /// The pre-registration tested the sign wherever `|reference| ≥ 1 mm`. That
-    /// number was a guess, and it is below the floor at which these two
-    /// implementations agree about anything at all: on the 454 muscles with NO
-    /// wrap object — where the wrap solver cannot be involved and OpenSim's two
-    /// columns are identical to the last stored digit — nimble's FK, the
-    /// linearly-interpolated `MovingPathPoint` splines and the finite-difference
-    /// step still put the two moment arms up to **3.758 mm** apart at these same
-    /// poses. A sign test on a 1.0 mm reference value is a test of that floor,
-    /// not of the wrap side.
+    /// The pre-registration tested the sign wherever `|reference| ≥ 1 mm`. A3
+    /// replaced that with the largest no-wrap disagreement measured in the same
+    /// run: then-linearly-interpolated `MovingPathPoint` splines, Nimble FK and
+    /// finite differencing put the implementations up to **3.758 mm** apart.
     ///
-    /// So the threshold is `controlFloor`, computed from the CONTROL class in
-    /// this same run rather than hard-coded, and both counts are printed. The
-    /// weaker sub-floor band is still gated at "at most one", so a regression
-    /// that flips many signs is caught either way.
+    /// That runtime threshold later proved to be coupled to an unrelated bug:
+    /// correcting SimmSpline endpoint extrapolation moved the same no-wrap
+    /// maximum from 3.758 mm to near machine precision without changing a
+    /// cylinder path. A correct fix elsewhere must not silently redefine C3.
+    ///
+    /// # AMENDMENT A4: restore the original fixed sign tripwire
+    ///
+    /// FullBody now reports Moving `4 parsed / 0 approximated`, and the unrelated
+    /// no-wrap maximum no longer supplies a meaningful runtime threshold. C3 is
+    /// therefore again the original fixed 1 mm zero-flip regression on the
+    /// definition-matched column. A failure below C1's 5 mm accuracy contract
+    /// still needs attribution; it is not automatically blamed on the cylinder.
+    /// The analytic 1 mm positive control and low-level quadrant tests remain.
     func testSolvedMusclesNeverPointTheWrongWay() {
-        let controlFloor = Self.samples
-            .filter { $0.wrapClass == .none }
-            .map { abs($0.ours - $0.wrapOn) }
-            .max() ?? 0
-        print(String(format: "SIGN-FLOOR control disagreement floor = %.6f m", controlFloor))
-        XCTAssertGreaterThan(controlFloor, 0,
-                             "the control class produced no disagreement at all, which "
-                             + "means it was not measured")
-
-        let subFloor = Self.samples.filter {
+        let signResolution = 0.001  // original C3/W2 contract
+        let single = Self.samples.filter {
             $0.wrapClass == .solved && $0.wrapCount == 1
-                && abs($0.centralDifference ?? 0) >= 0.001
-                && abs($0.centralDifference ?? 0) < controlFloor
+                && abs($0.centralDifference ?? 0) >= signResolution
+        }
+        let flipped = single.filter {
+            ($0.ours < 0) != (($0.centralDifference ?? 0) < 0)
+        }
+        let oneToFive = single.filter {
+            abs($0.centralDifference ?? 0) < 0.005
                 && ($0.ours < 0) != (($0.centralDifference ?? 0) < 0)
         }
-        print("SIGN-SUBFLOOR flips below the control floor: \(subFloor.count)")
-        XCTAssertLessThanOrEqual(subFloor.count, 1,
-                                 "even below the floor, more than one flip is a pattern")
-
-        let solved = Self.samples.filter {
-            $0.wrapClass == .solved && abs($0.centralDifference ?? 0) >= controlFloor
-        }
-        let single = solved.filter { $0.wrapCount == 1 }
-        let flipped = single.filter { ($0.ours < 0) != (($0.centralDifference ?? 0) < 0) }
-        let flippedMulti = solved.filter {
-            $0.wrapCount > 1 && ($0.ours < 0) != (($0.centralDifference ?? 0) < 0)
+        let flippedMulti = Self.samples.filter {
+            $0.wrapClass == .solved && $0.wrapCount > 1
+                && abs($0.centralDifference ?? 0) >= signResolution
+                && ($0.ours < 0) != (($0.centralDifference ?? 0) < 0)
         }
         // Against the analytic column too, so the amendment stays auditable.
         let analytic = Self.samples.filter { $0.wrapClass == .solved && abs($0.wrapOn) >= 0.001 }
         let flippedAnalytic = analytic.filter { ($0.ours < 0) != ($0.wrapOn < 0) }
         let flippedBefore = analytic.filter { ($0.wrapOff < 0) != ($0.wrapOn < 0) }
-        print("SIGN single=\(single.count) flipped=\(flipped.count) | "
+        print("SIGN resolution_mm=1 single=\(single.count) flipped=\(flipped.count) "
+              + "one_to_five_mm=\(oneToFive.count) | "
               + "multi flipped=\(flippedMulti.count) | "
               + "vs ANALYTIC: pairs=\(analytic.count) flipped_now=\(flippedAnalytic.count) "
               + "flipped_by_the_straight_line=\(flippedBefore.count)")

@@ -225,7 +225,8 @@ import XCTest
 /// 10.5 and 11.0 mm median against that column, 0.033 and 0.035 mm against it
 /// reconciled).
 ///
-/// So the ordering of causes, all on the same rig and the same statistic:
+/// Before the endpoint-extrapolation fix, the ordering of causes on the same rig
+/// and statistic was:
 /// **the reference against itself 5.28 pp median / 126.44 worst**, our arms
 /// against OpenSim's better-founded column 0.41 / 42.46, the sharing step
 /// 4.5e-05 / 21.98. The largest term is no longer inside this repository — but
@@ -247,6 +248,22 @@ import XCTest
 /// localises the next question away from wrapping and onto the kinematic/path
 /// derivative seam. The central-difference cell still proves the separate
 /// sharing-step result: an exact row can move when its neighbours change.
+///
+/// # RE-RUN 2026-08-09 (sixth stage): the 42.46 pp tail was endpoint-cubic extrapolation
+///
+/// `walker_knee_r` permits 140° of flexion, while its five nonlinear
+/// `SimmSpline` transform axes have knots only through 120°. Nimble had OpenSim's
+/// endpoint-tangent branches commented out and continued the final cubic at the
+/// 130° `run_4_mid_swing` pose. A two-sided low-level regression first failed on
+/// value, first derivative and second derivative; restoring both branches makes
+/// `bflh140_r` read **13.713464915 mm** versus OpenSim's **13.713465000 mm**.
+///
+/// The analytic-only maximum falls **42.4623 → 3.6932 pp** (p99 9.94 → 3.332,
+/// median 0.412 → 0.312). It is now `glmax2` at `grid_h090_k000_a+00`; the
+/// largest arm discrepancy in that cell is a different muscle, `gasmed`, at
+/// 1.047 mm. That is a 91.3% reduction, but 3.6932 pp is still 2.28× the
+/// unchanged 1.617 pp reopening bar. The claim therefore remains retired, and
+/// the separate 123.08 pp central-difference/reference tail still dominates R1.
 final class WrappedMomentArmLeakTests: XCTestCase {
 
     // MARK: - Pre-registered constants
@@ -684,6 +701,27 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                                     "the rig has to contain the muscles the product would name")
     }
 
+    /// FullBody permits 140 degrees of knee flexion, but the five nonlinear
+    /// `walker_knee_r` transform splines end at 120 degrees. This fixed-point,
+    /// wrap-free path at 130 degrees is the product-level regression for the
+    /// endpoint-linear SimmSpline patch: the old endpoint-cubic continuation
+    /// produced 16.059 mm instead of OpenSim's 13.713 mm.
+    func testEndpointLinearKinematicsMatchOpenSimBeyondTheLastKneeKnot() throws {
+        let sample = try XCTUnwrap(WrapValidationHarness.samples.first {
+            $0.pose == "run_4_mid_swing"
+                && $0.muscle == "bflh140_r"
+                && $0.coordinate == "knee_angle_r"
+        })
+        print(String(format: "SIMMSPLINE-METRIC pose=run_4_mid_swing "
+                     + "muscle=bflh140_r coordinate=knee_angle_r "
+                     + "ours_mm=%.9f opensim_mm=%.9f delta_mm=%+.9f",
+                     1000 * sample.ours, 1000 * sample.wrapOn,
+                     1000 * (sample.ours - sample.wrapOn)))
+        XCTAssertEqual(sample.ours, 0.013713464958, accuracy: 1e-6)
+        XCTAssertEqual(sample.ours, sample.wrapOn, accuracy: 1e-6,
+                       "Nimble must use the same endpoint-tangent extrapolation as OpenSim")
+    }
+
     /// **The mirror is exact in the matrix the solver is handed**, so the
     /// modelling error really is bilateral. Read off `Built.arms`, not asserted
     /// in a comment: a left row must be zero on every right coordinate, equal to
@@ -934,13 +972,14 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                   + "\(arms.joined(separator: " "))")
         }
 
-        // The muscle whose FIGURE moves most (`bflh140` in the registered run)
-        // need not be the muscle whose ARM is wrong: the QP couples every muscle
-        // crossing a coordinate. Print every readable row at the worst ANALYTIC
-        // cell and decide whether the repository-owned 42.46 pp tail is on the
-        // muscle's own row or arrives through a neighbour. Keep this on the
-        // analytic column: unlike OpenSim's central difference, that reference
-        // does not inherit the known multi-wrap path-length bookkeeping defect.
+        // The muscle whose FIGURE moves most need not be the muscle whose ARM is
+        // wrong: the QP couples every muscle crossing a coordinate. Print every
+        // readable row at the CURRENT worst ANALYTIC cell. This instrument first
+        // localised the 42.46 pp bflh140 tail, then moved automatically to the
+        // 3.69 pp glmax2 cell after endpoint-linear SimmSpline extrapolation fixed
+        // bflh140. Keep it on the analytic column: unlike OpenSim's central
+        // difference, that reference does not inherit the known multi-wrap
+        // path-length bookkeeping defect.
         let analyticCells = readable.filter { $0.reference == .analytic }
         let worstAnalytic = try XCTUnwrap(
             analyticCells.max { $0.leakExact < $1.leakExact },

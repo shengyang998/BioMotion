@@ -48,7 +48,7 @@ photo or video through a Core ML SAM 3D Body model.
 ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 - `NimbleBridge.h/.mm` — loads .osim, runs IK/ID, owns the runtime DOF mask. Registers virtual markers at joint centers for ARKit compatibility. **The IK solve is the app's own Levenberg-Marquardt**, not `Skeleton::fitMarkersToWorldPositions` / `math::refineIK`; the vendored nimble tree is untouched.
 - `MuscleSolver.h/.mm` — parses the model's muscles (520 in FullBody.osim, 80 in Rajagopal2016), runs OSQP static optimization
-- `MomentArmComputer.h/.mm` — parses muscle paths, computes moment arms via FK + numerical differentiation. Shares the bridge's skeleton (`NimbleBridge+Internal.h`) rather than parsing a second copy. Applies path WRAPPING, and picks a one-sided difference where the wrap state changes inside the stencil.
+- `MomentArmComputer.h/.mm` — parses muscle paths, computes moment arms via FK + numerical differentiation. Shares the bridge's skeleton (`NimbleBridge+Internal.h`) rather than parsing a second copy. Applies path WRAPPING, and picks a one-sided difference where the wrap state changes inside the stencil. FullBody's four `MovingPathPoint`s all survive; their `SimmSpline`s use Nimble's OpenSim-compatible evaluator (`parsed 4 / approximated 0`).
 - `MusclePathWrap.h/.cpp` — the cylinder AND ellipsoid wrap solvers, ported from opensim-core (Apache 2.0; licence header in the file, attribution in `./NOTICE`). Length only: no `wrap_pts` leave the solver, and only the ellipsoid's `hybrid` `<method>` is implemented — the other two are refused, not approximated. All 76 `PathWrap` references in `FullBody.osim` and all 46 in `Rajagopal2016.osim` are solved. Every intentional difference is listed under DEVIATIONS at the top of the .cpp (12 of them).
 - Bridging header: `BioMotion/Nimble/BioMotion-Bridging-Header.h`
 
@@ -95,6 +95,11 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 - **C++ exceptions**: Always use C++ `try/catch`, never ObjC `@try/@catch` — ObjC exceptions don't catch `std::exception` or SIGSEGV.
 - **Build number**: Must increment `CURRENT_PROJECT_VERSION` in `project.yml` before each TestFlight upload.
 - **Library search paths**: Conditional on SDK — `[sdk=iphoneos*]` for device, `[sdk=iphonesimulator*]` for simulator.
+- **Nimble source is not the linked artefact.** The app links
+  `nimblephysics/build_ios/libnimble_ios.a` and `build_sim/libnimble_ios.a`, not
+  the stale XCFramework. After changing vendored C++, rebuild BOTH archives and
+  add a reviewed patch under `nimble-patches/`; a source-only fix can otherwise
+  look correct in `git diff` while every test still runs the old object code.
 - **XcodeGen**: Always run `xcodegen generate` after editing `project.yml` — never edit `BioMotion.xcodeproj/` by hand. A **new test file** needs it too, even when `project.yml` is unchanged, or it sits on disk silently not running.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
 
@@ -182,8 +187,8 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   proves it has to CONSTRUCT the switch by bisection rather than wait for one. The ellipsoid adds a
   SMALL sibling to the same hazard: its surface distance is a sum of `(int)(|r1−r2| / 1 mm)`
   chords, so L steps by **2.6e-6 m** every time that integer ticks — 13 mm/rad once divided by
-  `2·eps`, well under the 3.758 mm floor but not zero. The chord count is therefore part of the
-  signature too.
+  `2·eps`, large enough to contaminate a finite-difference moment arm. The chord count is therefore
+  part of the signature too.
 - **A NUMERICAL ROUTINE CAN BE VALID ONLY AT ONE SCALE, and OpenSim's point-to-ellipsoid solver
   is.** `WrapEllipsoid::findClosestPoint` (Graphics Gems IV) stops its Newton iteration on
   `|f| < 1e-9`, where `f` is a DEGREE-6 polynomial in the radii. Called with the model's real
@@ -215,8 +220,10 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   OpenSim's own derivative the single-wrap muscles read max 3.569 mm. After the ellipsoid,
   `unmodelledPathWraps` counts **0**, not 12 and not 76, and
   `GaitLoadSummary.musclesWithUnmodelledPaths` is EMPTY — which does not mean the paths are exact,
-  it means every wrap OBJECT is solved; the `MovingPathPoint` linear interpolation is still worth
-  4.414 mm on `BICshort_l`/`pro_sup_l`. The elbow muscles' own before/after is an ABLATION rather
+  it means every wrap OBJECT is solved. Non-wrap fidelity is reported separately: FullBody now
+  reports four MovingPathPoints parsed and zero approximated, using the canonical Nimble
+  SimmSpline. The 4.414 mm BIC result below is the pre-exact-MovingPath snapshot; the current
+  central-difference maximum is 2.679 mm. The elbow muscles' own before/after is an ABLATION rather
   than an argument: `BRD_r`/`elbow_flex_r` reads **−8.73 mm** with the ellipsoids off against a true
   **+1.51 mm**, and **+1.51 mm** with them on. The numbers below describe the code as it
   was, and they are what the port has to keep beating. This entry used to be a
@@ -326,22 +333,23 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   is a statement about this codebase only while the two agree. Measured 2026-08-09 by sweeping the
   other column as a SUBJECT — same pose, same τ, same truth solve, same statistic, so it lands on
   R1's own scale: the two columns disagree by **126.44 pp** worst and **5.28 pp** median against
-  R1's 123.10 / 0.977, and **our leak is the smaller of the two in 466 of 582 cells**. The reopening
-  bar is 1.617 pp, so the reference disagrees with itself by 78× the whole gate budget and no work on
-  `MomentArmComputer` can pass R1 while it is taken that way. NOT a way out of the retirement:
-  against the better-founded analytic column alone our own worst is still **42.46 pp**, 26× the bar.
-  Register a gate against ONE reference you can defend, or the gate measures the reference.
-- **ONE MAXIMUM PROVED SHARING; A DIFFERENT MAXIMUM REJECTED THE NEIGHBOUR HYPOTHESIS.** At R1's
+  the post-SimmSpline R1's **123.083 / 0.657**. The reopening bar is 1.617 pp, so the reference
+  disagrees with itself by 78× the whole gate budget and no work on `MomentArmComputer` can pass R1
+  while it is taken that way. NOT a way out of the retirement: after fixing the repository-owned
+  endpoint-extrapolation bug, the better-founded analytic column alone is still **3.693 pp** worst
+  (median 0.312), 2.28× the bar. Register a gate against ONE reference you can defend, or the gate
+  measures the reference.
+- **ONE MAXIMUM PROVED SHARING; A DIFFERENT MAXIMUM FOUND A SIMMSPLINE BUG.** At R1's
   central-difference worst cell, `bflh140` — three fixed points, no `PathWrap` or `MovingPathPoint` —
   has exactly the same four arms in every source (`−57.249 / 16.044 / −5.762 / 29.526 mm`) and its
   figure still moves **126.44 pp** when neighbours change. That proves the QP sharing step can move
-  an exact row. It does **not** explain the separate 42.46 pp ANALYTIC maximum. Printing all 24
-  screened rows there (`LEAK-METRIC worst_analytic_cell_row`) rejects the recorded inference:
-  `bflh140_r`'s own knee arm is the largest discrepancy, ours **16.059 mm** vs analytic
-  **13.713 mm** (**+2.346 mm**), and its figure moves **−42.462 pp**; `gaslat140_r` is next at
-  1.597 mm. So "the analytic tail arrives through an unnamed synergist" is false. What remains is
-  why a wrap-free fixed-point path agrees at one pose and differs at `run_4_mid_swing` — inspect the
-  kinematic/path-derivative seam, not the wrap solver. The central cell still means a future
+  an exact row. The separate 42.46 pp ANALYTIC maximum was `bflh140_r`'s own knee arm: ours
+  **16.059 mm** vs analytic **13.713 mm**. `walker_knee_r` permits 140° while its five nonlinear
+  transform splines stop at 120°; Nimble continued the last cubic where OpenSim continues the
+  endpoint tangent. Restore BOTH value and derivative branches, rebuild BOTH static archives, and
+  pin both ends: at 130° BioMotion is now **13.713464915 mm** vs OpenSim **13.713465000 mm**. The
+  analytic maximum falls to **3.693 pp** on `glmax2`; its cell's largest arm discrepancy is actually
+  `gasmed` at 1.047 mm, another direct example of sharing. The central cell still means a future
   per-muscle claim needs the QP coupling sensitivity measured; validating one row never bounds its
   output error.
 - **A KKT RESIDUAL NORMALISED BY THE GRADIENT READS 1.0 AT A PERFECT ANSWER.** At an interior optimum

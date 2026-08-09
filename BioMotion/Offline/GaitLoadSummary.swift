@@ -1285,12 +1285,12 @@ struct GaitLoadSummary {
     /// `<PathWrap><method>` other than `hybrid`, puts entries back into it and
     /// the guard test fails.
     ///
-    /// **Empty does NOT mean the paths are exact.** It means every wrap OBJECT
-    /// is solved. `MomentArmComputer` still interpolates the model's four
-    /// `MovingPathPoint`s linearly between cubic-spline control points, and that
-    /// approximation is now the largest implementation gap left: it is worth up
-    /// to 4.4 mm of moment arm on `BIClong_*`/`BICshort_*` about `pro_sup_*`
-    /// (`EllipsoidWrapValidationTests`).
+    /// **Empty does NOT mean the paths are exact.** It certifies only that every
+    /// wrap object is solved; consult `MusclePathFidelityReport` for non-wrap
+    /// path functions. On FullBody all four MovingPathPoints are parsed and none
+    /// is approximated: SimmSpline uses Nimble's OpenSim-compatible evaluator.
+    /// The former 4.4 mm BIC attribution is a pre-exact-MovingPath snapshot, not
+    /// a current result (`EllipsoidWrapValidationTests`).
     ///
     /// Emptying this list did NOT reopen the per-muscle left/right claim.
     /// `perMuscleLeftRightClaimIsSupported` is a separate decision with its own

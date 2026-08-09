@@ -35,21 +35,21 @@ CONVENTIONS VERIFIED AGAINST NIMBLE SOURCE (not assumed)
   Combined with `getAxisFlips` this is identical to composing
   Rot(axis_i, f_i(q)) for i = 0,1,2 in document order, which is what this file
   does.
-* SimmSpline: exact port of `dart/math/SimmSpline.cpp` (itself a port of
-  OpenSim's), including the SIMM end conditions and TINY_NUMBER = 1e-7.
+* SimmSpline: exact port of BioMotion's patched `dart/math/SimmSpline.cpp`
+  (itself a port of OpenSim's), including endpoint-tangent linear
+  extrapolation, the SIMM end conditions and TINY_NUMBER = 1e-7.
 * PinJoint -> DART RevoluteJoint with default axis = +Z (OpenSimParser.cpp:5610
   never calls setAxis).  UniversalJoint -> DART defaults axis1=+X, axis2=+Y.
 
 LIMITATIONS (shared with the shipped app, and therefore NOT removed here)
 ------------------------------------------------------------------------
-* PathWrap (WrapCylinder / WrapEllipsoid) is not implemented, in nimble or in
-  MomentArmComputer.mm or here.  Each of the 8 quadriceps carries exactly 1
-  PathWrap, so their absolute moment arms carry that error in *both* the before
-  and the after column.  Differences are meaningful; absolute values are only
-  approximately right.
-* MovingPathPoint location functions are evaluated with this file's SimmSpline;
-  the app linearly interpolates the same control points for some of them.  No
-  muscle measured in this report has a MovingPathPoint (asserted in measure.py).
+* PathWrap (WrapCylinder / WrapEllipsoid) is not implemented here. The app's
+  MomentArmComputer now solves both surfaces. Each of the 8 quadriceps measured
+  by this historical diagnostic carries exactly 1 PathWrap, so its absolute
+  values remain only approximate here.
+* MovingPathPoint location functions use the same OpenSim-compatible SimmSpline
+  semantics here and in the app. No muscle measured in this report carries one
+  (asserted in measure.py).
 * No constraint solver: CoordinateCouplerConstraint is applied here only when a
   caller explicitly asks for the `coupled` reference model.  nimble never
   applies it, which is the whole point of defect 1.
@@ -115,7 +115,7 @@ class PiecewiseLinear:
 
 
 class SimmSpline:
-    """Exact port of dart/math/SimmSpline.cpp (calcCoefficients + calcValue)."""
+    """OpenSim-compatible port of SimmSpline coefficients and value evaluation."""
 
     kind = "SimmSpline"
 
@@ -183,6 +183,10 @@ class SimmSpline:
     def __call__(self, ax):
         x = self._x
         n = len(x)
+        if ax < x[0]:
+            return self._y[0] + (ax - x[0]) * self._b[0]
+        if ax > x[n - 1]:
+            return self._y[n - 1] + (ax - x[n - 1]) * self._b[n - 1]
         if n < 3:
             k = 0
         else:

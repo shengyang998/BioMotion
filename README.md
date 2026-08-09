@@ -16,7 +16,7 @@ labs/BioMotion/
 └── README.md               # this file — setup + build
 ```
 
-The `nimblephysics/` and `osqp/` folders are third-party C++ libraries. They are **not** committed to the project repo — you clone them separately and build them into static libs / xcframeworks that the iOS app links against.
+The `nimblephysics/` and `osqp/` folders are third-party C++ libraries. They are **not** committed to the project repo — you clone them separately and build the static archives that the iOS app links against.
 
 ## What ships in the binary
 
@@ -25,12 +25,12 @@ The compiled `.ipa` is only ~3.5MB. The repo on disk can balloon to 1.2GB if you
 | Path | Size | Required for build? |
 |------|------|---------------------|
 | `BioMotion/`, `BioMotion.xcodeproj/`, `BioMotionTests/`, `project.yml` | ~1.3MB | yes |
-| `nimblephysics/` source + iOS patches | ~50MB after pruning | yes (to rebuild xcframework) |
-| `nimblephysics/build_xcframework/NimbleIOS.xcframework` | 47MB | yes (or rebuild from source) |
+| `nimblephysics/` source + iOS patches | ~50MB after pruning | yes (to rebuild the static archives) |
+| `nimblephysics/build_ios/libnimble_ios.a`, `build_sim/libnimble_ios.a` | ~47MB | yes (or rebuild from source) |
+| `nimblephysics/build_xcframework/NimbleIOS.xcframework` | 47MB | **no** — legacy output, not linked |
 | `osqp/` source | ~14MB | yes |
 | `nimblephysics/data/` (osim/grf/c3d datasets) | 674MB | **no** — research fixtures |
-| `nimblephysics/javascript/`, `python/`, `dart/` | ~140MB | **no** — language bindings |
-| `nimblephysics/build_ios/`, `build_sim/` | ~90MB | **no** — CMake intermediates, regenerable |
+| `nimblephysics/javascript/`, `python/` | ~80MB | **no** — language bindings |
 | `nimblephysics/unittests/`, `www/`, `wiki_resources/` | ~14MB | **no** |
 | `build/` (Xcode DerivedData spillover) | ~15MB | **no** |
 
@@ -38,12 +38,12 @@ Safe to delete before zipping the project for transfer:
 
 ```bash
 rm -rf nimblephysics/data nimblephysics/javascript nimblephysics/python \
-       nimblephysics/dart nimblephysics/www nimblephysics/wiki_resources \
-       nimblephysics/unittests nimblephysics/build_ios nimblephysics/build_sim \
+       nimblephysics/www nimblephysics/wiki_resources nimblephysics/unittests \
        build
 ```
 
-That trims the project from ~1.2GB to ~50MB.
+That removes the bulky optional datasets while retaining the linked archives
+and the source required to rebuild them.
 
 ## Fresh setup on a new Mac
 
@@ -82,7 +82,21 @@ Then apply the iOS-specific patches. Search the existing tree for `DART_IOS_BUIL
 
 Replace `nimblephysics/CMakeLists.txt` with the iOS-specific version (the upstream original is preserved as `CMakeLists_original.txt` in the patched tree).
 
-> **Tip:** keep the patched nimblephysics tree as a private fork or a tarball — re-applying these patches by hand on a fresh upstream clone is painful.
+Then apply the reviewed behaviour patches recorded by this repository:
+
+```bash
+git -C nimblephysics apply ../nimble-patches/opensimparser-null-joint-fallback.patch
+git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
+```
+
+See `nimble-patches/README.md` for pinned SHAs, reverse-checks and regression
+commands. That directory does not yet reconstruct every older iOS-port change,
+so keep the patched tree in a private fork or reproducible archive until the
+remaining port diff has also been exported.
+
+Here “linear extrapolation” means continuation along an endpoint tangent only:
+SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses
+that same evaluator for exact MovingPathPoint locations.
 
 ### 4. Clone osqp
 
@@ -98,17 +112,19 @@ cd nimblephysics/build_ios
 cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
   -DCMAKE_OSX_SYSROOT=iphoneos ..
-ninja
+cmake --build . --target nimble_ios --parallel
 
 # iOS simulator (arm64 iphonesimulator)
 cd ../build_sim
 cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
   -DCMAKE_OSX_SYSROOT=iphonesimulator ..
-ninja
+cmake --build . --target nimble_ios --parallel
 ```
 
-Then assemble `build_xcframework/NimbleIOS.xcframework` from the device + simulator outputs (`xcodebuild -create-xcframework -library ... -library ... -output build_xcframework/NimbleIOS.xcframework`).
+The generated Xcode project links `build_ios/libnimble_ios.a` and
+`build_sim/libnimble_ios.a` directly according to the active SDK. The older
+`build_xcframework/NimbleIOS.xcframework` is not part of the current link path.
 
 ### 6. Build OSQP
 

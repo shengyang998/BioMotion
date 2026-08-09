@@ -97,6 +97,7 @@ enum WrapValidationHarness {
         let wrapCount: Int
         let withEllipsoids: Double
         let withoutEllipsoids: Double
+        let wrapOff: Double
         let wrapOn: Double
         let centralDifference: Double?
     }
@@ -324,6 +325,7 @@ enum WrapValidationHarness {
                         wrapCount: computer.pathWrapCount(forMuscleNamed: muscle.name),
                         withEllipsoids: onMatrix[ourRow * columns + column].doubleValue,
                         withoutEllipsoids: offMatrix[ourRow * columns + column].doubleValue,
+                        wrapOff: row.momentArmsWrapOff[slot],
                         wrapOn: row.momentArmsWrapOn[slot],
                         centralDifference: fdByCoordinate[coordinate]))
                 }

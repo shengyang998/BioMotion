@@ -1,0 +1,71 @@
+diff --git a/dart/math/SimmSpline.cpp b/dart/math/SimmSpline.cpp
+index f3aac4d919b54012e7f14a472fc8239d7985b2e5..c34ca04600dfb36b725acbf6f858875fae13fb12 100644
+--- a/dart/math/SimmSpline.cpp
++++ b/dart/math/SimmSpline.cpp
+@@ -269,12 +269,10 @@ s_t SimmSpline::calcValue(s_t x) const
+    * and the coordinate is still out of range, deal with it quietly.
+    */
+ 
+-  /*
+   if (aX < _x[0])
+     return _y[0] + (aX - _x[0]) * _b[0];
+   else if (aX > _x[n - 1])
+     return _y[n - 1] + (aX - _x[n - 1]) * _b[n - 1];
+-  */
+ 
+   if (n < 3)
+   {
+@@ -345,7 +343,6 @@ s_t SimmSpline::calcDerivative(int order, s_t x) const
+    * and the coordinate is still out of range, deal with it quietly.
+    */
+ 
+-  /*
+   if (aX < _x[0])
+   {
+     if (aDerivOrder == 1)
+@@ -360,7 +357,6 @@ s_t SimmSpline::calcDerivative(int order, s_t x) const
+     else
+       return 0;
+   }
+-  */
+ 
+   /* Check to see if the abscissa is close to one of the end points
+    * (the binary search method doesn't work well if you are at one of the
+@@ -476,4 +472,4 @@ int SimmSpline::getArgumentSize() const
+ int SimmSpline::getMaxDerivativeOrder() const
+ {
+   return 2;
+-}
+\ No newline at end of file
++}
+diff --git a/unittests/unit/test_SimmSpline.cpp b/unittests/unit/test_SimmSpline.cpp
+index fd6cfaaf8740eec76fe6b936c7d54f26c2995f42..95302eb9cd4ab41af38609a48c0dce0a2745c76f 100644
+--- a/unittests/unit/test_SimmSpline.cpp
++++ b/unittests/unit/test_SimmSpline.cpp
+@@ -37,6 +37,26 @@ TEST(SimmSpline, BASIC)
+   EXPECT_EQ(spline.calcDerivative(1, 1.0), 0.0);
+ }
+ 
++//==============================================================================
++TEST(SimmSpline, LINEAR_EXTRAPOLATION_MATCHES_OPENSIM)
++{
++  SimmSpline spline({0.0, 1.0, 2.0}, {0.0, 1.0, 0.0});
++  constexpr s_t tol = 1e-12;
++
++  EXPECT_NEAR(spline.calcValue(0.0), 0.0, tol);
++  EXPECT_NEAR(spline.calcDerivative(1, 0.0), 2.0, tol);
++  EXPECT_NEAR(spline.calcValue(2.0), 0.0, tol);
++  EXPECT_NEAR(spline.calcDerivative(1, 2.0), -2.0, tol);
++
++  EXPECT_NEAR(spline.calcValue(-1.0), -2.0, tol);
++  EXPECT_NEAR(spline.calcDerivative(1, -1.0), 2.0, tol);
++  EXPECT_NEAR(spline.calcDerivative(2, -1.0), 0.0, tol);
++
++  EXPECT_NEAR(spline.calcValue(3.0), -2.0, tol);
++  EXPECT_NEAR(spline.calcDerivative(1, 3.0), -2.0, tol);
++  EXPECT_NEAR(spline.calcDerivative(2, 3.0), 0.0, tol);
++}
++
+ //==============================================================================
+ TEST(SimmSpline, GRAD_AT_EDGES)
+ {

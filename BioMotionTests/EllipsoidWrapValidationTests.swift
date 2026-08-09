@@ -4,7 +4,7 @@ import XCTest
 /// Does the ported ellipsoid wrap solver reproduce OpenSim's moment arms, and
 /// what does it cost?
 ///
-/// # THE PRE-REGISTRATION
+/// # ORIGINAL PRE-REGISTRATION (historical; E-A3 below is current)
 ///
 /// Written before a single number from this stage was read. The reference is
 /// `BioMotionTests/Fixtures/opensim_moment_arms.txt` (OpenSim 4.6's analytic
@@ -37,7 +37,8 @@ import XCTest
 ///   finite-difference gap that was already there.
 /// - **E2** `p99 ≤ 4.0 mm` on the same population (cylinder C2's bar).
 /// - **E3** zero sign disagreements on SINGLE-WRAP muscles above the CONTROL's
-///   own measured disagreement floor. A sign flip is what a backwards
+///   own measured disagreement floor. E-A3 replaces that moving threshold with
+///   fixed effect and total-sign checks. A sign flip is what a backwards
 ///   `<quadrant>` looks like, and the ellipsoid has one on all 8 objects
 ///   (`x`, `-x`, `-y`, `z`).
 /// - **E4** path LENGTH: `max |ours − reference| ≤ 5.0 mm` on SINGLE-WRAP.
@@ -59,7 +60,8 @@ import XCTest
 /// - **X1** `max |ours − central difference| > 20 mm` on ANY ellipsoid muscle,
 ///   single or multi. Four times the known implementation residual is a
 ///   different branch, not FK noise.
-/// - **X2** any sign flip above the control floor on a SINGLE-WRAP muscle.
+/// - **X2** any sign flip above the control floor on a SINGLE-WRAP muscle
+///   (historical wording; E-A3 is the current contract).
 /// - **X3** the median error against the analytic column is not strictly better
 ///   than the straight line's. Wrapping that does not help is wrapping that is
 ///   wrong — and the straight line is measurably wrong here: 587 of 5,882 pairs
@@ -74,20 +76,22 @@ import XCTest
 ///
 /// # AMENDMENTS, and the evidence for each
 ///
-/// Both were written down before the amended numbers were read, and neither
-/// moves a threshold to cover a residual the ellipsoid caused — the ablation is
-/// what says so.
+/// A1 and A2 were written before their amended numbers were read. A3 was added
+/// after an unrelated SimmSpline fix exposed that the runtime-generated sign
+/// threshold could move. None changes a threshold to cover a residual caused by
+/// the ellipsoid — the A/B ablation is what establishes that attribution.
 ///
 /// **E-A1 — E2's p99 threshold was copied from the wrong population.** 4.0 mm
 /// was the CYLINDER muscles' measured p99. This population is different in a way
 /// that was documented before this stage started: all four of `FullBody.osim`'s
 /// `MovingPathPoint`s are on `BIClong_*` and `BICshort_*`, `MomentArmComputer`
-/// interpolates them LINEARLY between cubic-spline control points, and STATUS.md
-/// recorded the resulting **4.39 mm** residual on `BIClong_l`/`pro_sup_l` while
-/// only the cylinder shipped. E2 is E1's 5.0 mm. The evidence that this is not
+/// then interpolated them LINEARLY between cubic-spline control points, and
+/// STATUS.md recorded the resulting **4.39 mm** residual on
+/// `BIClong_l`/`pro_sup_l` while only the cylinder shipped. E2 is E1's 5.0 mm.
+/// The evidence that this was not
 /// the ellipsoid's residual is the ablation, printed by
-/// `testTheResidualThatSurvivesIsAttributed`: the ten worst survivors are all
-/// `BIClong_l` / `BICshort_l` about `pro_sup_l`, and each reads **4.414 mm with
+/// `testTheResidualThatSurvivesIsReportedWithoutPreAttribution`: the ten worst
+/// survivors are all `BIClong_l` / `BICshort_l` about `pro_sup_l`, and each reads **4.414 mm with
 /// the ellipsoid and 5.569 mm without it**. Turning the solver on made the
 /// survivor smaller.
 ///
@@ -102,6 +106,29 @@ import XCTest
 /// poses, with `setEllipsoidWrapObjectsActive(true)` and then `(false)`, and
 /// requires the ellipsoid to move the pairs it changes towards OpenSim at both
 /// the median and the maximum. The analytic-column comparison stays, reported.
+///
+/// **E-A3 — the sign gate measures the wrap's effect, not an unrelated error
+/// maximum.** E3 originally used the largest no-wrap `ours − analytic` residual
+/// from the current run as its inclusion threshold. Fixing SimmSpline endpoint
+/// extrapolation correctly moved that unrelated control from 3.758 mm to near
+/// machine precision and admitted 54 copies of the already-known BIC moving-
+/// point residual. Ellipsoid length, engagement, analytic sign and every
+/// residual were unchanged; only the runtime-generated threshold moved.
+///
+/// The replacement was registered before reading the exact-MovingPath result.
+/// On the six-pose A/B, compare the causal effects
+/// `(ellipsoids on − ellipsoids off)` and `(OpenSim wrap on − wrap off)` wherever
+/// the reference effect clears the original fixed 1 mm sign resolution; a zero
+/// actual effect fails rather than inheriting the positive sign. Across the
+/// whole sweep, the original fixed 1 mm total-sign check remains a regression
+/// tripwire. A failure below E1's 5 mm accuracy contract still needs attribution
+/// and is not automatically blamed on the ellipsoid. The analytic 1 mm positive
+/// control remains unchanged.
+///
+/// With exact MovingPath SimmSpline evaluation, FullBody reports Moving
+/// `4 parsed / 0 approximated`. The affected sweep measures central-difference
+/// max **2.679 mm** (formerly 4.414) and analytic max **2.301 mm** (formerly
+/// 4.385); the fixed sign thresholds do not move with either result.
 final class EllipsoidWrapValidationTests: XCTestCase {
 
     typealias Sample = WrapValidationHarness.Sample
@@ -205,10 +232,9 @@ final class EllipsoidWrapValidationTests: XCTestCase {
     ///
     /// Deactivating is the right "before". The alternative — OpenSim's wrap-off
     /// column — carries every other difference between the two implementations
-    /// as well (nimble's FK, the linearly-interpolated `MovingPathPoint`
-    /// splines, the finite-difference step), and on these muscles those are
-    /// millimetres. Subtracting two things that differ in two ways attributes
-    /// nothing.
+    /// as well (Nimble's FK, live `MovingPathPoint` evaluation and the
+    /// finite-difference step), and on these muscles those are millimetres.
+    /// Subtracting two things that differ in two ways attributes nothing.
     func testTurningTheEllipsoidsOnMovesTheMomentArmsTowardsOpenSim() {
         let pairs = WrapValidationHarness.ablation.filter { $0.centralDifference != nil }
         guard !pairs.isEmpty else { return XCTFail("the ablation collected nothing") }
@@ -253,14 +279,11 @@ final class EllipsoidWrapValidationTests: XCTestCase {
     ///
     /// The same pairs ranked by the residual that SURVIVES, each printed beside
     /// its ellipsoids-off value. A residual the ellipsoid caused has a much
-    /// smaller "off"; a residual that pre-dates it has an "off" of the same
-    /// size, and is somebody else's defect — on this population the candidate is
-    /// named and known: all four of the model's `MovingPathPoint`s are on
-    /// `BIClong_*` and `BICshort_*`, `MomentArmComputer` interpolates them
-    /// linearly between cubic-spline control points, and STATUS.md recorded the
-    /// resulting 4.39 mm residual on `BIClong_l`/`pro_sup_l` before this stage
-    /// began.
-    func testTheResidualThatSurvivesIsAttributed() {
+    /// smaller "off"; another cross-implementation residual can have an "off"
+    /// of the same size. This report deliberately does not pre-attribute the
+    /// remainder: FullBody's four MovingPathPoints now use exact SimmSpline
+    /// evaluation, and the measured 2.679 mm maximum must stand on its own.
+    func testTheResidualThatSurvivesIsReportedWithoutPreAttribution() {
         let pairs = WrapValidationHarness.ablation.filter { $0.centralDifference != nil }
         guard !pairs.isEmpty else { return XCTFail("the ablation collected nothing") }
         let ranked = pairs.sorted {
@@ -276,14 +299,15 @@ final class EllipsoidWrapValidationTests: XCTestCase {
                          sample.withEllipsoids == sample.withoutEllipsoids ? "no" : "yes"))
         }
         // Nothing is gated here that is not gated above; this exists so the
-        // number that survives is on the record with its attribution beside it.
+        // number that survives is on the record beside the A/B observation.
         XCTAssertGreaterThan(ranked.count, 10)
     }
 
     /// The same question against the column a reader of OpenSim would quote.
     /// Reported and gated only on the SIGN, because on this population the
-    /// analytic-versus-central-difference gap (amendment A1) and the
-    /// `MovingPathPoint` residual are both larger than the wrap's own effect.
+    /// analytic-versus-central-difference gap (amendment A1) and other
+    /// cross-implementation residuals are reported independently of the wrap's
+    /// own effect.
     func testEllipsoidWrappingAgainstTheAnalyticColumnIsReported() {
         let pairs = Self.samples
         let errors = pairs.map { abs($0.ours - $0.wrapOn) }
@@ -304,30 +328,57 @@ final class EllipsoidWrapValidationTests: XCTestCase {
     /// All eight ellipsoid wrap objects carry a real `<quadrant>` (`x`, `-x`,
     /// `-y`, `z`), so the mirror-to-the-active-side branch runs, and getting it
     /// backwards produces a perfectly plausible path on the wrong side of the
-    /// humerus. The threshold is the CONTROL's own measured floor — the largest
-    /// disagreement, in this same run, on the 454 muscles with no wrap object at
-    /// all, where the wrap solver cannot be involved.
+    /// humerus. The primary check compares the ellipsoid's causal A/B effect;
+    /// the whole-sweep total sign keeps the original fixed 1 mm tripwire.
     func testEllipsoidMusclesNeverPointTheWrongWay() {
-        let controlFloor = WrapValidationHarness.samples
-            .filter { $0.wrapClass == .none }
-            .map { abs($0.ours - $0.wrapOn) }
-            .max() ?? 0
-        print(String(format: "SIGN-FLOOR control disagreement floor = %.6f m", controlFloor))
-        XCTAssertGreaterThan(controlFloor, 0,
-                             "the control class produced no disagreement at all, which "
-                             + "means it was not measured")
+        let effectResolution = 0.001
+        let singleWrapAblation = WrapValidationHarness.ablation.filter { $0.wrapCount == 1 }
+        let nonFiniteEffects = singleWrapAblation.filter {
+            !$0.withEllipsoids.isFinite || !$0.withoutEllipsoids.isFinite
+                || !$0.wrapOn.isFinite || !$0.wrapOff.isFinite
+        }
+        XCTAssertEqual(nonFiniteEffects.count, 0,
+                       "non-finite A/B data cannot satisfy a direction gate")
+        let effects = singleWrapAblation.filter {
+            abs($0.wrapOn - $0.wrapOff) >= effectResolution
+        }
+        let effectFlips = effects.filter {
+            let actual = $0.withEllipsoids - $0.withoutEllipsoids
+            let reference = $0.wrapOn - $0.wrapOff
+            return actual * reference <= 0
+        }
+        print("SIGN-EFFECT resolution_mm=1 pairs=\(effects.count) flipped=\(effectFlips.count)")
+        for sample in effectFlips.prefix(10) {
+            print(String(format: "  EFFECT-FLIP %@ %@ %@ actual %+.5f reference %+.5f",
+                         sample.pose, sample.muscle, sample.coordinate,
+                         sample.withEllipsoids - sample.withoutEllipsoids,
+                         sample.wrapOn - sample.wrapOff))
+        }
+        XCTAssertGreaterThan(effects.count, 0, "the ellipsoid A/B has no resolved wrap effect")
+        XCTAssertEqual(effectFlips.count, 0,
+                       "the ellipsoid must move the path in OpenSim's wrap-effect direction")
 
-        let above = Self.samples.filter { abs($0.centralDifference ?? 0) >= controlFloor }
-        let single = above.filter { $0.wrapCount == 1 }
+        let totalResolution = 0.001  // original fixed E3/X2 sign tripwire
+        let single = Self.samples.filter {
+            $0.wrapCount == 1 && abs($0.centralDifference ?? 0) >= totalResolution
+        }
         let flipped = single.filter { ($0.ours < 0) != (($0.centralDifference ?? 0) < 0) }
-        let flippedMulti = above.filter {
+        let flippedMulti = Self.samples.filter {
             $0.wrapCount > 1 && ($0.ours < 0) != (($0.centralDifference ?? 0) < 0)
+                && abs($0.centralDifference ?? 0) >= totalResolution
+        }
+        let oneToFive = Self.samples.filter {
+            $0.wrapCount == 1
+                && abs($0.centralDifference ?? 0) >= totalResolution
+                && abs($0.centralDifference ?? 0) < 0.005
+                && ($0.ours < 0) != (($0.centralDifference ?? 0) < 0)
         }
         let analytic = Self.samples.filter { abs($0.wrapOn) >= 0.001 }
         let flippedAnalytic = analytic.filter { ($0.ours < 0) != ($0.wrapOn < 0) }
         let flippedBefore = analytic.filter { ($0.wrapOff < 0) != ($0.wrapOn < 0) }
         print("SIGN-ELLIPSOID single=\(single.count) flipped=\(flipped.count) | "
-              + "multi flipped=\(flippedMulti.count) | vs ANALYTIC: pairs=\(analytic.count) "
+              + "one-to-five-mm=\(oneToFive.count) | multi flipped=\(flippedMulti.count) | "
+              + "vs ANALYTIC: pairs=\(analytic.count) "
               + "flipped_now=\(flippedAnalytic.count) "
               + "flipped_by_the_straight_line=\(flippedBefore.count)")
         for sample in (flipped + flippedMulti + flippedAnalytic).prefix(10) {
@@ -335,7 +386,7 @@ final class EllipsoidWrapValidationTests: XCTestCase {
                          sample.pose, sample.muscle, sample.coordinate, sample.ours,
                          sample.centralDifference ?? .nan, sample.wrapOn))
         }
-        XCTAssertGreaterThan(single.count, 0, "no single-wrap sample cleared the floor")
+        XCTAssertGreaterThan(single.count, 0, "no single-wrap sample cleared E3's 1 mm contract")
         XCTAssertEqual(flipped.count, 0, "E3/X2: a backwards quadrant looks exactly like this")
         XCTAssertGreaterThan(flippedBefore.count, 0,
                              "the straight line flipped no sign on these muscles, so this "

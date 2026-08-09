@@ -1,23 +1,19 @@
 import XCTest
 @testable import BioMotion
 
-/// How far the shipped straight-line moment arm is from OpenSim's own.
+/// Historical straight-line baseline plus the current no-wrap control.
 ///
-/// This is the measurement that motivates implementing path wrapping.
-/// `MomentArmComputer` counts the `PathWrap` references it ignores and then
-/// cuts straight through bone; until `OpenSimReferenceFixture` existed there was
-/// no reference to say how large that is, and every statement about it was an
-/// argument.
+/// This measurement motivated path wrapping before both surface solvers shipped.
+/// It remains the control that checks paths with no wrap object against OpenSim.
 ///
 /// Two questions, and they are NOT the same question:
 ///
 /// 1. Is "OpenSim with every `WrapObject` deactivated" a faithful stand-in for
 ///    what this code computes? If it is, the wrap-off column isolates the
 ///    missing wrap solver from every other difference between two independent
-///    implementations (nimble's FK vs Simbody's, linear-interpolated
-///    `MovingPathPoint` splines vs exact ones, latched vs re-evaluated
-///    `ConditionalPathPoint`s, a 1e-4 rad centred difference vs OpenSim's
-///    `MomentArmSolver`).
+///    implementations (Nimble's FK vs Simbody's, live `MovingPathPoint` and
+///    `ConditionalPathPoint` evaluation, a 1e-4 rad centred difference vs
+///    OpenSim's `MomentArmSolver`).
 /// 2. How far is the shipped number from the reference?
 ///
 /// The suite answers 1 first, because a large answer to 1 would mean the
@@ -152,11 +148,10 @@ final class StraightLinePathErrorTests: XCTestCase {
     ///
     /// What remains here is the half of the claim that is still true and still
     /// load-bearing: on the muscles with NO wrap object — where there is nothing
-    /// to solve — the two independent straight-line implementations must still
-    /// agree to a few mm, because that residual is the FLOOR every other
-    /// comparison in this repo is read against. It is `MovingPathPoint` splines,
-    /// latched `ConditionalPathPoint`s, nimble's FK and a 1e-4 rad difference,
-    /// and nothing else.
+    /// to solve — the two independent straight-line implementations must remain
+    /// inside the fixed 5 mm cross-implementation contract. This is a control
+    /// and tripwire, not a runtime-generated inclusion threshold. FullBody's
+    /// four MovingPathPoints are parsed and none is approximated.
     func testOurStraightLineTracksOpenSimOnMusclesWithNoWrapObject() {
         let unwrapped = Self.samples.filter { !Self.carriesPathWrap.contains($0.muscle) }
         let wrapped = Self.samples.filter { Self.carriesPathWrap.contains($0.muscle) }
@@ -170,7 +165,7 @@ final class StraightLinePathErrorTests: XCTestCase {
         XCTAssertLessThan(worst, 0.005,
                           "the shipped straight line and OpenSim's straight line must "
                           + "agree to a few mm where no wrap object exists, or every "
-                          + "attribution in this repo is being read against the wrong floor")
+                          + "fixed 5 mm control contract is violated")
         XCTAssertGreaterThan(wrapped.map { abs($0.ours - $0.wrapOff) }.max() ?? 0, 0.05,
                              "the WRAPPED muscles must have left the wrap-OFF column behind "
                              + "by centimetres; if they have not, the wrap solver is not "

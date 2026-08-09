@@ -44,6 +44,7 @@
 		5EB4E09CAD2BF5644147136D /* MomentArmTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */; };
 		61C67AFA01C9529323A6BF7B /* DerivativeWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7125E0AE9F8D942866F064D4 /* DerivativeWindowTests.swift */; };
 		61CD4F1738AF0810A73A53FD /* MultiWrapReferenceTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 620F5686F648C8A342A1BD9C /* MultiWrapReferenceTests.mm */; };
+		6206476EBE4A5F4BAC631212 /* SimmSplineExtrapolationTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = A7ABA5DC9C6C3A8A8A4798F3 /* SimmSplineExtrapolationTests.mm */; };
 		667892EA2E6CC9FACD3EA3C5 /* StanceDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F4015F4D866CCE543FF3AD /* StanceDetector.swift */; };
 		67CEFB68CF7663A8A68FD9D7 /* GaitContactClaimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AA2EB0530BD8326A67BCE60 /* GaitContactClaimTests.swift */; };
 		68975B28DCF3CD55E9EB1746 /* PostureFindingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */; };
@@ -216,6 +217,7 @@
 		A021DA9E5DE28ED2E1F45BB4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2B85FE37CE702C7D8D14A08 /* StaticHoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaticHoldTests.swift; sourceTree = "<group>"; };
 		A72797213E433B0F010275E7 /* ClaimSurfaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimSurfaceTests.swift; sourceTree = "<group>"; };
+		A7ABA5DC9C6C3A8A8A4798F3 /* SimmSplineExtrapolationTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = SimmSplineExtrapolationTests.mm; sourceTree = "<group>"; };
 		A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonOverlayView.swift; sourceTree = "<group>"; };
 		A8E2DEF6905CA595DA267C6A /* E1MarkerSetComparisonTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = E1MarkerSetComparisonTests.mm; sourceTree = "<group>"; };
 		ACD092133DD2189F1200C6F3 /* BioMotion.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = BioMotion.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -350,6 +352,7 @@
 				EE2B9AAD0354C5643CD4E31D /* RootTranslationTests.swift */,
 				59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */,
 				1F460BBF2CEB2DE7A1735390 /* ShoulderRotObservabilityTests.mm */,
+				A7ABA5DC9C6C3A8A8A4798F3 /* SimmSplineExtrapolationTests.mm */,
 				C18C6B5EE39B4A7DCDF41DE4 /* StaticEquilibriumBenchmarkTests.swift */,
 				A2B85FE37CE702C7D8D14A08 /* StaticHoldTests.swift */,
 				F418BB721F83050352688C5E /* StraightLinePathErrorTests.swift */,
@@ -733,6 +736,7 @@
 				FCF85FDD27BCE3D45741E313 /* RootTranslationTests.swift in Sources */,
 				D5042C5568E0CC26BBB00D03 /* ShoulderRotMaskTests.swift in Sources */,
 				39898570C7128B9A2770FC21 /* ShoulderRotObservabilityTests.mm in Sources */,
+				6206476EBE4A5F4BAC631212 /* SimmSplineExtrapolationTests.mm in Sources */,
 				1D59AE434199F406B1B6F502 /* StaticEquilibriumBenchmarkTests.swift in Sources */,
 				E57576912BED5701F5109480 /* StaticHoldTests.swift in Sources */,
 				8CF37DE4171D50EAADF24A4D /* StraightLinePathErrorTests.swift in Sources */,

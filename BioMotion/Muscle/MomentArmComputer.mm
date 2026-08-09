@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <algorithm>
+#include <memory>
 
 #include <tinyxml2.h>
 
@@ -18,20 +19,25 @@
 #include "dart/dynamics/BodyNode.hpp"
 #include "dart/dynamics/DegreeOfFreedom.hpp"
 #include "dart/math/MathTypes.hpp"
+#include "dart/math/SimmSpline.hpp"
 
 using namespace dart;
 
 // MARK: - Internal muscle path structure
 
 /// One location component (x, y or z) of a MovingPathPoint: a scalar function
-/// of a driving coordinate, stored as its control points. `dofIndex < 0` with a
-/// non-empty sample set never happens — such a point is rejected at parse time
-/// rather than evaluated at a fabricated coordinate value.
+/// of a driving coordinate, stored as constants/knots plus a canonical
+/// evaluator where Nimble exposes one. `dofIndex < 0` with a non-empty sample
+/// set never happens — such a point is rejected at parse time rather than
+/// evaluated at a fabricated coordinate value.
 struct MovingAxis {
     int dofIndex = -1;              // Skeleton DOF driving this component.
     std::vector<double> knotX;      // Control-point abscissae, ascending.
     std::vector<double> knotY;      // Control-point ordinates (meters).
     double constantValue = 0.0;     // Used when knotX is empty.
+    // Built once at parse time. Shared ownership keeps InternalPathPoint
+    // copyable inside the path vectors.
+    std::shared_ptr<const math::SimmSpline> simmSpline;
 };
 
 struct InternalPathPoint {
@@ -130,8 +136,10 @@ static std::vector<double> readNumbers(tinyxml2::XMLElement* el, const char* tag
 /// Parse the location function of one MovingPathPoint component.
 /// Returns false for function types we cannot represent — the caller drops the
 /// whole point rather than substituting a guess.
-/// `approximated` is set when the true function is a cubic spline that we will
-/// evaluate by linear interpolation between its control points.
+/// `approximated` is set only for cubic function types for which Nimble exposes
+/// no matching evaluator. SimmSpline is evaluated by the same canonical class
+/// Nimble uses for parsed OpenSim functions. PiecewiseLinearFunction remains a
+/// direct line interpolation in-range and retains the documented endpoint clamp.
 static bool parseMovingAxisFunction(tinyxml2::XMLElement* locationEl,
                                     MovingAxis& axis,
                                     bool& approximated) {
@@ -146,26 +154,40 @@ static bool parseMovingAxisFunction(tinyxml2::XMLElement* locationEl,
         return true;
     }
 
-    const bool isCubicSpline = (kind == "SimmSpline" ||
-                                kind == "NaturalCubicSpline" ||
-                                kind == "GCVSpline");
-    if (!isCubicSpline && kind != "PiecewiseLinearFunction") return false;
+    const bool isSimmSpline = (kind == "SimmSpline");
+    const bool isUnsupportedCubic = (kind == "NaturalCubicSpline" ||
+                                     kind == "GCVSpline");
+    if (!isSimmSpline && !isUnsupportedCubic &&
+        kind != "PiecewiseLinearFunction") return false;
 
     axis.knotX = readNumbers(fn, "x");
     axis.knotY = readNumbers(fn, "y");
     if (axis.knotX.size() < 2 || axis.knotX.size() != axis.knotY.size()) return false;
+    for (size_t i = 0; i < axis.knotX.size(); i++) {
+        if (!std::isfinite(axis.knotX[i]) || !std::isfinite(axis.knotY[i]) ||
+            (i > 0 && axis.knotX[i] <= axis.knotX[i - 1])) {
+            return false;  // SimmSpline and the manual interpolator require ascending knots.
+        }
+    }
 
+    if (isSimmSpline) {
+        axis.simmSpline = std::make_shared<const math::SimmSpline>(axis.knotX,
+                                                                   axis.knotY);
+        return true;
+    }
     // With only two control points a natural cubic spline degenerates to the
     // straight line through them, so linear interpolation is exact there.
-    if (isCubicSpline && axis.knotX.size() > 2) approximated = true;
+    if (isUnsupportedCubic && axis.knotX.size() > 2) approximated = true;
     return true;
 }
 
-/// Linear interpolation over the control points, clamped to the terminal
-/// control point outside the knot span (OpenSim extrapolates; clamping keeps
-/// the path bounded when a coordinate is driven past the tabulated range).
+/// Exact SimmSpline evaluation, or linear interpolation for piecewise-linear
+/// and still-unsupported cubic functions. The unsupported cubic path remains
+/// visible in `movingPathPointsApproximated`; PiecewiseLinearFunction is exact
+/// inside its knot span but is still clamped rather than extrapolated outside.
 static double evaluateMovingAxis(const MovingAxis& axis, double coordValue) {
     if (axis.knotX.empty()) return axis.constantValue;
+    if (axis.simmSpline) return axis.simmSpline->calcValue(coordValue);
     if (coordValue <= axis.knotX.front()) return axis.knotY.front();
     if (coordValue >= axis.knotX.back()) return axis.knotY.back();
     for (size_t i = 1; i < axis.knotX.size(); i++) {

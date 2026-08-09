@@ -14,17 +14,20 @@ import XCTest
 /// and shows that what comes out is the branch-consistent one-sided difference
 /// and not the fabrication.
 ///
-/// # How the situation is constructed, and why it is not hand-picked
+/// # How the situation is constructed
 ///
-/// Nothing here hard-codes a muscle, a coordinate or a pose. The suite sweeps a
-/// real coordinate of the shipped model from the fixture's `neutral` pose,
-/// watches `currentWrapPointCounts` for the first muscle whose wrap engagement
-/// changes, and bisects to the switch. The stencil is then placed deliberately
-/// astride it: `q0 = q* − eps/2`, so `q0 − eps` and `q0` sit on one branch and
-/// `q0 + eps` on the other. At the 173 fixture poses this never happens by
-/// chance — `CylinderWrapValidationTests` reports **0 one-sided samples out of
-/// 3,163,680** — which is exactly why it has to be constructed rather than
-/// waited for.
+/// The suite sweeps every shipped knee path and chooses the engagement change
+/// with the largest coarse path-length jump before it bisects anything. That is
+/// a deterministic, high-signal regression witness; it does not estimate every
+/// switch. Choosing whichever muscle happens to switch FIRST made it depend on
+/// unrelated kinematic changes and could select
+/// a continuous engagement transition that never exercises the hazard. The
+/// selected switch is discovered from the model rather than hard-coded. The
+/// stencil is then placed astride it:
+/// `q0 = q* − eps/2`, so `q0 − eps` and `q0` sit on one branch and `q0 + eps`
+/// on the other. At the 173 fixture poses this never happens by chance —
+/// `CylinderWrapValidationTests` reports **0 one-sided samples out of
+/// 3,163,680** — which is exactly why it has to be constructed.
 final class MomentArmWrapDiscontinuityTests: XCTestCase {
 
     private static let stencil = 1e-4  // the step `computeMomentArms` uses
@@ -92,36 +95,39 @@ final class MomentArmWrapDiscontinuityTests: XCTestCase {
         let names = rig.computer.muscleNames as [String]
         let eps = Self.stencil
 
-        // 1. Find a coordinate and a muscle whose wrap engagement changes.
-        //    Knee flexion is where FullBody.osim's cylinder wraps engage and
-        //    disengage; the sweep covers the coordinate's whole clamped range.
+        // 1. Find every engagement switch, then select the one with the largest
+        //    coarse path-length jump. Knee flexion is where FullBody.osim's
+        //    cylinder wraps engage and disengage; the sweep covers the
+        //    coordinate's whole clamped range.
         let coordinate = "knee_angle_r"
         guard let column = rig.dofNames.firstIndex(of: coordinate) else {
             throw XCTSkip("\(coordinate) is not a coordinate of this model")
         }
         let base = rig.baseAngles[column]
         var previous = try XCTUnwrap(probe(rig, coordinate: coordinate, value: base))
-        var switchMuscle = -1
-        var below = base
-        var above = base
+        var candidates: [(muscle: Int, below: Double, above: Double, jump: Double)] = []
         let step = 2.0 * Double.pi / 180.0
         for tick in 1...60 {
             let value = base - Double(tick) * step   // knee flexion is negative here
             guard let current = probe(rig, coordinate: coordinate, value: value) else { continue }
             for m in 0..<current.wrapPoints.count
             where (current.wrapPoints[m] > 0) != (previous.wrapPoints[m] > 0) {
-                switchMuscle = m
-                below = value
-                above = base - Double(tick - 1) * step
-                break
+                candidates.append((muscle: m,
+                                   below: value,
+                                   above: base - Double(tick - 1) * step,
+                                   jump: abs(current.lengths[m] - previous.lengths[m])))
             }
-            if switchMuscle >= 0 { break }
             previous = current
         }
-        try XCTSkipIf(switchMuscle < 0,
-                      "no wrap engagement switch was found along \(coordinate); the model's "
-                      + "wrap geometry changed and this construction needs revisiting")
+        let found = try XCTUnwrap(candidates.max { $0.jump < $1.jump },
+                                  "no wrap engagement switch was found along \(coordinate); "
+                                  + "the model's discontinuity witness must be re-investigated")
+        let switchMuscle = found.muscle
         let muscle = names[switchMuscle]
+        let below = found.below
+        let above = found.above
+        print(String(format: "SWITCH-WITNESS candidates=%d selected=%@ coarse_jump=%.6f m",
+                     candidates.count, muscle, found.jump))
 
         // 2. Bisect to the switch. `engagedAt` is whichever end wraps.
         let engagedAbove =

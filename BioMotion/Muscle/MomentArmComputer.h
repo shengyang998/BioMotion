@@ -53,10 +53,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) NSInteger movingPathPointsParsed;
 
 /// Subset of `movingPathPointsParsed` where at least one location component is
-/// a cubic spline (`SimmSpline` / `NaturalCubicSpline` / `GCVSpline`) with ≥3
-/// control points. Those are evaluated by LINEAR interpolation between the
-/// spline's control points (clamped outside the knot span), not by evaluating
-/// the cubic. The error is bounded by the spline's curvature between knots.
+/// a still-unsupported `NaturalCubicSpline` or `GCVSpline` with ≥3 control
+/// points. Those functions are evaluated by LINEAR interpolation between the
+/// knots (clamped outside their span). `SimmSpline` is not counted here: it is
+/// evaluated exactly by Nimble's OpenSim-compatible implementation.
+/// `PiecewiseLinearFunction` is exact between knots but remains clamped outside
+/// its tabulated span; that separate extrapolation gap is not a cubic
+/// approximation and therefore is not counted by this field.
 @property (nonatomic, readonly) NSInteger movingPathPointsApproximated;
 
 /// `<MovingPathPoint>` vertices dropped — unsupported location function, or a

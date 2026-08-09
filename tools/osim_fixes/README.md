@@ -304,8 +304,9 @@ in Python, the two pieces of C++ that decide the answer:
 1. `OpenSimParser.cpp::readOsim40()` — which bodies/joints get built and which
    joint class each becomes, including the patella skip, the `first3Linear`
    orthogonality gate and the BioMotion `WeldJoint` crash-guard. `SimmSpline` is a
-   line-by-line port of `dart/math/SimmSpline.cpp`; the Euler conventions were read
-   out of `dart/math/Geometry.cpp` rather than assumed.
+   line-by-line port of BioMotion's patched `dart/math/SimmSpline.cpp`, including
+   OpenSim's endpoint-tangent linear extrapolation; the Euler conventions were
+   read out of `dart/math/Geometry.cpp` rather than assumed.
 2. `MomentArmComputer.mm` — polyline length, the unresolved-body fallback to raw
    local offsets, ConditionalPathPoint latching, and `r = −ΔL/2ε` with ε = 1e-4 rad.
 

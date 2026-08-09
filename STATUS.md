@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-09.
+Last updated: 2026-08-10.
 
 ---
 
@@ -84,14 +84,16 @@ biggest links were **not** where the effort had been going.
   4.39 mm, so 97 % of its error is the missing solver.
   `BioMotionTests/Fixtures/opensim_moment_arms.txt` is now the gate a wrap solver has to pass. See
   [the reference](#the-moment-arms-now-have-a-reference-and-the-defect-is-measured-2026-08-08).
-- **CYLINDER PATH WRAPPING SHIPS** (2026-08-08). `MusclePathWrap.cpp`, ported from
+- **CYLINDER PATH WRAPPING SHIPS** (2026-08-08; historical cylinder-stage numbers).
+  `MusclePathWrap.cpp`, ported from
   opensim-core (Apache 2.0, attribution in `./NOTICE`), solves **64 of FullBody's 76**
   `PathWrap` references and **all 46** of Rajagopal2016's. On the 56 muscles whose every
   wrap is a cylinder the moment-arm error against OpenSim falls from median 0.972 mm /
   max **146.6 mm** / **661 sign flips** to median **0.048 mm** / max **8.07 mm** /
   **4**; against OpenSim's own derivative of its own length the single-wrap muscles read
-  max **3.569 mm** and **1** flip, at a 1.00 mm reference value below the 3.758 mm floor
-  the two implementations agree to anyway. Wrap engagement matches on 2,016/2,016 rows.
+  max **3.569 mm** and **1** flip, at a 1.00 mm reference value below what that historical
+  stage called the 3.758 mm no-wrap floor. The current gate no longer self-calibrates from that
+  number. Wrap engagement matches on 2,016/2,016 rows.
   The discontinuity is handled by a signature-aware one-sided difference and proved on a
   constructed switch (raw centred **−19.62 m**, shipped **−0.0337 m**). Cost: 889 →
   6,049 ms per solve in Debug, ~36 ms extrapolated at −O2, NOT measured on device. Still
@@ -99,7 +101,8 @@ biggest links were **not** where the effort had been going.
   claim is NOT reopened.
   [Cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08).
 - **ELLIPSOID PATH WRAPPING SHIPS TOO, so every `PathWrap` in the model is solved**
-  (2026-08-08). The remaining 12 references — 8 `WrapEllipsoid`s on the humeri, 10 elbow
+  (2026-08-08; pre-exact-MovingPath snapshot). The remaining 12 references — 8
+  `WrapEllipsoid`s on the humeri, 10 elbow
   muscles — are a port of opensim-core's `WrapEllipsoid.cpp` (`hybrid` method only; the
   other two are refused because they are not pure functions of the pose).
   `unmodelledPathWraps` is **0** and `GaitLoadSummary.musclesWithUnmodelledPaths` is
@@ -110,9 +113,10 @@ biggest links were **not** where the effort had been going.
   pre-registered 3× ceiling — an ellipsoid solve is 130–450× a cylinder solve at −O2 but
   only runs when the segment actually pierces the surface. The ablation is the finding:
   without it, `BRD_r`/`elbow_flex_r` read **−8.73 mm** against a true **+1.51 mm**, sign
-  and all. The largest surviving residual, 4.414 mm on `BICshort_l`/`pro_sup_l`, is the
-  `MovingPathPoint` linear interpolation, not the wrap. The per-muscle left/right claim is
-  STILL NOT reopened.
+  and all. In that pre-exact snapshot, the largest surviving residual was 4.414 mm on
+  `BICshort_l`/`pro_sup_l` and was attributed to MovingPathPoint chord interpolation. Exact
+  SimmSpline evaluation now lowers the measured maximum to 2.679 mm; see the 2026-08-10 entry.
+  The per-muscle left/right claim is STILL NOT reopened.
   [Ellipsoid wrapping](#ellipsoid-path-wrapping-ships--every-pathwrap-in-the-model-is-solved-2026-08-08).
 - **THE RE-MEASUREMENT IS DONE. The moment arms are fixed; the claim still cannot come back, and the
   reason is no longer the moment arms** (2026-08-09). Re-run on REAL geometry — 40 right-leg muscles
@@ -162,7 +166,8 @@ biggest links were **not** where the effort had been going.
   `opensim_multiwrap.txt` + `MultiWrapReferenceTests`. See
   [the calf muscles](#the-calf-muscles-are-not-wrong-opensims-multi-wrap-length-is-not-a-path-length-2026-08-09).
 - **THE LEAK EXPERIMENT WAS RE-RUN AND THE CLAIM DOES NOT COME BACK — the largest remaining term is
-  the REFERENCE** (2026-08-09). Same 582 cells, same R1–R7, same 1.617 pp bar; R1 **123.0971 pp**,
+  the REFERENCE** (pre-SimmSpline snapshot, 2026-08-09). Same 582 cells, same R1–R7, same 1.617 pp
+  bar; R1 **123.0971 pp**,
   R2 **108.5752 pp**, R7 **47.52**, control **66.8824** — bit-identical to the QP round, so the two
   initial diagnostics are provably inert. `perMuscleLeftRightClaimIsSupported` stays `false`. What is
   new is the attribution. R1's worst muscle was recorded as `piri`/`glmed3` because the print beside
@@ -182,6 +187,26 @@ biggest links were **not** where the effort had been going.
   Also settled: R3 is **1.4022 pp** (0.568 was two noisy solves cancelling), and the two tests the QP
   round left failing. See
   [the leak re-run](#the-leak-experiment-re-run-the-claim-does-not-come-back-and-the-largest-remaining-term-is-the-reference-2026-08-09).
+- **THE 42.46 pp ANALYTIC TAIL WAS A SIMMSPLINE ENDPOINT-EXTRAPOLATION BUG, AND IT IS FIXED**
+  (2026-08-09). `walker_knee_r` permits 140°, but its five nonlinear transform splines end at 120°;
+  Nimble continued the last cubic while OpenSim continues the endpoint tangent. A two-sided RED test
+  pinned value/d1/d2 outside both ends; both device and simulator archives were rebuilt. At the 130°
+  `run_4_mid_swing` pose, `bflh140_r` is now **13.713464915 mm** versus OpenSim
+  **13.713465000 mm** (delta −0.000000085 mm), down from 16.059 mm. The analytic-only maximum falls
+  **42.4623 → 3.6932 pp** (p99 9.94 → 3.332, median 0.412 → 0.312), a 91.3 % reduction. It is still
+  2.28× the unchanged 1.617 pp bar, and registered R1 still includes the separate 123.083 pp
+  central-difference/reference tail, so the per-muscle claim stays retired. See
+  [the endpoint-extrapolation fix](#the-4246-pp-analytic-tail-was-endpoint-cubic-extrapolation-2026-08-09).
+- **MOVINGPATHPOINT SIMMSPLINE IS EXACT END TO END** (2026-08-10). FullBody reports
+  `Moving 4 parsed (0 approximated, 0 skipped)`: the app now evaluates the canonical Nimble
+  SimmSpline rather than a chord through its knots, both in-domain and along the endpoint tangent.
+  The affected ellipsoid sweep's central-difference maximum falls **4.414 → 2.679 mm** and its
+  analytic maximum **4.385 → 2.301 mm**; the remaining residual is reported without
+  pre-attribution. Malformed non-increasing knots are rejected. Wrap sign gates no longer derive a
+  threshold from the current no-wrap maximum: cylinder and ellipsoid total-sign tripwires use the
+  original fixed 1 mm resolution, while ellipsoid direction also has a fixed 1 mm causal A/B gate
+  in which a zero actual effect fails. No claim is reopened. See
+  [MovingPathPoint semantics](#movingpathpoint-uses-exact-simmspline-semantics-2026-08-10).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -251,7 +276,7 @@ being reported. Every fix has a test that fails on the old behaviour.
 | Defect | Location | Fix |
 |---|---|---|
 | Force–velocity curve returned **negative** force | `MuscleSolver.mm:63-76` | Old `1+v(1−0.25v)` crossed zero at `v ≈ −0.828` and returned `−0.25` at `v = −1`, contradicting its own doc comment. Replaced with normalized Hill hyperbola `(1+ṽ)/(1−ṽ/A_f)`, `A_f = 0.25`. Verified: exactly 0 at ṽ=−1, exactly 1 at ṽ=0, non-negative and strictly increasing on [−1,0]. |
-| 418 `ConditionalPathPoint` + 4 `MovingPathPoint` silently dropped | `MomentArmComputer.mm:168` | tinyxml2 name-matched iteration skipped them. Now walks **all** children in document order (ordering matters — these are polyline vertices). Adds a load-time geometry-fidelity report. |
+| 418 `ConditionalPathPoint` + 4 `MovingPathPoint` silently dropped | `MomentArmComputer.mm:168` | tinyxml2 name-matched iteration skipped them. Now walks **all** children in document order (ordering matters — these are polyline vertices). All four FullBody MovingPathPoints parse, their SimmSpline components use `dart::math::SimmSpline`, malformed knots fail closed, and the runtime report is `parsed 4 / approximated 0 / skipped 0`. |
 | Ground height was a **monotonic ratchet** | `NimbleBridge.mm:634-638` | One crouch/landing/drift permanently sank it → both feet read >6 cm above "ground" → `contactCount==0` → ID solved a free-floating body with **zero external force for the rest of the session**. Replaced with a bounded rolling robust percentile that can rise as well as fall, plus a reset hook. |
 | `jointVelocities` accepted but never read | `MuscleSolver.mm:573,593` | Fiber velocity came from wall-clock finite differencing whose `dt` jittered with dropped frames and disagreed with the SG filter's own `dt`. Now uses the analytic identity `dL_MT/dt = −Rᵀ·dq`. Sign convention derived from `MomentArmComputer.mm:381` (`R = −∂L_MT/∂q`), not guessed. |
 | IK did **5 random restarts every frame** | `NimbleBridge.mm:472,510` | `IKConfig.lossLowerBound` defaults to 0 (header) / 1e-10 (ctor) — both unreachable against a realistic 0.01–0.03 m ARKit marker residual, so the restart loop always ran to completion, each iteration calling `getRandomPose()` and discarding the previous solution at 171 DOF. Now 1 restart, warm-started from the previous pose, plus a static marker-reliability weighting (trunk 1.00 → toes 0.40). |
@@ -470,7 +495,8 @@ verified stock MIT** and is not affected.
   patellofemoral + 6 shoulder). Nothing is dropped any more.
   ⚠️ `CLAUDE.md` said 171 until 2026-08-07; anything quoting 171 or 163 predates the osim edit.
 - 520 muscles = 422 `Thelen2003Muscle` + 98 `Millard2012EquilibriumMuscle`.
-- `PathPoint` 1444 · `ConditionalPathPoint` 418 · `MovingPathPoint` 4 · `PathWrap` 76 ·
+- `PathPoint` 1444 · `ConditionalPathPoint` 418 · `MovingPathPoint` 4
+  (**runtime: 4 parsed, 0 approximated, 0 skipped**) · `PathWrap` 76 ·
   `WrapCylinder` 60 · `WrapEllipsoid` 9 · 15 `WeldJoint` · 53 `CustomJoint`.
 - **PathWrap distribution** (settles a contradiction between two analyses): shoulder 24 muscles →
   **0 wraps**; trapezius/serratus 48 → **0 wraps**; elbow 18 → **16 have wraps**.
@@ -3572,6 +3598,10 @@ the port is **0.54 mm** from the reconciled column. OpenSim's central difference
 
 ## The leak experiment, re-run: the claim does NOT come back, and the largest remaining term is the REFERENCE (2026-08-09)
 
+**Historical snapshot at commit `40a24df`.** The immediately following SimmSpline section preserves
+the same rig after fixing the endpoint-extrapolation mechanism this snapshot localised; use that
+section for current analytic-column numbers.
+
 The re-run the whole workflow was for. Same rig, same 582 readable cells, same pre-registered R1–R7,
 same 1.617 pp bar and 8.086 % floor. **Nothing was redesigned; the first two DIAGNOSTICS and the
 later 24-row analytic-cell dump leave every gated number bit-identical, which is the proof they are
@@ -3746,6 +3776,124 @@ quantitative one in the same units in, magnitude assertion (159.03 % > 10 %) unc
   tail to a mechanism inside `MomentArmComputer`; the latter is now localised to `bflh140_r`'s own
   wrap-free knee row, but the cause of its 2.346 mm discrepancy is still open.
 * It did **not** measure the STRIDE case, run in Release, or run on a phone.
+
+
+## The 42.46 pp analytic tail was endpoint-cubic extrapolation (2026-08-09)
+
+The previous section deliberately remains as the pre-fix measurement. Its last diagnostic turned
+an unattributed product tail into one row: at `run_4_mid_swing`, `bflh140_r`'s own knee moment arm
+was **16.059165 mm** in BioMotion and **13.713465 mm** in OpenSim, despite the muscle having only
+three fixed path points and no wrap. That was enough to stop inspecting the wrap solver and follow
+the kinematic transform instead.
+
+### RED: both ends, value and derivatives
+
+`SimmSplineExtrapolationTests` links the same `libnimble_ios.a` the app uses. For the symmetric
+three-knot spline `(0,0), (1,1), (2,0)`, OpenSim continues the endpoint tangents. Before touching
+Nimble, the new test failed six assertions:
+
+| query | expected `(value, d1, d2)` | linked Nimble before fix |
+|---|---:|---:|
+| `x = −1` | `(−2, +2, 0)` | `(−3, +4, −2)` |
+| `x = 3` | `(−2, −2, 0)` | `(−3, −4, −2)` |
+
+Testing both value and derivative is load-bearing. Fixing only `calcValue()` would make finite
+differences and path length look right while leaving Nimble's analytic Jacobian inconsistent with
+the pose it differentiates.
+
+### Root cause and GREEN
+
+FullBody allows `walker_knee_r` to move from 0° through 140°. Its five nonlinear `TransformAxis`
+`SimmSpline`s carry knots only through 120°, and `run_4_mid_swing` asks for 130°. Nimble's
+`SimmSpline.cpp` already contained OpenSim's intended endpoint-tangent branches, but both the value
+and derivative branches were commented out; an out-of-domain value therefore continued the first
+or last cubic.
+
+The fix restores exactly those two branches, not the unrelated commented exact-endpoint special
+case. Both `build_ios/libnimble_ios.a` and `build_sim/libnimble_ios.a` were rebuilt. The low-level
+test then passed, and a separate FullBody regression measured:
+
+```text
+SIMMSPLINE-METRIC pose=run_4_mid_swing muscle=bflh140_r coordinate=knee_angle_r
+ours_mm=13.713464915 opensim_mm=13.713465000 delta_mm=-0.000000085
+```
+
+The tracked `nimble-patches/simmspline-linear-extrapolation.patch` contains the production change
+and an upstream GTest. It reverse-checks against the patched vendored tree and apply-checks against
+a clean clone of pinned Nimble SHA `c405b056fc35068027e03e0c384e84e12870b475`. The standalone
+Python kinematics diagnostic now uses the same endpoint-linear semantics.
+
+### The 582-cell result after the fix
+
+No gate, floor, torque shape or screen moved. Only the linked kinematic function changed:
+
+| quantity | before | after |
+|---|---:|---:|
+| analytic-only maximum | 42.4623 pp (`bflh140`) | **3.6932 pp** (`glmax2`) |
+| analytic-only p99 | 9.94 pp | **3.3322 pp** |
+| analytic-only median | 0.4124 pp | **0.3121 pp** |
+| registered R1 maximum, worse of both references | 123.0971 pp | **123.0833 pp** |
+| registered R2 maximum | 108.5752 pp | **108.5576 pp** |
+| registered R1 median | 0.9770 pp | **0.6571 pp** |
+
+The repository-owned analytic maximum fell **91.3 %**. Its new cell is
+`grid_h090_k000_a+00`, shape `hip0.80_knee1.00`, effort 0.9. `glmax2` carries the largest figure
+movement there (**−3.6932 pp**) even though its own largest arm error is 0.234 mm; `gasmed` carries
+the cell's largest arm error, **−1.047 mm**, while its own figure moves only −0.081 pp. That is the
+same coupling warning as the central-difference maximum, now visible on the analytic column too.
+
+**The claim still does not come back.** The analytic-only 3.6932 pp maximum is 2.28× the unchanged
+1.6173 pp reopening bar. More importantly, registered R1 is still maximised over OpenSim's analytic
+and central-difference columns, whose multi-wrap bookkeeping disagreement produces the separate
+123.083 pp tail. The fix closes a real product bug; it does not redefine the reference or weaken the
+claim gate.
+
+
+## MovingPathPoint uses exact SimmSpline semantics (2026-08-10)
+
+The endpoint fix above corrected the joint transform, but `MomentArmComputer` still evaluated a
+`MovingPathPoint` by drawing straight chords through every function's knots and clamping outside
+the domain. That contradicted both OpenSim and the newly corrected Nimble evaluator. FullBody's
+four moving points are the BIC long/short paths, so this was also the remaining named mechanism
+behind the 4.414 mm `pro_sup` snapshot.
+
+The RED was product-facing. In a synthetic path, the three-knot SimmSpline
+`(-1,0), (0,0.1), (1,0)` must read `0.075 m` at `q=0.5`; the old chord returned `0.05 m` and counted
+the point as approximated. At `q=2`, the old path clamped while OpenSim continues the endpoint
+tangent. A FullBody assertion also pins `BICshort_l`'s moving-point z coordinate at
+`−0.0135667107416569 m` for `pro_sup_l = 0`. A separate RED showed that the previous parser accepted
+the invalid knot sequence `−1, 1, 0`; it now rejects non-finite or non-increasing knots and counts
+the whole moving point as skipped.
+
+The GREEN stores a read-only `dart::math::SimmSpline` per Simm axis and calls it directly on every
+FK evaluation. Unsupported `NaturalCubicSpline` / `GCVSpline` functions remain visible in
+`movingPathPointsApproximated`; the separate PiecewiseLinear endpoint-clamp gap remains documented
+and is not falsely counted as cubic approximation. FullBody now reports:
+
+```text
+Moving 4 parsed (0 approximated, 0 skipped)
+```
+
+Re-running the affected ellipsoid validation after the implementation — not guessing from the old
+attribution — gives:
+
+| comparison | pre-exact snapshot | exact MovingPath |
+|---|---:|---:|
+| max vs OpenSim central difference | 4.414 mm | **2.679 mm** |
+| p99 vs OpenSim central difference | 4.414 mm | **2.414 mm** |
+| max vs OpenSim analytic column | 4.385 mm | **2.301 mm** |
+
+Length and engagement remain exact (600/600). The six-pose causal sign gate sees 28 resolved
+single-wrap effects and zero reversals; the straight line still has 135 analytic sign reversals,
+the solver has zero. The remaining 2.679 mm is reported beside the ellipsoid-off result without
+pre-attribution.
+
+This rerun also exposed a test-design defect: deriving a sign threshold from the current no-wrap
+maximum let an unrelated SimmSpline fix redefine the population. That runtime floor is retired.
+Cylinder and ellipsoid total-sign tests use the original fixed 1 mm tripwire; the ellipsoid also
+compares `(ours on − ours off)` with `(OpenSim on − OpenSim off)` at a fixed 1 mm reference effect,
+and treats a zero actual effect as failure. The 1–5 mm band remains independently gated rather than
+being hidden by E1/C1's 5 mm magnitude contract.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4093,9 +4241,10 @@ arms must differ in the work that PRECEDES the mask.
     `false`; (b) the cost in a RELEASE build on the phone, which was
     extrapolated (~36 ms for the cylinders, +1.28× for the ellipsoids in Debug) and never measured,
     and where the two-wrap cylinder solve is 80× the one-wrap solve and one engaged ellipsoid solve
-    is 130–450× it; (c) the `MovingPathPoint` linear interpolation, which is now the largest
-    implementation gap by measurement — 4.414 mm on `BICshort_l`/`pro_sup_l`, against a 3.758 mm
-    floor; (d) the 8.75 mm gap on the 4 two-cylinder muscles, which is OpenSim's own
+    is 130–450× it; (c) ~~the `MovingPathPoint` linear interpolation~~ **DONE 2026-08-10** — all
+    four now use exact SimmSpline evaluation (`4 parsed / 0 approximated / 0 skipped`), lowering the
+    affected central-difference maximum 4.414 → 2.679 mm; the remainder is not pre-attributed;
+    (d) the 8.75 mm gap on the 4 two-cylinder muscles, which is OpenSim's own
     non-self-consistent iterate and needs a decision about which answer is wanted rather than a bug
     fix.
 
@@ -4116,12 +4265,13 @@ arms must differ in the work that PRECEDES the mask.
     (getting the wrap side backwards produces a plausible wrong path), and decide the licence
     paperwork for opensim-core's Apache-2.0 `WrapCylinder`/`WrapEllipsoid`/`WrapMath` if that code
     is used (header + NOTICE).
-18b. **Close the 4.4 mm implementation residual that is NOT wrapping.** Measured on
-    `BIClong_l`/`pro_sup_l`: ours +0.00957 against OpenSim's +0.01396 at a pose where the wrap is
-    not even engaged. It is the linearly-interpolated `MovingPathPoint` splines
-    (`movingPathPointsApproximated` in the fidelity report) plus the latched
-    `ConditionalPathPoint`s. Three per cent of the wrap error, so it is not urgent — but once
-    wrapping lands it becomes the whole remaining gap.
+18b. ~~**Close the 4.4 mm implementation residual that is NOT wrapping.**~~ **DONE 2026-08-10 for
+    the identified mechanism.** FullBody's four MovingPathPoints now use the canonical SimmSpline
+    in-domain and at both endpoint tails; the fidelity report is `4 parsed / 0 approximated / 0
+    skipped`. Re-running the affected sweep lowers the central-difference maximum from 4.414 to
+    **2.679 mm** and the analytic maximum from 4.385 to **2.301 mm**. The residual is deliberately
+    reported without assigning it to ConditionalPathPoint, FK or finite differencing until one of
+    those mechanisms is isolated.
 19. **The scatter the sampling interval is built from has never been measured on real footage.**
     Every survival number in `GaitClaimSurvivalTests` sweeps it because of that. Real per-muscle
     contact-to-contact scatter needs a clip that reaches the muscle solver — i.e. the 20-marker
@@ -4175,8 +4325,9 @@ arms must differ in the work that PRECEDES the mask.
     registered.** It is maximised over the worse of two `truth` definitions that differ by 78× its
     own bar. Either the gate names ONE reference this repo can defend — the reconciled column of
     `MultiWrapReferenceTests`, extended past the 8 multi-wrap muscles (next-step 30) — or it is a
-    measurement of OpenSim's bookkeeping. Against the analytic column alone our own worst is
-    **42.46 pp**, 26× the bar, and THAT is the number a wrap-solver improvement would move.
+    measurement of OpenSim's bookkeeping. The later SimmSpline endpoint fix reduced the analytic
+    column alone from **42.46 to 3.693 pp** without touching this registered-reference problem; see
+    next-step 34 and the endpoint-extrapolation section.
 25. ~~**The real problem is 520 × 169 and the rig is 80 × 12.**~~ **DONE 2026-08-09.**
     `MuscleSolverExactnessTests.testTheShippedSolverIsExactOnTheRealFiveHundredMuscleProblem` solves
     the real 520-muscle × 109-coordinate problem with both solvers. `BoxQP` reaches a KKT residual of
@@ -4238,8 +4389,9 @@ arms must differ in the work that PRECEDES the mask.
 32. **`poses.py` should gain the reference's jump poses, once someone owns the fallout.** The
     generator can now find them by rule (`dump_multiwrap.py` stage 1). Adding them to the shared
     grid would regenerate `opensim_moment_arms.txt` and `opensim_moment_arms_fd.txt` and move every
-    number in `CylinderWrapValidationTests`, `EllipsoidWrapValidationTests` and the control floor —
-    including W1's multi-wrap component, which would then fail at ~41 mm for the reference's reason.
+    population in `CylinderWrapValidationTests` and `EllipsoidWrapValidationTests`. The fixed 1 mm
+    sign thresholds themselves do not move; there is no runtime control floor. W1's multi-wrap
+    component would then fail at ~41 mm for the reference's reason.
     Deliberately not done in the same round as the measurement.
 
 ### Newly opened by the 2026-08-09 leak re-run (eleventh round)
@@ -4252,13 +4404,15 @@ arms must differ in the work that PRECEDES the mask.
     `reconciled` field beside `wrapOn`/`centralDifference` would let R1 be re-registered against a
     single defensible truth. **Do not re-register it quietly** — R1's current value would change,
     and a gate whose reference is chosen after a number is read is not pre-registered.
-34. ~~**Localise the 42.46 pp ANALYTIC tail by printing every screened row.**~~ **DONE 2026-08-09,
-    and the neighbour hypothesis was wrong.** At `run_4_mid_swing`, all 24 screened rows now print
-    across all four sources. `bflh140_r` itself carries the largest arm discrepancy: knee
-    **16.059 vs 13.713 mm (+2.346 mm)** and a **−42.462 pp** figure movement; `gaslat140_r` is second
-    at 1.597 mm and −2.904 pp. `bflh140` has no wrap or moving point, so what remains is the
-    pose-dependent kinematic/path-derivative seam that makes three fixed points agree at the
-    central-difference worst pose and disagree here. Do not send this tail back to the wrap solver.
+34. ~~**Localise and explain the 42.46 pp ANALYTIC tail.**~~ **DONE 2026-08-09.** The 24-row dump
+    first rejected the neighbour hypothesis: at `run_4_mid_swing`, `bflh140_r` itself carried knee
+    **16.059 vs 13.713 mm (+2.346 mm)** and a −42.462 pp figure movement. The kinematic seam then
+    closed it: `walker_knee_r` permits 140° while five `SimmSpline` axes end at 120°, and Nimble was
+    continuing their last cubics instead of OpenSim's endpoint tangents. Two-sided value/d1/d2 RED,
+    both archives rebuilt, product regression **13.713464915 vs 13.713465000 mm** at 130°. The
+    analytic maximum is now **3.6932 pp** (p99 3.3322, median 0.3121), still 2.28× the gate; the
+    separate registered-reference tail remains. Tracked patch and full account are in the
+    endpoint-extrapolation section.
 35. **The sharing step's amplification is unbounded per muscle and nothing measures it.** At the
     separate central-difference cell, a muscle with an exact row took 126 pp from its neighbours.
     That is a property of the QP's coupling and
