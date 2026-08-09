@@ -43,7 +43,7 @@ final class MomentArmWrapDiscontinuityTests: XCTestCase {
 
     override func setUpWithError() throws {
         try Self.build(bundle: Bundle(for: type(of: self)))
-        if let failure = Self.setupFailure { throw XCTSkip(failure) }
+        if let failure = Self.setupFailure { throw RequiredTestDependencyError(failure) }
     }
 
     private static func build(bundle: Bundle) throws {
@@ -100,9 +100,8 @@ final class MomentArmWrapDiscontinuityTests: XCTestCase {
         //    cylinder wraps engage and disengage; the sweep covers the
         //    coordinate's whole clamped range.
         let coordinate = "knee_angle_r"
-        guard let column = rig.dofNames.firstIndex(of: coordinate) else {
-            throw XCTSkip("\(coordinate) is not a coordinate of this model")
-        }
+        let column = try XCTUnwrap(rig.dofNames.firstIndex(of: coordinate),
+                                   "\(coordinate) is not a coordinate of this model")
         let base = rig.baseAngles[column]
         var previous = try XCTUnwrap(probe(rig, coordinate: coordinate, value: base))
         var candidates: [(muscle: Int, below: Double, above: Double, jump: Double)] = []

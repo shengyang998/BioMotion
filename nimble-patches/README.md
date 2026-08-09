@@ -118,9 +118,12 @@ cmake --build build_sim --target nimble_ios --parallel
 
 cd ..
 xcodegen generate
-tools/run_tests.sh \
+tools/run_tests.sh subset \
   -only-testing:BioMotionTests/SimmSplineExtrapolationTests
 ```
+
+That selection is a patch-specific diagnostic, not the commit gate. Run
+`tools/run_tests.sh all` before committing.
 
 On an already patched tree, this must succeed instead of applying it again:
 

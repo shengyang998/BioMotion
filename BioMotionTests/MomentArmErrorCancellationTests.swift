@@ -401,8 +401,7 @@ final class MomentArmErrorCancellationTests: XCTestCase {
     /// `WrappedMomentArmLeakTests`, which perturbs nothing and uses each muscle's
     /// own error on its own arms.
     func testTheShapeAsymmetryLeakWithTheResidualThisBuildLeaves() throws {
-        try WrapValidationHarness.build(bundle: Bundle(for: type(of: self)))
-        if let failure = WrapValidationHarness.setupFailure { throw XCTSkip(failure) }
+        try WrapValidationHarness.requireBuild(bundle: Bundle(for: type(of: self)))
         let named = Set(GaitLoadSummary.displayNames.keys)
         var pooled: [Double] = []
         var excluded = 0

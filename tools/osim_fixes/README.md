@@ -352,6 +352,9 @@ published band for the quadriceps/patellar-tendon knee moment arm.
 
 ## Tests that will change behaviour (could not be run — list, not verification)
 
+> Historical pre-fix expectation. The current E1 partition covers all 169 coordinates and its
+> 5706.9 s run passes; see `STATUS.md`.
+
 | test | why |
 |---|---|
 | `DOFMaskTests.testDOFCountAccounting` | asserts `numDOFs == 163`; now 169. Asserts the 6 shoulder coordinates are absent as DOFs; they now exist. Asserts `171 − 8 == numDOFs`; the file now has 169 coordinates and drops 0. |

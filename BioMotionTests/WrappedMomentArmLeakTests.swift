@@ -676,8 +676,7 @@ final class WrappedMomentArmLeakTests: XCTestCase {
     // MARK: - Structure, checked before anything is concluded from it
 
     override func setUpWithError() throws {
-        try WrapValidationHarness.build(bundle: Bundle(for: type(of: self)))
-        if let failure = WrapValidationHarness.setupFailure { throw XCTSkip(failure) }
+        try WrapValidationHarness.requireBuild(bundle: Bundle(for: type(of: self)))
         Self.buildIndex()
     }
 

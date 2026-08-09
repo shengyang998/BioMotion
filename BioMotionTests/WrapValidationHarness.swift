@@ -1,6 +1,16 @@
 import XCTest
 @testable import BioMotion
 
+/// A required test dependency was not available or could not be initialized.
+/// Throwing this from a test or `setUpWithError` is a failure, never a skip.
+struct RequiredTestDependencyError: LocalizedError {
+    let message: String
+
+    init(_ message: String) { self.message = message }
+
+    var errorDescription: String? { message }
+}
+
 /// ONE sweep of `FullBody.osim` through the shipped moment-arm chain, paired
 /// with OpenSim 4.6's reference columns, shared by the cylinder and ellipsoid
 /// validation suites.
@@ -104,7 +114,7 @@ enum WrapValidationHarness {
 
     private(set) static var samples: [Sample] = []
     private(set) static var lengthSamples: [LengthSample] = []
-    private(set) static var setupFailure: String?
+    private static var setupFailure: String?
     private(set) static var solvedMuscles: Set<String> = []
     private(set) static var unsolvedMuscles: Set<String> = []
     private(set) static var ellipsoidMuscles: Set<String> = []
@@ -124,9 +134,9 @@ enum WrapValidationHarness {
                                     "elbow_sweep_030", "elbow_sweep_090",
                                     "shoulder_sweep_060"]
 
-    /// Builds once per process. Throws `XCTSkip` material as a stored string so
-    /// a failure to load the model is not reported as every gate failing.
-    static func build(bundle: Bundle) throws {
+    /// Builds once per process. A failed initialization is cached so every
+    /// dependent suite fails with the same diagnostic instead of going vacuous.
+    private static func build(bundle: Bundle) throws {
         guard samples.isEmpty, setupFailure == nil else { return }
         guard let path = bundle.path(forResource: "FullBody", ofType: "osim") else {
             setupFailure = "FullBody.osim is not reachable from the test bundle"
@@ -333,6 +343,14 @@ enum WrapValidationHarness {
         }
         costAB = ab
         ablation = ablationSamples
+    }
+
+    /// Makes the shared sweep a required dependency. This is the only public
+    /// build entry point so an IDE run cannot accidentally turn missing model or
+    /// fixture setup into a green suite.
+    static func requireBuild(bundle: Bundle) throws {
+        try build(bundle: bundle)
+        if let setupFailure { throw RequiredTestDependencyError(setupFailure) }
     }
 
     // MARK: - Reporting helpers

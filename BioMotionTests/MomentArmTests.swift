@@ -148,9 +148,8 @@ final class MomentArmTests: XCTestCase {
     /// every one of its 418 ConditionalPathPoints was dropped, so its lumbar and
     /// abdominal muscles cut straight through the spine.
     func testFullBodyPathFidelityIncludesExactMovingSplines() throws {
-        guard let path = osimPath(named: "FullBody") else {
-            throw XCTSkip("FullBody.osim is not reachable from the test bundle")
-        }
+        let path = try XCTUnwrap(osimPath(named: "FullBody"),
+                                 "FullBody.osim is not reachable from the test bundle")
         XCTAssertTrue(bridge.loadModel(fromPath: path), "NimbleBridge failed to load FullBody")
         XCTAssertTrue(computer.parseMusclePaths(fromOsimPath: path, from: bridge))
 
@@ -315,9 +314,8 @@ final class MomentArmTests: XCTestCase {
 
         var union: Set<String> = []
         for model in ["FullBody", "Rajagopal2016"] {
-            guard let path = osimPath(named: model) else {
-                throw XCTSkip("\(model).osim is not reachable from the test bundle")
-            }
+            let path = try XCTUnwrap(osimPath(named: model),
+                                     "\(model).osim is not reachable from the test bundle")
             let bridge = NimbleBridge()
             let computer = MomentArmComputer()
             XCTAssertTrue(bridge.loadModel(fromPath: path), "\(model) failed to load")

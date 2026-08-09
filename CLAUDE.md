@@ -123,8 +123,15 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   failures (0 unexpected)` / 5 `Restarting after unexpected exit` / `** TEST FAILED **`, on a
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
-  whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run
-  `tools/run_tests.sh` — it takes a private device plus a lock, and gates on all three numbers.
+  whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
+  lanes in `tools/run_tests.sh`: `fast` is exactly 488 non-E1 tests, `slow` is exactly the one E1
+  test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
+  the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
+  is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`
+  requires at least one selected test, labels itself non-gating, and is the only lane that accepts
+  caller arguments. The three gating lanes accept none: their fixed invocation is part of the
+  receipt. Even `subset` rejects skips, retry/repetition controls, and alternate test
+  configurations; a later successful retry is not evidence that the first execution passed.
   Corollary for reading a crash report: six suites carry 95% of the wall clock (GaitDynamics 369 s,
   IKConvergence 91 s, ShoulderRotMask 51 s, StaticHold 48 s, MuscleQPUnits 41 s,
   IKSolverInternals 33 s), so "the kill landed just after X" is almost always a statement about the

@@ -142,8 +142,7 @@ final class EllipsoidWrapValidationTests: XCTestCase {
     }
 
     override func setUpWithError() throws {
-        try WrapValidationHarness.build(bundle: Bundle(for: type(of: self)))
-        if let failure = WrapValidationHarness.setupFailure { throw XCTSkip(failure) }
+        try WrapValidationHarness.requireBuild(bundle: Bundle(for: type(of: self)))
     }
 
     // MARK: - Did anything get measured

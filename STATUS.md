@@ -314,22 +314,29 @@ direct solve, coordinate descent and a direct optimality test) and
 residual instead of the guessed `×0.6`). Floor **474** — see
 [the re-measurement](#the-re-measurement-the-moment-arms-are-fixed-and-the-claim-still-cannot-come-back-2026-08-09).
 
-`E1MarkerSetComparisonTests` is EXCLUDED from that count. It costs over an hour and it currently
-fails at `E1MarkerSetComparisonTests.mm:475` for a pre-existing reason — its fixture enumerates 163
-coordinates against a 169-coordinate model, a leftover from the 2026-08-06 osim edit. See
-next-step 14.
+The current runner separates the ordinary suite from the deliberately expensive E1 experiment:
 
-Run with:
-```bash
-tools/run_tests.sh
-```
+| mode | selection | required receipt | meaning |
+|---|---|---|---|
+| `fast` | runner-owned non-E1 suite | exactly 488 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
+| `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
+| `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
+
+Run `tools/run_tests.sh all` before committing. `fast`, `slow`, and `all` accept no caller
+arguments; their fixed invocation is part of the reviewed receipt. `subset` is the only
+selector-bearing mode. In particular, selecting E1 can no longer inherit the fast lane's E1
+exclusion and report a zero-test run as green. Even `subset` rejects skips, retry/repetition
+controls, and alternate test configurations: a later successful retry cannot erase a product
+failure from the evidence.
 
 **Do not hand-type an `xcodebuild test` line.** The script exists because typed lines named the
 simulator by NAME, and that is what made this suite untrustworthy — see
 [the commit gate](#the-commit-gate-what-green-means-and-what-it-does-not-2026-08-08). It provisions
-a private device, refuses to start if another run holds it, and prints the only three numbers that
-decide whether a run means anything: the executed count, the restart count, and the final verdict.
-It exits non-zero unless all three are right.
+a private device, refuses to start if another run holds it, and writes a unique xcresult receipt.
+Missing evidence is failure: each lane requires `xcodebuild` rc 0, `TEST SUCCEEDED`, the exact
+reviewed count, zero failures, zero skips, zero expected failures, zero restarts, and a readable
+xcresult summary. A missing or unparsable result bundle fails the lane.
 
 **Wall time roughly doubled on 2026-08-08** when cylinder path wrapping landed: the last
 408-test run took 748 s, the first 438-test run took **1,627 s**. It is the Debug build, not
@@ -374,8 +381,10 @@ device, one variable:
 
 **Cause 2 — `Executed N tests, with 0 failures` is not a verdict.** Look at the table: the killed
 runs print exactly that line, with zero failures, having run 2 of 19 tests. A killed host reports
-its lost tests as neither passed nor failed. Only the trailing `** TEST ... **`, a zero restart
-count, and a full test count together mean anything. `tools/run_tests.sh` checks all three.
+its lost tests as neither passed nor failed. The current gate therefore requires independent
+process, log, and structured evidence: zero `xcodebuild` rc, trailing `** TEST SUCCEEDED **`, zero
+restart count, and a readable xcresult summary with the lane's exact count and zero
+failed/skipped/expected-failure tests. Any missing evidence fails closed.
 
 **The `DecodedFrameMemoryTests` attribution did not survive.** The finding was that its ~250 MB
 hold destabilises the rest of the suite. On a private device the full suite **including** it ran
@@ -3944,8 +3953,8 @@ refactor removed the duplicate channel entirely:
 
 The permanent regression asserts that the summary carries and prints the report's timestamp rate;
 the type signatures prevent a caller from injecting metadata alongside it. Seven related suites
-run **67 tests, 0 failures, 0 restarts**. One new test raised the fast-suite floor from 486 to
-**487** at that commit; no sampling, gait, dynamics or claim arithmetic changed.
+run **67 tests, 0 failures, 0 restarts**. One new test moved the fast lane's exact expected count
+from 486 to **487** at that commit; no sampling, gait, dynamics or claim arithmetic changed.
 
 
 ## Contact timing stays visible without a muscle summary (2026-08-10)
@@ -3970,8 +3979,35 @@ rows even after a successful downstream solve. `flags(report)` was already outsi
 and remains visible; the regression locks that rather than misreporting it as part of the defect.
 
 The related summary/presentation suites run **54 tests, 0 failures, 0 restarts**. One new regression
-raises the fast-suite floor from 487 to **488**. No gait report, claim floor or muscle computation
-changed; this is a visibility and ownership repair.
+moves the fast lane's exact expected count from 487 to **488**. No gait report, claim floor or
+muscle computation changed; this is a visibility and ownership repair.
+
+
+## The test gate fails closed, and E1 has its own receipt (2026-08-10)
+
+The old runner treated an `-only-testing` invocation as exempt from its count floor. That made a
+zero-test selection green. It also ignored XCTSkip totals and the captured `xcodebuild` return code,
+accepted caller exclusions, and always appended the E1 skip — so asking it to run E1 selected and
+skipped the same class. The log could say success while no required test supplied evidence.
+
+The runner now has four explicit modes. `fast` owns the E1 exclusion and requires exactly **488**
+ordinary tests. `slow` owns the one exact E1 selector and requires exactly **1** test. `all` runs
+both lanes and is the commit gate. `subset` requires at least one caller-selected test, rejects all
+skips, and prints `SUBSET PASS` rather than a gate verdict. Gating lanes accept no caller arguments,
+so selection, configuration, repetition, destination, and result-path semantics cannot be changed
+under the same receipt name.
+
+The decision is made from both the log and a unique result bundle. A zero `xcodebuild` return code,
+`TEST SUCCEEDED`, zero host restarts, case-sensitive xcresult `Passed`, exact total/passed counts,
+and zero failed/skipped/expected-failure tests are all mandatory. Missing, malformed, or
+contradictory evidence is a failure. The pure policy harness exercises the fail-closed branches
+without a simulator; required FullBody/reference setup in XCTest now throws a failure rather than
+`XCTSkip`, so the same rule also holds for an IDE run.
+
+E1's 163-coordinate partition is not an open blocker: SHOULDER6 restored 169-coordinate coverage
+and `testE1RunAll` passed in **5706.9 s** on 2026-08-07. The separate non-asserting V4 diagnostic
+still reimplements an obsolete production solver and remains structurally stale; the slow lane does
+not promote that diagnostic into evidence.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4264,15 +4300,12 @@ arms must differ in the work that PRECEDES the mask.
     Debug simulator number and the app's live path depends on it. If it is real, the untried lever is
     the Woodbury/dual form of the normal equations (169×169 vs a 60-row residual, ~8× on the cubic
     term).
-14. **`E1MarkerSetComparisonTests` no longer compiles its own premise.** It fails at
-    `E1MarkerSetComparisonTests.mm:475` asserting its coordinate blocks cover the model: 163 != 169.
-    The model gained 6 shoulder DOFs and lost 2 `knee_angle_*_beta` in the 2026-08-06 osim edit; E1's
-    fixture still enumerates 163. Pre-existing, not caused by any 2026-08-07 change (the failing
-    assertion is inside `buildCoordinateSets`, pure name bookkeeping, and never calls a solver).
-    Separately, E1's V4 "does the harness reproduce production" probe is now structurally stale — it
-    compares the bridge against a reimplementation of `refineIK` that production no longer uses. V4
-    carries no assertion, so nothing fails, but its number is meaningless. **E1's STOP verdict is
-    unaffected**: every arm uses E1's own internal solvers.
+14. ~~**E1's 163-coordinate partition no longer covers the 169-coordinate model.**~~ **CLOSED
+    2026-08-07.** The SHOULDER6 partition restored full coverage and `testE1RunAll` passed in
+    **5706.9 s**. It is now the slow lane's exact one test. The separate V4 “does the harness
+    reproduce production” probe remains structurally stale: it compares the bridge against a
+    reimplementation of `refineIK` that production no longer uses, and it carries no assertion.
+    Its number is diagnostic, not slow-lane evidence.
 
 ### Newly opened by the 2026-08-08 muscle-claim scoping
 

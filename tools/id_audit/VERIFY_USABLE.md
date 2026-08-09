@@ -229,6 +229,9 @@ carried separately as `ikLossSquaredMeters`. No caller reads the loss as a lengt
 
 ## 6. Full suite, run by me
 
+> **Historical transcript — do not reuse this command.** E1's coordinate partition was fixed and
+> rerun after this audit. The current commit gate is `tools/run_tests.sh all`; see `STATUS.md`.
+
 ```
 xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
   -destination "platform=iOS Simulator,name=iPhone 17" \
@@ -237,8 +240,10 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 → ** TEST SUCCEEDED **      "Restarting after unexpected exit": 0 occurrences
 ```
 
-E1 excluded as instructed (>1 h, and it fails pre-existing at `E1MarkerSetComparisonTests.mm:475`,
-163 vs 169 coordinates — I did not run it and cannot independently confirm that diagnosis).
+E1 excluded as instructed (>1 h, and it was then reported to fail pre-existing at
+`E1MarkerSetComparisonTests.mm:475`, 163 vs 169 coordinates — I did not run it and could not
+independently confirm that diagnosis). That state was subsequently superseded by the SHOULDER6 fix
+and the successful 5706.9 s rerun recorded in `STATUS.md`.
 
 **No regressions found.** Nothing went green by weakening.
 

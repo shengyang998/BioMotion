@@ -45,7 +45,7 @@ final class StraightLinePathErrorTests: XCTestCase {
 
     override func setUpWithError() throws {
         try Self.build(bundle: Bundle(for: type(of: self)))
-        if let failure = Self.setupFailure { throw XCTSkip(failure) }
+        if let failure = Self.setupFailure { throw RequiredTestDependencyError(failure) }
     }
 
     private static func build(bundle: Bundle) throws {

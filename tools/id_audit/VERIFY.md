@@ -219,6 +219,10 @@ gravity or to any dynamics call, so `setGravity` cannot reach it.
    safe — but nobody has confirmed that, and the previous agent did not claim to. Cost to close:
    one E1 run (>1 h).
 
+   **Superseded later the same day:** the SHOULDER6 partition fix restored all 169 coordinates and
+   the 5706.9 s E1 rerun passed; see `STATUS.md`. This paragraph remains the audit's historical
+   state at the time it was written.
+
 ---
 
 ## 7. Remaining concerns (none of them regressions; all pre-existing or out of scope)

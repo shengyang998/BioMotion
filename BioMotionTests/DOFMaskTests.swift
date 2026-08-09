@@ -366,9 +366,8 @@ final class DOFMaskTests: XCTestCase {
     private func loadFullBody() throws {
         let path = Bundle(for: type(of: self)).path(forResource: "FullBody", ofType: "osim")
             ?? Bundle.main.path(forResource: "FullBody", ofType: "osim")
-        guard let path else {
-            throw XCTSkip("FullBody.osim is not reachable from the test bundle")
-        }
-        XCTAssertTrue(bridge.loadModel(fromPath: path), "FullBody.osim must load")
+        let requiredPath = try XCTUnwrap(path,
+                                         "FullBody.osim is not reachable from the test bundle")
+        XCTAssertTrue(bridge.loadModel(fromPath: requiredPath), "FullBody.osim must load")
     }
 }

@@ -1,72 +1,82 @@
 #!/bin/bash
 #
-# The commit gate. Run this, not a hand-typed xcodebuild line.
+# Fail-closed XCTest runner. Every lane owns its selection and produces a
+# structured xcresult receipt; a green xcodebuild line alone is never a pass.
 #
-# # Why this file exists
+# Usage:
+#   tools/run_tests.sh fast
+#       All reviewed tests except the >1-hour E1 experiment. Exact count: 488.
 #
-# Three reviewers ran "the test suite" on 2026-08-07 and got three different
-# answers. Two causes, both mechanical, both removed here:
+#   tools/run_tests.sh slow
+#       E1MarkerSetComparisonTests/testE1RunAll only. Exact count: 1.
 #
-#   1. THE SHARED DEVICE. Every documented invocation named a simulator by
-#      NAME -- `name=iPhone 17` in STATUS.md, `name=iPhone 17 Pro` in
-#      README.md -- so two `xcodebuild test` processes resolved to the same
-#      UDID and evicted each other's test host. The evicted tests are reported
-#      neither passed nor failed. This script uses a device it owns, named
-#      $DEVICE_NAME, and takes a lock so a second invocation refuses rather
-#      than sharing it.
+#   tools/run_tests.sh subset -only-testing:TEST-ID [diagnostic xcodebuild args...]
+#       Debugging only. Requires at least one selected test and prints SUBSET
+#       PASS rather than a commit-gate receipt.
 #
-#   2. THE GREEN LINE THAT ISN'T ONE. A killed test host still prints
-#      `Executed N tests, with 0 failures (0 unexpected)` for every suite that
-#      completed before the kill. That line is not a verdict. Only the trailing
-#      `** TEST SUCCEEDED **`, a zero count of `Restarting after unexpected
-#      exit`, and a full test count together say the suite ran. This script
-#      checks all three and exits non-zero if any fails.
+#   tools/run_tests.sh all
+#       Runs fast, then slow, and succeeds only if both receipts pass.
 #
-# # What it does NOT do
-#
-# It does not skip anything except `E1MarkerSetComparisonTests`, which costs
-# over an hour (STATUS.md, next-step 14). Do not add skips here to make a run
-# green -- a test that cannot pass stays failing, with its number reported.
-#
-# Usage:  tools/run_tests.sh [extra xcodebuild args...]
-#   e.g.  tools/run_tests.sh -only-testing:BioMotionTests/IKConvergenceTests
-#
+# The fast/slow/all lanes accept no caller arguments: their invocation is part
+# of the reviewed receipt. The diagnostic subset lane rejects skip-testing,
+# alternate test plans/configurations, retry/repetition controls, and
+# runner-owned project/scheme/destination/result paths. Do not add a skip or
+# retry to make a lane green.
+
+# shellcheck source-path=SCRIPTDIR
+
 set -u
 
-DEVICE_NAME="BioMotion-CI"
-DEVICE_TYPE="iPhone 17"
+RUN_TESTS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=test_gate.sh
+source "$RUN_TESTS_SCRIPT_DIR/test_gate.sh"
+
+DEVICE_NAME='BioMotion-CI'
+DEVICE_TYPE='iPhone 17'
 LOCK_DIR="${TMPDIR:-/tmp}/biomotion-run-tests.lock"
+REPO_ROOT="$(cd "$RUN_TESTS_SCRIPT_DIR/.." && pwd)"
+TEST_DEVICE_UDID=''
+RUN_OUTPUT_DIR=''
 
-# The floor the run must clear. It is not decoration: a test host killed
-# mid-run, or a test file that `xcodegen generate` was never run for, both
-# show up ONLY as a smaller count -- every other line still reads green.
-# Raise it when you add tests; never lower it to make a run pass.
-# 474 at 64c3959. +3 MuscleSolverExactnessTests (2026-08-09 QP fix, and
-# WrappedMomentArmLeakTests replaced one test with one test) = 477, measured.
-# +6 MultiWrapReferenceTests (2026-08-09 multi-wrap reference) = 483.
-# +1 WrappedMomentArmLeakTests.testTheReferenceDisagreesWithItselfByMoreThanThe
-#    GateAllows (2026-08-09 leak re-run) = 484, measured.
-# +1 SimmSplineExtrapolationTests plus +1 FullBody 130-degree product regression
-#    (2026-08-09 endpoint-linear fix) = 486.
-# +1 GaitLoadSummary timestamp-cadence regression (2026-08-10) = 487.
-# +1 analysed-without-load-summary timing presentation regression = 488.
-MIN_TESTS=488
+run_tests_usage() {
+  cat >&2 <<'EOF'
+Usage:
+  tools/run_tests.sh fast
+  tools/run_tests.sh slow
+  tools/run_tests.sh subset -only-testing:TEST-ID [diagnostic xcodebuild args...]
+  tools/run_tests.sh all
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT" || exit 1
+fast, slow, and all accept no caller arguments. subset accepts -only-testing
+selectors plus diagnostic build arguments, but no skip, alternate test
+plan/configuration, retry/repetition control, or override for the project,
+scheme, destination, or result bundle.
+EOF
+}
 
-# ---- one run at a time, on a device nothing else is using ------------------
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  echo "REFUSING: $LOCK_DIR exists, so another run is using $DEVICE_NAME."
-  echo "Two xcodebuild test processes on one simulator evict each other's test"
-  echo "host and both report a partial suite as green. Wait, or remove the lock"
-  echo "if you are sure no run is live: rmdir $LOCK_DIR"
-  exit 2
-fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+run_tests_release_lock() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
 
-UDID=$(xcrun simctl list devices -j \
-  | python3 -c "
+run_tests_acquire_lock() {
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf 'REFUSING: %s exists, so another run is using %s.\n' "$LOCK_DIR" "$DEVICE_NAME"
+    printf '%s\n' 'Two xcodebuild test processes on one simulator can evict each other'
+    printf '%s\n' 'and report an incomplete suite. Wait, or remove the lock only after'
+    printf 'confirming no run is live: rmdir %s\n' "$LOCK_DIR"
+    return 2
+  fi
+  trap run_tests_release_lock EXIT
+  return 0
+}
+
+run_tests_resolve_device() {
+  local devices_json
+  if ! devices_json=$(xcrun simctl list devices -j); then
+    printf 'GATE FAIL: could not enumerate simulators\n' >&2
+    return 1
+  fi
+
+  TEST_DEVICE_UDID=$(printf '%s' "$devices_json" | python3 -c "
 import json,sys
 d = json.load(sys.stdin)['devices']
 for runtime, devices in d.items():
@@ -74,71 +84,175 @@ for runtime, devices in d.items():
     for dev in devices:
         if dev['name'] == '$DEVICE_NAME' and dev['isAvailable']:
             print(dev['udid']); sys.exit(0)
-")
-if [ -z "$UDID" ]; then
-  echo "Creating dedicated simulator '$DEVICE_NAME' ($DEVICE_TYPE)..."
-  UDID=$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE") || exit 1
-fi
-xcrun simctl bootstatus "$UDID" -b > /dev/null 2>&1
-echo "Device: $DEVICE_NAME ($UDID)"
+") || {
+    printf 'GATE FAIL: could not parse simulator inventory\n' >&2
+    return 1
+  }
 
-STAMP=$(date +%Y%m%d-%H%M%S)
-LOG="${TMPDIR:-/tmp}/biomotion-tests-${STAMP}.log"
-START=$(date +%s)
+  if [ -z "$TEST_DEVICE_UDID" ]; then
+    printf "Creating dedicated simulator '%s' (%s)...\n" "$DEVICE_NAME" "$DEVICE_TYPE"
+    TEST_DEVICE_UDID=$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE") || return 1
+  fi
 
-xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
-  -destination "platform=iOS Simulator,id=${UDID}" \
-  -skip-testing:BioMotionTests/E1MarkerSetComparisonTests \
-  "$@" test > "$LOG" 2>&1
-XCODEBUILD_RC=$?
-WALL=$(( $(date +%s) - START ))
+  if ! xcrun simctl bootstatus "$TEST_DEVICE_UDID" -b >/dev/null 2>&1; then
+    printf 'GATE FAIL: could not boot dedicated simulator %s (%s)\n' \
+      "$DEVICE_NAME" "$TEST_DEVICE_UDID" >&2
+    return 1
+  fi
+  printf 'Device: %s (%s)\n' "$DEVICE_NAME" "$TEST_DEVICE_UDID"
+  return 0
+}
 
-# ---- the three numbers that decide whether this run means anything --------
-EXECUTED_LINE=$(grep -E "^[[:space:]]*Executed [0-9]+ test" "$LOG" | tail -1)
-EXECUTED=$(echo "$EXECUTED_LINE" | sed -E 's/.*Executed ([0-9]+) test.*/\1/')
-RESTARTS=$(grep -c "Restarting after unexpected exit" "$LOG")
-VERDICT=$(grep -E "^\*\* TEST (SUCCEEDED|FAILED) \*\*" "$LOG" | tail -1)
+run_tests_print_failures() {
+  local log_path=$1
+  printf '\nFailures and skips (first 40):\n'
+  grep -E 'error:|XCTAssert.* failed|Test Case .* skipped' "$log_path" | head -40
+}
 
-echo
-echo "log:      $LOG"
-echo "wall:     ${WALL}s"
-echo "executed: ${EXECUTED_LINE:-<none>}"
-echo "restarts: $RESTARTS   (each one is tests silently not run)"
-echo "verdict:  ${VERDICT:-<none, xcodebuild rc=$XCODEBUILD_RC>}"
+# Build the invocation in an array that is non-empty from its first expansion.
+# macOS ships Bash 3.2, where expanding an EMPTY array under `set -u` raises
+# "unbound variable". The subset lane has no runner-owned selector, so the old
+# `selection_args=(); "${selection_args[@]}"` form died before xcodebuild.
+run_tests_invoke_xcodebuild() {
+  if [ "$#" -lt 2 ]; then
+    printf 'run_tests_invoke_xcodebuild requires SELECTOR RESULT_PATH [ARGS...]\n' >&2
+    return 2
+  fi
+  local selector=$1
+  local result_path=$2
+  shift 2
 
-if [ "$RESTARTS" -gt 0 ]; then
-  echo
-  echo "Killed hosts -- the tests running at these points did NOT report:"
-  grep -n "Restarting after unexpected exit" "$LOG" | head -20
-fi
-if [ "$VERDICT" != "** TEST SUCCEEDED **" ]; then
-  echo
-  echo "Failures:"
-  grep -E "error:|XCTAssert.* failed" "$LOG" | head -30
-fi
+  local xcodebuild_args=(
+    -project BioMotion.xcodeproj
+    -scheme BioMotion
+    -destination "platform=iOS Simulator,id=${TEST_DEVICE_UDID}"
+    -resultBundlePath "$result_path"
+  )
+  if [ -n "$selector" ]; then
+    xcodebuild_args+=("$selector")
+  fi
+  xcodebuild_args+=("$@" test)
+  xcodebuild "${xcodebuild_args[@]}"
+}
 
-FAIL=0
-[ "$VERDICT" = "** TEST SUCCEEDED **" ] || { echo "GATE FAIL: verdict is not TEST SUCCEEDED"; FAIL=1; }
-[ "$RESTARTS" -eq 0 ] || { echo "GATE FAIL: $RESTARTS test host(s) were killed; the suite is incomplete"; FAIL=1; }
-# The count floor applies to a whole-suite run only. `-only-testing` is a
-# debugging aid, and a subset that passes is NOT the commit gate -- say so
-# rather than silently accepting a smaller number.
-case " $* " in
-  *" -only-testing"*)
-    echo "NOTE: -only-testing given, so the $MIN_TESTS-test floor is not checked."
-    echo "      A subset run is not the commit gate."
-    ;;
-  *)
-    if [ -z "$EXECUTED" ] || [ "$EXECUTED" -lt "$MIN_TESTS" ]; then
-      echo "GATE FAIL: ran ${EXECUTED:-0} tests, floor is $MIN_TESTS"
-      FAIL=1
+run_tests_one_lane() {
+  local lane=$1
+  shift
+
+  local expected
+  local selector
+  expected=$(test_gate_expected_count "$lane") || return 2
+  selector=$(test_gate_lane_selector "$lane") || return 2
+
+  local lane_dir="$RUN_OUTPUT_DIR/$lane"
+  local log_path="$lane_dir/xcodebuild.log"
+  local result_path="$lane_dir/result.xcresult"
+  local summary_path="$lane_dir/summary.json"
+  local summary_error_path="$lane_dir/summary.stderr"
+  mkdir -p "$lane_dir" || return 1
+
+  printf '\nRunning %s lane (expected tests: %s)...\n' "$lane" "$expected"
+  printf 'log:      %s\n' "$log_path"
+  printf 'xcresult: %s\n' "$result_path"
+
+  local start
+  local wall
+  local xcodebuild_rc
+  start=$(date +%s)
+  run_tests_invoke_xcodebuild "$selector" "$result_path" "$@" \
+    >"$log_path" 2>&1
+  xcodebuild_rc=$?
+  wall=$(( $(date +%s) - start ))
+
+  local summary_rc=1
+  if [ -d "$result_path" ]; then
+    xcrun xcresulttool get test-results summary \
+      --path "$result_path" --compact \
+      >"$summary_path" 2>"$summary_error_path"
+    summary_rc=$?
+  else
+    printf 'result bundle was not created: %s\n' "$result_path" >"$summary_error_path"
+  fi
+
+  printf 'wall:     %ss\n' "$wall"
+  printf 'summary:  %s (xcresulttool rc=%s)\n' "$summary_path" "$summary_rc"
+
+  local gate_rc
+  test_gate_evaluate "$lane" "$expected" "$xcodebuild_rc" "$summary_rc" \
+    "$log_path" "$summary_path"
+  gate_rc=$?
+
+  if [ "$summary_rc" -ne 0 ]; then
+    printf '\nxcresult summary error:\n'
+    head -30 "$summary_error_path"
+  fi
+  if [ "$gate_rc" -ne 0 ]; then
+    run_tests_print_failures "$log_path"
+  fi
+  return "$gate_rc"
+}
+
+run_tests_main() {
+  if [ "$#" -eq 0 ]; then
+    run_tests_usage
+    return 2
+  fi
+  case "$1" in
+    -h|--help)
+      run_tests_usage
+      return 0
+      ;;
+  esac
+
+  local lane=$1
+  shift
+  case "$lane" in
+    fast|slow|subset|all) ;;
+    *)
+      printf 'unknown test lane: %s\n' "$lane" >&2
+      run_tests_usage
+      return 2
+      ;;
+  esac
+
+  if ! test_gate_validate_lane_args "$lane" "$@"; then
+    run_tests_usage
+    return 2
+  fi
+
+  local required_command
+  for required_command in xcrun xcodebuild python3; do
+    if ! command -v "$required_command" >/dev/null 2>&1; then
+      printf 'GATE FAIL: required command is unavailable: %s\n' "$required_command" >&2
+      return 1
     fi
-    ;;
-esac
+  done
 
-if [ "$FAIL" -eq 0 ]; then
-  echo "GATE PASS"
-else
-  echo "GATE FAIL -- do not commit"
+  cd "$REPO_ROOT" || return 1
+  test_gate_assert_no_xctskip "$REPO_ROOT/BioMotionTests" || return 1
+  run_tests_acquire_lock || return $?
+  run_tests_resolve_device || return 1
+
+  RUN_OUTPUT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/biomotion-tests.XXXXXX") || return 1
+  printf 'artifacts: %s\n' "$RUN_OUTPUT_DIR"
+
+  if [ "$lane" = all ]; then
+    if ! run_tests_one_lane fast "$@"; then
+      printf 'ALL GATE FAIL: fast lane did not pass; slow lane was not started.\n'
+      return 1
+    fi
+    if ! run_tests_one_lane slow "$@"; then
+      printf 'ALL GATE FAIL: slow lane did not pass.\n'
+      return 1
+    fi
+    printf 'ALL GATE PASS: fast and slow receipts both passed.\n'
+    return 0
+  fi
+
+  run_tests_one_lane "$lane" "$@"
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  run_tests_main "$@"
+  exit $?
 fi
-exit "$FAIL"

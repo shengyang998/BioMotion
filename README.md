@@ -148,10 +148,24 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 
 # Tests on simulator — always via the script, never a hand-typed xcodebuild line.
 # It provisions a private simulator (naming one shared with another xcodebuild
-# process is what made this suite untrustworthy), and reports the executed count,
-# the restart count and the final verdict. See STATUS.md, "The commit gate".
-tools/run_tests.sh
+# process is what made this suite untrustworthy) and emits an xcresult receipt.
+tools/run_tests.sh fast    # exactly 488; 0 failed/skipped/restarted
+tools/run_tests.sh slow    # only testE1RunAll; exactly 1; 0 failed/skipped
+tools/run_tests.sh all     # commit gate: fast, then slow
+
+# A diagnostic selection. It must execute >= 1 test and is never a commit gate.
+tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/SomeTests
 ```
+
+`fast`, `slow`, and `all` accept no caller arguments; their fixed invocation is
+part of the reviewed receipt. `subset` is the diagnostic escape hatch, but it
+still rejects skips, alternate test configurations, and retry/repetition
+controls. A lane passes only when
+`xcodebuild` exits zero, the log ends in `TEST SUCCEEDED`, no test host
+restarts, and the structured xcresult receipt has the exact reviewed count with
+zero failures, skips, or expected failures. Missing evidence is a failure. See
+STATUS.md, “The commit gate”.
 
 ## Regenerating the OpenSim moment-arm reference
 
