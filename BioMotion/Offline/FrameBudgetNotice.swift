@@ -27,9 +27,11 @@ import Foundation
 /// # How the cause is decided, without duplicating the sampler's arithmetic
 ///
 /// Re-deriving "which budget bound this" would be a second copy of
-/// `FrameSource`'s rules, free to drift from them. Instead the question is asked
-/// of the RESULT: if the run used every frame the clip has, the clip was the
-/// limit; otherwise a budget was. Both quantities are already in hand.
+/// `FrameSource`'s rules, free to drift from them. In native-window mode the
+/// question is asked of the RESULT: if the run used every frame the clip has,
+/// the clip was the limit; otherwise the native budget was. In sparse mode the
+/// sampler only sets `wasTruncated` when another sample exists beyond its cap,
+/// so a notice is necessarily the sparse budget case — there is no window.
 ///
 /// # …and the same defect then survived on the other sampling mode
 ///
@@ -114,6 +116,9 @@ struct FrameBudgetNotice: Equatable {
         /// take their frames from different parts of the clip, so one sentence
         /// cannot serve both.
         let budgetCause: Cause
+        /// Only native-window truncation can mean either "short clip" or
+        /// "budget". Sparse truncation already means its 120-frame cap fired.
+        let clipCapacity: Int?
         switch mode {
         case .singleFrame:
             return nil
@@ -121,16 +126,18 @@ struct FrameBudgetNotice: Equatable {
             guard fps > 0 else { return nil }
             step = 1.0 / fps
             budgetCause = .budgetStoppedTheSparseScan
+            clipCapacity = nil
         case .nativeWindow:
             step = 1.0 / FrameSource.sanitisedFrameRate(nominalFrameRate)
             budgetCause = .budgetCappedTheWindow
+            clipCapacity = Swift.max(1, Int(duration / step))
         }
-        // How many samples this clip could yield at this step at all. If the run
-        // used them all, the CLIP was the limit; anything less and a budget was.
-        let clipCapacity = Swift.max(1, Int(duration / step))
         let span = (timestamps.last ?? 0) - (timestamps.first ?? 0) + step
+        let cause = clipCapacity.map {
+            timestamps.count >= $0 ? Cause.clipShorterThanTheWindow : budgetCause
+        } ?? budgetCause
         return FrameBudgetNotice(
-            cause: timestamps.count >= clipCapacity ? .clipShorterThanTheWindow : budgetCause,
+            cause: cause,
             framesUsed: timestamps.count,
             analysedSeconds: span,
             clipSeconds: duration)

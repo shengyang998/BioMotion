@@ -142,7 +142,7 @@ final class OfflineDisclosureTests: XCTestCase {
     /// A genuinely long clip uses the same budget path and remains covered.
     func testTheNativeWindowBudgetNamesItsOwnCauseAtAndBeyondTheWindowBoundary() {
         let mode = FrameSource.SamplingMode.nativeWindow(seconds: FrameSource.analysisWindowSeconds)
-        for duration in [30.0, FrameSource.analysisWindowSeconds] {
+        for duration in [30.0, FrameSource.analysisWindowSeconds, 3.0] {
             let (timestamps, truncated) = FrameSource.sampleTimestamps(
                 duration: duration, mode: mode, nominalFrameRate: 240)
             XCTAssertTrue(truncated)
@@ -160,9 +160,9 @@ final class OfflineDisclosureTests: XCTestCase {
                           "601 frames were used, and 120 is not this mode's budget: \(message)")
             XCTAssertTrue(message.contains("2.5 s"), message)
             XCTAssertFalse(message.contains("\(FrameSource.maxFramesPerRun) frames"), message)
-            if duration == FrameSource.analysisWindowSeconds {
+            if duration <= FrameSource.analysisWindowSeconds {
                 XCTAssertFalse(message.contains("longer than the analysis window"),
-                               "a four-second clip is not longer than a four-second window: \(message)")
+                               "a clip no longer than the window cannot be called longer: \(message)")
             }
         }
 
@@ -223,6 +223,22 @@ final class OfflineDisclosureTests: XCTestCase {
                        "there is no analysis window in this mode: \(message)")
         XCTAssertTrue(message.contains("12.0 s"), message)
         XCTAssertTrue(message.contains("600.0 s"), "and the clip's real length: \(message)")
+
+        // Just one sample beyond the cap is still a BUDGET story. The notice
+        // used floor(duration / step), called this 120-frame clip-complete, and
+        // emitted the native mode's nonexistent four-second-window sentence.
+        let boundaryDuration = Double(FrameSource.maxFramesPerRun) / 10.0 + 0.01
+        let (boundaryTimestamps, boundaryTruncated) = FrameSource.sampleTimestamps(
+            duration: boundaryDuration, mode: mode)
+        XCTAssertTrue(boundaryTruncated)
+        XCTAssertEqual(boundaryTimestamps.count, FrameSource.maxFramesPerRun)
+        let boundaryNotice = try XCTUnwrap(FrameBudgetNotice.make(
+            mode: mode, duration: boundaryDuration, nominalFrameRate: 30,
+            timestamps: boundaryTimestamps, wasTruncated: boundaryTruncated))
+        XCTAssertEqual(boundaryNotice.cause, .budgetStoppedTheSparseScan)
+        XCTAssertTrue(boundaryNotice.message.contains("FIRST"), boundaryNotice.message)
+        XCTAssertFalse(boundaryNotice.message.lowercased().contains("analysis window"),
+                       boundaryNotice.message)
     }
 
     // MARK: - Fixtures

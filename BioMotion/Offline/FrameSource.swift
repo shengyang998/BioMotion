@@ -28,9 +28,12 @@ enum FrameSource {
         ///
         /// # Why a short window at native rate beats a long clip sampled sparsely
         ///
-        /// The two cost the same — both are bounded by `maxFramesPerRun`, i.e.
-        /// by the number of Core ML calls — but they buy different things, and
-        /// only one of them can measure gait.
+        /// Both modes are bounded, but they deliberately do NOT cost the same.
+        /// Sparse sampling stops at `maxFramesPerRun` (120 Core ML calls).
+        /// Native-rate sampling stops at `maxNativeWindowFrames` (601 calls),
+        /// the cap derived to preserve at least 2.5 s even at 240 fps. Only the
+        /// native mode can resolve a contact; its processing cost rises with
+        /// the video's frame rate and the selector discloses that trade.
         ///
         /// A contact lasts 167-247 ms on the owner's clips. Sampled at 2 fps
         /// that is 0.3-0.5 samples: contact duration is not merely imprecise,
@@ -41,8 +44,8 @@ enum FrameSource {
         /// the binding limit on this whole product (`GaitResolution`), and the
         /// only lever on it is the capture frame rate.
         ///
-        /// 4 s at 30 fps is 120 frames = exactly `maxFramesPerRun`, so the
-        /// model-call budget is unchanged from the previous 60 s at 2 fps.
+        /// At 30 fps only, 4 s is 120 frames — the same call count as the old
+        /// sparse cap. Higher native rates use more calls, up to 601 at 240 fps.
         case nativeWindow(seconds: Double)
     }
 

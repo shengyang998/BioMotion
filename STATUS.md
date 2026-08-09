@@ -3919,6 +3919,15 @@ always covered four seconds for the “same number of model calls” as the 120-
 video's frame rate. This changes disclosure only; the sampler arithmetic and the 486-test floor are
 unchanged.
 
+A post-commit boundary review found the same cause classifier was also unsafe for sparse sampling:
+at 10 fps, a 12.01 s clip has a 121st sample but the 120-frame cap stops first. The notice floored
+`duration / step` to 120, mislabelled the run clip-limited, and emitted the native mode's four-second
+window advice. The RED failed cause, location and no-window assertions. Sparse `wasTruncated` now
+maps directly to `.budgetStoppedTheSparseScan` (the sampler only raises it when a next sample exists);
+only native mode compares used frames with clip capacity. The 3 s / 240 fps competing-limit case is
+also pinned: although the clip is shorter than four seconds, its 720 available frames exceed the
+601-frame budget, so the budget remains the cause. Both boundary tests pass with zero restarts.
+
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 

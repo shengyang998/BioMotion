@@ -126,9 +126,10 @@ Default 2fps, user-adjustable 0.5–10fps, plus an explicit single-frame mode
 (auto-forced for photos). `FrameSource.maxFramesPerRun = 120` caps a
 pathological long-clip × high-fps selection; `OfflineSessionRunner` surfaces
 `frameBudgetNotice` rather than truncating silently — a `FrameBudgetNotice`
-that names WHICH of the two causes fired (the clip is shorter than the window,
-or the native-rate window exceeded the 601-frame run budget) and how many frames
-were really used. At 240 fps the cap spans about 2.5 s even when the clip itself
+that names WHICH cause fired (the native clip is shorter than the window, the
+native-rate window exceeded the 601-frame run budget, or the sparse scan hit its
+120-frame cap) and how many frames were really used. At 240 fps the native cap spans
+about 2.5 s even when the clip itself
 is exactly as long as the 4 s configured window; neither the notice nor the mode
 selector describes that as a long clip. The selector's copy lives in
 `FrameSource.nativeWindowDisclosure`, beside the arithmetic it discloses. It replaced a
