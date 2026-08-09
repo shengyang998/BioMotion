@@ -318,7 +318,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 488 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 491 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -842,7 +842,7 @@ fixed in build 18; both are easy to reintroduce.
 1. **Muscle output was filed against the wrong frame.** `OfflineSessionRunner` attached
    `nimble.lastMuscleResult` to the frame it had just submitted, but that result describes a frame
    ~4 earlier. At the 2 fps default that is a **2-second offset** between the pose drawn and the
-   muscle overlay drawn on top of it. Fixed by `routeBiomechanicsToOwningFrame()`, which matches on
+   muscle overlay drawn on top of it. Fixed by `routeSolveToOwningFrame()`, which matches on
    `MuscleOutput.timestamp` instead of assuming newest-result-belongs-to-newest-frame. A result with
    no close frame is discarded rather than misfiled.
 
@@ -1164,9 +1164,12 @@ frame improved in both samples, and the torso did not move in either. That "legs
 unchanged" signature is what separates the fix from a number that drifted. Harness:
 `labs/sam-3d-body/export/{vision_box_probe.swift,box_ablation.py}`.
 
-**The whole-image fallback needs no work** — it scores 4.7% against the real box's 4.6%, so the
-path taken when Vision finds nobody is not a quality cliff and does not need a
-carry-the-previous-frame's-box mechanism. Measured specifically to avoid building that.
+**The whole-image fallback is not a single-frame pose-quality cliff** — it scores 4.7% against the
+real box's 4.6%, so it does not need a carry-the-previous-frame's-box mechanism. That result did
+not license using fallback frames as if Vision had observed a continuous subject in a VIDEO:
+22/309 slots on `video_012` take this path and their scale/root values are discontinuous. The pose
+now stays visible for review, a PHOTO fallback remains analysable, and a VIDEO fallback is excluded
+before scale, derivatives, gait, ID, or muscle. See the temporal-isolation section below.
 
 **Asking for the whole body does not cost detection rate** — the obvious way this fix could have
 backfired, since a whole-body box is the harder detection and a miss falls back to the whole image.
@@ -3990,8 +3993,9 @@ zero-test selection green. It also ignored XCTSkip totals and the captured `xcod
 accepted caller exclusions, and always appended the E1 skip — so asking it to run E1 selected and
 skipped the same class. The log could say success while no required test supplied evidence.
 
-The runner now has four explicit modes. `fast` owns the E1 exclusion and requires exactly **488**
-ordinary tests. `slow` owns the one exact E1 selector and requires exactly **1** test. `all` runs
+The runner now has four explicit modes. `fast` owns the E1 exclusion and currently requires exactly
+**491** ordinary tests (488 when this gate itself landed, plus the three temporal-isolation
+regressions below). `slow` owns the one exact E1 selector and requires exactly **1** test. `all` runs
 both lanes and is the commit gate. `subset` requires at least one caller-selected test, rejects all
 skips, and prints `SUBSET PASS` rather than a gate verdict. Gating lanes accept no caller arguments,
 so selection, configuration, repetition, destination, and result-path semantics cannot be changed
@@ -4008,6 +4012,46 @@ E1's 163-coordinate partition is not an open blocker: SHOULDER6 restored 169-coo
 and `testE1RunAll` passed in **5706.9 s** on 2026-08-07. The separate non-asserting V4 diagnostic
 still reimplements an obsolete production solver and remains structurally stale; the slow lane does
 not promote that diagnostic into evidence.
+
+
+## Video whole-frame fallbacks split temporal analysis (2026-08-10)
+
+`usedFallbackBBox` used to be a warning attached after the fact. The runner still calibrated from
+that frame, primed/submitted it to Nimble, left it in the centred derivative window, and appended it
+to gait input. On `video_012` that is 22 of 309 decoder slots. A fallback pose can look plausible in
+isolation while its camera/root/scale jump is exactly the kind of discontinuity a derivative must
+not cross.
+
+The policy is now source-specific rather than treating fallback as failure:
+
+- a **photo** whole-frame fallback remains the one available still pose and follows the existing
+  static analysis path;
+- a **video** whole-frame fallback remains `.success` and its projected pose stays visible for
+  review, but `TemporalAnalysisExclusion.videoVisionWholeFrameFallback` branches before body-size
+  plausibility, calibration, SG padding, Nimble, `usableBodyFrames`, gait, ID, and muscle;
+- the result store refuses any later biomechanics route to an excluded frame, and every UI/load
+  consumer asks the same eligibility-derived gate. The exact orange disclosure says the pose was
+  not used for scale, motion, gait, or muscle calculations.
+
+Continuity is keyed to `DecodedFrame.index`/`BodyFrame.frameNumber`, never the compact result-store
+id. `DecodedBatch` retains the first and last REQUESTED slot even when decode failed, so leading or
+trailing failures cannot silently move an endpoint inward. The static pass clears SG/hold/display
+state before the next waiter; the gait pass groups trusted frames into explicit contiguous ranges.
+Only a trusted frame at the real requested head/tail receives held-pose padding. Internal gaps get
+no padding on either side: inserting a held pose there would assert stillness in an interval known
+to be missing.
+
+Three regressions cover the four source/fallback combinations, exact disclosure and fail-closed
+store update, decoder-slot segmentation, and leading/middle/trailing endpoint policy. The existing
+orchestration test now resets the real engine and proves the first `T−1` pushes produce no solve,
+the `T`th does, and the reset's own `objectWillChange` cannot wake a waiter. The fast lane's reviewed
+count therefore moves from 488 to **491**; E1 remains the one slow test.
+
+Verification on this exact tree: the related offline/gait subset passed **66/66** with zero
+failures, skips, expected failures, or restarts; the fail-closed shell harness passed **49/49**;
+and the full commit gate passed fast **491/491** in **2416 s** plus slow E1 **1/1** in **6160 s**.
+Both `xcodebuild` and `xcresulttool` exited 0, both xcresults were `Passed`, and both lanes recorded
+zero failures, skips, expected failures, and restarts (`ALL GATE PASS`).
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4548,8 +4592,10 @@ arms must differ in the work that PRECEDES the mask.
     no pose model — so it can run densely even when the pose sampling is sparse.
 18. **Decide (a) refuse vs (b) declare-depth-constant** — see the owner decision in the cam_t
     section. This is what gates whether a dynamic branch exists at all.
-19. **Drop Vision-fallback frames out of any derivative.** 22/309 frames on `video_012`; they make
-    `cam_t` and the body scale wild, and today they are pushed into the SG filter like any other.
+19. ~~**Drop Vision-fallback frames out of any derivative.**~~ **DONE 2026-08-10.** The 22/309
+    frames remain visible as reviewable poses, but video fallback now branches before scale/Nimble/
+    gait and splits both solve passes. Photo fallback remains analysable; raw decoder slots and
+    requested endpoints prevent gap compression or false edge padding.
 
 ### Owner decisions still open
 

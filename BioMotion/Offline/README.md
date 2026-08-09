@@ -43,14 +43,16 @@ Float`).
 `NimbleEngine.processFrame` drops a frame outright if a solve is in flight, and
 has no per-frame completion callback — every result lands via
 `DispatchQueue.main.async` inside `publishResults`, itself only called when
-`solveIK` succeeds. `OfflineSessionRunner`'s private `NimbleFrameWaiter` calls
+`solveIK` succeeds. `OfflineSessionRunner`'s `NimbleFrameWaiter` calls
 `nimble.processFrame(_:)` then awaits the engine's next `objectWillChange`
 (Combine), with a fixed 6s timeout treated as a failed frame. See the doc
 comments on `NimbleFrameWaiter` and `OfflineSessionRunner` for the full
 reasoning, including why a 30ms settle delay after the first
 `objectWillChange` is added (it fires from inside a `@Published` property's
 `willSet`, before the engine finishes writing the ~12 fields `publishResults`
-sets) — this reasoning is logical/documented but **not verified on a device**.
+sets). `OfflineOrchestrationTests` exercises the same waiter against the real
+engine, including a reset between two windows; device scheduling remains part
+of the external device verification boundary.
 
 ### 9-frame Savitzky-Golay warm-up
 
@@ -62,28 +64,50 @@ warmed up. This means:
   task brief requires "a still photo is one frame and must work end to end"
   and requires the pipeline to "show the muscle result" — the only way to
   reconcile those is to replay the same pose multiple times.
-- `OfflineSessionRunner.padToWarmUp` replays the LAST successfully estimated
-  pose with synthetic, evenly-spaced (1/30s) timestamps until 9 total pushes
-  have been made, whenever a run ends with fewer than 9. Because every padded
-  push is an IDENTICAL pose, the SG filter's velocity/acceleration
+- `OfflineSessionRunner` replays a real endpoint pose over the leading and
+  trailing half-window, at the decoded clip's median cadence. A photo is the
+  degenerate 4 head + 1 real + 4 tail sequence. Because every padded push is
+  an IDENTICAL pose, the SG filter's velocity/acceleration
   coefficients (which sum to zero for a constant input by construction —
   verified: `[86,-142,-193,-126,0,126,193,142,-86]` sums to 0) come out at
   ~0 regardless of the exact spacing, giving a physically meaningful
   **static-hold** muscle-activation estimate (the effort needed to hold that
   exact pose against gravity) rather than nothing.
+- Padding is legal only when the trusted pose is the real first/last REQUESTED
+  decoder slot. An undecodable, pose-rejected, or review-only slot splits the
+  stream; no held sample is inserted beside an internal or leading/trailing
+  known gap. Each later segment resets SG/hold/display state before the next
+  waiter.
 - This is surfaced honestly, not silently: `OfflineResultStore.FrameResult`
   carries `isStaticHoldEstimate`, and `OfflinePlaybackView` labels it "Pose +
-  static-hold muscle estimate" instead of implying continuous dynamics were
-  measured.
+  muscle (static hold)" instead of implying continuous dynamics were measured.
 - The padding rewrites the ORIGINAL frame's stored result in place
   (`OfflineResultStore.updateBiomechanics`) rather than appending a phantom
   extra scrubber row.
+
+### Whole-frame fallback admission
+
+`SAM3DPoseEstimator` still runs when Vision finds no person box. The result is
+not uniformly a failure:
+
+- a photo fallback remains an analysable still pose;
+- a video fallback is `.success` and remains projected over the source image
+  for review, but carries `videoVisionWholeFrameFallback` and branches before
+  body-size plausibility, model scaling, SG priming, Nimble submission, gait,
+  ID, or muscle.
+
+The decoder batch retains the bounds of the timestamp request, while surviving
+`BodyFrame`s keep the original decoder slot as `frameNumber`. That makes both a
+failed decode and an excluded fallback a visible temporal gap. The result store
+also refuses later biomechanics routing to an excluded frame, so a future
+caller cannot bypass admission by writing fields directly after the fact.
 
 ### Calibration without a T-pose
 
 Live tracking calibrates from a 60-frame T-pose hold (`CalibrationView`).
 There's no equivalent live capture for an imported clip, so
-`OfflineSessionRunner` scales the model from the FIRST successfully-estimated
+`OfflineSessionRunner` scales the model from the FIRST temporally eligible,
+plausible, successfully-estimated
 frame via `MHRRetarget.segmentScaleMarkers`/`estimatedStatureMeters` (both
 pose-invariant chain-sum derivations per that file's own extensive doc
 comments), then feeds that same frame through `processFrame` normally. This
@@ -208,7 +232,7 @@ All of this is written up with inline citations in
 own comment — cross-check against `CONTRACT.md` once it exists regardless;
 this is the highest-value single thing to re-verify before shipping.
 
-## What could not be verified (no build, no device)
+## External verification boundaries
 
 - **Pixel-level resampling fidelity.** The affine warp uses
   `CGContext.interpolationQuality = .high`, which is CoreGraphics' best
@@ -236,33 +260,10 @@ this is the highest-value single thing to re-verify before shipping.
 - The `RealityKit` `ARView(cameraMode: .nonAR, ...)` / `PerspectiveCamera` /
   camera auto-framing math — geometrically reasoned, not rendered.
 - The GCD serial-queue ordering argument for `scaleModel` → `processFrame` and
-  the `objectWillChange` + 30ms-settle argument for `NimbleFrameWaiter` (both
-  documented above) rest on public, stable Dispatch/Combine semantics, but
-  neither was exercised against the real `NimbleEngine`/`NimbleBridge` binary.
+  the `objectWillChange` + 30ms-settle waiter are exercised on the simulator
+  against the real engine. Their device scheduling/performance still needs the
+  device verification recorded in STATUS.
 - Whether a single Core ML model instance loaded with `.cpuAndGPU` safely
   serves sequential (never concurrent) `prediction(from:)` calls from a
   background serial queue the way this file assumes — standard usage, not
   device-tested.
-
-## Integration diffs needed (not applied here — see this task's structured output)
-
-1. `NimbleEngine.swift` — add a `resetSessionState()` method (calls the
-   existing `resetRealtimeState()` plus `bridge.resetSessionState()` on
-   `solverQueue`). `NimbleEngine` currently exposes no wrapper for
-   `NimbleBridge.resetSessionState`, only its own Swift-side filter reset.
-2. `ContentView.swift` — a `showOfflineImport` state var, a button in
-   `trackingView`'s top bar, and a `.sheet` presenting
-   `OfflineImportView(nimble: nimble, onDismiss: ...)`.
-
-**No `project.yml` / `Info.plist` change is believed necessary.** `PhotosPicker`
-(PhotosUI) does not require `NSPhotoLibraryUsageDescription` for either images
-or videos — it runs out-of-process like a share sheet and only grants access to
-the specific selected item(s), which Apple documents explicitly. The new
-`BioMotion/Offline/*.swift` files should be picked up automatically by the
-existing `sources: [BioMotion]` folder-source entry in `project.yml` (XcodeGen
-recursively includes a whole-folder source) once `xcodegen generate` re-runs;
-the same mechanism is already how `BioMotion/Resources/FullBody.osim` reaches
-the bundle today with no special-casing, which is why the coming
-`SAM3DBodyPose.mlpackage` drop into `BioMotion/Resources/` is expected to need
-no project.yml change either — flagged here for the orchestrator to confirm
-once the file actually lands and a real `xcodegen generate` can be run.

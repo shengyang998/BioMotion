@@ -48,7 +48,9 @@ final class SAM3DPoseEstimator {
         /// True if Vision found no person and preprocessing fell back to the
         /// whole image as the "bbox" — matches the Python path's own fallback
         /// (`sam_3d_body_estimator.py:125`, `boxes = [0,0,width,height]` when no
-        /// detector is configured). Informational only; the estimate still runs.
+        /// detector is configured). The estimate still runs. Admission is
+        /// source-specific downstream: a photo fallback remains analysable,
+        /// while a video fallback is review-only and splits temporal analysis.
         let usedFallbackBBox: Bool
 
         /// Checksum of the normalised `image` tensor actually handed to Core ML,

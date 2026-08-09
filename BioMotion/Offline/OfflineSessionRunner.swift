@@ -3,6 +3,73 @@ import Combine
 import QuartzCore
 import UIKit
 
+/// Pure admission and segmentation rules for the offline temporal pipeline.
+/// Kept outside the `@MainActor` runner so every edge decision can be tested
+/// without loading Core ML, Nimble, or a simulator scene.
+enum OfflineTemporalPolicy {
+    enum SourceKind: Equatable, Sendable {
+        case photo
+        case video
+    }
+
+    struct SegmentPlan: Equatable {
+        /// Indices into the compact array of trusted `BodyFrame`s. The frames
+        /// themselves keep their decoder slot numbers, so a hole still splits
+        /// two adjacent ranges here.
+        let frameIndices: Range<Int>
+        /// The first segment follows a full clip reset. Every later segment
+        /// needs only the derivative/hold/display reset that preserves the
+        /// clip's IK and ground warm starts.
+        let resetsRealtimeStateBefore: Bool
+        /// Held-pose padding is legal only at a real requested clip endpoint,
+        /// never beside a known missing interval.
+        let padsHead: Bool
+        let padsTail: Bool
+    }
+
+    static func exclusion(
+        source: SourceKind,
+        usedFallbackBBox: Bool
+    ) -> OfflineResultStore.TemporalAnalysisExclusion? {
+        guard source == .video, usedFallbackBBox else { return nil }
+        return .videoVisionWholeFrameFallback
+    }
+
+    static func areContiguous(previousFrameNumber: Int, currentFrameNumber: Int) -> Bool {
+        currentFrameNumber == previousFrameNumber + 1
+    }
+
+    static func segmentPlans(
+        frameNumbers: [Int],
+        firstRequestedFrameNumber: Int?,
+        lastRequestedFrameNumber: Int?
+    ) -> [SegmentPlan] {
+        guard !frameNumbers.isEmpty else { return [] }
+
+        var ranges: [Range<Int>] = []
+        var lowerBound = 0
+        for index in 1..<frameNumbers.count where !areContiguous(
+            previousFrameNumber: frameNumbers[index - 1],
+            currentFrameNumber: frameNumbers[index]
+        ) {
+            ranges.append(lowerBound..<index)
+            lowerBound = index
+        }
+        ranges.append(lowerBound..<frameNumbers.count)
+
+        return ranges.enumerated().map { segmentIndex, range in
+            SegmentPlan(
+                frameIndices: range,
+                resetsRealtimeStateBefore: segmentIndex > 0,
+                padsHead: range.lowerBound == 0
+                    && frameNumbers[range.lowerBound] == firstRequestedFrameNumber,
+                padsTail: range.upperBound == frameNumbers.count
+                    && frameNumbers[range.upperBound - 1] == lastRequestedFrameNumber
+            )
+        }
+    }
+}
+
 /// Drives the offline (photo/video import) batch: decode frames -> Core ML pose
 /// estimate -> MHR retarget -> NimbleEngine IK/ID/muscle -> OfflineResultStore.
 ///
@@ -77,9 +144,14 @@ final class OfflineSessionRunner: ObservableObject {
     private var perFrameDurations: [TimeInterval] = []
     private var calibrated = false
     private var lastSuccessfulFrame: (id: Int, bodyFrame: BodyFrame)?
-    /// Every frame that produced a usable skeleton, in decode order. The gait
-    /// analysis needs the WHOLE window before it can say anything — a stride is
-    /// not visible one frame at a time — so it runs after the batch.
+    /// Last frame admitted to the current SG/hold segment, using the decoder's
+    /// original slot number rather than the compact result-store id.
+    private var lastTemporalFrameNumber: Int?
+    /// Every trusted frame that produced a usable skeleton, in decode order.
+    /// Decoder slot numbers stay on the frames, so exclusions and decode holes
+    /// remain visible even though this is a compact array. Gait analysis needs
+    /// the whole clip before it can say anything — a stride is not visible one
+    /// frame at a time — so it runs after the batch and splits these raw gaps.
     private var usableBodyFrames: [BodyFrame] = []
     /// Identifies the current run so a cancelled predecessor cannot clean up
     /// shared engine state that now belongs to its successor. See `runInternal`.
@@ -101,7 +173,8 @@ final class OfflineSessionRunner: ObservableObject {
     private static let biomechanicsMatchTolerance: TimeInterval = 0.001
     /// Lag of the centred Savitzky-Golay window, in samples
     /// (`SavitzkyGolayFilter.windowSize / 2` = 4). Also the number of synthetic
-    /// frames padded onto each end of the clip.
+    /// frames padded onto each successfully observed clip endpoint. Known
+    /// leading/trailing failures and internal gaps are never padded.
     private static let sgHalfWindow = SavitzkyGolayFilter.halfWindow
 
     /// Spacing used for the synthetic edge-padding frames. Set from the decoded
@@ -136,8 +209,15 @@ final class OfflineSessionRunner: ObservableObject {
         perFrameDurations.removeAll()
         calibrated = false
         lastSuccessfulFrame = nil
+        lastTemporalFrameNumber = nil
         usableBodyFrames.removeAll()
         nimble.gaitPlan = nil
+
+        let sourceKind: OfflineTemporalPolicy.SourceKind
+        switch source {
+        case .photo: sourceKind = .photo
+        case .video: sourceKind = .video
+        }
 
         // Scoped to this run — see the class header. `defer` covers every exit
         // path including cancellation, so the shared engine goes back to
@@ -170,13 +250,14 @@ final class OfflineSessionRunner: ObservableObject {
         // Clip boundary — see this class's header comment.
         nimble.resetSessionState()
 
-        let decoded: [FrameSource.DecodedFrame]
+        let batch: DecodedBatch
         do {
-            decoded = try await decodeFrames(source: source, samplingMode: samplingMode)
+            batch = try await decodeFrames(source: source, samplingMode: samplingMode)
         } catch {
             phase = .failed(error.localizedDescription)
             return
         }
+        let decoded = batch.frames
         guard !decoded.isEmpty else {
             phase = .failed("No frames could be decoded from the selection.")
             return
@@ -202,7 +283,13 @@ final class OfflineSessionRunner: ObservableObject {
             let frameStart = CACurrentMediaTime()
             phase = .running(current: i, total: decoded.count, etaSeconds: eta(remainingFrames: decoded.count - i))
 
-            let succeeded = await processOneFrame(frame, frameIndex: i, totalPushes: &totalPushes)
+            let succeeded = await processOneFrame(
+                frame,
+                frameIndex: i,
+                sourceKind: sourceKind,
+                firstRequestedFrameNumber: batch.firstRequestedFrameNumber,
+                totalPushes: &totalPushes
+            )
             if !succeeded { failureCount += 1 }
 
             perFrameDurations.append(CACurrentMediaTime() - frameStart)
@@ -213,14 +300,17 @@ final class OfflineSessionRunner: ObservableObject {
             return
         }
 
-        // Edge-pad the tail. Mirrors the head priming in `processOneFrame`: the
-        // centred SG window lags 4 samples, so without this the LAST 4 real
-        // frames never reach the middle of a full window. Each of these pushes
-        // yields a result centred on a real frame, which
-        // `routeBiomechanicsToOwningFrame` files correctly. A single photo
-        // (1 real push) is just the degenerate case — 4 head + 1 + 4 tail = 9,
+        // Edge-pad the tail only when the final trusted pose belongs to the
+        // final requested decoder slot. This mirrors head priming: the centred
+        // SG window lags 4 samples, so the LAST 4 real frames otherwise never
+        // reach its middle. Each push yields a result centred on a real frame,
+        // which `routeSolveToOwningFrame` files correctly. A known trailing
+        // decode/pose/fallback gap therefore gets no padding. A single photo
+        // (1 real push) is the degenerate case — 4 head + 1 + 4 tail = 9,
         // centred exactly on the photo.
-        if totalPushes > 0, let last = lastSuccessfulFrame {
+        if totalPushes > 0,
+           let last = lastSuccessfulFrame,
+           last.bodyFrame.frameNumber == batch.lastRequestedFrameNumber {
             await padFilterTail(with: last.bodyFrame, totalPushes: &totalPushes,
                                 halfWindow: Self.sgHalfWindow)
         }
@@ -232,7 +322,10 @@ final class OfflineSessionRunner: ObservableObject {
         // clip turns out to be running, the second pass re-solves the STANCE
         // frames with the root acceleration the gait cycle supplies, which is
         // the only way a moving subject gets muscle numbers at all.
-        await runGaitPassIfThisIsARun()
+        await runGaitPassIfThisIsARun(
+            firstRequestedFrameNumber: batch.firstRequestedFrameNumber,
+            lastRequestedFrameNumber: batch.lastRequestedFrameNumber
+        )
 
         phase = .finished(processed: decoded.count, failed: failureCount, cancelled: false)
     }
@@ -244,7 +337,10 @@ final class OfflineSessionRunner: ObservableObject {
     ///
     /// Everything here is guarded so a non-running clip — a photo, a squat, a
     /// subject standing still — costs one cheap analysis and changes nothing.
-    private func runGaitPassIfThisIsARun() async {
+    private func runGaitPassIfThisIsARun(
+        firstRequestedFrameNumber: Int?,
+        lastRequestedFrameNumber: Int?
+    ) async {
         guard !Task.isCancelled, usableBodyFrames.count >= GaitSignal.minimumFrames else {
             resultStore.setGait(.notAttempted(reason: usableBodyFrames.isEmpty
                                               ? "no usable frames"
@@ -282,19 +378,41 @@ final class OfflineSessionRunner: ObservableObject {
 
         let half = plan.filterTaps / 2
         var pushes = 0
-        guard let first = usableBodyFrames.first else { return }
-        await primeFilterHead(with: first, totalPushes: &pushes, halfWindow: half)
+        var processed = 0
+        let segments = OfflineTemporalPolicy.segmentPlans(
+            frameNumbers: usableBodyFrames.map(\.frameNumber),
+            firstRequestedFrameNumber: firstRequestedFrameNumber,
+            lastRequestedFrameNumber: lastRequestedFrameNumber
+        )
 
-        for (i, body) in usableBodyFrames.enumerated() {
-            if Task.isCancelled { return }
-            phase = .running(current: i, total: usableBodyFrames.count, etaSeconds: nil)
-            if await submitAndWait(body, timeout: Self.solveTimeout) {
-                routeSolveToOwningFrame()
+        for segment in segments {
+            if segment.resetsRealtimeStateBefore {
+                // Must precede the next waiter's subscription: the reset emits
+                // `objectWillChange` synchronously, then queues filter clearing
+                // ahead of the next solve on the same FIFO solver queue.
+                nimble.resetRealtimeState()
             }
-            pushes += 1
-        }
-        if let last = usableBodyFrames.last {
-            await padFilterTail(with: last, totalPushes: &pushes, halfWindow: half)
+
+            let frames = usableBodyFrames[segment.frameIndices]
+            if segment.padsHead, let first = frames.first {
+                await primeFilterHead(with: first, totalPushes: &pushes, halfWindow: half)
+            }
+
+            for body in frames {
+                if Task.isCancelled { return }
+                phase = .running(current: processed,
+                                 total: usableBodyFrames.count,
+                                 etaSeconds: nil)
+                if await submitAndWait(body, timeout: Self.solveTimeout) {
+                    routeSolveToOwningFrame()
+                }
+                pushes += 1
+                processed += 1
+            }
+
+            if segment.padsTail, let last = frames.last {
+                await padFilterTail(with: last, totalPushes: &pushes, halfWindow: half)
+            }
         }
 
         resultStore.setGait(.analysed(report: report, plan: plan))
@@ -386,11 +504,24 @@ final class OfflineSessionRunner: ObservableObject {
     /// nimble published something for it — muscle/ID may still be nil during SG
     /// warm-up, which is still `.success`).
     @discardableResult
-    private func processOneFrame(_ frame: FrameSource.DecodedFrame, frameIndex: Int, totalPushes: inout Int) async -> Bool {
+    private func processOneFrame(
+        _ frame: FrameSource.DecodedFrame,
+        frameIndex: Int,
+        sourceKind: OfflineTemporalPolicy.SourceKind,
+        firstRequestedFrameNumber: Int?,
+        totalPushes: inout Int
+    ) async -> Bool {
+        // The tail candidate must describe the final requested slot itself.
+        // Clearing it before any fallible work prevents a trailing pose failure
+        // or review-only fallback from padding the previous trusted pose across
+        // a known missing interval.
+        lastSuccessfulFrame = nil
+
         let estimate: SAM3DPoseEstimator.Output
         do {
             estimate = try await poseEstimator.estimate(uiImage: frame.image)
         } catch {
+            endTemporalSegment()
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed(error.localizedDescription), usedFallbackBBox: false,
@@ -411,6 +542,36 @@ final class OfflineSessionRunner: ObservableObject {
                                                    timestamp: frame.timestamp,
                                                    frameNumber: frame.index)
 
+        // A whole-image fallback is still a pose result. For a PHOTO it remains
+        // the only pose and follows the existing static analysis path. For a
+        // VIDEO it is a measured discontinuity: keep the projected skeleton for
+        // review, but branch before plausibility, scale, SG priming, Nimble, and
+        // the gait-frame collection so no downstream calculation can consume it.
+        if let exclusion = OfflineTemporalPolicy.exclusion(
+            source: sourceKind,
+            usedFallbackBBox: estimate.usedFallbackBBox
+        ) {
+            endTemporalSegment()
+            resultStore.append(OfflineResultStore.FrameResult(
+                id: frameIndex,
+                sourceImage: frame.image,
+                timestamp: frame.timestamp,
+                status: .success,
+                usedFallbackBBox: true,
+                temporalAnalysisExclusion: exclusion,
+                camT: estimate.camT,
+                modelChecksums: (estimate.inputChecksum, estimate.outputChecksum,
+                                 estimate.sourceHash, estimate.bboxHash, estimate.warpHash),
+                bodyFrame: bodyFrame,
+                ikResult: nil,
+                idResult: nil,
+                muscleResult: nil,
+                isStaticHoldEstimate: false,
+                motionState: .undetermined
+            ))
+            return true
+        }
+
         // BODY-SIZE GATE — must sit ahead of `nimble.scaleModel`.
         //
         // `scaleModelWithHeight` clamps its per-segment factors into
@@ -422,6 +583,7 @@ final class OfflineSessionRunner: ObservableObject {
         // silently is what made the original case invisible.
         let plausibility = MHRRetarget.plausibility(jointCoords: estimate.jointCoords)
         if case .implausible(let reason, let hip, let stature) = plausibility {
+            endTemporalSegment()
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .implausibleBody(reason: reason, hipWidthMeters: hip, statureMeters: stature),
@@ -435,6 +597,7 @@ final class OfflineSessionRunner: ObservableObject {
         }
 
         guard bodyFrame.joints.contains(where: \.isTracked) else {
+            endTemporalSegment()
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .poseEstimationFailed("retarget produced no usable joints"), usedFallbackBBox: estimate.usedFallbackBBox,
@@ -444,6 +607,21 @@ final class OfflineSessionRunner: ObservableObject {
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
+
+        if let previous = lastTemporalFrameNumber,
+           !OfflineTemporalPolicy.areContiguous(
+               previousFrameNumber: previous,
+               currentFrameNumber: bodyFrame.frameNumber
+           ) {
+            // A decoder hole has no `processOneFrame` call of its own. Detect it
+            // from the original slot numbers and clear the derivative state
+            // before the next waiter exists.
+            endTemporalSegment()
+        }
+
+        let shouldPrimeHead = lastTemporalFrameNumber == nil
+            && bodyFrame.frameNumber == firstRequestedFrameNumber
+        lastTemporalFrameNumber = bodyFrame.frameNumber
 
         if !calibrated {
             let stature = Double(MHRRetarget.estimatedStatureMeters(jointCoords: estimate.jointCoords))
@@ -455,23 +633,24 @@ final class OfflineSessionRunner: ObservableObject {
             calibrated = true
         }
 
-        // Edge-pad the head of the sequence. The SG filter is CENTRED, so
-        // without this the first 4 real frames can never sit at the middle of a
-        // full window and would show pose with no muscle. Replaying this frame
-        // backdated fills the leading half-window; the results those pushes
-        // produce are centred on synthetic timestamps and get discarded by
-        // `routeBiomechanicsToOwningFrame`, which is what we want.
-        if totalPushes == 0 {
+        // Edge-pad only a trusted pose at the first requested decoder slot.
+        // The SG filter is CENTRED, so without this the first 4 real frames can
+        // never sit at the middle of a full window and would show pose with no
+        // muscle. Replaying this frame backdated fills the leading half-window;
+        // results centred on synthetic timestamps are discarded by
+        // `routeSolveToOwningFrame`, which is what we want. A known leading gap
+        // and every segment after an internal gap get no synthetic history.
+        if shouldPrimeHead {
             await primeFilterHead(with: bodyFrame, totalPushes: &totalPushes,
                                   halfWindow: Self.sgHalfWindow)
         }
 
         let published = await submitAndWait(bodyFrame, timeout: Self.solveTimeout)
         totalPushes += 1
-        lastSuccessfulFrame = (frameIndex, bodyFrame)
         usableBodyFrames.append(bodyFrame)
 
         guard published else {
+            endTemporalSegment()
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
                 status: .nimbleTimeout, usedFallbackBBox: estimate.usedFallbackBBox,
@@ -482,8 +661,10 @@ final class OfflineSessionRunner: ObservableObject {
             return false
         }
 
+        lastSuccessfulFrame = (frameIndex, bodyFrame)
+
         // Biomechanics are deliberately NOT attached here — see
-        // `routeBiomechanicsToOwningFrame`. The newest solve does not describe
+        // `routeSolveToOwningFrame`. The newest solve does not describe
         // the newest frame.
         resultStore.append(OfflineResultStore.FrameResult(
             id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
@@ -495,6 +676,24 @@ final class OfflineSessionRunner: ObservableObject {
             muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
         routeSolveToOwningFrame()
         return true
+    }
+
+    /// Ends the current trusted temporal segment without discarding clip-wide
+    /// IK, ground, or QP warm starts.
+    ///
+    /// `resetRealtimeState()` synchronously clears published values and queues
+    /// SG/hold clearing on NimbleEngine's serial solver queue. Every call site
+    /// invokes this before the next `NimbleFrameWaiter` subscribes, so the
+    /// reset's own `objectWillChange` cannot masquerade as a completed solve;
+    /// FIFO then guarantees the filter clear runs before the next solve.
+    private func endTemporalSegment() {
+        guard lastTemporalFrameNumber != nil else {
+            lastSuccessfulFrame = nil
+            return
+        }
+        nimble.resetRealtimeState()
+        lastTemporalFrameNumber = nil
+        lastSuccessfulFrame = nil
     }
 
     /// Files the newest complete solve against the frame it actually describes.
@@ -550,7 +749,7 @@ final class OfflineSessionRunner: ObservableObject {
     }
 
     /// Replays `bodyFrame` on backdated timestamps to fill the LEADING half of
-    /// the Savitzky-Golay window before the first real frame is pushed.
+    /// the Savitzky-Golay window before a real, observed clip head is pushed.
     ///
     /// Held-pose padding is the right choice here rather than reflection or
     /// extrapolation: it makes `dq`/`ddq` tend to zero at the clip edges, which
@@ -582,7 +781,7 @@ final class OfflineSessionRunner: ObservableObject {
         }
     }
 
-    /// Mirror of `primeFilterHead` for the TRAILING half-window. Each push here
+    /// Mirror of `primeFilterHead` for a real, observed clip tail. Each push
     /// advances the window centre onto one of the last real frames, so unlike
     /// the head padding these results are routed and kept.
     private func padFilterTail(with bodyFrame: BodyFrame, totalPushes: inout Int,
@@ -626,10 +825,25 @@ final class OfflineSessionRunner: ObservableObject {
 
     // MARK: - Frame decoding
 
-    private func decodeFrames(source: RunSource, samplingMode: FrameSource.SamplingMode) async throws -> [FrameSource.DecodedFrame] {
+    /// Surviving images plus the bounds of the timestamp request that produced
+    /// them. Keeping the latter is what makes leading/trailing decode failures
+    /// visible; `frames.last?.index` alone silently moves the clip endpoint
+    /// inward and would license false held-pose padding there.
+    private struct DecodedBatch {
+        let frames: [FrameSource.DecodedFrame]
+        let firstRequestedFrameNumber: Int?
+        let lastRequestedFrameNumber: Int?
+    }
+
+    private func decodeFrames(
+        source: RunSource,
+        samplingMode: FrameSource.SamplingMode
+    ) async throws -> DecodedBatch {
         switch source {
         case .photo(let image):
-            return FrameSource.decodePhoto(image)
+            return DecodedBatch(frames: FrameSource.decodePhoto(image),
+                                firstRequestedFrameNumber: 0,
+                                lastRequestedFrameNumber: 0)
 
         case .video(let url):
             phase = .decodingFrames
@@ -654,7 +868,9 @@ final class OfflineSessionRunner: ObservableObject {
                     frames.append(FrameSource.DecodedFrame(image: image, timestamp: t, index: i))
                 }
             }
-            return frames
+            return DecodedBatch(frames: frames,
+                                firstRequestedFrameNumber: timestamps.indices.first,
+                                lastRequestedFrameNumber: timestamps.indices.last)
         }
     }
 
@@ -699,7 +915,7 @@ final class OfflineSessionRunner: ObservableObject {
 /// (no per-frame completion callback) and why a timeout is a legitimate,
 /// expected outcome (a totally failed `solveIK` never publishes at all).
 @MainActor
-private enum NimbleFrameWaiter {
+enum NimbleFrameWaiter {
     /// Extra delay after the first `objectWillChange` signal before reporting
     /// "done". `objectWillChange` fires from inside a `@Published` property's
     /// `willSet` — i.e. before NimbleEngine finishes writing the ~12 fields

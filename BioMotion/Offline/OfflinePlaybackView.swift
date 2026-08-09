@@ -109,7 +109,7 @@ struct OfflinePlaybackView: View {
     /// one.
     private var anatomyCapsulesAreOnScreen: Bool {
         !showSourceImage && showMuscles && selectedFrameLoadsAreDrawable
-            && resultStore.selectedFrame?.muscleResult != nil
+            && (resultStore.selectedFrame?.hasFullBiomechanics ?? false)
     }
 
     var body: some View {
@@ -216,7 +216,7 @@ struct OfflinePlaybackView: View {
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.75))
                 }
-                if frame.usedFallbackBBox {
+                if frame.usedFallbackBBox && frame.temporalAnalysisExclusion == nil {
                     Text("no person detected — used full frame")
                         .font(.caption2)
                         .foregroundStyle(.orange)
@@ -229,6 +229,9 @@ struct OfflinePlaybackView: View {
     }
 
     private func statusText(_ frame: OfflineResultStore.FrameResult) -> String {
+        if let exclusion = frame.temporalAnalysisExclusion {
+            return exclusion.badgeTitle
+        }
         switch frame.status {
         case .success:
             // The gait cases come first: on a running clip they are what
@@ -295,6 +298,7 @@ struct OfflinePlaybackView: View {
     }
 
     private func statusTint(_ frame: OfflineResultStore.FrameResult) -> Color {
+        if frame.temporalAnalysisExclusion != nil { return .orange }
         switch frame.status {
         case .success:
             if frame.hasFullBiomechanics { return .green }
@@ -308,6 +312,9 @@ struct OfflinePlaybackView: View {
     /// One line of the actual measurement behind the verdict, so the number is
     /// inspectable rather than a badge the user has to trust.
     private func motionDetail(_ frame: OfflineResultStore.FrameResult) -> String? {
+        if let exclusion = frame.temporalAnalysisExclusion {
+            return exclusion.badgeDetail
+        }
         switch frame.motionState {
         case .undetermined:
             return nil
@@ -427,6 +434,8 @@ struct OfflinePlaybackView: View {
         // looks like a solver failure rather than a framing problem.
         let rejected = resultStore.implausibleBodyCount
         if rejected > 0 { label += ", \(rejected) rejected (body size)" }
+        let excluded = resultStore.frames.filter { !$0.isEligibleForTemporalAnalysis }.count
+        if excluded > 0 { label += ", \(excluded) pose-only (no person box)" }
         return label
     }
 }

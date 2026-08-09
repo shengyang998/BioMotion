@@ -1,4 +1,3 @@
-import Combine
 import simd
 import XCTest
 @testable import BioMotion
@@ -14,7 +13,6 @@ import XCTest
 final class OfflineOrchestrationTests: XCTestCase {
 
     private var engine: NimbleEngine!
-    private var cancellables = Set<AnyCancellable>()
 
     override func setUp() {
         super.setUp()
@@ -22,7 +20,6 @@ final class OfflineOrchestrationTests: XCTestCase {
     }
 
     override func tearDown() {
-        cancellables.removeAll()
         engine = nil
         super.tearDown()
     }
@@ -60,22 +57,11 @@ final class OfflineOrchestrationTests: XCTestCase {
     /// then wait for the engine to publish.
     @MainActor
     private func submitAndWait(_ frame: BodyFrame, timeout: TimeInterval) async -> Bool {
-        await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-            var resumed = false
-            var token: AnyCancellable?
-            let finish: (Bool) -> Void = { ok in
-                guard !resumed else { return }
-                resumed = true
-                token?.cancel()
-                cont.resume(returning: ok)
-            }
-            token = engine.objectWillChange
-                .receive(on: DispatchQueue.main)
-                .sink { _ in
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { finish(true) }
-                }
+        switch await NimbleFrameWaiter.submit(on: engine, timeout: timeout, {
             engine.processFrame(frame)
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(false) }
+        }) {
+        case .published: return true
+        case .timedOut, .dropped: return false
         }
     }
 
@@ -155,6 +141,42 @@ final class OfflineOrchestrationTests: XCTestCase {
         // means this must equal the MIDDLE push, not the last one.
         XCTAssertEqual(muscle.timestamp, 0.0, accuracy: 1e-6,
                        "muscle timestamp is not the centre of the window — timestamp routing in OfflineSessionRunner would misfile or discard it")
+
+        // A temporal gap clears SG/hold/display state but keeps the clip's IK
+        // warm start. The reset happens BEFORE the next waiter subscribes; if
+        // its own `objectWillChange` were mistaken for a solve, the IK timestamp
+        // below would stay nil/stale and this loop would fail immediately.
+        engine.resetRealtimeState()
+        XCTAssertNil(engine.lastSolve)
+
+        let resetStart: TimeInterval = 10
+        for push in 0..<(SavitzkyGolayFilter.windowSize - 1) {
+            let timestamp = resetStart + Double(push) * dt
+            let published = await submitAndWait(
+                bodyFrame(timestamp: timestamp, frameNumber: 100 + push),
+                timeout: submissionLivenessTimeout)
+            XCTAssertTrue(published, "post-gap push \(push) did not publish")
+            XCTAssertEqual(engine.lastIKResult?.timestamp ?? -Double.infinity,
+                           timestamp,
+                           accuracy: 1e-6,
+                           "the waiter resumed on reset rather than this frame")
+            XCTAssertNil(engine.lastSolve,
+                         "a derivative solve appeared before the reset window refilled")
+        }
+
+        let finalPush = SavitzkyGolayFilter.windowSize - 1
+        let finalTimestamp = resetStart + Double(finalPush) * dt
+        let finalPublished = await submitAndWait(
+            bodyFrame(timestamp: finalTimestamp, frameNumber: 100 + finalPush),
+            timeout: submissionLivenessTimeout)
+        XCTAssertTrue(finalPublished)
+        let postGapSolve = try XCTUnwrap(engine.lastSolve,
+                                         "the Tth trusted push must refill the window")
+        XCTAssertEqual(postGapSolve.centerTimestamp,
+                       resetStart + Double(SavitzkyGolayFilter.halfWindow) * dt,
+                       accuracy: 1e-6)
+        XCTAssertEqual(engine.droppedFrameCount, 0,
+                       "reset and resubmission must preserve offline backpressure")
     }
 }
 

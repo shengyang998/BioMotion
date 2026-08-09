@@ -106,15 +106,40 @@ final class OfflineResultStore: ObservableObject {
         }
     }
 
+    /// Why a successfully estimated pose must not enter any calculation that
+    /// depends on neighbouring frames or on a musculoskeletal solve.
+    ///
+    /// This is deliberately separate from `usedFallbackBBox`: a photo has no
+    /// temporal neighbours and the whole-image fallback remains an analysable
+    /// still pose. In a video, however, Vision missing the person is a real
+    /// discontinuity. The fallback pose stays visible for review but may not
+    /// calibrate the model or enter IK, derivatives, gait, ID, or muscle work.
+    enum TemporalAnalysisExclusion: Equatable {
+        case videoVisionWholeFrameFallback
+
+        var badgeTitle: String {
+            "Pose only — excluded from motion analysis"
+        }
+
+        var badgeDetail: String {
+            "Vision found no person box; the full-frame fallback pose is shown for review "
+                + "and was not used for scale, motion, gait, or muscle calculations."
+        }
+    }
+
     struct FrameResult: Identifiable {
         let id: Int  // frame index — stable, matches the scrubber position
         let sourceImage: UIImage
         let timestamp: TimeInterval
         let status: FrameStatus
         /// True if person detection found nobody and preprocessing fell back to
-        /// the whole image. Informational, not a failure — pose estimation still
-        /// ran; the result may just be lower quality.
+        /// the whole image. The source-specific policy is carried separately:
+        /// photos remain analysable; video fallback frames are review-only.
         let usedFallbackBBox: Bool
+        /// Defaulted `var`, rather than `let = nil`, so Swift's synthesized
+        /// memberwise initializer lets the runner explicitly mark an excluded
+        /// frame while all existing call sites may omit the argument.
+        var temporalAnalysisExclusion: TemporalAnalysisExclusion? = nil
 
         // Present only on `.success`. `muscleResult` (and therefore
         // `hasFullBiomechanics`) can still be nil on a `.success` frame: the
@@ -144,20 +169,26 @@ final class OfflineResultStore: ObservableObject {
         /// Why this frame does or does not carry muscle data.
         let motionState: MotionState
 
-        var hasFullBiomechanics: Bool { muscleResult != nil }
+        var isEligibleForTemporalAnalysis: Bool { temporalAnalysisExclusion == nil }
+        var hasFullBiomechanics: Bool {
+            isEligibleForTemporalAnalysis && muscleResult != nil
+        }
         /// Pose was solved fine, but the detector could not certify a still
         /// instant, so no muscle magnitudes are claimed. Distinct from the
         /// warm-up case — and deliberately NOT named "because moving": one of
         /// the two reasons is that the pose estimate is too noisy to tell,
         /// which is the app's limitation and not the subject's.
         var isPoseOnlyBecauseNotStill: Bool {
+            guard isEligibleForTemporalAnalysis else { return false }
             guard case .measured(let verdict, _, _, _) = motionState else { return false }
             return verdict != .hold && muscleResult == nil
         }
 
         /// True on a running clip's stance frames — the ones whose muscle
         /// numbers came from the gait cycle rather than from a static hold.
-        var isGaitStance: Bool { motionState.verdict == .gaitStance }
+        var isGaitStance: Bool {
+            isEligibleForTemporalAnalysis && motionState.verdict == .gaitStance
+        }
 
         /// **Whether THIS frame's muscle numbers may be drawn.**
         ///
@@ -295,7 +326,8 @@ final class OfflineResultStore: ObservableObject {
                              ikResult: NimbleEngine.IKOutput?,
                              isStaticHoldEstimate: Bool,
                              motionState: MotionState) {
-        guard let index = frames.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = frames.firstIndex(where: { $0.id == id }),
+              frames[index].isEligibleForTemporalAnalysis else { return }
         let existing = frames[index]
         frames[index] = FrameResult(
             id: existing.id,
@@ -303,6 +335,7 @@ final class OfflineResultStore: ObservableObject {
             timestamp: existing.timestamp,
             status: muscleResult != nil ? .success : existing.status,
             usedFallbackBBox: existing.usedFallbackBBox,
+            temporalAnalysisExclusion: existing.temporalAnalysisExclusion,
             camT: existing.camT,
             modelChecksums: existing.modelChecksums,
             bodyFrame: existing.bodyFrame,

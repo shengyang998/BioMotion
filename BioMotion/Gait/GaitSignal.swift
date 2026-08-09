@@ -110,8 +110,9 @@ struct GaitSignal {
     /// POSITIVE plateau. `nil` at the two ends, where a centred difference has
     /// no neighbour.
     let plateauVelocity: Bilateral<[Double?]>
-    /// Gaps in `frameNumbers`. `video_013` has two (3 missing slots) because
-    /// Vision found no person there.
+    /// Gaps in `frameNumbers`: undecodable slots, failed poses, and video frames
+    /// where Vision found no person are all deliberately left out rather than
+    /// compressed into a slower-looking continuous sequence.
     let droppedFrameCount: Int
     /// Every adjacent gap, in whole sampling intervals.
     let maximumGapInFrames: Int

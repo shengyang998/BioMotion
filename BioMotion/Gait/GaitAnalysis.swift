@@ -337,7 +337,8 @@ struct GaitReport {
         var description: String {
             switch self {
             case .droppedFrames(let count, let gap):
-                return "\(count) frames carry no pose (largest gap \(gap) frames)"
+                return "\(count) frames were excluded from gait input "
+                     + "(largest gap \(gap) frames)"
             case .edgeClippedRunsExcluded(let count):
                 return "\(count) contact(s) ran past the end of the analysis window and were dropped"
             case .asymmetryBelowResolution(let measured, let resolvable):

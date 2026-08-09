@@ -1026,7 +1026,9 @@ struct GaitLoadSummary {
             // gave it a side but not the interval that side came from — so it is
             // not folded into a neighbouring contact, which is what keying on
             // adjacency used to do to every hole.
-            guard let muscle = frame.muscleResult, outcome.contactIndex >= 0 else { continue }
+            guard frame.hasFullBiomechanics,
+                  let muscle = frame.muscleResult,
+                  outcome.contactIndex >= 0 else { continue }
             usableStance += 1
             let onLeft = outcome.contactSide < 0
             if onLeft { usableLeft += 1 } else { usableRight += 1 }

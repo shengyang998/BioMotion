@@ -105,6 +105,70 @@ final class OfflineDisclosureTests: XCTestCase {
                        frames.filter { !$0.gaitLoadsAreComparable }.count)
     }
 
+    /// Detection provenance is not itself a failure: a still photo may use the
+    /// whole image and remain analysable. The same event inside a video is a
+    /// temporal discontinuity, so its pose stays reviewable but every solve
+    /// field is fail-closed both at admission and at the result-store seam.
+    @MainActor
+    func testVideoFallbackIsPoseOnlyWhilePhotoFallbackRemainsAnalysable() {
+        XCTAssertNil(OfflineTemporalPolicy.exclusion(source: .photo,
+                                                      usedFallbackBBox: false))
+        XCTAssertNil(OfflineTemporalPolicy.exclusion(source: .photo,
+                                                      usedFallbackBBox: true))
+        XCTAssertNil(OfflineTemporalPolicy.exclusion(source: .video,
+                                                      usedFallbackBBox: false))
+        let exclusion = OfflineTemporalPolicy.exclusion(source: .video,
+                                                         usedFallbackBBox: true)
+        XCTAssertEqual(exclusion, .videoVisionWholeFrameFallback)
+        XCTAssertEqual(exclusion?.badgeTitle,
+                       "Pose only — excluded from motion analysis")
+        XCTAssertEqual(exclusion?.badgeDetail,
+                       "Vision found no person box; the full-frame fallback pose is shown "
+                       + "for review and was not used for scale, motion, gait, or muscle "
+                       + "calculations.")
+
+        let store = OfflineResultStore()
+        store.append(OfflineResultStore.FrameResult(
+            id: 0, sourceImage: UIImage(), timestamp: 0, status: .success,
+            usedFallbackBBox: true, temporalAnalysisExclusion: exclusion,
+            camT: nil, modelChecksums: nil, bodyFrame: nil,
+            ikResult: nil, idResult: nil, muscleResult: nil,
+            isStaticHoldEstimate: false, motionState: .undetermined))
+        store.append(OfflineResultStore.FrameResult(
+            id: 1, sourceImage: UIImage(), timestamp: 1, status: .success,
+            usedFallbackBBox: true,
+            camT: nil, modelChecksums: nil, bodyFrame: nil,
+            ikResult: nil, idResult: nil, muscleResult: nil,
+            isStaticHoldEstimate: false, motionState: .undetermined))
+
+        let muscle = NimbleEngine.MuscleOutput(
+            activations: ["soleus_l": 0.4],
+            forces: ["soleus_l": 400],
+            converged: true,
+            timestamp: 0)
+        for id in [0, 1] {
+            store.updateBiomechanics(
+                forFrameID: id,
+                muscleResult: muscle,
+                idResult: nil,
+                ikResult: nil,
+                isStaticHoldEstimate: true,
+                motionState: .measured(verdict: .hold,
+                                       peakSpeedMetersPerSecond: 0,
+                                       windowSeconds: 1,
+                                       noiseFloorMetersPerSecond: 0.001))
+        }
+
+        XCTAssertFalse(store.frames[0].isEligibleForTemporalAnalysis)
+        XCTAssertNil(store.frames[0].muscleResult,
+                     "a later route must not bypass video fallback admission")
+        XCTAssertFalse(store.frames[0].hasFullBiomechanics)
+        XCTAssertTrue(store.frames[1].isEligibleForTemporalAnalysis)
+        XCTAssertNotNil(store.frames[1].muscleResult,
+                        "photo fallback retains the existing still-pose path")
+        XCTAssertTrue(store.frames[1].hasFullBiomechanics)
+    }
+
     // MARK: - The truncation banner
 
     /// **The case the banner most often fires on, and used to describe
