@@ -202,6 +202,33 @@ final class CylinderWrapValidationTests: XCTestCase {
 
     /// **C1 / C2, on the definition-matched column (amendment A1) and the
     /// closed-form muscles (amendment A2).**
+    ///
+    /// # W1's multi-wrap component is a tripwire, not a gate — read this before
+    /// # adding poses
+    ///
+    /// `allErrors` mixes the single-wrap and multi-wrap classes, and for the
+    /// four gastrocnemius muscles the column it is measured against **is not a
+    /// path length**. `calcLengthAfterPathComputation` adds straight segments
+    /// measured between the wrap points OpenSim REPORTS to the spiral length
+    /// OpenSim STORED beside them, and for a two-cylinder path those halves
+    /// describe different paths: on `gasmed_r` at knee 0 deg the stored spiral
+    /// is 0.038054 m while the chord between the two points it is supposed to
+    /// connect is 0.045350 m, i.e. the reported total is 7.30 mm below the
+    /// length of any path through its own points (`WrapCylinder::_adjust_
+    /// tangent_point` moves the tangent points and no one recomputes the arc).
+    ///
+    /// So this bar passes for the multi-wrap class at 15.8 mm because of where
+    /// the committed 5-deg grid lands, not because 20 mm bounds anything. Scan
+    /// `knee_angle_r` at a step finer than the centred-difference stencil and
+    /// `gaslat140_r` reads **41.26 mm at 26.01866 deg** — while the same pose,
+    /// same port, against a reconciled column reads **0.54 mm**.
+    ///
+    /// Adding poses to `tools/opensim_ref/poses.py` can therefore fail this
+    /// assertion for a reason that is not this port's. The gate for that class
+    /// is `MultiWrapReferenceTests`, which holds it to C1/C2/C5's own bars on a
+    /// grid that deliberately includes the reference's worst rows. This one is
+    /// left as written — a change of BRANCH would move it by metres, which is
+    /// still worth catching end-to-end through nimble's forward kinematics.
     func testSingleWrapMusclesMatchOpenSimsOwnDerivative() {
         let solved = Self.samples.filter { $0.wrapClass == .solved && $0.centralDifference != nil }
         let single = solved.filter { $0.wrapCount == 1 }
@@ -340,6 +367,18 @@ final class CylinderWrapValidationTests: XCTestCase {
         XCTAssertGreaterThan(multi.count, 0)
         XCTAssertLessThan(singleErrors.max() ?? .infinity, 0.005,
                           "C5: path length over single-wrap solved muscles")
+        // Amendment A2 said the 4 two-cylinder muscles "cannot match OpenSim's
+        // non-self-consistent iterate". Since 2026-08-09 that is measured rather
+        // than asserted, and it is sharper than A2 guessed: the reference's
+        // stored spiral arc is shorter than the CHORD between the two tangent
+        // points it reports (worst -7.30 mm, 88 rows), so its total is not the
+        // length of any path. Reconcile it with its own tangent points and this
+        // class agrees to 0.045 mm — see `MultiWrapReferenceTests`, which is the
+        // gate. The bar below stays where it was pre-registered; it now reads as
+        // a bound on the REFERENCE's bookkeeping error at these poses, and the
+        // note above `testSingleWrapMusclesMatchOpenSimsOwnDerivative` explains
+        // why densifying the grid can push it through 20 mm without this port
+        // changing at all.
         XCTAssertLessThan(multiErrors.max() ?? .infinity, 0.020,
                           "the 4 two-cylinder muscles cannot match OpenSim's non-self-consistent "
                           + "iterate (amendment A2), but they must stay inside W1's envelope")

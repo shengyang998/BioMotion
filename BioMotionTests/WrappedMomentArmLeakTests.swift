@@ -54,16 +54,19 @@ import XCTest
 ///   `testTheForceScaleIsExactlyFmaxAtTheseLengths` checks it against the
 ///   solver's own returned forces rather than assuming it.
 ///
-/// # THE INSTRUMENT: the shipping solver is not fine enough to measure this
+/// # THE INSTRUMENT: the shipping solver was not fine enough to measure this,
+/// and this file is what showed it and then what fixed it
 ///
 /// The first run of this file took its maximum over every cell and reported a
 /// 54 pp leak on a cell with 9 readable muscles. That number was not a
-/// moment-arm effect. `MuscleSolver` runs OSQP at `eps_abs = eps_rel = 1e-3`
-/// with polishing off and accepts `OSQP_SOLVED_INACCURATE`, so an activation
-/// carries up to 0.02 of ABSOLUTE slack; a left/right percentage built from two
-/// of them carries `≈ 100·2·0.02/ā`, tens of percentage points at a realistic
-/// `ā`. The three-muscle rig does not see this — its QP is small enough that
-/// OSQP solves it accurately — and neither did anything else in this project.
+/// moment-arm effect. `MuscleSolver` ran OSQP with Ruiz scaling on, polishing
+/// off and a 200-iteration cap, and its answer sat a median of 14.88 pp from the
+/// exact minimiser of the SAME objective. The three-muscle rig did not see it —
+/// its QP is small enough that OSQP solves it accurately — and neither did
+/// anything else in this project. Since 2026-08-09 (`scaling = 0`,
+/// `polishing = 1`) that quantity is **4.4994e-05 pp**, and the three-way split
+/// below is what proved it: `solverSlack` collapsed while `leakExact` stayed
+/// bit-identical.
 ///
 /// So this file solves the SAME objective a second time, to machine precision,
 /// with `BoxQP` (an active-set solver using Woodbury on the twelve coordinate
@@ -147,43 +150,87 @@ import XCTest
 ///   `floor/5` bar as R1. That is strictly stronger than what was registered:
 ///   the original admitted a leak up to `floor` and this one does not.
 ///
-/// # WHAT IT MEASURED — 2026-08-09, 582 readable cells
+/// # WHAT IT MEASURED — 2026-08-09, 582 readable cells, RE-RUN after the solver fix
 ///
-/// **The claim stays retired, and the binding constraint has changed.**
+/// **The claim stays retired, and only one of its two causes is left.**
 ///
 /// * **The wrap solver did what it was for.** Median moment-arm leak
 ///   **0.977 pp** against the straight line's **7.939 pp** on the identical rig
 ///   — 8.1× — and the three-muscle rig re-run with the perturbation resized from
-///   the guessed `×0.6` to the measured p99 residual (1.114 %) reads **0.568 pp**
+///   the guessed `×0.6` to the measured p99 residual (1.114 %) reads **1.4022 pp**
 ///   where it read **9.92 pp**. R3 passes.
-/// * **R1 fails on the tail.** Worst moment-arm leak **123.10 pp** (`piri` at
-///   `grid_h060_k000_a+00`, against the central-difference reference); against
-///   the analytic reference alone, max 42.46 / p99 9.94 / median 0.41. OpenSim's
-///   two columns disagree with each other by more than the gates allow, so which
-///   part of that tail is this build's residual and which is the reference's own
-///   inconsistency is NOT settled here.
-/// * **R2 fails on something that is not the moment arms at all.** With the
-///   geometry held fixed, OSQP's answer differs from the exact minimiser of the
-///   SAME objective by a median of **14.88 pp**, p90 37.83, max **100.98 pp**, at
-///   a median activation of 0.132 — against the 0.02 absolute tolerance this
-///   solver accepts, which predicts `100·2·0.02/0.132 = 30 pp`. The mechanism
-///   is arithmetic, not a bug: an absolute stopping tolerance on `a` becomes a
-///   relative error in `100·(a_l − a_r)/mean`.
-/// * **R7 fails as a consequence of R2, and only of R2**: median
-///   spread-over-error **2.90** against the required 4 when the error is the
-///   number the product would print, and **48.52** when it is the moment-arm
-///   error alone. So the retirement's second half — "the regime where the error
-///   cancels is the regime where every muscle reads the same number, and there
-///   is no regime that is both safe and informative" — is DEFEATED as an
-///   argument about moment arms: the rows carry 48× more per-muscle signal than
-///   moment-arm error. They are drowned by the solver instead.
+/// * **The solver is no longer a cause.** `MuscleSolver` used to run OSQP with
+///   Ruiz scaling on, polishing off and 200 iterations, and its answer differed
+///   from the exact minimiser of the SAME objective by a median of 14.88 pp
+///   (p90 37.83, max 100.98). With `scaling = 0` and `polishing = 1` the same
+///   measurement reads **median 4.4994e-05 pp, p90 0.0471, max 21.98**, and the
+///   median relative torque residual falls from 2.7995e-03 to **8.316e-09**.
+///   Every number below that involves OSQP moved with it; every number that does
+///   not — `leakExact`, the control — is bit-identical to the earlier run, which
+///   is the check that the change touched only the solve.
+/// * **R1 still fails, unchanged and untouched.** Worst moment-arm leak
+///   **123.10 pp** against the central-difference reference (p99 104.54, median
+///   7.09); against the analytic reference alone, max 42.46 / p99 9.94 / median
+///   0.41. This is now the ONLY reason the rows are withheld.
+/// * **R2 still fails, and now it is R1 wearing a different hat**: worst printed
+///   number **108.58 pp**, at the same cell and the same muscle as R1's worst,
+///   with only 14.52 pp of solver slack there. The MEDIAN printed-number leak
+///   fell from 14.42 pp to **1.045 pp**, which is inside the 1.617 pp bar — so
+///   the typical cell would now pass and the tail is what fails.
+/// * **R7 now PASSES**: median spread-over-error **47.52** against the required
+///   4 (it was 2.90), and 48.52 against the moment-arm error alone. The
+///   retirement's second half — "the regime where the error cancels is the regime
+///   where every muscle reads the same number, so there is no regime that is both
+///   safe and informative" — is fully defeated: the rows carry ~48× more
+///   per-muscle signal than the error in them.
 /// * **R4 and R5 and R6 pass**: 0 unmodelled `PathWrap`s on both models, the
 ///   straight-line control leaks 66.88 pp (271 of 549 cells over the floor), 582
 ///   readable cells.
 ///
-/// So the honest statement is no longer "the moment arms are too wrong to
-/// publish a per-muscle number". It is "the moment arms are now the SMALLER of
-/// two errors, and the larger one is the solver tolerance the product ships".
+/// # RE-RUN 2026-08-09 (fourth stage): every gated number is bit-identical, and
+/// the tail is now ATTRIBUTED
+///
+/// Same 582 cells, same protocol, same thresholds — R1 123.09713008193307 pp,
+/// R2 108.57519173214942 pp, R7 47.52166243963286, control 66.8824128835621,
+/// medians 0.977 / 1.045, to the last stored digit. Two DIAGNOSTICS were added
+/// (nothing gated changed, and that identity is the proof):
+///
+/// 1. **`Cell.worstExactBase`.** `worstBase` is the base of the worst SHIPPED
+///    leak, and it was being printed beside `leakExact` as if it were R1's
+///    muscle. It is not the same maximum, and the two parted company the moment
+///    the solver stopped contributing — which is how STATUS.md came to record
+///    R1's worst as `piri` and `glmed3`, muscles that carry **no `PathWrap` at
+///    all**. R1's worst is on **`bflh140`**, at `grid_h060_k000_a+00` against
+///    the central difference and at `run_4_mid_swing` against the analytic
+///    column.
+/// 2. **The other reference is swept as a SUBJECT** — same τ, same truth solve,
+///    same statistic — so "how far apart are OpenSim's own two answers" is a
+///    number on R1's scale. It is **126.44 pp** worst, a paired median of
+///    **5.28 pp** against our **0.977 pp**, and **our leak is the SMALLER of the
+///    two in 466 of 582 cells**.
+///
+/// **So R1, as registered, is not a measurement of this codebase.** It is
+/// maximised over the worse of two `truth` definitions that differ from each
+/// other by more than R1's own worst value and by 78× the reopening bar. No work
+/// on `MomentArmComputer` can pass it while the gate is taken that way.
+///
+/// **And `bflh140` carries no `PathWrap`, no `MovingPathPoint` and no row in the
+/// finite-difference fixture** — so its moment arm is the SAME NUMBER in the
+/// `analytic` and `centralDifference` matrices by construction, and it still
+/// moves 126.44 pp between them. The tail is not a path error on the muscle that
+/// shows it: it is the SHARING STEP redistributing a neighbour's error onto a
+/// muscle whose own path is exact. `bflh140` is a hamstring — hip extensor and
+/// knee flexor — sharing the knee with `gasmed`/`gaslat140`, the two muscles the
+/// central-difference column is measurably wrong about (`MultiWrapReferenceTests`:
+/// 10.5 and 11.0 mm median against that column, 0.033 and 0.035 mm against it
+/// reconciled).
+///
+/// So the ordering of causes, all on the same rig and the same statistic:
+/// **the reference against itself 5.28 pp median / 126.44 worst**, our arms
+/// against OpenSim's better-founded column 0.41 / 42.46, the sharing step
+/// 4.5e-05 / 21.98. The largest term is no longer inside this repository — but
+/// 42.46 pp against the analytic column is still 26× the bar, so the claim does
+/// not come back on that argument either.
 final class WrappedMomentArmLeakTests: XCTestCase {
 
     // MARK: - Pre-registered constants
@@ -446,7 +493,16 @@ final class WrappedMomentArmLeakTests: XCTestCase {
         let solverSlack: Double
         /// `|d(subject, OSQP) − d(reference, exact)|` — both causes together.
         let leakShipped: Double
+        /// The base at which `leakShipped` is maximised. **Not** the base at which
+        /// `leakExact` is: those are different maxima and they landed on different
+        /// muscles the moment the solver stopped contributing. Printing this one
+        /// beside `leakExact` is how STATUS.md came to record R1's worst as
+        /// `piri`/`glmed3` — muscles that carry NO `PathWrap` at all, so the
+        /// attribution it invited ("the tail is a wrapping residual") was wrong
+        /// twice over. Read `worstExactBase` for the exact leak.
         let worstBase: String
+        /// The base at which `leakExact` is maximised — R1's own muscle.
+        let worstExactBase: String
         /// `leakShipped` restricted to muscles `displayNames` prints a row for.
         let leakAmongNamed: Double
         let namedScreened: Int
@@ -493,11 +549,20 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                               tau.contains(where: { abs($0) > 1e-9 }),
                               let truth = solve(pose: pose, source: reference, torques: tau)
                         else { continue }
-                        for subject in ArmSource.allCases where !subject.isReference {
+                        // The OTHER reference is swept as a SUBJECT too. Same τ,
+                        // same truth solve, same statistic — so "how far apart are
+                        // OpenSim's own two answers" lands on the identical scale
+                        // as R1 instead of being argued about. Every gate here
+                        // filters by `subject` (`readable(.ours)` /
+                        // `readable(.straightLine)`), so this adds cells and
+                        // changes no gated number; that is asserted in
+                        // `testTheReferenceDisagreesWithItselfByMoreThanTheGateAllows`
+                        // and was verified bit-for-bit against the run before it.
+                        for subject in ArmSource.allCases where subject != reference {
                             guard let test = solve(pose: pose, source: subject, torques: tau)
                             else { continue }
                             var exactLeak = 0.0, slack = 0.0, shippedLeak = 0.0, namedLeak = 0.0
-                            var worstBase = "", screened = 0, namedScreened = 0
+                            var worstBase = "", worstExactBase = "", screened = 0, namedScreened = 0
                             var trueFigures: [Double] = []
                             var levels: [Double] = []
                             for base in bases {
@@ -512,7 +577,10 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                                    let r = truth.exact["\(base)_r"] {
                                     levels.append(0.5 * (l + r))
                                 }
-                                exactLeak = Swift.max(exactLeak, abs(dExact - dTruth))
+                                if abs(dExact - dTruth) > exactLeak {
+                                    exactLeak = abs(dExact - dTruth)
+                                    worstExactBase = base
+                                }
                                 slack = Swift.max(slack, abs(dShipped - dExact))
                                 let total = abs(dShipped - dTruth)
                                 if total > shippedLeak { shippedLeak = total; worstBase = base }
@@ -525,6 +593,7 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                                             shape: shape.name, effort: effort, screened: screened,
                                             leakExact: exactLeak, solverSlack: slack,
                                             leakShipped: shippedLeak, worstBase: worstBase,
+                                            worstExactBase: worstExactBase,
                                             leakAmongNamed: namedLeak, namedScreened: namedScreened,
                                             trueSpread: (trueFigures.max() ?? 0)
                                                       - (trueFigures.min() ?? 0),
@@ -789,7 +858,7 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                 "%@ exact[max %.4f on %@ at %@ | p99 %.4f median %.4f] "
                 + "shipped[max %.4f median %.4f] n=%d",
                 reference.rawValue, subset.map(\.leakExact).max() ?? 0,
-                worst?.worstBase ?? "-", worst?.pose ?? "-",
+                worst?.worstExactBase ?? "-", worst?.pose ?? "-",
                 WrapValidationHarness.percentile(subset.map(\.leakExact), 0.99),
                 WrapValidationHarness.percentile(subset.map(\.leakExact), 0.5),
                 subset.map(\.leakShipped).max() ?? 0,
@@ -798,7 +867,7 @@ final class WrappedMomentArmLeakTests: XCTestCase {
         print("LEAK-METRIC wrapped worst_exact_leak_pp=\(worstExact.leakExact) "
               + "at pose=\(worstExact.pose) ref=\(worstExact.reference.rawValue) "
               + "shape=\(worstExact.shape) effort=\(worstExact.effort) "
-              + "on=\(worstExact.worstBase) screened=\(worstExact.screened) | "
+              + "on=\(worstExact.worstExactBase) screened=\(worstExact.screened) | "
               + "worst_shipped_leak_pp=\(worstShipped.leakShipped) "
               + "at pose=\(worstShipped.pose) ref=\(worstShipped.reference.rawValue) "
               + "shape=\(worstShipped.shape) effort=\(worstShipped.effort) "
@@ -815,6 +884,40 @@ final class WrappedMomentArmLeakTests: XCTestCase {
               + "R1_pass=\(worstExact.leakExact < threshold) "
               + "R2_pass=\(worstShipped.leakShipped < threshold)")
 
+        // **The worst cell's own muscle, in METRES beside the pp.** A moment arm
+        // out by 2 mm on a 5 mm arm is a different finding from one out by 20 mm
+        // on a 50 mm arm, and until this printed, the pp number was quoted alone
+        // and attributed to "the wrapping residual" — on `bflh140`, which carries
+        // no `PathWrap`, no `MovingPathPoint` and no entry in the
+        // finite-difference fixture. Its row is therefore the SAME NUMBER in the
+        // `analytic` and `centralDifference` matrices by construction, and what
+        // moves its figure is the other muscles it shares the joint with.
+        for cell in [worstExact, worstShipped] where !cell.worstExactBase.isEmpty {
+            let name = "\(cell.worstExactBase)_r"
+            guard let row = Self.byPose[cell.pose]?[name] else { continue }
+            var arms: [String] = []
+            for coordinate in Self.rightLegCoordinates {
+                guard let sample = row[coordinate] else { continue }
+                arms.append(String(format: "%@[ours %.3f analytic %.3f centralDiff %.3f "
+                                   + "straightLine %.3f mm]",
+                                   coordinate, 1000 * Self.value(sample, .ours),
+                                   1000 * Self.value(sample, .analytic),
+                                   1000 * Self.value(sample, .centralDifference),
+                                   1000 * Self.value(sample, .straightLine)))
+            }
+            // A row in the finite-difference fixture exists only for muscles
+            // that carry a `PathWrap`, so this doubles as "does this muscle wrap
+            // at all" — read off the fixture rather than from a list.
+            let carriesAPathWrap = WrapValidationHarness.samples.contains {
+                $0.muscle == name && $0.centralDifference != nil
+            }
+            print("LEAK-METRIC worst_cell_arms muscle=\(name) pose=\(cell.pose) "
+                  + "ref=\(cell.reference.rawValue) leak_exact_pp=\(cell.leakExact) "
+                  + "leak_shipped_pp=\(cell.leakShipped) "
+                  + "has_path_wrap=\(carriesAPathWrap) "
+                  + "\(arms.joined(separator: " "))")
+        }
+
         XCTAssertGreaterThanOrEqual(worstExact.screened, Self.minimumScreenedBases,
                                     "R6: the maximum must be over a population")
         XCTAssertLessThan(median, controlMedian / 3,
@@ -826,41 +929,144 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                           + "wrap work did not move the distribution at all")
     }
 
-    /// **THE BINDING CONSTRAINT, and it is not the moment arms.** `MuscleSolver`
-    /// runs OSQP at `eps_abs = eps_rel = 1e-3`, polishing off, and accepts
-    /// `OSQP_SOLVED_INACCURATE` — ten times looser again. On this rig that is
-    /// worth more of a published left/right percentage than the entire
-    /// moment-arm error, and more than the finest pinned clip can resolve.
+    /// **THE REFERENCE DISAGREES WITH ITSELF BY MORE THAN THE WHOLE GATE BUDGET,
+    /// and it is measured here on the identical scale as R1 rather than argued
+    /// about.**
+    ///
+    /// R1 is `|d(ours, exact) − d(truth, exact)|` and it is maximised over BOTH
+    /// definitions of `truth`, so it is only a statement about this codebase to
+    /// the extent that the two definitions agree. They do not. This test puts
+    /// OpenSim's OTHER column in the SUBJECT slot — same pose, same τ, same truth
+    /// solve, same statistic — so "how far apart are OpenSim's own two answers"
+    /// is a number in the same units as R1's 123.10 pp, and neither arm of the
+    /// comparison contains a line of BioMotion geometry code.
+    ///
+    /// Why this is not a way out of R1: it is not. R1 stays failed and the flag
+    /// stays `false`. What it decides is what the NEXT stage should work on. If
+    /// this quantity is the size of R1's tail, then no amount of work on
+    /// `MomentArmComputer` can pass R1 as registered, because the gate is taken
+    /// over a `truth` that is not one — and the honest next step is a reference
+    /// this repo can defend (`MultiWrapReferenceTests`' reconciled column is the
+    /// first instalment) rather than another wrap solver.
+    ///
+    /// Delete this test if OpenSim ever ships a `calcLengthAfterPathComputation`
+    /// that reports the length of the path it reports the points of; the failure
+    /// of the assertion below is the signal that it did.
+    func testTheReferenceDisagreesWithItselfByMoreThanTheGateAllows() throws {
+        let cells = Self.sweep()
+        let floor = try smallestPublicationFloorOnThePinnedClips()
+        let threshold = floor * Self.reopenFractionOfFloor
+        let ours = Self.readable(.ours, in: cells)
+        var rows: [String] = []
+        var worstDisagreement = 0.0
+        var pairedOurs: [Double] = [], pairedThem: [Double] = []
+        for subject in Self.ArmSource.allCases where subject.isReference {
+            let subset = Self.readable(subject, in: cells)
+            guard !subset.isEmpty else { continue }
+            let worst = subset.max { $0.leakExact < $1.leakExact }
+            worstDisagreement = Swift.max(worstDisagreement, subset.map(\.leakExact).max() ?? 0)
+            rows.append(String(format: "subject=%@ vs the other column: max %.4f on %@ at %@ "
+                               + "| p99 %.4f median %.4f n=%d",
+                               subject.rawValue, subset.map(\.leakExact).max() ?? 0,
+                               worst?.worstExactBase ?? "-", worst?.pose ?? "-",
+                               WrapValidationHarness.percentile(subset.map(\.leakExact), 0.99),
+                               WrapValidationHarness.percentile(subset.map(\.leakExact), 0.5),
+                               subset.count))
+            // Paired on the identical cell key, so the comparison is not between
+            // two differently-sampled populations.
+            let index = Dictionary(subset.map {
+                ("\($0.pose)|\($0.reference.rawValue)|\($0.shape)|\($0.effort)", $0)
+            }, uniquingKeysWith: { first, _ in first })
+            for cell in ours {
+                let key = "\(cell.pose)|\(cell.reference.rawValue)|\(cell.shape)|\(cell.effort)"
+                guard let theirs = index[key] else { continue }
+                pairedOurs.append(cell.leakExact)
+                pairedThem.append(theirs.leakExact)
+            }
+        }
+        let ourMedian = WrapValidationHarness.percentile(pairedOurs, 0.5)
+        let theirMedian = WrapValidationHarness.percentile(pairedThem, 0.5)
+        let oursExceeds = zip(pairedOurs, pairedThem).filter { $0 > $1 }.count
+        print("LEAK-METRIC reference_self_disagreement worst_pp=\(worstDisagreement) "
+              + "threshold_pp=\(threshold) floor_percent=\(floor) "
+              + "R1_worst_pp=\(ours.map(\.leakExact).max() ?? 0) "
+              + "paired_cells=\(pairedOurs.count) paired_median_ours_pp=\(ourMedian) "
+              + "paired_median_reference_pp=\(theirMedian) "
+              + "paired_p90_ours_pp=\(WrapValidationHarness.percentile(pairedOurs, 0.9)) "
+              + "paired_p90_reference_pp=\(WrapValidationHarness.percentile(pairedThem, 0.9)) "
+              + "cells_where_ours_exceeds_the_reference=\(oursExceeds)/\(pairedOurs.count) "
+              + "per_subject=\(rows)")
+
+        XCTAssertGreaterThan(pairedOurs.count, 200,
+                             "the comparison must be over a population of paired cells")
+        XCTAssertGreaterThan(worstDisagreement, threshold,
+                             "OpenSim's two columns agree to within the reopening bar "
+                             + "(\(threshold) pp), so `truth` is well-defined after all and R1's "
+                             + "tail is this codebase's to own — re-read the decision")
+    }
+
+    /// **THE SOLVER WAS THE BINDING CONSTRAINT AND IS NOT ANY MORE — this test
+    /// changed direction on 2026-08-09, and that is what it was written to do.**
+    ///
+    /// It used to assert `median > floor`, in the direction of the defect, with
+    /// the instruction "if it ever fails, the solver has been tightened and the
+    /// whole per-muscle decision has to be re-read — do not delete it, re-run the
+    /// decision". It failed at `4.4994e-05` against `8.086`, the decision was
+    /// re-run (`testTheShippedFlagMatchesWhatTheMeasurementSupports`, still
+    /// `false`, now on R1/R2 alone), and the assertion is now the tripwire in the
+    /// other direction with the SAME quantity and a tighter number.
     ///
     /// Measured with the geometry held FIXED: the same arms, the same torques,
     /// OSQP's answer against the exact minimiser of the same objective. No
     /// reference model is involved, so no disagreement between OpenSim's two
-    /// columns can explain it.
+    /// columns can explain either the old number or the new one.
     ///
-    /// **This assertion is in the direction the defect points**, like
-    /// `MomentArmErrorCancellationTests.testASignFlippedMomentArmPinsTheMuscleToTheFloorAndReadsFalselyEven`.
-    /// If it ever fails, the solver has been tightened and the whole per-muscle
-    /// decision has to be re-read — do not delete it, re-run the decision.
-    func testTheShippingSolversOwnSlackIsLargerThanThePublicationFloor() throws {
+    /// | | before (`scaling = 10`, no polish, 200 iterations) | after |
+    /// |---|---|---|
+    /// | median | 14.883 pp | **4.4994e-05 pp** |
+    /// | p90 | 37.826 pp | **0.04714 pp** |
+    /// | max | 100.977 pp | **21.981 pp** |
+    /// | median relative torque residual | 2.7995e-03 | **8.316e-09** |
+    ///
+    /// **The max is 466× the p90 and it is NOT a solver failure in the sense the
+    /// median measures.** A cell is screened on the EXACT solution being at least
+    /// `interiorMargin = 1e-3` inside the box; a muscle 1.1e-3 inside is one an
+    /// exact solver calls interior and any finite solver may put on the bound, and
+    /// `100·(a_l − a_r)/mean` at `ā ≈ aMin` divides by a small number. The worst
+    /// cell is printed with its base so the next stage can attribute it rather
+    /// than inherit a number. The gate below is on the MEDIAN, which is what was
+    /// pre-registered, and the p90 is asserted too so the tail cannot grow
+    /// unnoticed.
+    func testTheShippingSolversOwnSlackIsBelowWhatAnyClipCouldResolve() throws {
         let readable = Self.readable(.ours, in: Self.sweep())
         let floor = try smallestPublicationFloorOnThePinnedClips()
+        let threshold = floor * Self.reopenFractionOfFloor
         let slacks = readable.map(\.solverSlack)
         let median = WrapValidationHarness.percentile(slacks, 0.5)
+        let p90 = WrapValidationHarness.percentile(slacks, 0.9)
         let activation = WrapValidationHarness.percentile(readable.map(\.medianActivation), 0.5)
-        // The mechanism, in one line: an ABSOLUTE tolerance on `a` becomes a
-        // RELATIVE error in `100·(a_l − a_r)/mean`.
-        let predicted = 100 * 2 * MuscleSolver.saturationActivationTolerance / activation
-        print("LEAK-METRIC solver_slack median_pp=\(median) "
-              + "p90_pp=\(WrapValidationHarness.percentile(slacks, 0.9)) "
-              + "max_pp=\(slacks.max() ?? 0) median_activation=\(activation) "
-              + "predicted_from_tolerance_pp=\(predicted) "
-              + "osqp_accepted_tolerance=\(MuscleSolver.saturationActivationTolerance) "
-              + "floor_percent=\(floor) cells=\(readable.count)")
-        XCTAssertGreaterThan(median, floor,
-                             "the shipping solver's own termination slack moves a published "
-                             + "left/right figure by \(median) pp, against a \(floor) % floor — "
-                             + "so no per-muscle number can be published at this tolerance "
-                             + "however good the moment arms are")
+        let worst = readable.max { $0.solverSlack < $1.solverSlack }
+        print("LEAK-METRIC solver_slack median_pp=\(median) p90_pp=\(p90) "
+              + "max_pp=\(slacks.max() ?? 0) at pose=\(worst?.pose ?? "-") "
+              + "shape=\(worst?.shape ?? "-") effort=\(worst?.effort ?? 0) "
+              // `worstBase` is the cell's worst SHIPPED leak, not its worst solver
+              // slack — the cell does not record the latter per base. Named so,
+              // rather than printed as if it were the muscle to look at.
+              + "ref=\(worst?.reference.rawValue ?? "-") "
+              + "worst_shipped_base_in_that_cell=\(worst?.worstBase ?? "-") "
+              + "screened_there=\(worst?.screened ?? 0) "
+              + "median_activation=\(activation) "
+              + "median_torque_residual="
+              + "\(WrapValidationHarness.percentile(readable.map(\.torqueResidual), 0.5)) "
+              + "floor_percent=\(floor) threshold_pp=\(threshold) cells=\(readable.count)")
+        XCTAssertLessThan(median, threshold / 100,
+                          "the solver's own termination slack moves a published left/right "
+                          + "figure by \(median) pp; it was 14.883 pp before `scaling = 0` and "
+                          + "`polishing = 1`, and the bar this file reopens a claim at is "
+                          + "\(threshold) pp")
+        XCTAssertLessThan(p90, threshold,
+                          "and nine cells in ten must be inside the reopening bar itself, not "
+                          + "just the median: \(p90) pp")
     }
 
     /// **R7 — the claim has to be informative as well as safe.** The retirement's

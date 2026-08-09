@@ -13,9 +13,16 @@ import simd
 /// 1. **Selection.** The old second pass took `rawActivations`, dropped
 ///    everything near the solver's floor, sorted the rest descending and drew
 ///    the strongest 24. Which capsules EXISTED was therefore already a ranking
-///    by a number whose per-muscle scale is unknown — 66 of `FullBody.osim`'s
-///    muscles are given a straight-line path where the tendon wraps around bone,
-///    so each activation is inflated by 1/k for its own pose-dependent k.
+///    by a number whose per-muscle scale is unknown. The reason given at the
+///    time was that 66 of `FullBody.osim`'s muscles were given a straight-line
+///    path where the tendon wraps around bone, inflating each activation by 1/k
+///    for its own pose-dependent k; **those paths are wrapped since 2026-08-08**
+///    (76 solved / 0 unmodelled) and the ranking is still refused, because
+///    nothing puts two muscles' activations on one scale. The QP's own
+///    termination slack was a second reason for one commit — a median 14.88 pp
+///    of a left/right activation figure at fixed geometry — and `scaling = 0`
+///    plus `polishing = 1` took it to 4.4994e-05 pp on 2026-08-09. The absent
+///    common scale is the one that cannot be fixed by solving harder.
 /// 2. **Colour.** Every capsule was coloured from one shared blue→red ramp, with
 ///    alpha rising alongside it, so the drawn set was ordered a second time.
 ///
@@ -134,7 +141,30 @@ final class MuscleOverlayClaimTests: XCTestCase {
         XCTAssertTrue(note.contains("WHERE"), note)
         XCTAssertTrue(note.contains("colour is fixed"), note)
         XCTAssertTrue(note.contains("moment arm"), "it names the mechanism: \(note)")
-        XCTAssertTrue(note.contains("wraps around bone"), note)
+        // ⚠️ This assertion has pinned a repaired defect TWICE. It read
+        // `contains("wraps around bone")` until 2026-08-09, after the ellipsoid
+        // commit had already removed it (76 solved / 0 unmodelled); its
+        // replacement read `contains("close enough")`, and the solver fix in the
+        // next commit took that gap from 14.88 pp to 4.4994e-05 pp.
+        //
+        // The reason that survived BOTH is structural and cannot be repaired:
+        // the sharing step divides by each muscle's own leverage and its own
+        // maximum force, so no two of the resulting fractions share a scale
+        // however exactly they are computed. Both refuted versions are now
+        // negative assertions.
+        XCTAssertTrue(note.contains("sharing that moment"), "it names the step: \(note)")
+        XCTAssertTrue(note.contains("own leverage and its own maximum force"),
+                      "and why the fractions cannot share a scale: \(note)")
+        XCTAssertTrue(note.contains("Nothing in it puts two different muscles' efforts on one "
+                                    + "scale"),
+                      "and the reason that never depended on the paths: \(note)")
+        XCTAssertFalse(note.contains("straight line"),
+                       "the path defect was fixed on 2026-08-08 and this sentence outlived it "
+                       + "on both screens: \(note)")
+        XCTAssertFalse(note.contains("close enough"),
+                       "the sharing step returns its own exact answer since `scaling = 0` and "
+                       + "`polishing = 1`; this is the second reason to outlive its own "
+                       + "repair: \(note)")
         XCTAssertTrue(note.contains("cannot be read against another muscle's"),
                       "it names the comparison being refused: \(note)")
         // No number in it. A figure here would be the claim it exists to deny.

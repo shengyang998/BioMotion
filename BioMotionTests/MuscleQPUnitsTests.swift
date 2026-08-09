@@ -645,64 +645,111 @@ final class MuscleQPUnitsTests: XCTestCase {
             // THE DECISIVE ONE. If the residual is flat in lambda, the soft
             // penalty is already behaving as a hard least-squares projection
             // and what is left is the distance from tau to the reachable set.
+            // **WHICH lambdas may be read is decided by a THEOREM about the
+            // objective, not by whether the answer is convenient.**
+            //
+            // `MuscleSolver` minimises `½ε‖a‖² + ½λ‖Aa − τ‖²` over the box
+            // `a ∈ [aMin, 1]` (the shipped form drops the `−½λ‖τ‖²` constant).
+            // For `λ₁ < λ₂` with minimisers `a₁`, `a₂` and residuals
+            // `rᵢ = ‖Aaᵢ − τ‖²`, optimality of each at its own λ gives
+            //     ½ε‖a₁‖² + ½λ₁r₁ ≤ ½ε‖a₂‖² + ½λ₁r₂
+            //     ½ε‖a₂‖² + ½λ₂r₂ ≤ ½ε‖a₁‖² + ½λ₂r₁
+            // and adding them collapses to `½(λ₂ − λ₁)(r₂ − r₁) ≤ 0`, i.e.
+            // **r₂ ≤ r₁**. The argument uses only convexity of the feasible set,
+            // so the BOX does not weaken it. AT THE MINIMISER THE τ-RESIDUAL IS
+            // NON-INCREASING IN λ. A returned point whose residual went UP did
+            // not minimise, and its residual is not a measurement of the
+            // objective — the same class of error as the all-at-floor corner
+            // below, and as "a gate that measured nothing is not a gate that
+            // passed".
+            //
+            // This replaces the ad-hoc rule that admitted every solve except the
+            // all-at-floor corner and excused one known-bad point in a comment
+            // ("it happens once, at lambda = 100 on the `dancer` pose"). That
+            // point is no longer degenerate — `scaling = 0` + `polishing = 1`
+            // solves it to relative 0.3407 — and the degeneracy moved to
+            // λ ≥ 1e6, where `εI + λAᵀA` is conditioned 1e13–1e15. Measured
+            // 2026-08-09: upright 0.2420 / 0.2373 / 0.2336 for λ ≤ 1e4 and then
+            // **0.5833** at 1e6 (a 149.6 % rise) and 1.4760 at 1e8 (531.8 %);
+            // dancer 0.3392 / 0.3407 / 0.3390 and then **0.9535** at both
+            // (181.3 %). The 1 % slack below is what a converged solve at this
+            // tolerance may legitimately wobble by — dancer's λ=100 rises 0.44 %
+            // and is admitted — and it is three orders below the violations.
             var byLambda: [Double] = []
-            var degenerate: [Double] = []
-            for lambda in [1.0, 100.0, 1e4, 1e6, 1e8] {
+            var admittedLambdas: [Double] = []
+            var rejected: [String] = []
+            var best = Double.infinity
+            let lambdas = [1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e8]
+            let shippingLambda = 100.0
+            for lambda in lambdas {
                 solver = try perPose()
                 solver.excludesLockedCoordinates = false
                 let r = try runQP(solver, arms: armsNS, s: s, lambda: lambda)
-                // **A SOLVE THAT PINNED EVERY MUSCLE TO `aMin` IS NOT A
-                // MEASUREMENT.** It is the lower-bound corner of the box, and
-                // `relativeForce >= 1` says its forces explain none of the
-                // demand. Comparing that residual with a healthy one compares a
-                // failure with a measurement — the same class of error as
-                // "a gate that measured nothing is not a gate that passed".
-                //
-                // It happens once, at lambda = 100 on the `dancer` pose, and
-                // ONLY with `excludesLockedCoordinates = false`, which this
-                // sweep forces and the shipping path never uses: dropping the
-                // locked rows (`cut=locked` below) solves the same pose to
-                // relative 0.334. It appeared on 2026-08-08 when cylinder path
-                // wrapping changed the moment-arm matrix; it is recorded in
-                // STATUS.md, not swallowed.
-                if r.atFloor == nMuscles && r.relativeForce >= 1.0 {
-                    degenerate.append(lambda)
+                // The all-at-floor corner: `relativeForce >= 1` says its forces
+                // explain none of the demand. Kept as its own reason so the log
+                // still names it; it is now also caught by the monotone test.
+                let allAtFloor = r.atFloor == nMuscles && r.relativeForce >= 1.0
+                let breaksMonotonePath = r.relative > best * 1.01
+                if allAtFloor || breaksMonotonePath {
+                    rejected.append(String(format: "lambda=%g relative=%.6f best_so_far=%.6f "
+                                           + "rise=%.1f%% all_at_floor=%@",
+                                           lambda, r.relative, best,
+                                           100 * (r.relative / best - 1),
+                                           allAtFloor ? "yes" : "no"))
                 } else {
                     byLambda.append(r.relative)
+                    admittedLambdas.append(lambda)
+                    best = Swift.min(best, r.relative)
                 }
                 print("QP-SWEEP [\(tag)] lambda=\(lambda) \(r.line)")
             }
-            print("QP-SWEEP [\(tag)] degenerate_lambdas=\(degenerate)")
-            XCTAssertLessThanOrEqual(degenerate.count, 1,
-                "\(tag): \(degenerate.count) of 5 solves returned the all-at-floor corner. "
-                + "One is the known lambda=100 case; more than one means the QP itself has "
-                + "stopped solving this pose and the sweep below measures nothing.")
+            print("QP-SWEEP [\(tag)] admitted_lambdas=\(admittedLambdas) "
+                  + "rejected_not_minimisers=\(rejected)")
+
+            // A rejection is only readable as "the solver ran out of decades" if
+            // the rejected set is the TOP of the sweep. An interior rejection
+            // would mean the exclusion rule is picking points, and the spread
+            // below would be over a set chosen after seeing the answer.
+            let admittedSuffix = lambdas.prefix(admittedLambdas.count)
+            XCTAssertEqual(Array(admittedSuffix), admittedLambdas,
+                "\(tag): the lambdas that failed the monotone test are not a contiguous high-end "
+                + "tail (\(rejected)) — the exclusion is selecting points, not bounding the range "
+                + "over which this solver returns minimisers")
+            // THE SHIPPING WEIGHT MUST BE ONE OF THEM. `MuscleSolver`'s
+            // `softPenalty` is 100 on every real frame, so a sweep that admits
+            // four decades none of which is the shipped one says nothing about
+            // the product. This assertion did not exist before and would have
+            // failed on the 2026-08-08 `dancer` case the old comment excused.
+            XCTAssertTrue(admittedLambdas.contains(shippingLambda),
+                "\(tag): the shipping soft penalty \(shippingLambda) did not return a minimiser "
+                + "(\(rejected)), so every activation the app produces at this pose is a point "
+                + "the objective does not choose")
             XCTAssertGreaterThanOrEqual(byLambda.count, 4,
                 "\(tag): fewer than four usable solves, so there is no sweep to read")
             let spread = (byLambda.max()! - byLambda.min()!) / max(byLambda.min()!, 1e-9)
-            print("QP-SWEEP [\(tag)] lambda_1e0_to_1e8_relative_spread=\(spread)")
+            let decades = log10(admittedLambdas.last! / admittedLambdas.first!)
+            print("QP-SWEEP [\(tag)] admitted_relative_spread=\(spread) decades=\(decades)")
             // THE FALSIFIER, stated as the mechanism claim rather than as a
             // tolerance. "The residual is a reachability distance, not an
-            // artifact of the objective weighting" is false if buying eight more
-            // decades of tau-match weight materially BUYS something. It does
-            // not: measured 2026-08-07 with the straight-line moment arms,
-            // lambda 100 -> 1e8 moved the relative residual from 0.2662 to
-            // 0.2732 (upright) and 0.6572 to 0.6568 (dancer) — i.e. slightly
-            // WORSE, the signature of an iteration-limited solve on a
-            // harder-conditioned problem rather than of an under-weighted
-            // penalty.
+            // artifact of the objective weighting" is false if buying more
+            // decades of tau-match weight materially BUYS something. Over the
+            // decades where this solver returns minimisers it does not, and the
+            // number got BETTER when the exclusion stopped comparing minimisers
+            // with non-minimisers: measured 2026-08-09, upright spans
+            // 0.2336-0.2420 (spread 0.0356) and dancer 0.3390-0.3407 (0.0050),
+            // against 0.229 / 0.029 on 2026-08-08 and a bar of 0.5.
             //
-            // Stated over the solves that actually solved. It used to
-            // compare lambda=100 against lambda=1e8 by index; with one lambda
-            // able to degenerate, an index is the wrong handle — the claim is
-            // about the whole sweep, so it is now stated over the whole sweep.
-            // Measured 2026-08-08 with cylinder wrapping: upright spans
-            // 0.2463-0.3027 (spread 0.229), dancer 0.3404-0.3505 (spread 0.029).
+            // What the sweep no longer claims: the range is the decades the
+            // shipping solver can actually solve, not eight. Nothing here can
+            // say what the residual would be at λ = 1e8, because nothing in this
+            // repo can compute that point — `scaling = 0` lands 7.7e-02 from the
+            // minimiser there and `scaling = 10` landed 0.46-0.65, and neither
+            // moves with eps down to 1e-7 or 50,000 iterations.
             XCTAssertLessThan(spread, 0.5,
-                "\(tag): buying eight decades of tau-match weight moved the relative residual "
-                + "by \(spread) of itself (\(byLambda)). That would mean the leftover residual "
-                + "IS the objective weighting after all, and the reachability reading in "
-                + "MuscleSolver.h is wrong.")
+                "\(tag): buying \(decades) decades of tau-match weight moved the relative residual "
+                + "by \(spread) of itself (\(byLambda) at \(admittedLambdas)). That would mean the "
+                + "leftover residual IS the objective weighting after all, and the reachability "
+                + "reading in MuscleSolver.h is wrong.")
 
             // --- ROW SET --------------------------------------------------
             let cuts: [(String, Set<String>)] = [

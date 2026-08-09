@@ -211,13 +211,19 @@ struct ContentView: View {
                 // the 3-D overlay was making in colour.** Twelve named muscles,
                 // bar height ∝ activation, a blue→red colour cut and "71 %"
                 // under each — a cross-muscle ranking AND an absolute effort
-                // figure, on numbers whose per-muscle scale is unknown: 66 of
-                // this model's muscles take a straight line where the tendon
-                // wraps around bone, so each activation is inflated by 1/k for
-                // its own pose-dependent k. Reading soleus 0.71 against vastus
-                // 0.34 is exactly what `MomentArmErrorCancellationTests` shows
-                // this model cannot support, and the offline panel retired the
-                // same comparison on 2026-08-08.
+                // figure, on numbers whose per-muscle scale is unknown. The
+                // reason given at the time was the straight-line paths (66 of
+                // this model's muscles), and those are wrapped since 2026-08-08;
+                // what is left is the reason that never depended on them —
+                // nothing puts two muscles' activations on one scale. The QP's
+                // own termination slack was a second reason for one commit (a
+                // median of 14.88 pp at fixed geometry); `scaling = 0` plus
+                // `polishing = 1` took it to 4.4994e-05 pp on 2026-08-09, and the
+                // absent common scale is the one that cannot be solved harder.
+                // Reading soleus 0.71 against vastus 0.34 is exactly what
+                // `MomentArmErrorCancellationTests` shows this model cannot
+                // support, and the offline panel retired the same comparison on
+                // 2026-08-08.
                 //
                 // What replaces it is the absence, stated. The engineering
                 // diagnostics above (marker residual, |τ|/kg, foot-load

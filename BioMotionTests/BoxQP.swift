@@ -2,12 +2,18 @@ import Foundation
 
 /// **The muscle QP, solved to machine precision instead of to OSQP's stopping
 /// tolerance.** Test-only. It exists because a measurement needs an instrument
-/// finer than the effect it is measuring, and the shipping solver is not one:
-/// `MuscleSolver` runs OSQP at `eps_abs = eps_rel = 1e-3` with polishing off and
-/// ACCEPTS `OSQP_SOLVED_INACCURATE`, so a returned activation carries up to
-/// `10·(1e-3 + 1e-3) = 0.02` of absolute slack — and a left/right percentage
-/// built from two of them carries `≈ 100·2·0.02/ā`, which at a typical `ā` is
-/// tens of percentage points.
+/// finer than the effect it is measuring, and when it was written the shipping
+/// solver was not one: OSQP with Ruiz scaling on and polishing off returned an
+/// answer a median of 14.88 pp of a left/right figure from the exact minimiser
+/// of its own objective, and 0.10269 of absolute activation on the real
+/// 520-muscle problem.
+///
+/// **That was fixed on 2026-08-09 using this file as the reference**
+/// (`scaling = 0`, `polishing = 1`; 4.4994e-05 pp and 1.017e-04 respectively), so
+/// the two now agree. That does NOT make this redundant: it is the only thing
+/// that can tell whether they still agree, and
+/// `MuscleSolverExactnessTests` asserts exactly that. An instrument is not
+/// retired because the thing it measures got better.
 ///
 /// # The problem
 ///

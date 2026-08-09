@@ -63,11 +63,16 @@ struct OfflinePlaybackView: View {
     /// **False on every analysed running clip.** The reason has changed and the
     /// answer has not. It was: `MuscleOverlay` selected the strongest 24
     /// activations and coloured every capsule from one shared colormap — a
-    /// cross-muscle ORDERING, on numbers whose per-muscle scale carries the
-    /// unmodelled-`PathWrap` error, retired from the panel the same day
+    /// cross-muscle ORDERING, on numbers with no common per-muscle scale,
+    /// retired from the panel the same day
     /// (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`). That renderer is
     /// gone: the capsules are a fixed anatomical set in one constant colour and
-    /// state nothing about effort.
+    /// state nothing about effort. (The `PathWrap` error that was cited beside
+    /// that scale argument is fixed — 76 solved / 0 unmodelled — and the
+    /// retirement did not depend on it. The QP's own termination slack was the
+    /// measured blocker for one commit, 14.88 pp of a left/right figure, and is
+    /// 4.4994e-05 pp since `scaling = 0` and `polishing = 1`; what blocks the
+    /// per-muscle claim now is the moment-arm tail, worst 123.10 pp.)
     ///
     /// What survives is a COHERENCE rule. On an analysed running clip the panel
     /// beside this view is headed "Muscle by muscle: not shown, and why";

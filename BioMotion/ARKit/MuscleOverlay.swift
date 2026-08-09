@@ -16,11 +16,21 @@ import simd
 /// path where the real tendon wraps around bone (42 of the `Rajagopal2016`
 /// fallback's), so the moment arm that divides each joint moment was wrong by a
 /// factor of its own and the activation it returned was inflated by 1/k for an
-/// unknown, POSE-DEPENDENT k. Cylinder wrapping shipped on 2026-08-08 and that
-/// count is down to 10 elbow muscles — but the ordering is still retired,
-/// because retiring it took a second argument that wrapping does not touch:
-/// nothing establishes that two DIFFERENT muscles' activations share a scale,
-/// and the QP redistributes load between synergists.
+/// unknown, POSE-DEPENDENT k.
+///
+/// **That count is 0 now** — cylinder wrapping shipped on 2026-08-08 and
+/// ellipsoid wrapping the same day, so all 76 `PathWrap` references in
+/// `FullBody.osim` and all 46 in `Rajagopal2016.osim` are solved. (This
+/// paragraph said "down to 10 elbow muscles" for a day after the ellipsoid
+/// commit took it to none, which is the same staleness the note below carried.)
+/// The ordering is still retired, because retiring it took arguments that
+/// wrapping does not touch: nothing establishes that two DIFFERENT muscles'
+/// activations share a scale, and the QP redistributes load between synergists.
+/// Even one muscle's number against ITSELF on the other side is not resolved to
+/// the size the panel would print: the moment-arm leak is median 0.977 pp and
+/// worst 123.10 pp (`WrappedMomentArmLeakTests`). The QP's own termination slack
+/// was a third reason for one commit, 14.88 pp at fixed geometry, and reads
+/// 4.4994e-05 pp since `scaling = 0` and `polishing = 1` on 2026-08-09.
 ///
 /// The panel retired exactly this ordering on 2026-08-08
 /// (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`,
@@ -86,12 +96,34 @@ final class MuscleOverlay {
     /// It states the absence first ("effort is not shown"), then what the
     /// capsules ARE, then the mechanism — in that order, because the first
     /// clause is the one a user scanning the screen needs.
+    ///
+    /// ⚠️ **Twice now it has named a defect that was fixed under it.** Until
+    /// 2026-08-09 the mechanism clause read "it gives many of its muscles a
+    /// straight line where the real tendon wraps around bone" — false since the
+    /// ellipsoid commit (`MomentArmComputer`: 76 solved / 0 unmodelled). It was
+    /// rewritten to "that sharing stops as soon as it is close enough rather than
+    /// at the exact answer", and the solver fix in the next commit took that gap
+    /// from a median of 14.88 pp to 4.4994e-05 pp.
+    ///
+    /// The reason that survived BOTH rounds is the one that retired the ordering
+    /// in the first place, it is structural rather than numerical, and it is now
+    /// the only thing this string says: **nothing in this model puts two different
+    /// muscles' efforts on a common scale.** The sharing step splits a joint
+    /// moment between synergists using each muscle's own leverage and its own
+    /// maximum force, so the resulting fraction is per-muscle by construction —
+    /// no amount of solver accuracy makes two of them comparable.
+    ///
+    /// No digit appears in it, and `MuscleOverlayClaimTests` asserts that: a
+    /// number here would be the magnitude claim the sentence exists to deny. That
+    /// is also why the surviving reason is the right one to carry — a mechanism
+    /// that cannot be repaired cannot go stale.
     static let anatomyOnlyNote =
         "Muscle effort is not shown. These capsules mark WHERE the muscles are on your pose — "
         + "their colour is fixed and means nothing. The model reaches a muscle's effort by "
-        + "dividing a joint moment by a moment arm, and it gives many of its muscles a "
-        + "straight line where the real tendon wraps around bone, so each effort number is on a "
-        + "scale of its own and cannot be read against another muscle's."
+        + "dividing a joint moment by a moment arm and then sharing that moment among the "
+        + "muscles that cross the joint, using each muscle's own leverage and its own maximum "
+        + "force. Nothing in it puts two different muscles' efforts on one scale, so each "
+        + "number is on a scale of its own and cannot be read against another muscle's."
 
     // Pre-defined muscle visual positions (approximate anatomical placement)
     static let muscleDefs: [MuscleDef] = {

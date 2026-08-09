@@ -311,6 +311,66 @@ static const double kOSQPEpsAbs = 1e-3;
 static const double kOSQPEpsRel = 1e-3;
 static const double kOSQPInaccurateToleranceFactor = 10.0;
 
+// **WHY OSQP'S OWN PROBLEM SCALING IS OFF, and it is not a tuning choice.**
+//
+// OSQP terminates on `dual_res <= eps_abs + eps_rel·max(‖q‖∞, ‖Px‖∞, ‖Aᵀy‖∞)`
+// (`osqp/src/auxil.c:compute_dual_tol`). On this QP the right-hand side is
+// enormous, because `q = −λAᵀτ` with `λ = 100`, moment arms in metres and
+// forces in newtons: MEASURED on the leak rig, ‖q‖∞ = 8.3e6 and ‖Px‖∞ = 6.3e6,
+// so a stationarity violation of **8.3e3** passes as SOLVED. The measured
+// violation at termination was a median of 788 over 2,791 solves.
+//
+// That would be harmless if the objective were uniformly curved. It is not:
+// `εI + λAᵀA` has `A` with only as many rows as the problem has coordinates, so
+// on the 80-muscle × 12-coordinate rig **68 of its 80 eigenvalues are exactly
+// ε = 0.01** and its condition number is 1.2e9. Dividing the permitted
+// stationarity violation by the curvature that resists it gives the activation
+// error the test tolerates: `788 / 1.2e7 = 7e-5` along the stiff directions,
+// and `788 / 0.01 = 8e4` along the 68 flat ones — i.e. **the termination test
+// places no constraint whatever on the redundant subspace**, and only the box
+// bounds it. Those 68 directions are exactly the "which synergist carries the
+// load" question a per-muscle comparison asks.
+//
+// The error really does live there, measured rather than argued: project
+// `a_OSQP − a_exact` onto the row space of `A` and onto its orthogonal
+// complement. At `scaling = 10` the norm is 0.607 and **99.3 % of it is in the
+// flat complement** (0.602 against 0.072 in the stiff subspace); at
+// `scaling = 0` the norm is 3.6e-4 and still 98.4 % flat. The solver is not
+// "roughly right everywhere" — it is right in the directions the termination
+// test can see and unconstrained in the rest.
+//
+// So this is NOT a tolerance that can be tightened into correctness. Measured
+// on a dumped cell: `eps_abs = eps_rel = 1e-9` with `max_iter = 20000` still
+// returns `‖a − a*‖∞ = 0.30`; 200,000 iterations at `eps_rel = 0` reaches
+// 1.1e-3 after 463 ms. Ruiz equilibration is what makes it that slow — it
+// rewrites `A = I` into a diagonal that no longer matches the ADMM step, and
+// the flat subspace stops contracting. With `scaling = 0` the same solver at
+// the SAME `eps = 1e-3` reaches `‖a − a*‖∞ = 1.4e-3` in 25-75 iterations, and
+// with polishing on top, 1e-7 — measured against a machine-precision active-set
+// solve of the identical objective (`BioMotionTests/BoxQP.swift`).
+//
+// Falsifier, so this is not folklore: if `scaling = 0` ever costs MORE
+// iterations than `scaling = 10` on the shipped 520-muscle problem, or if
+// `MuscleQPUnitsTests`/`StaticEquilibriumBenchmarkTests` residuals rise, this
+// reasoning is wrong and the numbers in `testTheSolverReturnsItsOwnExactAnswer`
+// will say so.
+static const OSQPInt kOSQPScaling = 0;
+
+// **WHY POLISHING IS ON.** With `scaling = 0` the ADMM iterate identifies the
+// active set correctly, and `polish` then solves the equality-constrained KKT
+// system on that set directly — turning a 1e-3 answer into a 1e-7 one. It costs
+// one extra factorization per solve and nothing when the active set is empty.
+// OSQP checks its own polished residuals and keeps the ADMM answer if polishing
+// did not improve them (`info->status_polish == -1`), so this cannot make a
+// solve worse.
+static const OSQPInt kOSQPPolishing = 1;
+
+// Iteration cap. 200 was not enough for the shipped model: MEASURED on
+// `StaticEquilibriumBenchmarkTests`, every 520-muscle solve terminated at
+// exactly `iter = 200` with `OSQP_SOLVED_INACCURATE` — i.e. the cap, not the
+// tolerance, was deciding when to stop, and the result was accepted anyway.
+static const OSQPInt kOSQPMaxIterations = 4000;
+
 // A coordinate enters the torque-matching penalty only if some muscle has a
 // moment arm above this about it (metres for a rotational coordinate,
 // dimensionless for a translational one).
@@ -788,12 +848,17 @@ static const double kMomentArmFloor = 1e-6;
 
         OSQPSettings settings;
         osqp_set_default_settings(&settings);
-        settings.max_iter = 200;
+        settings.max_iter = kOSQPMaxIterations;
         settings.eps_abs = kOSQPEpsAbs;
         settings.eps_rel = kOSQPEpsRel;
         settings.verbose = false;
         settings.warm_starting = true;
-        settings.polishing = false;
+        // See kOSQPScaling / kOSQPPolishing above: together these two are what
+        // makes the returned activation vector the QP's own answer rather than
+        // a point OSQP's relative termination test could not distinguish from
+        // it. Neither is a tuning knob.
+        settings.scaling = kOSQPScaling;
+        settings.polishing = kOSQPPolishing;
 
         OSQPInt exitflag = osqp_setup(&_realSolver, &P_csc, _realQ.data(), &A_csc,
                                       _realL.data(), _realU.data(),

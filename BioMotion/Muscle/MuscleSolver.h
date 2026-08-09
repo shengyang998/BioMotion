@@ -150,10 +150,24 @@ NS_ASSUME_NONNULL_BEGIN
 /// `eps_abs + eps_rel·max(‖Ax‖∞, ‖z‖∞)`, and with `A = I` and `z ∈ [aMin, 1]`
 /// that is `eps_abs + eps_rel`. This solver also accepts
 /// `OSQP_SOLVED_INACCURATE`, which is the same check with both tolerances
-/// multiplied by ten, and it runs with `polishing = false` so nothing snaps the
-/// solution back onto the active set. Published rather than restated at the
-/// call site because a display layer that hard-codes its own band drifts from
-/// the solver the moment either tolerance moves.
+/// multiplied by ten. Published rather than restated at the call site because a
+/// display layer that hard-codes its own band drifts from the solver the moment
+/// either tolerance moves.
+///
+/// ⚠️ **Since 2026-08-09 this is a CONSERVATIVE screen, not a tight bound, and
+/// the direction matters.** `polishing = 1` and `scaling = 0` (see the constants
+/// in the .mm) mean a genuinely clipped activation now comes back within ~1e-7
+/// of its bound rather than the 0.02 this formula allows — MEASURED on the real
+/// 520-muscle problem: worst departure from the exact minimiser 5.88e-4, and
+/// 1.02e-4 over the muscles the exact solution puts strictly inside the box.
+/// So the band is ~200× wider than it needs to be, which makes the saturation
+/// screen OVER-inclusive: it can call a muscle at 0.985 clipped when it is not.
+/// That is the safe direction — an over-screened muscle is dropped from a
+/// comparison, an under-screened one is published at a bound where
+/// `100·(a_l − a_r)/mean` reads exactly 0.0 against a real difference (see
+/// `CLAUDE.md`, "isSaturated is not the QP is in its linear regime"). Tightening
+/// it is a separate, measurable decision about `GaitLoadSummary`'s screening,
+/// not a side effect of a solver change, so the formula is unchanged.
 @property (class, nonatomic, readonly) double saturationActivationTolerance;
 
 /// Coordinates the loaded model declares `<locked>true</locked>`. Empty until

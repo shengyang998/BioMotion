@@ -453,14 +453,38 @@ final class MomentArmErrorCancellationTests: XCTestCase {
                           + "variant is \(worstAtMax) pp")
     }
 
-    /// **The cross-muscle ordering, still not a measurement.** Kept from the
-    /// round that retired it: the bilateral perturbation moves the absolute
-    /// activations by tens of percent and reorders the list, on the same rig
-    /// where it was claimed to be harmless to the left/right figure.
-    func testABilateralMomentArmErrorMovesTheCrossMuscleQuantityAndTheOrder() throws {
+    /// **The cross-muscle ordering, still not a measurement — and since
+    /// 2026-08-09 the honest statement is about the MARGIN, not about the sort
+    /// order.**
+    ///
+    /// It used to assert that the perturbed list sorts differently. It does not
+    /// any more, and that is a real result: with `scaling = 0` and
+    /// `polishing = 1` the solver returns the minimiser instead of a point ~14 pp
+    /// away from it, and part of what used to reorder this rig was OSQP's own
+    /// slack reshuffling two near-tied entries. On the exact answer the order
+    /// survives — `[alpha, gamma, beta]` both ways.
+    ///
+    /// **That is not evidence the ranking is safe, and the replacement says why
+    /// in the same units.** `alpha` and `gamma` are separated by 0.0033 of
+    /// activation out of 0.60, while a `×0.6` error on ONE muscle's moment arm
+    /// moves a ranking key by 0.30 — ninety times the margin that decides which
+    /// of them prints first. A sort order that survives that is surviving by
+    /// which muscle happened to move, not by a margin. So the assertion is now:
+    /// the shift exceeds the smallest gap between adjacent entries. It is
+    /// quantitative where the old one was binary, it is in the same units as the
+    /// thing it is about, and it does not go green because two numbers landed on
+    /// the same side of a comparison.
+    ///
+    /// None of this reopens the cross-muscle ranking. That is retired for a
+    /// STRUCTURAL reason no solver fix can reach — nothing puts two different
+    /// muscles' efforts on one scale, because the sharing step divides by each
+    /// muscle's own leverage and its own maximum force — and
+    /// `MuscleOverlay.update(joints:)` takes no muscle solve at all.
+    func testABilateralMomentArmErrorMovesTheCrossMuscleQuantityPastItsRankingMargins() throws {
         let truth = try solve(torques: Rig.proportionalTorques)
         let wrong = try solve(torques: Rig.proportionalTorques, scale: ["gamma": 0.6])
         var worstRankingShiftPercent = 0.0
+        var worstRankingShiftAbsolute = 0.0
         var truthKeys: [String: Double] = [:]
         var wrongKeys: [String: Double] = [:]
         for (base, _, _, _) in Rig.muscles {
@@ -469,16 +493,31 @@ final class MomentArmErrorCancellationTests: XCTestCase {
             truthKeys[base] = t
             wrongKeys[base] = w
             worstRankingShiftPercent = Swift.max(worstRankingShiftPercent, 100 * abs(w - t) / t)
+            worstRankingShiftAbsolute = Swift.max(worstRankingShiftAbsolute, abs(w - t))
         }
         let bases = Rig.muscles.map(\.base)
         let truthOrder = bases.sorted { (truthKeys[$0] ?? 0) > (truthKeys[$1] ?? 0) }
         let wrongOrder = bases.sorted { (wrongKeys[$0] ?? 0) > (wrongKeys[$1] ?? 0) }
+        // The margin the sort order actually rests on: the smallest distance
+        // between two adjacent entries in the TRUE ranking.
+        let sortedKeys = truthOrder.compactMap { truthKeys[$0] }
+        let gaps = zip(sortedKeys, sortedKeys.dropFirst()).map { $0 - $1 }
+        let smallestGap = gaps.min() ?? .infinity
         print("MOMENT-ARM-METRIC cross_muscle worst_ranking_shift_percent="
-              + "\(worstRankingShiftPercent) order_truth=\(truthOrder) order_wrong=\(wrongOrder)")
+              + "\(worstRankingShiftPercent) worst_ranking_shift_absolute="
+              + "\(worstRankingShiftAbsolute) smallest_adjacent_gap=\(smallestGap) "
+              + "shift_over_gap=\(worstRankingShiftAbsolute / smallestGap) "
+              + "keys_truth=\(truthOrder.map { ($0, truthKeys[$0] ?? 0) }) "
+              + "order_truth=\(truthOrder) order_wrong=\(wrongOrder) "
+              + "order_changed=\(truthOrder != wrongOrder)")
 
         XCTAssertGreaterThan(worstRankingShiftPercent, 10.0)
-        XCTAssertNotEqual(truthOrder, wrongOrder,
-                          "the ranking the panel used to publish must be shown to reorder")
+        XCTAssertGreaterThan(worstRankingShiftAbsolute, smallestGap,
+                             "one muscle's moment-arm error moves a ranking key by "
+                             + "\(worstRankingShiftAbsolute) while the closest pair in the true "
+                             + "ranking is separated by \(smallestGap) — if that ever reverses, "
+                             + "the ranking has a margin and this retirement's evidence has to be "
+                             + "re-read")
     }
 
     /// **The sign flip the loader's own warning names, and what it actually

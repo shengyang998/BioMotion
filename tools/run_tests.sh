@@ -41,7 +41,12 @@ LOCK_DIR="${TMPDIR:-/tmp}/biomotion-run-tests.lock"
 # mid-run, or a test file that `xcodegen generate` was never run for, both
 # show up ONLY as a smaller count -- every other line still reads green.
 # Raise it when you add tests; never lower it to make a run pass.
-MIN_TESTS=474
+# 474 at 64c3959. +3 MuscleSolverExactnessTests (2026-08-09 QP fix, and
+# WrappedMomentArmLeakTests replaced one test with one test) = 477, measured.
+# +6 MultiWrapReferenceTests (2026-08-09 multi-wrap reference) = 483.
+# +1 WrappedMomentArmLeakTests.testTheReferenceDisagreesWithItselfByMoreThanThe
+#    GateAllows (2026-08-09 leak re-run) = 484, measured.
+MIN_TESTS=484
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1

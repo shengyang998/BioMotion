@@ -31,15 +31,22 @@ import SwiftUI
 ///
 /// **Left against right, by CONTACT TIME.** The per-muscle left/right rows are
 /// gone as of 2026-08-08, with the cross-muscle ranking that went before them.
-/// `MomentArmErrorCancellationTests` measures why: 66 of the model's muscles
-/// take a straight-line path where the real tendon wraps around bone, that error
-/// cancels out of a left/right comparison only when the two legs load the joints
-/// in proportion — and in that regime every muscle returns the same figure, so
-/// there is no per-muscle finding to make. Where they do not, the error moves a
-/// published figure by 9.92 pp on the shipping solver (13.11 pp in exact
-/// arithmetic, 17.72 pp at a larger shape difference) — as large as the finest
-/// difference any of the three pinned clips can resolve — and it moves muscles
-/// whose own paths are modelled correctly.
+/// `MomentArmErrorCancellationTests` measures the first half of why: an error in
+/// the matrix cancels out of a left/right comparison only when the two legs load
+/// the joints in proportion — and in that regime every muscle returns the same
+/// figure, so there is no per-muscle finding to make.
+///
+/// The rest of that paragraph used to say the error was the 66 straight-line
+/// muscle paths, worth 9.92 pp. **Both numbers are historical.** Every `PathWrap`
+/// is solved since 2026-08-08, and the 2026-08-09 re-measurement on real geometry
+/// puts the moment-arm leak at a median of 0.977 pp and a worst case of
+/// 123.10 pp, while the number this panel would print is out by a median of
+/// 1.045 pp and a worst case of 108.58 pp against an 8.086 % floor. (The QP's own
+/// termination slack was the dominant term for one commit, 14.88 pp at fixed
+/// geometry; it is 4.4994e-05 pp since `scaling = 0` and `polishing = 1`.) It
+/// still lands on muscles whose own paths are modelled correctly, because the QP
+/// redistributes between synergists. See
+/// `GaitLoadSummary.perMuscleLeftRightClaimIsSupported` for the gates.
 ///
 /// So `loadBlock` states what was measured and why it is not shown, in one
 /// paragraph, and points at the contact-time comparison above it — which is

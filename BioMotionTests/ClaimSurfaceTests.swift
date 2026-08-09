@@ -78,8 +78,47 @@ final class ClaimSurfaceTests: XCTestCase {
         XCTAssertEqual(withheld.perMuscleRetirementSentence,
                        clean.perMuscleRetirementSentence)
         XCTAssertFalse(withheld.perMuscleRetirementSentence.isEmpty)
-        XCTAssertTrue(withheld.perMuscleRetirementSentence.contains("wraps around bone"),
-                      "it names the mechanism the user cannot change")
+
+        // ⚠️ **This paragraph has gone stale TWICE, and each time the assertion
+        // under it was the thing holding the false version green.**
+        //
+        // Round 1: it read `contains("wraps around bone")` while the wrapping
+        // commits had taken `MomentArmComputer` to 76 solved / 0 unmodelled and
+        // the 9.92 pp rig to 1.4022 pp.
+        // Round 2: the replacement asserted `contains("15 percentage points")`,
+        // naming the solver's termination slack — and the very next commit took
+        // that quantity from 14.88 pp to 4.4994e-05 pp by turning OSQP's Ruiz
+        // scaling off and its polish step on.
+        //
+        // So the POSITIVE assertions name what is true now (the sharing step is
+        // exact; the remaining cause is a few muscles at a few joint angles where
+        // the leverage disagrees with the reference, and the reference disagrees
+        // with itself there), and the NEGATIVES carry every refuted version, so a
+        // future repair cannot leave any of them on screen.
+        let sentence = withheld.perMuscleRetirementSentence
+        print("UI-METRIC retirement_sentence=\(sentence)")
+        XCTAssertTrue(sentence.contains("exact answer to its own calculation"),
+                      "the sharing step is no longer a cause and must not be blamed: "
+                      + "\(sentence)")
+        XCTAssertTrue(sentence.contains("a few muscles at a few joint angles"),
+                      "it names what IS the cause — a tail, not the typical muscle: "
+                      + "\(sentence)")
+        XCTAssertTrue(sentence.contains("disagrees with itself"),
+                      "and says the reference is in dispute there, which is why the app "
+                      + "cannot pick the good rows out: \(sentence)")
+        XCTAssertFalse(sentence.contains("straight line"),
+                       "the straight-line path defect was fixed on 2026-08-08; a sentence "
+                       + "citing it as current is false on the most-read surface: \(sentence)")
+        XCTAssertFalse(sentence.contains("66"),
+                       "no muscle has an unmodelled path: \(sentence)")
+        XCTAssertFalse(sentence.contains("10 percentage points"),
+                       "the 9.92 pp rig reads 1.4022 pp at this build's residual: \(sentence)")
+        XCTAssertFalse(sentence.contains("close enough"),
+                       "the solver's own slack is 4.4994e-05 pp since `scaling = 0` and "
+                       + "`polishing = 1`; blaming it is the SECOND stale version of this "
+                       + "paragraph: \(sentence)")
+        XCTAssertFalse(sentence.contains("15 percentage points"),
+                       "same defect, same round: \(sentence)")
     }
 
     /// The sentence that stops the refusal selling a re-shoot. Present exactly
