@@ -3608,6 +3608,20 @@ back to the analytic column for muscles the FD fixture does not carry, `bflh140`
 **same number in both reference matrices by construction**. And its left/right figure still moves
 **126.44 pp** between them.
 
+**And it is not an inference — the commit gate printed the arms.** `LEAK-METRIC worst_cell_arms` at
+that cell, in millimetres, across all four sources:
+
+| coordinate | ours | analytic | centralDiff | straightLine |
+|---|---|---|---|---|
+| `hip_flexion_r` | −57.249 | −57.249 | −57.249 | −57.249 |
+| `hip_adduction_r` | 16.044 | 16.044 | 16.044 | 16.044 |
+| `hip_rotation_r` | −5.762 | −5.762 | −5.762 | −5.762 |
+| `knee_angle_r` | 29.526 | 29.526 | 29.526 | 29.526 |
+
+**Zero. The muscle carrying the worst moment-arm leak in the entire experiment has no moment-arm
+error at all**, in any column, including the straight-line control this project shipped until
+2026-08-08. R1's 123.10 pp is 100 % other muscles' arms arriving through the solve.
+
 So the tail is not a path error on the muscle that shows it. It is the SHARING STEP: the QP couples
 every muscle crossing a joint, so a neighbour's moment-arm error lands on a muscle whose own path is
 exact. `bflh140` is a hamstring — hip extensor and knee flexor — sharing the knee with `gasmed` and

@@ -335,8 +335,13 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   "validate this muscle's path, then trust its row" is not a valid inference.** The worst cell in the
   whole leak rig is `bflh140` — three fixed path points, no `PathWrap`, no `MovingPathPoint`, and no
   row in `opensim_moment_arms_fd.txt`, so the finite-difference source falls back to the analytic
-  column and **its moment arm is the same number in both reference matrices by construction**. Its
-  left/right figure still moves **126.44 pp** between them. It is a hamstring sharing the knee with
+  column and **its moment arm is the same number in both reference matrices by construction**. The
+  gate prints the arms rather than leaving that as an inference (`LEAK-METRIC worst_cell_arms`), and
+  at the worst cell all four sources agree to the last printed digit in millimetres: `hip_flexion_r`
+  **−57.249** / `hip_adduction_r` **16.044** / `hip_rotation_r` **−5.762** / `knee_angle_r` **29.526**
+  for `ours`, `analytic`, `centralDiff` AND the straight-line control. **The muscle carrying the worst
+  moment-arm leak in the experiment has zero moment-arm error**, and its left/right figure still moves
+  **126.44 pp** between the two references. It is a hamstring sharing the knee with
   `gasmed`/`gaslat140` — the two muscles the multi-wrap entry above shows that column is wrong about
   by 10-11 mm. The QP couples every muscle crossing a joint, so per-muscle path fidelity does not
   bound per-muscle output error, at any size. A future per-muscle claim needs the COUPLING measured
