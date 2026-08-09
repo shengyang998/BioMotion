@@ -2189,9 +2189,9 @@ to report anything at the scatter we have.
   4. `OfflinePlaybackView.statusText` consults `gaitLoadsAreComparable` and never
      `summary.arePublishable`, so a clip whose residual gate FAILED still gets a per-frame badge
      implying a successful solve. Half-closed: the badge no longer claims relative loads.
-  5. Two refusals state a fact and offer no lever ("No contact produced muscle output on both
-     sides.", "The strides were measured but no contact produced muscle output.") while every other
-     refusal on the screen ends in an action.
+  5. One muscle-data refusal still states a fact and offers no lever ("No contact produced muscle
+     output on both sides."). The separate nil-summary sentence was removed 2026-08-10 when timing
+     was restored on that branch; it now says only which downstream section is unavailable.
 
 ### Sixth round: the same claim, in colour (2026-08-08)
 
@@ -2470,11 +2470,9 @@ the rest stand.
    26 muscle-shaped capsules are drawn with no sentence. The offline path deliberately collapsed this
    into one property; the live path was left with two. (The new GRF caption in M1 does NOT repeat
    this — it is inside the same `if` as its badge.)
-9. **An analysed clip with no muscle output loses the CONTACT-TIME finding too.** `GaitReportPanel`'s
-   `.analysed` branch with `summary == nil` renders one sentence and skips `resolutionBlock` and
-   `contactBlock`, both of which read from `report` and need no muscle solve — while
-   `replacesPostureFindings` has already taken the posture findings off the screen. **This is the one
-   to fix first next round:** it is the surviving claim, computed and in hand, dropped on a branch.
+9. ~~**An analysed clip with no load summary loses the CONTACT-TIME finding too.**~~
+   **CLOSED 2026-08-10.** Resolution, contact time and flags are now report-owned, non-optional
+   sections; only the downstream muscle section follows `summary` availability.
 
 #### What this round did NOT do
 
@@ -3946,8 +3944,34 @@ refactor removed the duplicate channel entirely:
 
 The permanent regression asserts that the summary carries and prints the report's timestamp rate;
 the type signatures prevent a caller from injecting metadata alongside it. Seven related suites
-run **67 tests, 0 failures, 0 restarts**. One new test raises the fast-suite floor
-from 486 to **487**; no sampling, gait, dynamics or claim arithmetic changed.
+run **67 tests, 0 failures, 0 restarts**. One new test raised the fast-suite floor from 486 to
+**487** at that commit; no sampling, gait, dynamics or claim arithmetic changed.
+
+
+## Contact timing stays visible without a muscle summary (2026-08-10)
+
+An `.analysed` report replaces the posture panel because a run has no single representative pose.
+When `GaitLoadSummary.make` returned nil, `GaitReportPanel` then skipped both the resolution and
+contact-time blocks and showed only “The strides were measured but no contact produced muscle
+output.” The product's one surviving left/right finding was already computed in `GaitReport` and
+uses neither inverse dynamics nor the muscle solver, but this branch discarded it.
+
+The RED required a nil-summary analysed presentation to retain resolution, contact time and report
+flags, while selecting an explicit unavailable muscle section. It did not compile because no such
+policy or report-owned timing type existed. The GREEN introduces `GaitTimingSummary(report:)` and a
+tested `AnalysedPresentation`: timing and flags are non-optional; only muscle/load/honesty content
+follows the optional `GaitLoadSummary`. Existing summary-based resolution APIs delegate to the same
+timing type, so there is one copy of the advice arithmetic.
+
+The nil branch now says the contact-time result is complete, no stance frame reached the downstream
+muscle-analysis summary, and muscle-model checks are unavailable. It does not claim that a contact
+failed to produce output, and it explicitly says this build would not publish per-muscle left/right
+rows even after a successful downstream solve. `flags(report)` was already outside the old branch
+and remains visible; the regression locks that rather than misreporting it as part of the defect.
+
+The related summary/presentation suites run **54 tests, 0 failures, 0 restarts**. One new regression
+raises the fast-suite floor from 487 to **488**. No gait report, claim floor or muscle computation
+changed; this is a visibility and ownership repair.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4333,12 +4357,9 @@ arms must differ in the work that PRECEDES the mask.
 
 ### Newly opened by the 2026-08-08 contact-claim repair (seventh round)
 
-20. **Restore the contact-time finding on `.analysed` with no summary.** `GaitReportPanel`'s
-    `summary == nil` branch skips `resolutionBlock` and `contactBlock`, both of which read from
-    `report` and need no muscle solve, while `replacesPostureFindings` has already removed the
-    posture findings. So a clean run whose QP failed on every stance frame shows one sentence and
-    nothing else — the product's only surviving claim, computed and in hand, dropped on a branch.
-    **First thing to fix next round.** (Minor 9.)
+20. ~~**Restore the contact-time finding on `.analysed` with no summary.**~~
+    **DONE 2026-08-10.** `GaitTimingSummary(report:)` now feeds the resolution and contact blocks
+    regardless of the optional muscle summary; report flags stay visible as before. (Minor 9.)
 21. **Longer clips are the only lever on the contact-claim floor, and it is `1/√n`.** The sampling
     half-width is `t·√(s²_L/n_L + s²_R/n_R)`, so halving `video_015`'s 16.5 % needs ~4× the
     contacts — about 20 a side, a ~16 s steady run against the current 4 s window and the 601-frame

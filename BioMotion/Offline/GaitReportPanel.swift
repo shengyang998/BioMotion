@@ -27,6 +27,11 @@ import SwiftUI
 /// clip on exactly the clips where the answer is "the model cannot do it". See
 /// `loadBlock`.
 ///
+/// Resolution, contact time and report flags are NOT load blocks. They belong
+/// to `GaitReport` and render on every `.analysed` branch, including when the
+/// downstream `GaitLoadSummary` is nil. Only muscle/load/honesty content follows
+/// that optional summary.
+///
 /// # This screen makes ONE kind of comparison, and it is not a muscle one
 ///
 /// **Left against right, by CONTACT TIME.** The per-muscle left/right rows are
@@ -65,6 +70,37 @@ struct GaitReportPanel: View {
     let outcome: OfflineResultStore.GaitOutcome
     let summary: GaitLoadSummary?
 
+    /// Report-owned timing is non-optional; only the downstream muscle section
+    /// may be unavailable. `body` reads this policy directly, and tests can pin
+    /// the nil-summary branch without trying to introspect a SwiftUI tree.
+    struct AnalysedPresentation {
+        enum MuscleSection: Equatable {
+            case summary
+            case unavailable
+        }
+
+        let timing: GaitTimingSummary
+        let muscleSummary: GaitLoadSummary?
+        let showsResolution = true
+        let showsContactTime = true
+        let showsFlags = true
+        var muscleSection: MuscleSection {
+            muscleSummary == nil ? .unavailable : .summary
+        }
+    }
+
+    static func analysedPresentation(report: GaitReport,
+                                     summary: GaitLoadSummary?) -> AnalysedPresentation {
+        AnalysedPresentation(timing: GaitTimingSummary(report: report),
+                             muscleSummary: summary)
+    }
+
+    static let noMuscleSummaryMessage =
+        "The contact-time result above is complete and does not use the muscle solver. "
+        + "No stance frame reached the muscle-analysis summary, so muscle-model checks are "
+        + "unavailable for this run. This build does not publish per-muscle left/right rows "
+        + "even when that downstream solve succeeds."
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -98,21 +134,28 @@ struct GaitReportPanel: View {
                     flags(report)
 
                 case .analysed(let report, _):
-                    if let summary {
-                        resolutionBlock(summary)
+                    let presentation = Self.analysedPresentation(report: report, summary: summary)
+                    if presentation.showsResolution {
+                        resolutionBlock(presentation.timing)
                         Divider()
-                        contactBlock(report, summary)
-                        Divider()
-                        loadBlock(summary)
-                        Divider()
-                        honestyBlock(summary)
-                    } else {
-                        header("Running, no stance frame solved")
-                        Text("The strides were measured but no contact produced muscle output.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    flags(report)
+                    if presentation.showsContactTime {
+                        contactBlock(report, presentation.timing)
+                        Divider()
+                    }
+                    switch presentation.muscleSection {
+                    case .summary:
+                        if let muscleSummary = presentation.muscleSummary {
+                            loadBlock(muscleSummary)
+                            Divider()
+                            honestyBlock(muscleSummary)
+                        }
+                    case .unavailable:
+                        muscleUnavailableBlock
+                    }
+                    if presentation.showsFlags {
+                        flags(report)
+                    }
                 }
                 notDiagnosisNote
             }
@@ -145,7 +188,7 @@ struct GaitReportPanel: View {
     }
 
     /// FIRST, always. A claim the clip cannot resolve is not a claim.
-    private func resolutionBlock(_ s: GaitLoadSummary) -> some View {
+    private func resolutionBlock(_ s: GaitTimingSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             header("What this clip can resolve")
             Text(s.resolutionSentence).font(.callout)
@@ -155,7 +198,7 @@ struct GaitReportPanel: View {
         }
     }
 
-    private func contactBlock(_ report: GaitReport, _ s: GaitLoadSummary) -> some View {
+    private func contactBlock(_ report: GaitReport, _ s: GaitTimingSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             // The surviving left/right finding on this screen, so it is labelled
             // as one. It is measured from stance timing: no moment arm, no
@@ -201,6 +244,15 @@ struct GaitReportPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var muscleUnavailableBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            header("Muscle model: unavailable")
+            Text(Self.noMuscleSummaryMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

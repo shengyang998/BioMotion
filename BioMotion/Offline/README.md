@@ -144,6 +144,11 @@ surviving `BodyFrame` timestamps and is stored in `GaitReport.framesPerSecond`. 
 and `GaitLoadSummary.make` deliberately carry no second FPS value, so a sparse 10 fps analysis of a
 nominal 30 fps track cannot print 30 fps or scale camera advice from it.
 
+An `.analysed` `GaitReport` always owns the timing UI: resolution, left/right contact time, and
+report flags render whether or not the downstream `GaitLoadSummary` exists. `GaitTimingSummary`
+holds that non-optional presentation data. A nil load summary replaces only the muscle section with
+an unavailable explanation; it never removes the already-computed contact-time result.
+
 ### Model loading
 
 `MLModelConfiguration.computeUnits = .cpuAndGPU` (not `.all`) per this task's

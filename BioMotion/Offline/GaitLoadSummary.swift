@@ -1,5 +1,85 @@
 import Foundation
 
+/// Timing-only presentation data for an analysed run. Every field comes from
+/// `GaitReport`, so it remains available when the downstream muscle solve has
+/// no usable stance frame and `GaitLoadSummary.make` returns nil.
+struct GaitTimingSummary: Equatable {
+    let resolvableAsymmetryPercent: Double
+    let quantisationFloorPercent: Double
+    let strideRepeatabilityPercent: Double
+    let measuredStrideRepeatabilityPercent: Double
+    let strideRepeatabilityBoundPercent: Double
+    let contactClaimFloorPercent: Double
+    let contactSamplingUncertaintyPercent: Double
+    let framesPerContact: Double
+    let framesPerSecond: Double
+
+    func frameRateNeeded(forPercent target: Double) -> Double {
+        guard target > 0, framesPerContact > 0 else { return .infinity }
+        return framesPerSecond * (100 * 0.5 / target) / framesPerContact
+    }
+
+    var bestAchievablePercentAtAnyFrameRate: Double { strideRepeatabilityPercent }
+
+    var resolutionSentence: String {
+        let base = String(format: "This clip's timing resolves left/right to about ±%.0f%% "
+                          + "(%.1f frames per contact at %.0f fps).",
+                          resolvableAsymmetryPercent, framesPerContact, framesPerSecond)
+        guard contactClaimFloorPercent <= resolvableAsymmetryPercent + 0.5 else {
+            return base + String(format: " But the contact-time comparison below has to clear "
+                                 + "±%.0f%%, which is set by how much your contact times differ "
+                                 + "from step to step rather than by the sampling grid — so a "
+                                 + "faster camera does not lower it. More steps do: the figure "
+                                 + "falls as the square root of the number of contacts.",
+                                 contactClaimFloorPercent)
+        }
+        let withFloor = base + " That is what the CONTACT-TIME comparison below has to clear."
+        let target = Swift.max(5.0, bestAchievablePercentAtAnyFrameRate)
+        guard target.isFinite, resolvableAsymmetryPercent > target else { return withFloor }
+        let needed = frameRateNeeded(forPercent: target)
+        guard needed.isFinite, needed > framesPerSecond,
+              needed <= FrameSource.highestAnalysableFrameRate else {
+            return withFloor + " A higher frame rate is the only lever, and this clip is already "
+                 + "at what the analysis window can cover."
+        }
+        return withFloor + String(format: " Filming at %.0f fps would resolve ±%.0f%%.",
+                                  needed, target)
+    }
+
+    var resolutionBreakdownSentence: String {
+        let grid = String(format: "Sampling grid ±%.0f%%; ", quantisationFloorPercent)
+        let closing = String(format: " Against the contact times' own spread ±%.0f%%, the claim "
+                             + "floor is ±%.0f%%.",
+                             contactSamplingUncertaintyPercent, contactClaimFloorPercent)
+        if measuredStrideRepeatabilityPercent < strideRepeatabilityBoundPercent {
+            return grid + String(format: "this runner's strides varied by less than the ±%.1f%% "
+                                 + "this clip could have seen (measured ±%.1f%% on whole-frame "
+                                 + "touchdowns), so ±%.1f%% is what may be assumed.",
+                                 strideRepeatabilityBoundPercent,
+                                 measuredStrideRepeatabilityPercent,
+                                 strideRepeatabilityPercent) + closing
+        }
+        return grid + String(format: "this runner's own stride-to-stride variation ±%.0f%%.",
+                             strideRepeatabilityPercent) + closing
+    }
+}
+
+extension GaitTimingSummary {
+    init(report: GaitReport) {
+        self.init(
+            resolvableAsymmetryPercent: report.resolution.resolvableAsymmetryPercent,
+            quantisationFloorPercent: report.resolution.quantisationFloorPercent,
+            strideRepeatabilityPercent: report.resolution.strideRepeatabilityPercent,
+            measuredStrideRepeatabilityPercent: report.resolution
+                .measuredStrideRepeatabilityPercent,
+            strideRepeatabilityBoundPercent: report.resolution.strideRepeatabilityBoundPercent,
+            contactClaimFloorPercent: report.contactClaimFloorPercent,
+            contactSamplingUncertaintyPercent: report.contactSamplingUncertaintyPercent,
+            framesPerContact: report.resolution.framesPerContact,
+            framesPerSecond: report.framesPerSecond)
+    }
+}
+
 /// The RELATIVE view of a running clip — **left against right, one muscle at a
 /// time** — plus the per-clip resolution that says which of those comparisons
 /// the clip is actually allowed to make.
@@ -762,13 +842,27 @@ struct GaitLoadSummary {
     /// ⚠️ Not the same as "the rate that would let me claim `target`": the
     /// published resolution is `max(floor, strideRepeatability)` and no camera
     /// moves the second term, nor the per-muscle scatter term.
+    var timingSummary: GaitTimingSummary {
+        GaitTimingSummary(
+            resolvableAsymmetryPercent: resolvableAsymmetryPercent,
+            quantisationFloorPercent: quantisationFloorPercent,
+            strideRepeatabilityPercent: strideRepeatabilityPercent,
+            measuredStrideRepeatabilityPercent: measuredStrideRepeatabilityPercent,
+            strideRepeatabilityBoundPercent: strideRepeatabilityBoundPercent,
+            contactClaimFloorPercent: contactClaimFloorPercent,
+            contactSamplingUncertaintyPercent: contactSamplingUncertaintyPercent,
+            framesPerContact: framesPerContact,
+            framesPerSecond: framesPerSecond)
+    }
+
     func frameRateNeeded(forPercent target: Double) -> Double {
-        guard target > 0, framesPerContact > 0 else { return .infinity }
-        return framesPerSecond * (100 * 0.5 / target) / framesPerContact
+        timingSummary.frameRateNeeded(forPercent: target)
     }
 
     /// The finest claim any capture rate could support on this runner's TIMING.
-    var bestAchievablePercentAtAnyFrameRate: Double { strideRepeatabilityPercent }
+    var bestAchievablePercentAtAnyFrameRate: Double {
+        timingSummary.bestAchievablePercentAtAnyFrameRate
+    }
 
     /// One line stating what this clip resolves and what to do about it.
     ///
@@ -790,63 +884,13 @@ struct GaitLoadSummary {
     /// because it is the only one with a camera attached; the floor that
     /// actually governs is named beside it whenever the two differ.
     var resolutionSentence: String {
-        let base = String(format: "This clip's timing resolves left/right to about ±%.0f%% "
-                          + "(%.1f frames per contact at %.0f fps).",
-                          resolvableAsymmetryPercent, framesPerContact, framesPerSecond)
-        // The camera advice below is about the QUANTISATION FLOOR. When the
-        // contact durations' own scatter is what binds, a faster camera cannot
-        // deliver the claim, so the promise is withheld and the reason named —
-        // the same rule the refusals follow: only offer a lever when one exists.
-        guard contactClaimFloorPercent <= resolvableAsymmetryPercent + 0.5 else {
-            // State only what the two numbers show: the floor is set by the
-            // spread of the contact times themselves, and the frame rate moves
-            // the other term. The earlier wording went further and told the user
-            // their steps "varied by more than the sampling grid explains" —
-            // a variance ATTRIBUTION the app never computes. That comparison was
-            // made once, in a test, on one clip; it is not a fact about this one.
-            return base + String(format: " But the contact-time comparison below has to clear "
-                                 + "±%.0f%%, which is set by how much your contact times differ "
-                                 + "from step to step rather than by the sampling grid — so a "
-                                 + "faster camera does not lower it. More steps do: the figure "
-                                 + "falls as the square root of the number of contacts.",
-                                 contactClaimFloorPercent)
-        }
-        let withFloor = base + " That is what the CONTACT-TIME comparison below has to clear."
-        let target = Swift.max(5.0, bestAchievablePercentAtAnyFrameRate)
-        guard target.isFinite, resolvableAsymmetryPercent > target else { return withFloor }
-        let needed = frameRateNeeded(forPercent: target)
-        guard needed.isFinite, needed > framesPerSecond,
-              needed <= FrameSource.highestAnalysableFrameRate else {
-            return withFloor + " A higher frame rate is the only lever, and this clip is already "
-                 + "at what the analysis window can cover."
-        }
-        return withFloor + String(format: " Filming at %.0f fps would resolve ±%.0f%%.",
-                                  needed, target)
+        timingSummary.resolutionSentence
     }
 
     /// What the sampling grid cannot see versus what the runner actually varied
     /// — kept apart, because only the first is the camera's fault.
     var resolutionBreakdownSentence: String {
-        let grid = String(format: "Sampling grid ±%.0f%%; ", quantisationFloorPercent)
-        // These two terms make the TIMING resolution. They are not the claim
-        // floor: that is this pair against the contact durations' own sampling
-        // scatter, whichever is larger. Naming the pair as the floor understated
-        // it by a factor of two on video_015 (8.1% printed, 16.5% governing) —
-        // the same wrong-variance defect this round exists to close, restated
-        // one line lower.
-        let closing = String(format: " Against the contact times' own spread ±%.0f%%, the claim "
-                             + "floor is ±%.0f%%.",
-                             contactSamplingUncertaintyPercent, contactClaimFloorPercent)
-        if measuredStrideRepeatabilityPercent < strideRepeatabilityBoundPercent {
-            return grid + String(format: "this runner's strides varied by less than the ±%.1f%% "
-                                 + "this clip could have seen (measured ±%.1f%% on whole-frame "
-                                 + "touchdowns), so ±%.1f%% is what may be assumed.",
-                                 strideRepeatabilityBoundPercent,
-                                 measuredStrideRepeatabilityPercent,
-                                 strideRepeatabilityPercent) + closing
-        }
-        return grid + String(format: "this runner's own stride-to-stride variation ±%.0f%%.",
-                             strideRepeatabilityPercent) + closing
+        timingSummary.resolutionBreakdownSentence
     }
 
     /// **What is NOT measured on the fore-aft axis — which is not the same as
@@ -924,8 +968,10 @@ struct GaitLoadSummary {
 
     // MARK: - Construction
 
-    /// Builds the summary from the frames a run produced. `nil` when the clip
-    /// has no stance frame carrying muscle output.
+    /// Builds the downstream muscle summary from the frames a run produced.
+    /// `nil` only when no frame carries a claimed gait-stance outcome into this
+    /// pass. A non-nil summary may still have zero muscle samples; report-owned
+    /// timing remains available in either case through `GaitTimingSummary`.
     ///
     /// - Important: `frames` must be in capture order. Contacts are identified
     ///   by `GaitFrameOutcome.contactIndex`, which comes from the stance

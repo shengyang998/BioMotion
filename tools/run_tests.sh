@@ -49,7 +49,8 @@ LOCK_DIR="${TMPDIR:-/tmp}/biomotion-run-tests.lock"
 # +1 SimmSplineExtrapolationTests plus +1 FullBody 130-degree product regression
 #    (2026-08-09 endpoint-linear fix) = 486.
 # +1 GaitLoadSummary timestamp-cadence regression (2026-08-10) = 487.
-MIN_TESTS=487
+# +1 analysed-without-load-summary timing presentation regression = 488.
+MIN_TESTS=488
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1

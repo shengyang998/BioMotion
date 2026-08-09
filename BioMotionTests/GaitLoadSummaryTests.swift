@@ -987,6 +987,47 @@ final class GaitLoadSummaryTests: XCTestCase {
                       GaitReportPanel.alwaysVisibleNote)
     }
 
+    /// Contact timing is owned by `GaitReport`, not by the downstream muscle
+    /// solve. A valid run must keep its one supported finding when the downstream
+    /// `GaitLoadSummary.make` result is nil.
+    func testAnAnalysedRunWithoutALoadSummaryKeepsItsTimingPresentation() throws {
+        let report = try Self.usableReport()
+        XCTAssertNil(GaitLoadSummary.make(frames: [], report: report, filterTaps: 5))
+        let presentation = GaitReportPanel.analysedPresentation(
+            report: report, summary: nil)
+        XCTAssertNil(presentation.muscleSummary)
+        XCTAssertTrue(presentation.showsResolution)
+        XCTAssertTrue(presentation.showsContactTime)
+        XCTAssertTrue(presentation.showsFlags)
+        XCTAssertEqual(presentation.muscleSection, .unavailable)
+        XCTAssertEqual(presentation.timing.framesPerSecond,
+                       report.framesPerSecond, accuracy: 1e-12)
+        XCTAssertFalse(presentation.timing.resolutionSentence.isEmpty)
+        XCTAssertTrue(GaitReportPanel.noMuscleSummaryMessage.contains("contact-time result above"),
+                      GaitReportPanel.noMuscleSummaryMessage)
+        XCTAssertTrue(GaitReportPanel.noMuscleSummaryMessage.lowercased()
+            .contains("no stance frame"),
+                      GaitReportPanel.noMuscleSummaryMessage)
+        XCTAssertFalse(GaitReportPanel.noMuscleSummaryMessage
+            .contains("no contact produced muscle output"),
+            GaitReportPanel.noMuscleSummaryMessage)
+
+        let frames = [
+            Self.gaitFrame(id: 0, side: -1, activations: ["soleus_l": 0.6]),
+            Self.gaitFrame(id: 1, side: 1, activations: ["soleus_r": 0.5]),
+        ]
+        let summary = try XCTUnwrap(GaitLoadSummary.make(
+            frames: frames, report: report, filterTaps: 5))
+        let complete = GaitReportPanel.analysedPresentation(
+            report: report, summary: summary)
+        XCTAssertTrue(complete.showsResolution)
+        XCTAssertTrue(complete.showsContactTime)
+        XCTAssertTrue(complete.showsFlags)
+        XCTAssertEqual(complete.muscleSection, .summary)
+        XCTAssertEqual(complete.timing, summary.timingSummary,
+                       "both branches must use the same timing arithmetic")
+    }
+
     /// **Every refusal names its own cause and its own lever**, and the two that
     /// a faster camera fixes quote the rate the app already knows.
     func testEveryRefusalCarriesItsOwnAdviceAndTheRateOnesNameARate() {

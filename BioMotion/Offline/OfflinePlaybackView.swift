@@ -48,8 +48,9 @@ struct OfflinePlaybackView: View {
                                       cameraDepthAxis: PostureFindings.offlineCameraDepthAxis)
     }
 
-    /// The relative-load view of a running clip. Nil unless the clip was
-    /// analysed as a run AND at least one stance frame produced muscle output.
+    /// The downstream muscle/load view of a running clip. It can be nil even
+    /// when `GaitReport` already contains valid resolution and contact timing;
+    /// `GaitReportPanel` keeps those report-owned sections visible either way.
     private var loadSummary: GaitLoadSummary? {
         guard case .analysed(let report, let plan)? = resultStore.gait else { return nil }
         return GaitLoadSummary.make(frames: resultStore.frames,

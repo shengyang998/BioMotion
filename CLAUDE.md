@@ -109,6 +109,9 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   surviving frame timestamps. AVAsset's nominal rate is valid for native decoding and frame-budget
   notices only. Do not add it to `GaitOutcome.analysed` or `GaitLoadSummary.make`; sparse sampling
   is precisely where nominal rate and analysed cadence differ.
+- **An analysed report does not depend on a muscle summary.** Resolution, contact-time findings and
+  report flags come from `GaitReport` through `GaitTimingSummary` and stay visible when
+  `GaitLoadSummary.make` returns nil. Only muscle/load/honesty sections may follow that optional.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
 
 ## Readings that lie — each has already cost a wrong conclusion
