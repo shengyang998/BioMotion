@@ -331,21 +331,19 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   `MomentArmComputer` can pass R1 while it is taken that way. NOT a way out of the retirement:
   against the better-founded analytic column alone our own worst is still **42.46 pp**, 26× the bar.
   Register a gate against ONE reference you can defend, or the gate measures the reference.
-- **THE SHARING STEP CARRIES A NEIGHBOUR'S MOMENT-ARM ERROR ONTO A MUSCLE WHOSE OWN PATH IS EXACT, so
-  "validate this muscle's path, then trust its row" is not a valid inference.** The worst cell in the
-  whole leak rig is `bflh140` — three fixed path points, no `PathWrap`, no `MovingPathPoint`, and no
-  row in `opensim_moment_arms_fd.txt`, so the finite-difference source falls back to the analytic
-  column and **its moment arm is the same number in both reference matrices by construction**. The
-  gate prints the arms rather than leaving that as an inference (`LEAK-METRIC worst_cell_arms`), and
-  at the worst cell all four sources agree to the last printed digit in millimetres: `hip_flexion_r`
-  **−57.249** / `hip_adduction_r` **16.044** / `hip_rotation_r` **−5.762** / `knee_angle_r` **29.526**
-  for `ours`, `analytic`, `centralDiff` AND the straight-line control. **The muscle carrying the worst
-  moment-arm leak in the experiment has zero moment-arm error**, and its left/right figure still moves
-  **126.44 pp** between the two references. It is a hamstring sharing the knee with
-  `gasmed`/`gaslat140` — the two muscles the multi-wrap entry above shows that column is wrong about
-  by 10-11 mm. The QP couples every muscle crossing a joint, so per-muscle path fidelity does not
-  bound per-muscle output error, at any size. A future per-muscle claim needs the COUPLING measured
-  (the sensitivity of muscle `i`'s figure to muscle `j`'s arm), not a per-muscle path audit.
+- **ONE MAXIMUM PROVED SHARING; A DIFFERENT MAXIMUM REJECTED THE NEIGHBOUR HYPOTHESIS.** At R1's
+  central-difference worst cell, `bflh140` — three fixed points, no `PathWrap` or `MovingPathPoint` —
+  has exactly the same four arms in every source (`−57.249 / 16.044 / −5.762 / 29.526 mm`) and its
+  figure still moves **126.44 pp** when neighbours change. That proves the QP sharing step can move
+  an exact row. It does **not** explain the separate 42.46 pp ANALYTIC maximum. Printing all 24
+  screened rows there (`LEAK-METRIC worst_analytic_cell_row`) rejects the recorded inference:
+  `bflh140_r`'s own knee arm is the largest discrepancy, ours **16.059 mm** vs analytic
+  **13.713 mm** (**+2.346 mm**), and its figure moves **−42.462 pp**; `gaslat140_r` is next at
+  1.597 mm. So "the analytic tail arrives through an unnamed synergist" is false. What remains is
+  why a wrap-free fixed-point path agrees at one pose and differs at `run_4_mid_swing` — inspect the
+  kinematic/path-derivative seam, not the wrap solver. The central cell still means a future
+  per-muscle claim needs the QP coupling sensitivity measured; validating one row never bounds its
+  output error.
 - **A KKT RESIDUAL NORMALISED BY THE GRADIENT READS 1.0 AT A PERFECT ANSWER.** At an interior optimum
   every gradient component is at rounding level, so dividing the worst violation by `max|∇f|` divides
   noise by noise. `BoxQP` normalises by the largest TERM entering the gradient

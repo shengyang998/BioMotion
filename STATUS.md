@@ -164,7 +164,7 @@ biggest links were **not** where the effort had been going.
 - **THE LEAK EXPERIMENT WAS RE-RUN AND THE CLAIM DOES NOT COME BACK — the largest remaining term is
   the REFERENCE** (2026-08-09). Same 582 cells, same R1–R7, same 1.617 pp bar; R1 **123.0971 pp**,
   R2 **108.5752 pp**, R7 **47.52**, control **66.8824** — bit-identical to the QP round, so the two
-  added diagnostics are provably inert. `perMuscleLeftRightClaimIsSupported` stays `false`. What is
+  initial diagnostics are provably inert. `perMuscleLeftRightClaimIsSupported` stays `false`. What is
   new is the attribution. R1's worst muscle was recorded as `piri`/`glmed3` because the print beside
   `leakExact` was the worst SHIPPED base; it is **`bflh140`**, which carries **no `PathWrap`, no
   `MovingPathPoint` and no finite-difference row**, so its moment arm is the SAME NUMBER in both
@@ -174,8 +174,13 @@ biggest links were **not** where the effort had been going.
   leak is the smaller of the two in **466 of 582 cells**. So R1 as registered is maximised over a
   `truth` that is not one, and no work on `MomentArmComputer` can pass it that way — but against the
   better-founded analytic column alone our own worst is still **42.46 pp**, 26× the bar, so the claim
-  stays retired on the measurement. Also settled: R3 is **1.4022 pp** (0.568 was two noisy solves
-  cancelling), and the two tests the QP round left failing. See
+  stays retired on the measurement. The next diagnostic prints all 24 screened rows at that
+  ANALYTIC worst cell and corrects the first attribution: `bflh140_r` itself has the largest arm
+  error there, **16.059 vs 13.713 mm** about the knee (**+2.346 mm**), ahead of `gaslat140_r` at
+  1.597 mm. The 42.46 pp tail is therefore not evidence for an unnamed neighbour; it is now
+  localised to a wrap-free, fixed-point path whose pose-dependent derivative still disagrees.
+  Also settled: R3 is **1.4022 pp** (0.568 was two noisy solves cancelling), and the two tests the QP
+  round left failing. See
   [the leak re-run](#the-leak-experiment-re-run-the-claim-does-not-come-back-and-the-largest-remaining-term-is-the-reference-2026-08-09).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
@@ -3568,8 +3573,9 @@ the port is **0.54 mm** from the reconciled column. OpenSim's central difference
 ## The leak experiment, re-run: the claim does NOT come back, and the largest remaining term is the REFERENCE (2026-08-09)
 
 The re-run the whole workflow was for. Same rig, same 582 readable cells, same pre-registered R1–R7,
-same 1.617 pp bar and 8.086 % floor. **Nothing was redesigned; two DIAGNOSTICS were added and every
-gated number came back bit-identical, which is the proof they are inert.**
+same 1.617 pp bar and 8.086 % floor. **Nothing was redesigned; the first two DIAGNOSTICS and the
+later 24-row analytic-cell dump leave every gated number bit-identical, which is the proof they are
+inert.**
 
 ### The answer, with the number
 
@@ -3629,6 +3635,25 @@ exact. `bflh140` is a hamstring — hip extensor and knee flexor — sharing the
 about by **10.5 and 11.0 mm**. This is the same mechanism the 2026-08-08 retirement named ("it lands
 on a muscle whose OWN path is modelled correctly"), now with a named muscle and a construction proof
 instead of an inference.
+
+**That construction proves the 123.10 pp CENTRAL-DIFFERENCE cell; it did not attribute the separate
+42.46 pp ANALYTIC cell.** The next diagnostic printed all 24 muscles admitted by R1's screen at that
+cell (`run_4_mid_swing`, `hip0.90_ankle1.20`, effort 0.9), sorted by their largest arm discrepancy:
+
+| muscle | largest ours − analytic arm | own figure movement |
+|---|---:|---:|
+| `bflh140_r` | knee **16.059 − 13.713 = +2.346 mm** | **−42.462 pp** |
+| `gaslat140_r` | knee **20.503 − 22.100 = −1.597 mm** | −2.904 pp |
+| `vasmed_r` | knee +0.716 mm | +0.630 pp |
+| `semiten_r` | knee +0.625 mm | −0.298 pp |
+| `grac_r` | knee +0.584 mm | −3.158 pp |
+
+So the registered hypothesis — "`bflh140` is fixed-point geometry, therefore the analytic tail must
+arrive through a synergist" — is **REJECTED**. `bflh140` has three fixed path points and no
+`PathWrap`/`MovingPathPoint`, yet its own knee arm is the largest discrepancy in the cell. The full
+24-row `LEAK-METRIC worst_analytic_cell_row` dump is the durable instrument; the remaining question
+is why this wrap-free path's derivative agrees at `grid_h060_k000_a+00` and differs by 2.346 mm at
+`run_4_mid_swing`. That points at the kinematic/path-derivative seam, not at path wrapping.
 
 ### The largest remaining term, named the way the solver was
 
@@ -3702,7 +3727,8 @@ quantitative one in the same units in, magnitude assertion (159.03 % > 10 %) unc
   solves, +33 % on this file, every gated number bit-identical); `testTheReferenceDisagreesWithItself
   ByMoreThanTheGateAllows` (new, 484th test); a `LEAK-METRIC worst_cell_arms` line printing the worst
   cell's muscle per coordinate in MILLIMETRES across all four arm sources, which is what next-step 24
-  asked for.
+  asked for; and `worst_analytic_cell_row`, which prints every one of the 24 screened muscles at the
+  analytic maximum and rejects next-step 34's neighbour attribution.
 * `MuscleQPUnitsTests` and `MomentArmErrorCancellationTests` as above. No product code changed.
 * Every stale `0.568 pp` reading corrected to the measured **1.4022 pp** across `GaitLoadSummary`,
   `ClaimSurfaceTests`, `WrappedMomentArmLeakTests`, `CLAUDE.md`.
@@ -3717,7 +3743,8 @@ quantitative one in the same units in, magnitude assertion (159.03 % > 10 %) unc
 * It did **not** settle whether the `analytic` column is RIGHT, only that it is better founded and
   that the two columns cannot both be. R1 against it is still 42.46 pp.
 * It did **not** attribute the 21.98 pp solver-slack tail (next-step 27) or the 42.46 pp analytic-column
-  tail to a mechanism inside `MomentArmComputer`.
+  tail to a mechanism inside `MomentArmComputer`; the latter is now localised to `bflh140_r`'s own
+  wrap-free knee row, but the cause of its 2.346 mm discrepancy is still open.
 * It did **not** measure the STRIDE case, run in Release, or run on a phone.
 
 
@@ -4225,14 +4252,16 @@ arms must differ in the work that PRECEDES the mask.
     `reconciled` field beside `wrapOn`/`centralDifference` would let R1 be re-registered against a
     single defensible truth. **Do not re-register it quietly** — R1's current value would change,
     and a gate whose reference is chosen after a number is read is not pre-registered.
-34. **42.46 pp against the ANALYTIC column is the largest term this repository owns.** Median 0.41,
-    p99 9.94. It is not attributed to a mechanism: `bflh140`'s own arm is fixed-point geometry, so
-    the error arrives through its synergists, and which synergist is unmeasured.
-    `LEAK-METRIC worst_cell_arms` now prints the worst cell's arms in millimetres across all four
-    sources — the next step is the same print for every screened muscle in that one cell, which
-    localises the neighbour carrying the error in a single run.
-35. **The sharing step's amplification is unbounded per muscle and nothing measures it.** A muscle
-    with an exact path took 126 pp from its neighbours. That is a property of the QP's coupling and
+34. ~~**Localise the 42.46 pp ANALYTIC tail by printing every screened row.**~~ **DONE 2026-08-09,
+    and the neighbour hypothesis was wrong.** At `run_4_mid_swing`, all 24 screened rows now print
+    across all four sources. `bflh140_r` itself carries the largest arm discrepancy: knee
+    **16.059 vs 13.713 mm (+2.346 mm)** and a **−42.462 pp** figure movement; `gaslat140_r` is second
+    at 1.597 mm and −2.904 pp. `bflh140` has no wrap or moving point, so what remains is the
+    pose-dependent kinematic/path-derivative seam that makes three fixed points agree at the
+    central-difference worst pose and disagree here. Do not send this tail back to the wrap solver.
+35. **The sharing step's amplification is unbounded per muscle and nothing measures it.** At the
+    separate central-difference cell, a muscle with an exact row took 126 pp from its neighbours.
+    That is a property of the QP's coupling and
     it applies to every per-muscle statement this product could ever make, not just to this gate —
     so "validate a muscle's path, then trust its row" is not a valid inference and no future
     per-muscle claim may rest on it. The measurable form: the sensitivity of muscle `i`'s left/right

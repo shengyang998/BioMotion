@@ -231,6 +231,22 @@ import XCTest
 /// 4.5e-05 / 21.98. The largest term is no longer inside this repository — but
 /// 42.46 pp against the analytic column is still 26× the bar, so the claim does
 /// not come back on that argument either.
+///
+/// # RE-RUN 2026-08-09 (fifth stage): the analytic tail is on `bflh140`'s own row
+///
+/// The previous stage proved that `bflh140`'s arms are identical across all four
+/// sources at the CENTRAL-DIFFERENCE worst cell, then inferred that the separate
+/// 42.46 pp ANALYTIC tail must arrive from a synergist. Printing every screened
+/// row at that analytic cell rejects the inference. At `run_4_mid_swing`, the
+/// largest arm error among all 24 screened muscles is `bflh140_r`'s own
+/// `knee_angle_r`: ours **16.059 mm**, analytic **13.713 mm**, a **+2.346 mm**
+/// gap. Its figure moves −42.462 pp. The next row is `gaslat140_r` at 1.597 mm;
+/// no unnamed neighbour carries a larger discrepancy.
+///
+/// This does not explain WHY three fixed path points disagree at that pose. It
+/// localises the next question away from wrapping and onto the kinematic/path
+/// derivative seam. The central-difference cell still proves the separate
+/// sharing-step result: an exact row can move when its neighbours change.
 final class WrappedMomentArmLeakTests: XCTestCase {
 
     // MARK: - Pre-registered constants
@@ -917,6 +933,73 @@ final class WrappedMomentArmLeakTests: XCTestCase {
                   + "has_path_wrap=\(carriesAPathWrap) "
                   + "\(arms.joined(separator: " "))")
         }
+
+        // The muscle whose FIGURE moves most (`bflh140` in the registered run)
+        // need not be the muscle whose ARM is wrong: the QP couples every muscle
+        // crossing a coordinate. Print every readable row at the worst ANALYTIC
+        // cell and decide whether the repository-owned 42.46 pp tail is on the
+        // muscle's own row or arrives through a neighbour. Keep this on the
+        // analytic column: unlike OpenSim's central difference, that reference
+        // does not inherit the known multi-wrap path-length bookkeeping defect.
+        let analyticCells = readable.filter { $0.reference == .analytic }
+        let worstAnalytic = try XCTUnwrap(
+            analyticCells.max { $0.leakExact < $1.leakExact },
+            "the analytic reference produced no readable cell")
+        let analyticShape = try XCTUnwrap(
+            Self.shapes.first { $0.name == worstAnalytic.shape },
+            "the worst cell's torque shape is not in the registered sweep")
+        let analyticTau = try XCTUnwrap(Self.torques(
+            pose: worstAnalytic.pose, reference: .analytic,
+            activation: worstAnalytic.effort, shape: analyticShape.scales))
+        let analyticTruth = try XCTUnwrap(Self.solve(
+            pose: worstAnalytic.pose, source: .analytic, torques: analyticTau))
+        let analyticTest = try XCTUnwrap(Self.solve(
+            pose: worstAnalytic.pose, source: .ours, torques: analyticTau))
+        var screenedRows: [(maxArmError: Double, line: String)] = []
+        for base in Self.bases where Self.isScreened(analyticTruth, analyticTest, base) {
+            let name = "\(base)_r"
+            guard let row = Self.byPose[worstAnalytic.pose]?[name],
+                  let truthFigure = Self.differencePercent(analyticTruth.exact, base),
+                  let oursFigure = Self.differencePercent(analyticTest.exact, base)
+            else { continue }
+            var arms: [String] = []
+            var maxArmError = 0.0
+            for coordinate in Self.rightLegCoordinates {
+                guard let sample = row[coordinate] else { continue }
+                let error = Self.value(sample, .ours) - Self.value(sample, .analytic)
+                maxArmError = Swift.max(maxArmError, abs(error))
+                arms.append(String(format: "%@[ours %.3f analytic %.3f delta %+.3f "
+                                   + "centralDiff %.3f straightLine %.3f mm]",
+                                   coordinate, 1000 * Self.value(sample, .ours),
+                                   1000 * Self.value(sample, .analytic), 1000 * error,
+                                   1000 * Self.value(sample, .centralDifference),
+                                   1000 * Self.value(sample, .straightLine)))
+            }
+            let carriesAPathWrap = WrapValidationHarness.samples.contains {
+                $0.muscle == name && $0.centralDifference != nil
+            }
+            let line = String(format:
+                "muscle=%@ figure_truth_pp=%.6f figure_ours_pp=%.6f "
+                + "figure_leak_pp=%+.6f max_arm_error_mm=%.6f has_path_wrap=%@ %@",
+                name, truthFigure, oursFigure, oursFigure - truthFigure,
+                1000 * maxArmError, carriesAPathWrap.description,
+                arms.joined(separator: " "))
+            screenedRows.append((maxArmError, line))
+        }
+        screenedRows.sort {
+            if $0.maxArmError != $1.maxArmError { return $0.maxArmError > $1.maxArmError }
+            return $0.line < $1.line
+        }
+        print("LEAK-METRIC worst_analytic_cell pose=\(worstAnalytic.pose) "
+              + "shape=\(worstAnalytic.shape) effort=\(worstAnalytic.effort) "
+              + "figure_worst=\(worstAnalytic.worstExactBase)_r "
+              + "worst_exact_leak_pp=\(worstAnalytic.leakExact) "
+              + "screened_rows=\(screenedRows.count)")
+        for row in screenedRows {
+            print("LEAK-METRIC worst_analytic_cell_row \(row.line)")
+        }
+        XCTAssertEqual(screenedRows.count, worstAnalytic.screened,
+                       "the diagnostic must print every muscle admitted by R1's screen")
 
         XCTAssertGreaterThanOrEqual(worstExact.screened, Self.minimumScreenedBases,
                                     "R6: the maximum must be over a population")
