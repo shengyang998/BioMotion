@@ -19,7 +19,10 @@ import Foundation
 /// too SHORT and 60 were used. The advice ("shorten it") is the opposite of the
 /// action that would fix it. The same string also fires at 240 fps, where 601
 /// frames were used and it still says 120, because `maxFramesPerRun` is not the
-/// native-window mode's budget at all.
+/// native-window mode's budget at all. At 240 fps the same sentence is false
+/// even for a clip that is EXACTLY as long as the four-second window: the
+/// window asks for 960 frames, the bounded run takes 601, and only the frame
+/// budget — not the clip length — explains the shorter analysed span.
 ///
 /// # How the cause is decided, without duplicating the sampler's arithmetic
 ///
@@ -45,9 +48,11 @@ struct FrameBudgetNotice: Equatable {
         /// The clip is SHORTER than the analysis window: every frame it holds
         /// was used, and the lever is a longer clip.
         case clipShorterThanTheWindow
-        /// The clip is longer than what the frame budget covers at this rate, so
-        /// the MIDDLE of it was analysed. `.nativeWindow` only — that mode
-        /// centres its window (`FrameSource.sampleTimestamps`).
+        /// The native-rate window asks for more frames than one bounded run can
+        /// analyse at this rate, so its MIDDLE was analysed. The clip can be
+        /// longer than, equal to, or shorter than the configured window; the
+        /// frame budget is the cause. `.nativeWindow` only — that mode centres
+        /// its samples (`FrameSource.sampleTimestamps`).
         case budgetCappedTheWindow
         /// **The sparse `.fps` scan ran out of frame budget.** A separate case
         /// because both halves of the sentence above are false for it: there is
@@ -80,9 +85,11 @@ struct FrameBudgetNotice: Equatable {
                           FrameSource.analysisWindowSeconds, framesUsed, analysedSeconds,
                           FrameSource.minimumAnalysisSeconds)
         case .budgetCappedTheWindow:
-            return String(format: "This clip is longer than the analysis window, so %d frames "
-                          + "(%.1f s) from the middle were used.",
-                          framesUsed, analysedSeconds)
+            return String(format: "At this video's frame rate, the %.0f s analysis window "
+                          + "exceeds one run's %d-frame budget, so the middle %d frames "
+                          + "(%.1f s) were analysed.",
+                          FrameSource.analysisWindowSeconds,
+                          FrameSource.maxNativeWindowFrames, framesUsed, analysedSeconds)
         case .budgetStoppedTheSparseScan:
             return String(format: "This clip is longer than one run's %d-frame budget at this "
                           + "sampling rate, so only the FIRST %d frames (%.1f s of %.1f s) were "

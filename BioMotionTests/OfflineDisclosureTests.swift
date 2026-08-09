@@ -136,25 +136,43 @@ final class OfflineDisclosureTests: XCTestCase {
                       "the lever must be the one that works: \(message)")
     }
 
-    /// And the case the old sentence was written for still reads correctly — at
-    /// a rate where the budget is 601 frames and not the 120 it used to quote.
-    func testAClipLongerThanTheWindowNamesTheFramesItActuallyUsed() {
+    /// At 240 fps the four-second window itself asks for 960 frames, so the
+    /// 601-frame run budget binds even when the clip is EXACTLY four seconds.
+    /// The notice must name the budget rather than inventing a longer clip.
+    /// A genuinely long clip uses the same budget path and remains covered.
+    func testTheNativeWindowBudgetNamesItsOwnCauseAtAndBeyondTheWindowBoundary() {
         let mode = FrameSource.SamplingMode.nativeWindow(seconds: FrameSource.analysisWindowSeconds)
-        let (timestamps, truncated) = FrameSource.sampleTimestamps(
-            duration: 30.0, mode: mode, nominalFrameRate: 240)
-        XCTAssertTrue(truncated)
-        XCTAssertEqual(timestamps.count, FrameSource.maxNativeWindowFrames)
-        let notice = try? XCTUnwrap(FrameBudgetNotice.make(
-            mode: mode, duration: 30.0, nominalFrameRate: 240,
-            timestamps: timestamps, wasTruncated: truncated))
-        XCTAssertEqual(notice?.cause, .budgetCappedTheWindow)
-        XCTAssertEqual(notice?.framesUsed, FrameSource.maxNativeWindowFrames)
-        let message = notice?.message ?? ""
-        print("UI-METRIC long_clip_banner=\(message)")
-        XCTAssertTrue(message.contains("longer"), message)
-        XCTAssertTrue(message.contains("\(FrameSource.maxNativeWindowFrames)"),
-                      "601 frames were used, and 120 is not this mode's budget: \(message)")
-        XCTAssertFalse(message.contains("\(FrameSource.maxFramesPerRun) frames"), message)
+        for duration in [30.0, FrameSource.analysisWindowSeconds] {
+            let (timestamps, truncated) = FrameSource.sampleTimestamps(
+                duration: duration, mode: mode, nominalFrameRate: 240)
+            XCTAssertTrue(truncated)
+            XCTAssertEqual(timestamps.count, FrameSource.maxNativeWindowFrames)
+            let notice = try? XCTUnwrap(FrameBudgetNotice.make(
+                mode: mode, duration: duration, nominalFrameRate: 240,
+                timestamps: timestamps, wasTruncated: truncated))
+            XCTAssertEqual(notice?.cause, .budgetCappedTheWindow)
+            XCTAssertEqual(notice?.framesUsed, FrameSource.maxNativeWindowFrames)
+            XCTAssertEqual(notice?.analysedSeconds ?? 0, 2.5, accuracy: 0.01)
+            let message = notice?.message ?? ""
+            print("UI-METRIC native_budget_notice duration=\(duration) message=\(message)")
+            XCTAssertTrue(message.lowercased().contains("frame budget"), message)
+            XCTAssertTrue(message.contains("\(FrameSource.maxNativeWindowFrames)"),
+                          "601 frames were used, and 120 is not this mode's budget: \(message)")
+            XCTAssertTrue(message.contains("2.5 s"), message)
+            XCTAssertFalse(message.contains("\(FrameSource.maxFramesPerRun) frames"), message)
+            if duration == FrameSource.analysisWindowSeconds {
+                XCTAssertFalse(message.contains("longer than the analysis window"),
+                               "a four-second clip is not longer than a four-second window: \(message)")
+            }
+        }
+
+        let modeDisclosure = FrameSource.nativeWindowDisclosure
+        XCTAssertTrue(modeDisclosure.contains("\(FrameSource.maxNativeWindowFrames)"),
+                      "the selector must disclose its high-rate cap: \(modeDisclosure)")
+        XCTAssertTrue(modeDisclosure.contains("2.5"),
+                      "and the shortest span that cap buys: \(modeDisclosure)")
+        XCTAssertFalse(modeDisclosure.lowercased().contains("same number of model calls"),
+                       "native-rate cost grows with the selected video's rate: \(modeDisclosure)")
     }
 
     /// A clip that got everything it asked for says nothing at all.

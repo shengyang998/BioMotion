@@ -127,8 +127,12 @@ Default 2fps, user-adjustable 0.5–10fps, plus an explicit single-frame mode
 pathological long-clip × high-fps selection; `OfflineSessionRunner` surfaces
 `frameBudgetNotice` rather than truncating silently — a `FrameBudgetNotice`
 that names WHICH of the two causes fired (the clip is shorter than the window,
-or a budget capped it) and how many frames were really used. It replaced a
-single boolean whose one sentence stated both wrongly on a short clip. Progress ETA
+or the native-rate window exceeded the 601-frame run budget) and how many frames
+were really used. At 240 fps the cap spans about 2.5 s even when the clip itself
+is exactly as long as the 4 s configured window; neither the notice nor the mode
+selector describes that as a long clip. The selector's copy lives in
+`FrameSource.nativeWindowDisclosure`, beside the arithmetic it discloses. It replaced a
+single boolean whose one sentence stated both causes wrongly on a short clip. Progress ETA
 (`OfflineSessionRunner.eta`) is derived from the running average of measured
 per-frame wall time (`perFrameDurations`), shown as "estimating time…" (not a
 fabricated number) until at least one frame has completed.

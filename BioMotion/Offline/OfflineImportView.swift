@@ -134,14 +134,13 @@ struct OfflineImportView: View {
             if pickedVideoURL != nil {
                 Toggle("Single frame only", isOn: $isSingleFrameMode)
                 if !isSingleFrameMode {
-                    Toggle("Analyse movement (every frame, \(Int(FrameSource.analysisWindowSeconds)) s)",
+                    Toggle("Analyse movement (every frame, up to \(Int(FrameSource.analysisWindowSeconds)) s)",
                            isOn: $useNativeWindow)
                     if useNativeWindow {
-                        // The trade this toggle makes, stated in the terms that
-                        // decide it: a foot contact is 150-250 ms, so at 2 fps
-                        // it is under half a sample and simply not there. The
-                        // model-call budget is the same either way.
-                        Text("Samples every frame the video has, over \(Int(FrameSource.analysisWindowSeconds)) seconds from the middle of the clip. This is what makes running measurable: a foot contact lasts about 200 ms, so at 2 frames/second it falls between samples entirely. Same number of model calls as the sparse mode.")
+                        // The trade this toggle makes, including the high-rate
+                        // cap and cost. The sentence lives beside FrameSource's
+                        // arithmetic and is pinned by OfflineDisclosureTests.
+                        Text(FrameSource.nativeWindowDisclosure)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -157,8 +156,9 @@ struct OfflineImportView: View {
                     // Names which of the two causes fired and how many frames
                     // were really used. The single sentence this replaced said
                     // "longer than the analysis window" and "120 frames" for
-                    // every case, including the short-clip case where both
-                    // halves are false. See `FrameBudgetNotice`.
+                    // every case, including the short-clip and exact-window
+                    // cases where the cause is not clip length. See
+                    // `FrameBudgetNotice`.
                     Text(notice.message)
                         .font(.caption)
                         .foregroundStyle(.orange)

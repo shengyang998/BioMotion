@@ -2453,11 +2453,13 @@ the rest stand.
    right and the fact is true of the internals, but there is no per-muscle figure on screen to
    subtract it from. The imperative implies a number that is not there.
 4. **The same sentence's "out of N pairs" could not contain its numerators.** CLOSED by M3.
-5. **`FrameBudgetNotice.budgetCappedTheWindow` names the wrong cause at 240 fps** — exactly the rate
+5. ~~**`FrameBudgetNotice.budgetCappedTheWindow` names the wrong cause at 240 fps.**~~
+   **CLOSED 2026-08-10** — this was exactly the rate
    `resolutionSentence` is allowed to recommend. A 4.0 s clip against a 4.0 s window wants 960
-   samples, `maxNativeWindowFrames` caps at 601, and the banner says the clip "is longer than the
-   analysis window" when the window is 4.0 s. Acting on it (trimming to 2 s) trips
-   `clipShorterThanTheWindow` and the run is refused for too few contacts.
+   samples and `maxNativeWindowFrames` caps at 601. Before the fix, the banner said the clip "is
+   longer than the analysis window" when the window was 4.0 s; acting on it (trimming to 2 s) could
+   trip `clipShorterThanTheWindow` and refuse the run for too few contacts. It now names the frame
+   budget, and the selector discloses the 2.5-second high-rate span and rising processing cost.
 6. **A doc comment cites a test suite that does not exist.** `GaitLoadSummary.tMultiplier`'s doc names
    `MuscleUncertaintyTests`; `grep` returns only that line. The guarantee holds under another name
    (`GaitLoadSummaryTests.testTheUncertaintyMultiplierIsStudentTAtSmallCounts`), so the citation is
@@ -3894,6 +3896,28 @@ Cylinder and ellipsoid total-sign tests use the original fixed 1 mm tripwire; th
 compares `(ours on − ours off)` with `(OpenSim on − OpenSim off)` at a fixed 1 mm reference effect,
 and treats a zero actual effect as failure. The 1–5 mm band remains independently gated rather than
 being hidden by E1/C1's 5 mm magnitude contract.
+
+
+## The native-rate frame-budget notice names the budget, not the clip (2026-08-10)
+
+At 240 fps, a four-second native-rate window asks for 960 samples and the bounded run takes 601.
+That is true even when the clip is exactly 4.0 seconds long, but the import screen said “This clip
+is longer than the analysis window”. Following that diagnosis and trimming the clip could make it
+too short for the minimum contact count.
+
+`OfflineDisclosureTests` now drives both a 30-second clip and the exact 4.0-second boundary through
+the real sampler. The RED was the same false sentence for both inputs (three failed assertions:
+the missing frame-budget cause twice and the invented clip length at the boundary). The notice now
+says the four-second window exceeds one run's 601-frame budget at that video's rate and reports the
+actual middle 601 frames / 2.5 seconds. The related disclosure and sampling gate is green with 19
+tests, zero failures and zero restarts.
+
+The selector immediately above the notice carried a second stale promise: it said native-rate mode
+always covered four seconds for the “same number of model calls” as the 120-frame sparse mode.
+`FrameSource.nativeWindowDisclosure` is now the single tested source of that copy. It says “up to
+4 seconds”, names the 601-frame / 2.5-second-at-240-fps cap, and says processing time rises with the
+video's frame rate. This changes disclosure only; the sampler arithmetic and the 486-test floor are
+unchanged.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

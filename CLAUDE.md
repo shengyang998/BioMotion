@@ -101,6 +101,10 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   add a reviewed patch under `nimble-patches/`; a source-only fix can otherwise
   look correct in `git diff` while every test still runs the old object code.
 - **XcodeGen**: Always run `xcodegen generate` after editing `project.yml` — never edit `BioMotion.xcodeproj/` by hand. A **new test file** needs it too, even when `project.yml` is unchanged, or it sits on disk silently not running.
+- **Native-rate sampling is span-bounded and frame-bounded.** It targets up to 4 s, but the
+  601-frame cap covers about 2.5 s at 240 fps; it is not the same 120-call budget as sparse mode.
+  Keep selector copy in `FrameSource.nativeWindowDisclosure` and truncation causes in
+  `FrameBudgetNotice`, where `OfflineDisclosureTests` pins the exact-window boundary.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
 
 ## Readings that lie — each has already cost a wrong conclusion

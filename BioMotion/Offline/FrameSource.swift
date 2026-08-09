@@ -107,6 +107,17 @@ enum FrameSource {
         Double(maxNativeWindowFrames - 1) / minimumAnalysisSeconds
     }
 
+    /// Honest selector copy for the native-rate mode. Kept beside the budget
+    /// arithmetic so the UI cannot again promise four seconds and sparse-mode
+    /// cost after a frame-budget change makes either statement false.
+    static var nativeWindowDisclosure: String {
+        String(format: "Samples every frame over up to %.0f seconds from the middle of the clip, "
+               + "capped at %d frames (%.1f seconds at %.0f fps). This makes a roughly 200 ms "
+               + "foot contact measurable; processing time rises with the video's frame rate.",
+               analysisWindowSeconds, maxNativeWindowFrames, minimumAnalysisSeconds,
+               plausibleFrameRates.upperBound)
+    }
+
     /// Used when a video reports no usable nominal frame rate. Every clip the
     /// owner supplied is 30 fps; this only has to be a sane fallback, and it is
     /// reported to the caller so a wrong guess is visible rather than silent.
