@@ -113,7 +113,7 @@ final class GaitContactAgreementTests: XCTestCase {
         }
         let corruptedSummary = try XCTUnwrap(
             GaitLoadSummary.make(frames: corrupted, report: report,
-                                 framesPerSecond: 30, filterTaps: 5))
+                                 filterTaps: 5))
         XCTAssertEqual(corruptedSummary.claimedStanceFrameCount, 6)
         XCTAssertEqual(corruptedSummary.contactDetectorDisagreements, 6,
                        "every double contact must be counted as a disagreement")
@@ -137,7 +137,7 @@ final class GaitContactAgreementTests: XCTestCase {
         }
         let cleanSummary = try XCTUnwrap(
             GaitLoadSummary.make(frames: clean, report: report,
-                                 framesPerSecond: 30, filterTaps: 5))
+                                 filterTaps: 5))
         XCTAssertEqual(cleanSummary.contactDetectorDisagreements, 0)
         XCTAssertEqual(cleanSummary.stanceFrameCount, 6)
         XCTAssertTrue(cleanSummary.arePublishable,

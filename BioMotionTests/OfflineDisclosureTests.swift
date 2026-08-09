@@ -99,7 +99,7 @@ final class OfflineDisclosureTests: XCTestCase {
                                            cleanWindow: i % 2 == 0))
         }
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
-                                                   framesPerSecond: 30, filterTaps: 5))
+                                                   filterTaps: 5))
         XCTAssertEqual(s.stanceFrameCount, frames.filter(\.gaitLoadsAreComparable).count)
         XCTAssertEqual(s.claimedStanceFrameCount - s.stanceFrameCount,
                        frames.filter { !$0.gaitLoadsAreComparable }.count)

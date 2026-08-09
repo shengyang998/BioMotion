@@ -934,9 +934,11 @@ struct GaitLoadSummary {
     ///   them, which is the whole point: a non-converged IK or a `submitAndWait`
     ///   timeout used to split one contact in two and have each half contribute
     ///   its own off-peak sample at double weight, invisibly to every counter.
+    /// - Important: cadence comes only from `report.framesPerSecond`, which is
+    ///   derived from the surviving capture timestamps. Track metadata is used
+    ///   for decoding but is not an analysis rate and is not accepted here.
     static func make(frames: [OfflineResultStore.FrameResult],
                      report: GaitReport,
-                     framesPerSecond: Double,
                      filterTaps: Int) -> GaitLoadSummary? {
         /// One contact's usable samples, in capture order.
         struct Contact {
@@ -1108,7 +1110,7 @@ struct GaitLoadSummary {
             contactTimeContributionPercent: report.peakVerticalForceIsSharedBetweenLegs
                 ? 0 : contactTimeContribution,
             framesPerContact: report.resolution.framesPerContact,
-            framesPerSecond: framesPerSecond,
+            framesPerSecond: report.framesPerSecond,
             stanceFrameCount: usableStance,
             claimedStanceFrameCount: claimedStance,
             screenedComparisonCount: screened,

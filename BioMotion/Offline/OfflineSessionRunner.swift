@@ -69,11 +69,6 @@ final class OfflineSessionRunner: ObservableObject {
     /// really used, because the single boolean this replaced let the UI state
     /// both wrongly. See `FrameBudgetNotice`.
     @Published private(set) var frameBudgetNotice: FrameBudgetNotice?
-    /// The frame rate the analysis window was sampled at, i.e. the video's own.
-    /// Published because every duration this app measures is expressed in
-    /// frames, so a wrong rate would rescale all of them silently.
-    @Published private(set) var sampledFrameRate: Double = FrameSource.assumedFrameRateWhenUnknown
-
     let resultStore = OfflineResultStore()
 
     private let nimble: NimbleEngine
@@ -302,9 +297,7 @@ final class OfflineSessionRunner: ObservableObject {
             await padFilterTail(with: last, totalPushes: &pushes, halfWindow: half)
         }
 
-        resultStore.setGait(.analysed(report: report,
-                                      plan: plan,
-                                      framesPerSecond: sampledFrameRate))
+        resultStore.setGait(.analysed(report: report, plan: plan))
     }
 
     /// Turns a `GaitReport` into the per-frame root acceleration and ground
@@ -643,7 +636,6 @@ final class OfflineSessionRunner: ObservableObject {
             let decoder = FrameSource.VideoDecoder(url: url)
             let duration = try await decoder.duration()
             let rate = await decoder.nominalFrameRate()
-            sampledFrameRate = rate
             let (timestamps, truncated) = FrameSource.sampleTimestamps(duration: duration,
                                                                       mode: samplingMode,
                                                                       nominalFrameRate: rate)

@@ -2184,8 +2184,8 @@ to report anything at the scatter we have.
      analysed running clips — but the provenance flag is still destroyed.
   2. The multiplicity sentence's row count was hard-coded rather than taken from the rows drawn.
      Dead: the sentence and the rows are gone.
-  3. `GaitLoadSummary.framesPerSecond` is the video track's NOMINAL rate even when the sparse `.fps`
-     sampler ran, so `resolutionSentence` names a rate the run did not use. Still open, still wrong.
+  3. ~~`GaitLoadSummary.framesPerSecond` used the video track's NOMINAL rate under sparse sampling.~~
+     **CLOSED 2026-08-10:** analysed cadence now has one timestamp-derived source.
   4. `OfflinePlaybackView.statusText` consults `gaitLoadsAreComparable` and never
      `summary.arePublishable`, so a clip whose residual gate FAILED still gets a per-frame badge
      implying a successful solve. Half-closed: the badge no longer claims relative loads.
@@ -2280,10 +2280,9 @@ statement the screen makes that is imprecise, not one that is false in a way a u
    solved with q̈ = 0 and loses the flag that says so. Its user-visible half is now doubly moot — the
    overlay is off on analysed running clips, and the capsules carry no numbers anywhere — but the
    provenance flag is still destroyed in the store.
-2. **`GaitLoadSummary.framesPerSecond` is the video track's NOMINAL rate** even when the sparse
-   `.fps` sampler ran (`OfflineSessionRunner.swift:307`), so `resolutionSentence` can name a rate the
-   run did not use and `frameRateNeeded` scales its advice off the same base. Still open, still
-   wrong. The refusal path is correct.
+2. ~~**`GaitLoadSummary.framesPerSecond` used the video track's NOMINAL rate under sparse
+   sampling.**~~ **CLOSED 2026-08-10:** the analysed outcome and summary factory no longer accept a
+   second FPS beside `GaitReport.framesPerSecond`.
 3. **`OfflinePlaybackView.statusText` never consults `summary.arePublishable`.** A clip whose
    vertical residual gate FAILED still gets per-frame badges implying a completed solve. Half-closed:
    the badge no longer says "relative loads".
@@ -2441,12 +2440,9 @@ what ties that arithmetic back to what `GaitReport` publishes, on the real clips
 Numbered as the reviews numbered them. Minors 2 and 4 are the M3 sentence and are closed by that fix;
 the rest stand.
 
-1. **`GaitLoadSummary.framesPerSecond` is the video track's NOMINAL rate** even when the sparse
-   `.fps` sampler ran (`OfflineSessionRunner.swift:645-646`, passed at `:307`), so `resolutionSentence`
-   can name a rate the run did not use and `frameRateNeeded` scales its advice off the same base. A
-   10 fps run reaching `.analysed` prints "…2.0 frames per contact at 30 fps", which is internally
-   inconsistent. The refusal path is correct — it reads `report.framesPerSecond`, derived from real
-   timestamps. **Third round in a row this has been deferred.**
+1. ~~**`GaitLoadSummary.framesPerSecond` is the video track's NOMINAL rate even when the sparse
+   `.fps` sampler ran.**~~ **CLOSED 2026-08-10.** The report's real timestamps are now the only FPS
+   source accepted by the analysed outcome and summary factory; see the timestamp-cadence section.
 2. **The honesty block's three counts in one sentence with a denominator excluding its numerators.**
    CLOSED by M3 — the sentence no longer prints any of the three.
 3. **`peakForceRegimeSentence` still ends "subtract it, do not take a share of it".** The unit is
@@ -3916,8 +3912,8 @@ The selector immediately above the notice carried a second stale promise: it sai
 always covered four seconds for the “same number of model calls” as the 120-frame sparse mode.
 `FrameSource.nativeWindowDisclosure` is now the single tested source of that copy. It says “up to
 4 seconds”, names the 601-frame / 2.5-second-at-240-fps cap, and says processing time rises with the
-video's frame rate. This changes disclosure only; the sampler arithmetic and the 486-test floor are
-unchanged.
+video's frame rate. This changed disclosure only; the sampler arithmetic stayed unchanged and the
+test floor was 486 at that commit.
 
 A post-commit boundary review found the same cause classifier was also unsafe for sparse sampling:
 at 10 fps, a 12.01 s clip has a 121st sample but the 120-frame cap stops first. The notice floored
@@ -3927,6 +3923,31 @@ maps directly to `.budgetStoppedTheSparseScan` (the sampler only raises it when 
 only native mode compares used frames with clip capacity. The 3 s / 240 fps competing-limit case is
 also pinned: although the clip is shorter than four seconds, its 720 available frames exceed the
 601-frame budget, so the budget remains the cause. Both boundary tests pass with zero restarts.
+
+
+## Analysed cadence has one timestamp-derived source (2026-08-10)
+
+The refusal path already used `GaitReport.framesPerSecond`, derived as `1 / median(timestamp
+interval)`. The successful path carried a second value: AVAsset's nominal track rate was published
+as `OfflineSessionRunner.sampledFrameRate`, copied into `.analysed`, unpacked by playback, and passed
+to `GaitLoadSummary.make`. That is numerically hidden in native mode. In sparse mode it made a 10 fps
+analysis of a nominal 30 fps track print “at 30 fps”, and scaled `frameRateNeeded` advice from the
+same wrong base; timing, contact detection and dynamics themselves continued to use timestamps.
+
+The RED deliberately supplied conflicting sources: a fixture report at 30 fps and a metadata value
+at 90 fps. The screen sentence printed 90 fps and advised 164 fps; three assertions failed. The
+minimal GREEN made the summary use the report and printed the report cadence. The subsequent green
+refactor removed the duplicate channel entirely:
+
+- `GaitLoadSummary.make` no longer accepts `framesPerSecond`;
+- `GaitOutcome.analysed` carries only the report and gait plan;
+- `OfflineSessionRunner.sampledFrameRate` is gone; the nominal rate remains local to decoding and
+  frame-budget calculations, where it is the correct quantity.
+
+The permanent regression asserts that the summary carries and prints the report's timestamp rate;
+the type signatures prevent a caller from injecting metadata alongside it. Seven related suites
+run **67 tests, 0 failures, 0 restarts**. One new test raises the fast-suite floor
+from 486 to **487**; no sampling, gait, dynamics or claim arithmetic changed.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4326,9 +4347,8 @@ arms must differ in the work that PRECEDES the mask.
     than ~20 % that does not need a new statistic.
 22. **The eight remaining minors** are listed in
     [Seventh round](#seventh-round-the-surviving-claim-was-gated-on-the-wrong-variance-too-2026-08-08)
-    (minors 1, 3, 5, 6, 7, 8, 9 plus the round-six list). Minor 1 — `framesPerSecond` being the
-    NOMINAL rate under the sparse sampler — has now been deferred three rounds running and is the
-    only one that puts a wrong number in front of the user.
+    (minors 1, 3, 5, 6, 7, 8, 9 plus the round-six list). Minor 1 — `framesPerSecond` using the
+    NOMINAL rate under the sparse sampler — was closed 2026-08-10 by removing the duplicate source.
 
 ### Newly opened by the 2026-08-09 re-measurement (eighth round)
 

@@ -174,7 +174,7 @@ final class ClaimSurfaceTests: XCTestCase {
             frames.append(Self.gaitFrame(id: 10 + i, side: 1, activations: right, contact: 10 + i))
         }
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
-                                                   framesPerSecond: 30, filterTaps: 5))
+                                                   filterTaps: 5))
         print("GAIT-METRIC honesty_block_arithmetic floored=\(s.flooredMuscleCount) "
               + "saturated=\(s.saturatedMuscleCount) screened=\(s.screenedComparisonCount) "
               + "pairs=\(s.muscles.count)")

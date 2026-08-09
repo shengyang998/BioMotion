@@ -105,6 +105,10 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   601-frame cap covers about 2.5 s at 240 fps; it is not the same 120-call budget as sparse mode.
   Keep selector copy in `FrameSource.nativeWindowDisclosure` and truncation causes in
   `FrameBudgetNotice`, where `OfflineDisclosureTests` pins the exact-window boundary.
+- **Analysis FPS has one source:** `GaitReport.framesPerSecond`, derived from the median interval of
+  surviving frame timestamps. AVAsset's nominal rate is valid for native decoding and frame-budget
+  notices only. Do not add it to `GaitOutcome.analysed` or `GaitLoadSummary.make`; sparse sampling
+  is precisely where nominal rate and analysed cadence differ.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
 
 ## Readings that lie — each has already cost a wrong conclusion

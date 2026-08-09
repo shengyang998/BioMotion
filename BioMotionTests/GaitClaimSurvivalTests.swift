@@ -222,7 +222,6 @@ final class GaitClaimSurvivalTests: XCTestCase {
         }
 
         let summary = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
-                                                         framesPerSecond: report.framesPerSecond,
                                                          filterTaps: 5))
         var outcome = Outcome()
         outcome.screened = summary.screenedComparisonCount

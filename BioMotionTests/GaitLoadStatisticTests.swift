@@ -38,7 +38,7 @@ final class GaitLoadStatisticTests: XCTestCase {
             + Self.contact(side: 1, firstID: 30, values: [0.50])
 
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
-                                                   framesPerSecond: 30, filterTaps: 5))
+                                                   filterTaps: 5))
         let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         // A → 0.80 (middle of three), B → 0.25 (mean of the two middle).
         XCTAssertEqual(load.leftLoad, 0.5 * (0.80 + 0.25), accuracy: 1e-12)
@@ -65,7 +65,7 @@ final class GaitLoadStatisticTests: XCTestCase {
             + Self.contact(side: 1, firstID: 20, values: [0.50])
             + Self.contact(side: 1, firstID: 30, values: [0.50])
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: split, report: report,
-                                                   framesPerSecond: 30, filterTaps: 5))
+                                                   filterTaps: 5))
         let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         // Two left contacts: 0.10, and mean(0.20, 0.90) = 0.55 → 0.325.
         XCTAssertEqual(load.leftLoad, 0.5 * (0.10 + 0.55), accuracy: 1e-12)
@@ -103,7 +103,7 @@ final class GaitLoadStatisticTests: XCTestCase {
             + Self.contact(side: 1, firstID: 30, values: values)
 
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
-                                                   framesPerSecond: 30, filterTaps: 5))
+                                                   filterTaps: 5))
         let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         XCTAssertEqual(load.leftContacts, 2, "one hole is not a second foot-strike")
         XCTAssertEqual(s.leftContactCount, 2)
@@ -129,7 +129,7 @@ final class GaitLoadStatisticTests: XCTestCase {
             frames: lopsided + Self.contact(side: -1, firstID: 10, values: values)
                 + Self.contact(side: 1, firstID: 20, values: values)
                 + Self.contact(side: 1, firstID: 30, values: values),
-            report: report, framesPerSecond: 30, filterTaps: 5))
+            report: report, filterTaps: 5))
         let asymmetricLoad = try XCTUnwrap(asymmetric.muscles.first { $0.id == "glmax1" })
         XCTAssertEqual(asymmetricLoad.leftContacts, 2)
         // Five surviving samples → the middle one, 0.30. Side mean (0.30+0.40)/2.
@@ -174,7 +174,7 @@ final class GaitLoadStatisticTests: XCTestCase {
                 frames += Self.contact(side: 1, firstID: id, values: rightValues); id += 10
             }
             let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
-                                                       framesPerSecond: 30, filterTaps: 5))
+                                                       filterTaps: 5))
             let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
             XCTAssertEqual(load.leftContacts, 6)
             XCTAssertEqual(load.rightContacts, 6)
@@ -243,7 +243,7 @@ final class GaitLoadStatisticTests: XCTestCase {
                 frames += Self.contact(side: 1, firstID: id, values: r); id += 10
             }
             let s = try XCTUnwrap(GaitLoadSummary.make(frames: frames, report: report,
-                                                       framesPerSecond: 30, filterTaps: 5))
+                                                       filterTaps: 5))
             newPercents.append(try XCTUnwrap(s.muscles.first { $0.id == "glmax1" }).differencePercent)
             let old = Self.oldMaxStatistic(frames)
             oldPercents.append(200 * (old.left - old.right) / (old.left + old.right))
@@ -262,7 +262,7 @@ final class GaitLoadStatisticTests: XCTestCase {
             + Self.contact(side: -1, firstID: 20, values: [0.80, 0.80])
             + Self.contact(side: 1, firstID: 30, values: [0.50, 0.50])
         let s = try XCTUnwrap(GaitLoadSummary.make(frames: stronger, report: report,
-                                                   framesPerSecond: 30, filterTaps: 5))
+                                                   filterTaps: 5))
         let load = try XCTUnwrap(s.muscles.first { $0.id == "glmax1" })
         XCTAssertEqual(load.differencePercent, 100 * 0.30 / 0.65, accuracy: 1e-9)
         XCTAssertTrue(s.clearsStatisticalFloor(load),

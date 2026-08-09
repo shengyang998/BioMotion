@@ -97,7 +97,7 @@ struct GaitReportPanel: View {
                     }
                     flags(report)
 
-                case .analysed(let report, _, _):
+                case .analysed(let report, _):
                     if let summary {
                         resolutionBlock(summary)
                         Divider()

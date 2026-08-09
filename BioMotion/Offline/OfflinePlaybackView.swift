@@ -51,10 +51,9 @@ struct OfflinePlaybackView: View {
     /// The relative-load view of a running clip. Nil unless the clip was
     /// analysed as a run AND at least one stance frame produced muscle output.
     private var loadSummary: GaitLoadSummary? {
-        guard case .analysed(let report, let plan, let fps)? = resultStore.gait else { return nil }
+        guard case .analysed(let report, let plan)? = resultStore.gait else { return nil }
         return GaitLoadSummary.make(frames: resultStore.frames,
                                     report: report,
-                                    framesPerSecond: fps,
                                     filterTaps: plan.filterTaps)
     }
 

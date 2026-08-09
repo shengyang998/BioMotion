@@ -223,16 +223,17 @@ final class OfflineResultStore: ObservableObject {
         /// A run, but the clip's own model refused it. Every refusal carries the
         /// number that produced it.
         case refused(report: GaitReport)
-        /// A usable run: dynamics were solved on its stance frames.
+        /// A usable run: dynamics were solved on its stance frames. The report
+        /// owns the timestamp-derived cadence; no nominal track rate travels
+        /// beside it as a second source of truth.
         case analysed(report: GaitReport,
-                      plan: NimbleEngine.GaitPlan,
-                      framesPerSecond: Double)
+                      plan: NimbleEngine.GaitPlan)
 
         var report: GaitReport? {
             switch self {
             case .notAttempted: return nil
             case .refused(let r): return r
-            case .analysed(let r, _, _): return r
+            case .analysed(let r, _): return r
             }
         }
 

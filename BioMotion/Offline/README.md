@@ -138,6 +138,12 @@ single boolean whose one sentence stated both causes wrongly on a short clip. Pr
 per-frame wall time (`perFrameDurations`), shown as "estimating time…" (not a
 fabricated number) until at least one frame has completed.
 
+The video's nominal track rate is used only where it is the relevant fact: native-rate sampling,
+decode-memory sizing, and the budget notice. Analysis cadence comes from the median interval of the
+surviving `BodyFrame` timestamps and is stored in `GaitReport.framesPerSecond`. `GaitOutcome.analysed`
+and `GaitLoadSummary.make` deliberately carry no second FPS value, so a sparse 10 fps analysis of a
+nominal 30 fps track cannot print 30 fps or scale camera advice from it.
+
 ### Model loading
 
 `MLModelConfiguration.computeUnits = .cpuAndGPU` (not `.all`) per this task's
