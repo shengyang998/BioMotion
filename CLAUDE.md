@@ -114,6 +114,10 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   and muscle. A photo fallback remains analysable. Segment on `DecodedFrame.index`/
   `BodyFrame.frameNumber`; reset realtime state before the next waiter, and pad held poses only at
   real requested clip endpoints — never across an internal or leading/trailing known gap.
+- **A stored biomechanics result is one solve generation.** Route a complete
+  `OfflineResultStore.BiomechanicsPayload` from one `SolveRecord`; never nil-coalesce IK, ID, or
+  muscle fields with the previous frame payload. A nil ID/muscle means the new solve withheld it
+  and must erase any older value, while image/decoder/model provenance and `FrameStatus` stay fixed.
 - **An analysed report does not depend on a muscle summary.** Resolution, contact-time findings and
   report flags come from `GaitReport` through `GaitTimingSummary` and stay visible when
   `GaitLoadSummary.make` returns nil. Only muscle/load/honesty sections may follow that optional.
@@ -129,7 +133,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 491 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 493 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

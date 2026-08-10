@@ -82,8 +82,13 @@ warmed up. This means:
   carries `isStaticHoldEstimate`, and `OfflinePlaybackView` labels it "Pose +
   muscle (static hold)" instead of implying continuous dynamics were measured.
 - The padding rewrites the ORIGINAL frame's stored result in place
-  (`OfflineResultStore.updateBiomechanics`) rather than appending a phantom
+  (`OfflineResultStore.replaceBiomechanics`) rather than appending a phantom
   extra scrubber row.
+- Every routed `SolveRecord` becomes one `BiomechanicsPayload`: IK, optional ID,
+  optional muscle, the static-hold flag, and motion state replace the prior
+  generation together. A nil ID or muscle means the new solve withheld it and
+  erases the old value; image/frame/model provenance and `FrameStatus` are not
+  owned by the solve and remain unchanged.
 
 ### Whole-frame fallback admission
 

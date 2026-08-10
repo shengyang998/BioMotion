@@ -136,10 +136,10 @@ final class OfflineResultStore: ObservableObject {
         /// the whole image. The source-specific policy is carried separately:
         /// photos remain analysable; video fallback frames are review-only.
         let usedFallbackBBox: Bool
-        /// Defaulted `var`, rather than `let = nil`, so Swift's synthesized
-        /// memberwise initializer lets the runner explicitly mark an excluded
-        /// frame while all existing call sites may omit the argument.
-        var temporalAnalysisExclusion: TemporalAnalysisExclusion? = nil
+        /// Immutable admission provenance. The explicit initializer below gives
+        /// this a source-compatible nil default without making it mutable after
+        /// the frame enters the store.
+        let temporalAnalysisExclusion: TemporalAnalysisExclusion?
 
         // Present only on `.success`. `muscleResult` (and therefore
         // `hasFullBiomechanics`) can still be nil on a `.success` frame: the
@@ -169,9 +169,43 @@ final class OfflineResultStore: ObservableObject {
         /// Why this frame does or does not carry muscle data.
         let motionState: MotionState
 
+        init(
+            id: Int,
+            sourceImage: UIImage,
+            timestamp: TimeInterval,
+            status: FrameStatus,
+            usedFallbackBBox: Bool,
+            temporalAnalysisExclusion: TemporalAnalysisExclusion? = nil,
+            camT: SIMD3<Float>?,
+            modelChecksums: (input: UInt64, output: UInt64,
+                             source: UInt64, bbox: UInt64, warp: UInt64)?,
+            bodyFrame: BodyFrame?,
+            ikResult: NimbleEngine.IKOutput?,
+            idResult: NimbleEngine.IDOutput?,
+            muscleResult: NimbleEngine.MuscleOutput?,
+            isStaticHoldEstimate: Bool,
+            motionState: MotionState
+        ) {
+            self.id = id
+            self.sourceImage = sourceImage
+            self.timestamp = timestamp
+            self.status = status
+            self.usedFallbackBBox = usedFallbackBBox
+            self.temporalAnalysisExclusion = temporalAnalysisExclusion
+            self.camT = camT
+            self.modelChecksums = modelChecksums
+            self.bodyFrame = bodyFrame
+            self.ikResult = ikResult
+            self.idResult = idResult
+            self.muscleResult = muscleResult
+            self.isStaticHoldEstimate = isStaticHoldEstimate
+            self.motionState = motionState
+        }
+
         var isEligibleForTemporalAnalysis: Bool { temporalAnalysisExclusion == nil }
         var hasFullBiomechanics: Bool {
-            isEligibleForTemporalAnalysis && muscleResult != nil
+            guard case .success = status else { return false }
+            return isEligibleForTemporalAnalysis && muscleResult != nil
         }
         /// Pose was solved fine, but the detector could not certify a still
         /// instant, so no muscle magnitudes are claimed. Distinct from the
@@ -179,6 +213,7 @@ final class OfflineResultStore: ObservableObject {
         /// the two reasons is that the pose estimate is too noisy to tell,
         /// which is the app's limitation and not the subject's.
         var isPoseOnlyBecauseNotStill: Bool {
+            guard case .success = status else { return false }
             guard isEligibleForTemporalAnalysis else { return false }
             guard case .measured(let verdict, _, _, _) = motionState else { return false }
             return verdict != .hold && muscleResult == nil
@@ -187,7 +222,8 @@ final class OfflineResultStore: ObservableObject {
         /// True on a running clip's stance frames — the ones whose muscle
         /// numbers came from the gait cycle rather than from a static hold.
         var isGaitStance: Bool {
-            isEligibleForTemporalAnalysis && motionState.verdict == .gaitStance
+            guard case .success = status else { return false }
+            return isEligibleForTemporalAnalysis && motionState.verdict == .gaitStance
         }
 
         /// **Whether THIS frame's muscle numbers may be drawn.**
@@ -238,6 +274,19 @@ final class OfflineResultStore: ObservableObject {
             }
             return "too close to a touchdown or toe-off to differentiate"
         }
+    }
+
+    /// One generation of output from one `NimbleEngine.SolveRecord`.
+    ///
+    /// IK is non-optional because a published solve always contains it. ID and
+    /// muscle are optional by policy; nil means this generation withheld that
+    /// output and must erase any older generation stored on the same frame.
+    struct BiomechanicsPayload {
+        let ikResult: NimbleEngine.IKOutput
+        let idResult: NimbleEngine.IDOutput?
+        let muscleResult: NimbleEngine.MuscleOutput?
+        let isStaticHoldEstimate: Bool
+        let motionState: MotionState
     }
 
     @Published private(set) var frames: [FrameResult] = []
@@ -312,20 +361,18 @@ final class OfflineResultStore: ObservableObject {
         selectedIndex = frames.count - 1
     }
 
-    /// Rewrites frame `id`'s biomechanics fields in place.
+    /// Atomically replaces frame `id`'s biomechanics generation.
     ///
     /// The Savitzky-Golay window is centred, so a solve never describes the
     /// frame that was just pushed — `OfflineSessionRunner` matches on the
     /// solve's own timestamp and calls this to file it against the frame it
-    /// actually belongs to. That includes solves that produced NO muscle
-    /// output because the subject was moving: `motionState` is the payload
-    /// there, and passing `muscleResult: nil` must not erase the reason.
-    func updateBiomechanics(forFrameID id: Int,
-                             muscleResult: NimbleEngine.MuscleOutput?,
-                             idResult: NimbleEngine.IDOutput?,
-                             ikResult: NimbleEngine.IKOutput?,
-                             isStaticHoldEstimate: Bool,
-                             motionState: MotionState) {
+    /// actually belongs to. A gait pass may replace a static-pass solve, so all
+    /// five fields travel together: optional nil values erase the old ID or
+    /// muscle rather than mixing two solve generations.
+    func replaceBiomechanics(
+        forFrameID id: Int,
+        with payload: BiomechanicsPayload
+    ) {
         guard let index = frames.firstIndex(where: { $0.id == id }),
               frames[index].isEligibleForTemporalAnalysis else { return }
         let existing = frames[index]
@@ -333,17 +380,17 @@ final class OfflineResultStore: ObservableObject {
             id: existing.id,
             sourceImage: existing.sourceImage,
             timestamp: existing.timestamp,
-            status: muscleResult != nil ? .success : existing.status,
+            status: existing.status,
             usedFallbackBBox: existing.usedFallbackBBox,
             temporalAnalysisExclusion: existing.temporalAnalysisExclusion,
             camT: existing.camT,
             modelChecksums: existing.modelChecksums,
             bodyFrame: existing.bodyFrame,
-            ikResult: ikResult ?? existing.ikResult,
-            idResult: idResult ?? existing.idResult,
-            muscleResult: muscleResult ?? existing.muscleResult,
-            isStaticHoldEstimate: isStaticHoldEstimate,
-            motionState: motionState
+            ikResult: payload.ikResult,
+            idResult: payload.idResult,
+            muscleResult: payload.muscleResult,
+            isStaticHoldEstimate: payload.isStaticHoldEstimate,
+            motionState: payload.motionState
         )
     }
 

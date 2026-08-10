@@ -740,12 +740,14 @@ final class OfflineSessionRunner: ObservableObject {
                 noiseFloorMetersPerSecond: motion.poseNoiseFloorMetersPerSecond)
         }
 
-        resultStore.updateBiomechanics(forFrameID: owner.id,
-                                       muscleResult: solve.muscle,
-                                       idResult: solve.id,
-                                       ikResult: solve.ik,
-                                       isStaticHoldEstimate: solve.isStaticHoldEstimate,
-                                       motionState: state)
+        resultStore.replaceBiomechanics(
+            forFrameID: owner.id,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: solve.ik,
+                idResult: solve.id,
+                muscleResult: solve.muscle,
+                isStaticHoldEstimate: solve.isStaticHoldEstimate,
+                motionState: state))
     }
 
     /// Replays `bodyFrame` on backdated timestamps to fill the LEADING half of

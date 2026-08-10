@@ -318,7 +318,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 491 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 493 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -2189,11 +2189,9 @@ to report anything at the scatter we have.
   different surface with its own static-hold gating, and changing the shared renderer was not this
   stage's to do.
 * **Minors deferred, recorded here rather than fixed:**
-  1. Pass-1 static-hold muscle output survives on frames the gait pass excluded
-     (`OfflineResultStore.swift:310` merges `muscleResult ?? existing.muscleResult` and overwrites
-     `isStaticHoldEstimate`), so a `.gaitOutsideAnalysis` frame keeps activations solved with q̈ = 0
-     under a "Pose only" caption. Materially reduced by this round — the overlay no longer draws on
-     analysed running clips — but the provenance flag is still destroyed.
+  1. ~~Pass-1 static-hold muscle output survives on frames the gait pass excluded.~~
+     **CLOSED 2026-08-10:** one `BiomechanicsPayload` now replaces IK, ID, muscle, the static flag,
+     and motion state atomically; a nil pass-2 field erases the pass-1 value.
   2. The multiplicity sentence's row count was hard-coded rather than taken from the rows drawn.
      Dead: the sentence and the rows are gone.
   3. ~~`GaitLoadSummary.framesPerSecond` used the video track's NOMINAL rate under sparse sampling.~~
@@ -2286,12 +2284,10 @@ muscle capsules next to it invites the reading that they are what the paragraph 
 These are the MINORs from the two review lenses that survive, plus one found on the way. Each is a
 statement the screen makes that is imprecise, not one that is false in a way a user can act on.
 
-1. **Pass-1 static-hold muscle output survives on frames the gait pass excluded.**
-   `OfflineResultStore.swift:310` merges `muscleResult ?? existing.muscleResult` and line 313
-   overwrites `isStaticHoldEstimate` to false, so a `.gaitOutsideAnalysis` frame keeps activations
-   solved with q̈ = 0 and loses the flag that says so. Its user-visible half is now doubly moot — the
-   overlay is off on analysed running clips, and the capsules carry no numbers anywhere — but the
-   provenance flag is still destroyed in the store.
+1. ~~**Pass-1 static-hold muscle output survives on frames the gait pass excluded.**~~
+   **CLOSED 2026-08-10:** the result store no longer nil-coalesces fields from two solve generations.
+   The complete pass-2 payload replaces pass 1, including erasing withheld ID/muscle values while
+   preserving the frame envelope.
 2. ~~**`GaitLoadSummary.framesPerSecond` used the video track's NOMINAL rate under sparse
    sampling.**~~ **CLOSED 2026-08-10:** the analysed outcome and summary factory no longer accept a
    second FPS beside `GaitReport.framesPerSecond`.
@@ -3994,9 +3990,10 @@ accepted caller exclusions, and always appended the E1 skip — so asking it to 
 skipped the same class. The log could say success while no required test supplied evidence.
 
 The runner now has four explicit modes. `fast` owns the E1 exclusion and currently requires exactly
-**491** ordinary tests (488 when this gate itself landed, plus the three temporal-isolation
-regressions below). `slow` owns the one exact E1 selector and requires exactly **1** test. `all` runs
-both lanes and is the commit gate. `subset` requires at least one caller-selected test, rejects all
+**493** ordinary tests (488 when this gate itself landed, plus three temporal-isolation and two
+atomic-payload regressions below). `slow` owns the one exact E1 selector and requires exactly **1**
+test. `all` runs both lanes and is the commit gate. `subset` requires at least one caller-selected
+test, rejects all
 skips, and prints `SUBSET PASS` rather than a gate verdict. Gating lanes accept no caller arguments,
 so selection, configuration, repetition, destination, and result-path semantics cannot be changed
 under the same receipt name.
@@ -4052,6 +4049,31 @@ failures, skips, expected failures, or restarts; the fail-closed shell harness p
 and the full commit gate passed fast **491/491** in **2416 s** plus slow E1 **1/1** in **6160 s**.
 Both `xcodebuild` and `xcresulttool` exited 0, both xcresults were `Passed`, and both lanes recorded
 zero failures, skips, expected failures, and restarts (`ALL GATE PASS`).
+
+
+## Offline solve generations replace atomically (2026-08-10)
+
+`OfflineResultStore.updateBiomechanics` independently nil-coalesced IK, ID, and muscle against the
+existing frame. That made the gait second pass able to publish impossible mixed generations:
+pose-only became `IK₂ + ID₁ + muscle₁ + motion₂`, and an ID-only pass kept `muscle₁` while replacing
+its static-hold provenance. The method also changed any frame carrying a new muscle result to
+`.success`, although solve routing does not own decoder/pose/timeout status.
+
+The RED exercised pose-only, ID-only, and full pass-2 payloads plus an envelope whose status was
+`.nimbleTimeout`: **2/2 tests failed**, showing the stale generation-1 fields and the status rewrite.
+The GREEN introduces one `BiomechanicsPayload` built from one `SolveRecord`. Its IK is non-optional;
+ID and muscle are optional and assigned directly, so nil erases. Static-hold provenance and
+`MotionState` travel in the same value, while image, timestamp, decoder/model provenance,
+`BodyFrame`, fallback admission, and `FrameStatus` are preserved. The video-fallback admission guard
+still rejects the whole replacement. `temporalAnalysisExclusion` is now an immutable `let`; an
+explicit `FrameResult` initializer retains the source-compatible nil default.
+
+The two permanent regressions plus the video-exclusion seam pass **3/3** with zero failures, skips,
+expected failures, or restarts; the related offline/gait suites pass **68/68**; and the fail-closed
+shell harness passes **49/49**. They move the fast lane's reviewed count from 491 to **493**. The
+full commit gate passed fast **493/493** in **2416 s** plus slow E1 **1/1** in **6140 s**. Both
+`xcodebuild` and `xcresulttool` exited 0, both xcresults were `Passed`, and both lanes recorded zero
+failures, skips, expected failures, and restarts (`ALL GATE PASS`).
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

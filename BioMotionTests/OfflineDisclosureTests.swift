@@ -147,26 +147,147 @@ final class OfflineDisclosureTests: XCTestCase {
             converged: true,
             timestamp: 0)
         for id in [0, 1] {
-            store.updateBiomechanics(
+            store.replaceBiomechanics(
                 forFrameID: id,
-                muscleResult: muscle,
-                idResult: nil,
-                ikResult: nil,
+                with: OfflineResultStore.BiomechanicsPayload(
+                    ikResult: Self.ik(generation: 1),
+                    idResult: nil,
+                    muscleResult: muscle,
+                    isStaticHoldEstimate: true,
+                    motionState: .measured(verdict: .hold,
+                                           peakSpeedMetersPerSecond: 0,
+                                           windowSeconds: 1,
+                                           noiseFloorMetersPerSecond: 0.001)))
+        }
+
+        XCTAssertFalse(store.frames[0].isEligibleForTemporalAnalysis)
+        XCTAssertNil(store.frames[0].ikResult)
+        XCTAssertNil(store.frames[0].idResult)
+        XCTAssertNil(store.frames[0].muscleResult,
+                     "a later route must not bypass video fallback admission")
+        XCTAssertFalse(store.frames[0].isStaticHoldEstimate)
+        XCTAssertEqual(store.frames[0].motionState, .undetermined)
+        XCTAssertFalse(store.frames[0].hasFullBiomechanics)
+        XCTAssertTrue(store.frames[1].isEligibleForTemporalAnalysis)
+        XCTAssertNotNil(store.frames[1].ikResult)
+        XCTAssertNotNil(store.frames[1].muscleResult,
+                        "photo fallback retains the existing still-pose path")
+        XCTAssertTrue(store.frames[1].hasFullBiomechanics)
+    }
+
+    /// A gait pass can revisit a frame after the static pass. Every field on
+    /// the stored solve must then come from pass 2: nil means pass 2 withheld
+    /// that output, not "keep the pass-1 value".
+    @MainActor
+    func testBiomechanicsReplacementNeverMixesSolveGenerations() {
+        struct Scenario {
+            let name: String
+            let id: NimbleEngine.IDOutput?
+            let muscle: NimbleEngine.MuscleOutput?
+        }
+
+        let scenarios = [
+            Scenario(name: "pose only", id: nil, muscle: nil),
+            Scenario(name: "ID only", id: Self.id(generation: 2), muscle: nil),
+            Scenario(name: "full", id: Self.id(generation: 2),
+                     muscle: Self.muscle(generation: 2))
+        ]
+
+        for (frameID, scenario) in scenarios.enumerated() {
+            let store = OfflineResultStore()
+            store.append(Self.emptyFrame(id: frameID))
+            store.replaceBiomechanics(
+                forFrameID: frameID,
+                with: OfflineResultStore.BiomechanicsPayload(
+                    ikResult: Self.ik(generation: 1),
+                    idResult: Self.id(generation: 1),
+                    muscleResult: Self.muscle(generation: 1),
+                    isStaticHoldEstimate: true,
+                    motionState: .measured(verdict: .hold,
+                                           peakSpeedMetersPerSecond: 0,
+                                           windowSeconds: 1,
+                                           noiseFloorMetersPerSecond: 0.001)))
+
+            let passTwoState = OfflineResultStore.MotionState.measured(
+                verdict: .movingBeyondStaticBudget,
+                peakSpeedMetersPerSecond: 2,
+                windowSeconds: 2,
+                noiseFloorMetersPerSecond: 0.02)
+            store.replaceBiomechanics(
+                forFrameID: frameID,
+                with: OfflineResultStore.BiomechanicsPayload(
+                    ikResult: Self.ik(generation: 2),
+                    idResult: scenario.id,
+                    muscleResult: scenario.muscle,
+                    isStaticHoldEstimate: false,
+                    motionState: passTwoState))
+
+            let frame = store.frames[0]
+            XCTAssertEqual(frame.ikResult?.jointAngles["generation"], 2,
+                           scenario.name)
+            XCTAssertEqual(frame.idResult?.jointTorques["generation"],
+                           scenario.id?.jointTorques["generation"],
+                           scenario.name)
+            XCTAssertEqual(frame.muscleResult?.activations["generation"],
+                           scenario.muscle?.activations["generation"],
+                           scenario.name)
+            XCTAssertFalse(frame.isStaticHoldEstimate, scenario.name)
+            XCTAssertEqual(frame.motionState, passTwoState, scenario.name)
+        }
+    }
+
+    /// Filing a solve owns only the biomechanics payload. Image/decoder/model
+    /// provenance and frame status remain exactly the envelope that was
+    /// appended, even when the new payload contains muscle output.
+    @MainActor
+    func testBiomechanicsReplacementPreservesFrameEnvelope() {
+        let image = UIImage()
+        let body = BodyFrame(timestamp: 9, frameNumber: 99, joints: [])
+        let store = OfflineResultStore()
+        store.append(OfflineResultStore.FrameResult(
+            id: 7,
+            sourceImage: image,
+            timestamp: 8,
+            status: .nimbleTimeout,
+            usedFallbackBBox: true,
+            camT: SIMD3<Float>(1, 2, 3),
+            modelChecksums: (input: 10, output: 11, source: 12, bbox: 13, warp: 14),
+            bodyFrame: body,
+            ikResult: nil,
+            idResult: nil,
+            muscleResult: nil,
+            isStaticHoldEstimate: false,
+            motionState: .undetermined))
+
+        store.replaceBiomechanics(
+            forFrameID: 7,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 2),
+                idResult: Self.id(generation: 2),
+                muscleResult: Self.muscle(generation: 2),
                 isStaticHoldEstimate: true,
                 motionState: .measured(verdict: .hold,
                                        peakSpeedMetersPerSecond: 0,
                                        windowSeconds: 1,
-                                       noiseFloorMetersPerSecond: 0.001))
-        }
+                                       noiseFloorMetersPerSecond: 0.001)))
 
-        XCTAssertFalse(store.frames[0].isEligibleForTemporalAnalysis)
-        XCTAssertNil(store.frames[0].muscleResult,
-                     "a later route must not bypass video fallback admission")
-        XCTAssertFalse(store.frames[0].hasFullBiomechanics)
-        XCTAssertTrue(store.frames[1].isEligibleForTemporalAnalysis)
-        XCTAssertNotNil(store.frames[1].muscleResult,
-                        "photo fallback retains the existing still-pose path")
-        XCTAssertTrue(store.frames[1].hasFullBiomechanics)
+        let frame = store.frames[0]
+        XCTAssertEqual(frame.id, 7)
+        XCTAssertTrue(frame.sourceImage === image)
+        XCTAssertEqual(frame.timestamp, 8)
+        XCTAssertEqual(frame.status, .nimbleTimeout)
+        XCTAssertTrue(frame.usedFallbackBBox)
+        XCTAssertNil(frame.temporalAnalysisExclusion)
+        XCTAssertEqual(frame.camT, SIMD3<Float>(1, 2, 3))
+        XCTAssertEqual(frame.modelChecksums?.input, 10)
+        XCTAssertEqual(frame.modelChecksums?.output, 11)
+        XCTAssertEqual(frame.modelChecksums?.source, 12)
+        XCTAssertEqual(frame.modelChecksums?.bbox, 13)
+        XCTAssertEqual(frame.modelChecksums?.warp, 14)
+        XCTAssertEqual(frame.bodyFrame?.timestamp, 9)
+        XCTAssertEqual(frame.bodyFrame?.frameNumber, 99)
+        XCTAssertFalse(frame.hasFullBiomechanics,
+                       "a non-success envelope must stay fail-closed in UI/load gates")
     }
 
     // MARK: - The truncation banner
@@ -306,6 +427,35 @@ final class OfflineDisclosureTests: XCTestCase {
     }
 
     // MARK: - Fixtures
+
+    private static func emptyFrame(id: Int) -> OfflineResultStore.FrameResult {
+        OfflineResultStore.FrameResult(
+            id: id, sourceImage: UIImage(), timestamp: Double(id), status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
+            ikResult: nil, idResult: nil, muscleResult: nil,
+            isStaticHoldEstimate: false, motionState: .undetermined)
+    }
+
+    private static func ik(generation: Double) -> NimbleEngine.IKOutput {
+        NimbleEngine.IKOutput(
+            jointAngles: ["generation": generation],
+            markerRMSMeters: generation,
+            ikLossSquaredMeters: generation,
+            timestamp: generation)
+    }
+
+    private static func id(generation: Double) -> NimbleEngine.IDOutput {
+        NimbleEngine.IDOutput(jointTorques: ["generation": generation],
+                              timestamp: generation)
+    }
+
+    private static func muscle(generation: Double) -> NimbleEngine.MuscleOutput {
+        NimbleEngine.MuscleOutput(
+            activations: ["generation": generation],
+            forces: ["generation": generation],
+            converged: true,
+            timestamp: generation)
+    }
 
     static func stanceFrame(id: Int = 0, side: Int,
                             solverLeft: Bool? = nil, solverRight: Bool? = nil,
