@@ -236,6 +236,13 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// `resetSessionState`.
 @property (nonatomic, readonly) BOOL ikWarmStartAvailable;
 
+/// Drops only the previous IK pose used as the next solve's warm start.
+///
+/// Use this between two analysis passes over the SAME continuous clip. Unlike
+/// `resetSessionState`, it deliberately preserves the rolling ground estimate,
+/// because the floor and its sample provenance still belong to that clip.
+- (void)resetIKWarmStart;
+
 /// Drops all per-session state that is only valid while one continuous body
 /// track is in view: the ground-height sample window (including any explicit
 /// calibration) and the IK warm-start pose.

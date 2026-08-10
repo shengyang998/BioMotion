@@ -116,13 +116,27 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   is precisely where nominal rate and analysed cadence differ.
 - **A video whole-frame fallback is a temporal gap, not a failed pose.** Keep its projected skeleton
   visible, but exclude it before body plausibility, scale, SG priming, Nimble submission, gait, ID,
-  and muscle. A photo fallback remains analysable. Segment on `DecodedFrame.index`/
+  and muscle. A photo fallback remains analysable for pose, but without an explicit/external floor
+  it is not evidence for ID/GRF/muscle. Segment on `DecodedFrame.index`/
   `BodyFrame.frameNumber`; reset realtime state before the next waiter, and pad held poses only at
   real requested clip endpoints — never across an internal or leading/trailing known gap.
 - **A stored biomechanics result is one solve generation.** Route a complete
   `OfflineResultStore.BiomechanicsPayload` from one `SolveRecord`; never nil-coalesce IK, ID, or
-  muscle fields with the previous frame payload. A nil ID/muscle means the new solve withheld it
-  and must erase any older value, while image/decoder/model provenance and `FrameStatus` stay fixed.
+  muscle fields with the previous frame payload. Carry `DynamicsAvailability` in that same payload;
+  `.available` is equivalent to a non-nil ID, while every other case names why dynamics are absent.
+  A nil ID/muscle means the new solve withheld it and must erase any older value, while
+  image/decoder/model provenance and `FrameStatus` stay fixed. Absence is never a measured zero.
+  Before a gait replacement pass, invalidate all pass-one dynamics to
+  `.analysisPassIncomplete`; only same-generation pass-two solves may repopulate them.
+- **Ground trust is a hard dynamics boundary.** `solveIDGRF` observes the feet before solving, so
+  inspect `groundHeightTrusted` after the call: observations 1–29 are pose-only and observation 30
+  is the first same-call ID/GRF/muscle result that may publish. SG endpoint replay supplies filter
+  context, not independent floor evidence; therefore one photo without an explicit/external floor
+  remains pose-only. A second pass over the same continuous clip resets IK/QP/filter state but
+  preserves that clip's ground estimate. A new clip or AR world-origin reset uses the full session
+  reset and discards it. State touched before the main-thread generation guard (including display
+  filters) is solver-queue-owned; recording history is written only after that guard, so an in-flight
+  pre-reset solve cannot mutate a new session.
 - **An analysed report does not depend on a muscle summary.** Resolution, contact-time findings and
   report flags come from `GaitReport` through `GaitTimingSummary` and stay visible when
   `GaitLoadSummary.make` returns nil. Only muscle/load/honesty sections may follow that optional.
@@ -146,7 +160,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 506 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 514 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

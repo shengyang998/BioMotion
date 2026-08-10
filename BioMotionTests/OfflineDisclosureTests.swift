@@ -105,6 +105,27 @@ final class OfflineDisclosureTests: XCTestCase {
                        frames.filter { !$0.gaitLoadsAreComparable }.count)
     }
 
+    /// Consumer-side fail-closed guard: even a contradictory payload carrying
+    /// an old gait outcome must not smuggle a residual through after the same
+    /// frame says its dynamics are unavailable.
+    func testUnavailableDynamicsCannotEnterTheGaitResidualSummary() throws {
+        let report = try GaitAnalysis.analyse(
+            frames: try GaitClipFixture.load(
+                "video_012", bundle: Bundle(for: type(of: self))).frames)
+        let contradictory = Self.gaitFrame(
+            contactSide: -1,
+            solverLeft: true,
+            solverRight: false,
+            cleanWindow: true,
+            dynamicsAvailability: .groundPlaneUntrusted)
+
+        XCTAssertFalse(contradictory.gaitLoadsAreComparable)
+        XCTAssertNil(
+            GaitLoadSummary.make(frames: [contradictory], report: report, filterTaps: 5),
+            "an unavailable frame must not contribute even a residual-only summary"
+        )
+    }
+
     /// Detection provenance is not itself a failure: a still photo may use the
     /// whole image and remain analysable. The same event inside a video is a
     /// temporal discontinuity, so its pose stays reviewable but every solve
@@ -234,6 +255,88 @@ final class OfflineDisclosureTests: XCTestCase {
             XCTAssertFalse(frame.isStaticHoldEstimate, scenario.name)
             XCTAssertEqual(frame.motionState, passTwoState, scenario.name)
         }
+    }
+
+    /// Ground calibration is a provenance boundary, not a zero-valued solve.
+    /// A gait/static second pass must erase the previous generation's physics
+    /// and carry the reason in the same atomic replacement.
+    @MainActor
+    func testGroundUntrustedReplacementErasesPhysicsAndCarriesItsReason() {
+        let store = OfflineResultStore()
+        store.append(Self.emptyFrame(id: 0))
+        store.replaceBiomechanics(
+            forFrameID: 0,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 1),
+                idResult: Self.id(generation: 1),
+                muscleResult: Self.muscle(generation: 1),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .measured(verdict: .hold,
+                                       peakSpeedMetersPerSecond: 0,
+                                       windowSeconds: 1,
+                                       noiseFloorMetersPerSecond: 0.001)))
+        XCTAssertTrue(store.frames[0].hasFullBiomechanics)
+
+        store.replaceBiomechanics(
+            forFrameID: 0,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 2),
+                idResult: nil,
+                muscleResult: nil,
+                dynamicsAvailability: .groundPlaneUntrusted,
+                isStaticHoldEstimate: false,
+                motionState: .measured(verdict: .hold,
+                                       peakSpeedMetersPerSecond: 0,
+                                       windowSeconds: 1,
+                                       noiseFloorMetersPerSecond: 0.001)))
+
+        let frame = store.frames[0]
+        XCTAssertEqual(frame.ikResult?.jointAngles["generation"], 2)
+        XCTAssertNil(frame.idResult)
+        XCTAssertNil(frame.muscleResult)
+        XCTAssertEqual(frame.dynamicsAvailability, .groundPlaneUntrusted)
+        XCTAssertFalse(frame.hasFullBiomechanics)
+        XCTAssertEqual(store.groundUntrustedCount, 1)
+        XCTAssertTrue(frame.dynamicsAvailability.title.contains("ground"))
+        XCTAssertTrue(frame.dynamicsAvailability.detail.contains("30"))
+    }
+
+    /// A gait pass replaces the static pass. Clearing first makes a timeout or
+    /// missing centred publication fail closed instead of leaving pass-one
+    /// torques and muscle output under an analysed-running result.
+    @MainActor
+    func testGaitReplacementPassClearsOldPhysicsBeforeAnyNewSolve() throws {
+        let store = OfflineResultStore()
+        store.append(Self.emptyFrame(id: 0))
+        store.replaceBiomechanics(
+            forFrameID: 0,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 1),
+                idResult: Self.id(generation: 1),
+                muscleResult: Self.muscle(generation: 1),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .measured(verdict: .hold,
+                                       peakSpeedMetersPerSecond: 0,
+                                       windowSeconds: 1,
+                                       noiseFloorMetersPerSecond: 0.001)))
+
+        store.beginGaitReplacementPass()
+
+        let cleared = store.frames[0]
+        XCTAssertEqual(cleared.ikResult?.jointAngles["generation"], 1)
+        XCTAssertNil(cleared.idResult)
+        XCTAssertNil(cleared.muscleResult)
+        XCTAssertEqual(cleared.dynamicsAvailability, .analysisPassIncomplete)
+        XCTAssertFalse(cleared.isStaticHoldEstimate)
+        XCTAssertFalse(cleared.hasFullBiomechanics)
+
+        let runner = try Self.source(at: "BioMotion/Offline/OfflineSessionRunner.swift")
+        let clear = try XCTUnwrap(runner.range(of: "resultStore.beginGaitReplacementPass()"))
+        let loop = try XCTUnwrap(runner.range(of: "        for segment in segments {"))
+        XCTAssertLessThan(clear.lowerBound, loop.lowerBound,
+                          "pass-one physics must be cleared before any pass-two submission")
     }
 
     /// Filing a solve owns only the biomechanics payload. Image/decoder/model
@@ -436,6 +539,15 @@ final class OfflineDisclosureTests: XCTestCase {
             isStaticHoldEstimate: false, motionState: .undetermined)
     }
 
+    private static func source(at relativePath: String) throws -> String {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repositoryRoot.appendingPathComponent(relativePath),
+            encoding: .utf8)
+    }
+
     private static func ik(generation: Double) -> NimbleEngine.IKOutput {
         NimbleEngine.IKOutput(
             jointAngles: ["generation": generation],
@@ -468,7 +580,9 @@ final class OfflineDisclosureTests: XCTestCase {
 
     static func gaitFrame(id: Int = 0, contactSide: Int,
                           solverLeft: Bool, solverRight: Bool,
-                          cleanWindow: Bool) -> OfflineResultStore.FrameResult {
+                          cleanWindow: Bool,
+                          dynamicsAvailability: NimbleEngine.DynamicsAvailability? = nil)
+        -> OfflineResultStore.FrameResult {
         let outcome = NimbleEngine.GaitFrameOutcome(
             modelledVerticalForceInBodyWeights: 2.0,
             solvedVerticalForceInBodyWeights: 2.1,
@@ -488,6 +602,7 @@ final class OfflineDisclosureTests: XCTestCase {
             id: id, sourceImage: UIImage(), timestamp: Double(id) / 30.0,
             status: .success, usedFallbackBBox: false, camT: nil, modelChecksums: nil,
             bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: muscle,
+            dynamicsAvailability: dynamicsAvailability,
             isStaticHoldEstimate: false,
             motionState: .gait(verdict: contactSide == 0 ? .gaitFlight : .gaitStance,
                                outcome: outcome))

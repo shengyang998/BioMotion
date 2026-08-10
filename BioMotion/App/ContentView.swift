@@ -99,7 +99,9 @@ struct ContentView: View {
         }
         .onChange(of: bodyTracking.isTracking) { _, isTracking in
             if !isTracking {
-                nimble.resetRealtimeState()
+                // Tracking loss invalidates the AR world origin and therefore
+                // the floor expressed in it, not just the SG window.
+                nimble.resetSessionState()
             }
         }
         // Charts shown via export button, not auto-transition
@@ -114,10 +116,12 @@ struct ContentView: View {
         .onChange(of: showOfflineImport) { _, presenting in
             if presenting {
                 bodyTracking.pause()
-                // Drop the live filter warm-up so the offline session starts from
-                // an empty window rather than inheriting live samples.
-                nimble.resetRealtimeState()
+                // Offline input belongs to a different coordinate session.
+                nimble.resetSessionState()
             } else {
+                // `start()` runs ARKit with `.resetTracking`, so the offline
+                // floor must not survive into the new live world origin.
+                nimble.resetSessionState()
                 bodyTracking.start()
             }
         }
@@ -142,7 +146,7 @@ struct ContentView: View {
                 // === TOP BAR ===
                 HStack {
                     StatusBadge(text: bodyTracking.trackingMessage, isActive: bodyTracking.isTracking)
-                    if nimble.isModelLoaded {
+                    if nimble.isModelLoaded && nimble.lastIKResult != nil {
                         StatusBadge(text: String(format: "IK %.1fms", nimble.ikSolveTimeMs), isActive: true)
                     }
                     Spacer()
@@ -170,7 +174,7 @@ struct ContentView: View {
                 //   |τ|/m    ≈ 1–3 Nm/kg for walking/squat (physiological)
                 //   L+R load ≈ 1.0 ± 0.1 in stance (weight supported by feet)
                 //   root res ≈ < 0.5 Nm/kg (GRF consistent with kinematics)
-                if nimble.isModelLoaded && bodyTracking.isTracking {
+                if nimble.isModelLoaded && bodyTracking.isTracking && nimble.lastIKResult != nil {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             AccuracyBadge(
@@ -185,11 +189,14 @@ struct ContentView: View {
                                 value: String(format: "%.0f mm", nimble.ikMarkerResidualMeters * 1000),
                                 good: nimble.ikMarkerResidualMeters < 0.020
                             )
-                            AccuracyBadge(
-                                label: "max |τ|/m",
-                                value: String(format: "%.1f Nm/kg", nimble.maxTorquePerKg),
-                                good: nimble.maxTorquePerKg < 5.0
-                            )
+                            if nimble.dynamicsAvailability.hasInverseDynamics,
+                               nimble.lastIDResult != nil {
+                                AccuracyBadge(
+                                    label: "max |τ|/m",
+                                    value: String(format: "%.1f Nm/kg", nimble.maxTorquePerKg),
+                                    good: nimble.maxTorquePerKg < 5.0
+                                )
+                            }
                             if nimble.totalMassKg > 0 {
                                 AccuracyBadge(
                                     label: "mass",
@@ -199,7 +206,9 @@ struct ContentView: View {
                             }
                             Spacer()
                         }
-                        HStack(spacing: 6) {
+                        if nimble.dynamicsAvailability.hasInverseDynamics,
+                           nimble.lastIDResult != nil {
+                            HStack(spacing: 6) {
                             // **This badge used to print the LEFT/RIGHT SPLIT,
                             // and it was the app's most-used screen making the
                             // exact claim the offline path spent four rounds
@@ -238,16 +247,27 @@ struct ContentView: View {
                                 value: String(format: "%.2f N/kg", nimble.rootResidualPerKg),
                                 good: nimble.rootResidualPerKg < 0.5
                             )
-                            Spacer()
+                                Spacer()
+                            }
+                            // Same `if` as the badges above it, deliberately: a
+                            // number and the sentence that scopes it must not be
+                            // gated on different conditions.
+                            Text(NimbleEngine.footLoadSplitIsNotMeasuredNote)
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(nimble.dynamicsAvailability.title)
+                                .font(.caption2.bold())
+                                .foregroundStyle(.orange)
+                            if !nimble.dynamicsAvailability.detail.isEmpty {
+                                Text(nimble.dynamicsAvailability.detail)
+                                    .font(.caption2)
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
-                        // Same `if` as the badges above it, deliberately: a
-                        // number and the sentence that scopes it must not be
-                        // gated on different conditions.
-                        Text(NimbleEngine.footLoadSplitIsNotMeasuredNote)
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.75))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.horizontal, 12)
                     .padding(.top, 2)
@@ -293,7 +313,10 @@ struct ContentView: View {
                         .padding(.horizontal, 12)
                 }
                 if showIKPanel, let ik = nimble.lastIKResult {
-                    IKReadoutPanel(ikResult: ik, idResult: nimble.lastIDResult).padding(.horizontal, 12)
+                    IKReadoutPanel(ikResult: ik,
+                                   idResult: nimble.lastIDResult,
+                                   dynamicsAvailability: nimble.dynamicsAvailability)
+                        .padding(.horizontal, 12)
                 } else if bodyTracking.isTracking, let frame = bodyTracking.currentFrame {
                     JointReadoutPanel(frame: frame).padding(.horizontal, 12)
                 }
@@ -515,6 +538,7 @@ struct JointReadoutPanel: View {
 struct IKReadoutPanel: View {
     let ikResult: NimbleEngine.IKOutput
     let idResult: NimbleEngine.IDOutput?
+    let dynamicsAvailability: NimbleEngine.DynamicsAvailability
 
     // Show a curated set of important DOFs
     private let keyDOFs = [
@@ -550,6 +574,16 @@ struct IKReadoutPanel: View {
                             }
                         }
                     }
+                }
+            }
+            if idResult == nil {
+                Text(dynamicsAvailability.title)
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
+                if !dynamicsAvailability.detail.isEmpty {
+                    Text(dynamicsAvailability.detail)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.75))
                 }
             }
         }

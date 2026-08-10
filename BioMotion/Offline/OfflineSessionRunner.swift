@@ -371,7 +371,11 @@ final class OfflineSessionRunner: ObservableObject {
         // Clip boundary between passes: the derivative window changes length
         // here (9 taps -> `plan.filterTaps`), and the IK warm start belongs to
         // the last frame of pass 1, not the first of pass 2.
-        nimble.resetSessionState()
+        nimble.resetAnalysisPassStatePreservingGround()
+        // Pass two owns the dynamics generation. Clear pass-one statics up
+        // front so a timeout or missing centred publication cannot leave old
+        // ID/muscle values under an analysed-running result.
+        resultStore.beginGaitReplacementPass()
         nimble.staticHoldGating = false
         nimble.gaitPlan = plan
         defer { nimble.gaitPlan = nil; nimble.staticHoldGating = true }
@@ -746,6 +750,7 @@ final class OfflineSessionRunner: ObservableObject {
                 ikResult: solve.ik,
                 idResult: solve.id,
                 muscleResult: solve.muscle,
+                dynamicsAvailability: solve.dynamicsAvailability,
                 isStaticHoldEstimate: solve.isStaticHoldEstimate,
                 motionState: state))
     }

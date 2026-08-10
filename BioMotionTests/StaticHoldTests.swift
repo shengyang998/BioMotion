@@ -549,6 +549,9 @@ final class StaticHoldTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertTrue(engine.isModelLoaded, "model never finished loading")
+        // StaticHoldTests exercises the motion-policy seam, not rolling-floor
+        // calibration. A trusted explicit plane keeps that contract isolated.
+        engine.setExplicitGroundHeightY(0)
         return engine
     }
 

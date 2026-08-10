@@ -337,13 +337,39 @@ final class GaitDynamicsTests: XCTestCase {
             engine.staticHoldGating = false
             engine.gaitPlan = Self.plan(for: sequence, dt: dt, taps: 5, peakBW: 2.5)
             var worst = 0.0
+            var solverContactFrames = 0
+            var pinnedFixtureGround = false
             for (i, markers) in sequence.enumerated() {
                 let ok = await submitAndWait(engine, bodyFrame(markers, timestamp: Double(i) * dt,
                                                                frameNumber: i))
-                guard ok, let g = engine.lastSolve?.gait else { continue }
+                guard ok else { continue }
+                if !pinnedFixtureGround,
+                   engine.dynamicsAvailability == .groundPlaneUntrusted {
+                    // The raw native call already observed this solved pose's
+                    // calcn bodies. Promote THAT provisional value explicitly
+                    // for this residual-only fixture; source toe markers are
+                    // not the same points and cannot supply the number.
+                    let y = engine.groundHeightY
+                    print("GAIT-METRIC fixture_ground_y=\(y) swing=\(swing)")
+                    engine.setExplicitGroundHeightY(y)
+                    pinnedFixtureGround = true
+                    continue
+                }
+                guard let g = engine.lastSolve?.gait else { continue }
+                // With no geometric contact `solveIDGRF` returns zero ground
+                // force and this value is exactly the whole planned 2.5 BW — a
+                // contact-detection failure, not the omitted articulation term
+                // this test is about. At least one solved contact is sufficient
+                // here because the falsifier uses the SUM over contacts.
+                guard g.solverSawLeftContact || g.solverSawRightContact else { continue }
+                solverContactFrames += 1
                 worst = max(worst, g.residualInBodyWeights)
             }
             engine.gaitPlan = nil
+            XCTAssertTrue(pinnedFixtureGround,
+                          "the first warm solve must expose its provisional model-foot floor")
+            XCTAssertGreaterThan(solverContactFrames, 0,
+                                 "the fixture must exercise the contact-backed residual")
             return worst
         }
 
@@ -378,6 +404,7 @@ final class GaitDynamicsTests: XCTestCase {
 
         func holdSolve() async throws -> NimbleEngine.SolveRecord {
             engine.resetSessionState()
+            engine.setExplicitGroundHeightY(Self.trustedFixtureGroundY)
             engine.gaitPlan = nil
             engine.staticHoldGating = true
             let dt = 0.5
@@ -439,6 +466,7 @@ final class GaitDynamicsTests: XCTestCase {
         let dt = 1.0 / 30.0
         let sequence = Self.syntheticRunSequence(dt: dt, frames: 20, swingAmplitude: 0.03)
         engine.resetSessionState()
+        engine.setExplicitGroundHeightY(Self.trustedFixtureGroundY)
         engine.staticHoldGating = false
         engine.gaitPlan = Self.plan(for: sequence, dt: dt, taps: 5, peakBW: 2.5)
         for (i, markers) in sequence.enumerated() {
@@ -546,6 +574,7 @@ final class GaitDynamicsTests: XCTestCase {
         /// One whole clip through the shipping path, from a clip boundary.
         func run(_ sequence: [[(String, SIMD3<Double>)]]) async -> [(Double, [String: Double])] {
             engine.resetSessionState()
+            engine.setExplicitGroundHeightY(Self.trustedFixtureGroundY)
             engine.staticHoldGating = false
             engine.gaitPlan = Self.plan(for: sequence, dt: dt, taps: 5, peakBW: 2.5)
             var out: [(Double, [String: Double])] = []
@@ -603,6 +632,11 @@ final class GaitDynamicsTests: XCTestCase {
             (opensim, SIMD3<Double>(Double(p.x), Double(p.y), Double(p.z)))
         }
     }
+
+    /// The FullBody model's world-ground convention. These tests isolate gait
+    /// dynamics from rolling-floor calibration, which has its own integration
+    /// contracts in `OfflineOrchestrationTests`.
+    private static let trustedFixtureGroundY = 0.0
 
     /// A running-like 20-marker sequence: the whole body bounces vertically at
     /// stride frequency while the limb markers swing at twice that. Contacts
@@ -746,6 +780,9 @@ final class GaitDynamicsTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertTrue(engine.isModelLoaded, "model never finished loading")
+        // These tests exercise the gait substitution/falsifier, not floor
+        // estimation. Their contact fixture therefore declares its ground.
+        engine.setExplicitGroundHeightY(Self.trustedFixtureGroundY)
         return engine
     }
 

@@ -67,6 +67,11 @@ final class NimbleEngine: ObservableObject {
     /// is still filling. Prefer this over the individual fields above when you
     /// need IK, ID, muscle and the motion verdict to describe the SAME instant.
     @Published private(set) var lastSolve: SolveRecord?
+    /// Why the newest publication does or does not contain inverse dynamics.
+    /// Numeric diagnostics are valid only for `.available`; zero remains a
+    /// legitimate measured value (for example flight) and is never reused as
+    /// an absence sentinel.
+    @Published private(set) var dynamicsAvailability: DynamicsAvailability = .waitingForMotionWindow
 
     /// When true, inverse dynamics and the muscle solve run ONLY on frames the
     /// hold detector marks as static, and they run as a static-equilibrium
@@ -271,6 +276,85 @@ final class NimbleEngine: ObservableObject {
             case .gaitStance, .gaitFlight, .gaitOutsideAnalysis, .gaitRefused: return true
             case .hold, .movingBeyondStaticBudget, .indistinguishableFromNoise,
                  .noMeasurement, .poseDidNotConverge: return false
+            }
+        }
+    }
+
+    /// Whether inverse-dynamics numbers exist for the newest publication.
+    ///
+    /// This is deliberately separate from `MotionVerdict`: stillness answers
+    /// whether a solve SHOULD be attempted, while this value records whether a
+    /// trustworthy solve actually exists. It travels with `SolveRecord` so a
+    /// nil ID can never be reinterpreted downstream as a measured zero.
+    enum DynamicsAvailability: Equatable {
+        /// The centred derivative window has not filled yet.
+        case waitingForMotionWindow
+        /// Product policy intentionally did not request dynamics for this
+        /// motion class (moving, flight, outside a gait interval, and so on).
+        case withheld(MotionVerdict)
+        /// The gait model cannot inject its vertical acceleration because the
+        /// loaded skeleton has no supported root-y coordinate.
+        case missingRootVerticalDOF
+        /// The native solve ran to advance the rolling floor estimator, but the
+        /// estimate did not yet have the 30 observations required for trust.
+        case groundPlaneUntrusted
+        /// Ground provenance was trusted, but native inverse dynamics failed.
+        case inverseDynamicsFailed
+        /// A replacement analysis pass started, but no same-generation solve
+        /// reached this frame. This keeps pass-one physics from surviving a
+        /// timeout or missing centred publication in pass two.
+        case analysisPassIncomplete
+        /// `IDOutput` is present and every number derived from it is usable at
+        /// this layer. Later physical gates may still withhold claims.
+        case available
+
+        var hasInverseDynamics: Bool { self == .available }
+
+        var title: String {
+            switch self {
+            case .waitingForMotionWindow:
+                return "Pose only — collecting neighbouring frames"
+            case .withheld(let verdict):
+                switch verdict {
+                case .gaitFlight: return "Pose only — both feet off the ground"
+                case .gaitOutsideAnalysis: return "Pose only — outside the analysed strides"
+                case .gaitRefused: return "Pose only — strides too uneven to model"
+                case .poseDidNotConverge: return "Pose only — the skeleton did not settle here"
+                case .indistinguishableFromNoise:
+                    return "Pose only — movement below what this clip can resolve"
+                case .movingBeyondStaticBudget: return "Pose only — subject moving"
+                case .noMeasurement: return "Pose only — motion was not measurable"
+                case .hold, .gaitStance: return "Pose only — dynamics withheld"
+                }
+            case .missingRootVerticalDOF:
+                return "Pose only — this model cannot solve running dynamics"
+            case .groundPlaneUntrusted:
+                return "Pose only — establishing the ground plane"
+            case .inverseDynamicsFailed:
+                return "Pose only — inverse dynamics did not return a result"
+            case .analysisPassIncomplete:
+                return "Pose only — running analysis incomplete for this frame"
+            case .available:
+                return "Inverse dynamics available"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .waitingForMotionWindow:
+                return "More neighbouring frames are needed before velocity and acceleration can be computed."
+            case .withheld(let verdict):
+                return verdict.advice
+            case .missingRootVerticalDOF:
+                return "The loaded musculoskeletal model has no supported world-vertical root coordinate."
+            case .groundPlaneUntrusted:
+                return "Ground reaction force, centre of pressure and muscle output stay hidden until the rolling floor estimate has 30 observations."
+            case .inverseDynamicsFailed:
+                return "The pose is available, but no torque, ground-force or muscle number is claimed for this frame."
+            case .analysisPassIncomplete:
+                return "The gait re-solve did not return a same-generation result here; earlier static dynamics were discarded."
+            case .available:
+                return ""
             }
         }
     }
@@ -489,6 +573,9 @@ final class NimbleEngine: ObservableObject {
         let ik: IKOutput
         let id: IDOutput?
         let muscle: MuscleOutput?
+        /// Same-generation provenance for `id`. `.available` iff `id` is
+        /// non-nil; every other case explains the absence without inventing 0.
+        let dynamicsAvailability: DynamicsAvailability
         /// True iff `id` and `muscle` were solved with q̇ = q̈ = 0 because the
         /// subject was measured to be holding still. False means they came from
         /// the Savitzky-Golay derivatives (live-camera path).
@@ -638,7 +725,9 @@ final class NimbleEngine: ObservableObject {
     // we don't want to soften real force onset.
     private var activationFilters: [String: OneEuroFilter] = [:]
 
-    // IK history for recording
+    // IK/ID history and the recording flag are main-thread-owned. Solver work
+    // contributes only inside `publishResults`, after the generation guard has
+    // rejected any solve captured before a reset.
     /// `markerRMSMeters` is the TRUE per-marker RMS in metres, not the solver
     /// loss. See `IKOutput.ikLossSquaredMeters` for why the distinction matters.
     private(set) var ikHistory: [(timestamp: TimeInterval, angles: [String: Double], markerRMSMeters: Double)] = []
@@ -915,7 +1004,8 @@ final class NimbleEngine: ObservableObject {
                                     ikTime: ikTime, idTime: 0, muscleTime: 0,
                                     ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
                                     groundY: self.bridge.groundHeightY,
-                                    generation: frameGeneration)
+                                    generation: frameGeneration,
+                                    dynamicsAvailability: .waitingForMotionWindow)
                 return
             }
 
@@ -1010,7 +1100,8 @@ final class NimbleEngine: ObservableObject {
                                          motion: motion.replacingVerdict(.gaitRefused),
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
-                                         ikTime: ikTime, generation: frameGeneration)
+                                         ikTime: ikTime, generation: frameGeneration,
+                                         availability: .missingRootVerticalDOF)
                     return
                 }
 
@@ -1078,17 +1169,28 @@ final class NimbleEngine: ObservableObject {
             var idOutput: IDOutput?
             var idTime = 0.0
             var maxTorqueNm = 0.0
+            let dynamicsAvailability: DynamicsAvailability
 
             let idStart = CACurrentMediaTime()
             // Use the GRF-aware ID solver. It runs Nimble's near-CoP
             // multi-contact inverse dynamics which auto-detects foot contact
             // and decomposes the system wrench into GRFs + joint torques.
-            if let idResult = self.bridge.solveIDGRF(
+            let rawIDResult = self.bridge.solveIDGRF(
                 withJointAngles: smoothedQNS,
                 jointVelocities: smoothedDQNS,
                 jointAccelerations: smoothedDDQNS
-            ) {
-                idTime = (CACurrentMediaTime() - idStart) * 1000.0
+            )
+            idTime = (CACurrentMediaTime() - idStart) * 1000.0
+
+            // `solveIDGRF` observes the current feet before it solves contact,
+            // so trust must be checked AFTER the call. Observation 30 upgrades
+            // the rolling estimate and is the first same-call result allowed
+            // through. The first 29 raw solves exist only to establish the
+            // floor; none of their torques/GRFs/CoPs may escape this boundary.
+            if !self.bridge.groundHeightTrusted {
+                dynamicsAvailability = .groundPlaneUntrusted
+            } else if let idResult = rawIDResult {
+                dynamicsAvailability = .available
 
                 var torques: [String: Double] = [:]
                 for i in 0..<min(idResult.jointTorques.count, dofNames.count) {
@@ -1110,6 +1212,8 @@ final class NimbleEngine: ObservableObject {
                 out.rightFootInContact = idResult.rightFootInContact
                 out.rootResidualNorm   = idResult.rootResidualNorm
                 idOutput = out
+            } else {
+                dynamicsAvailability = .inverseDynamicsFailed
             }
 
             // --- Muscle static optimization (on same SG-centered state) ---
@@ -1233,9 +1337,9 @@ final class NimbleEngine: ObservableObject {
             // with `solved`. Their difference is `‖a_artic‖/g` — see
             // `GaitFrameOutcome`.
             var gaitOutcome: GaitFrameOutcome?
-            if let planned = plannedForce {
+            if let planned = plannedForce, let id = idOutput {
                 let weightN = max(self.bridge.totalMass, 1e-6) * StaticHoldDetector.gravityMetersPerSecondSquared
-                let solvedN = (idOutput?.leftFootForce.y ?? 0) + (idOutput?.rightFootForce.y ?? 0)
+                let solvedN = id.leftFootForce.y + id.rightFootForce.y
                 let solved = solvedN / weightN
                 gaitOutcome = GaitFrameOutcome(
                     modelledVerticalForceInBodyWeights: planned,
@@ -1243,28 +1347,21 @@ final class NimbleEngine: ObservableObject {
                     residualInBodyWeights: abs(solved - planned),
                     contactSide: plannedSide,
                     contactIndex: plannedContactIndex,
-                    solverSawLeftContact: idOutput?.leftFootInContact ?? false,
-                    solverSawRightContact: idOutput?.rightFootInContact ?? false,
+                    solverSawLeftContact: id.leftFootInContact,
+                    solverSawRightContact: id.rightFootInContact,
                     rootVerticalAccelerationMetersPerSecondSquared: rootVerticalAccel,
                     horizontalRootAccelerationModelled: false,
                     derivativeWindowInsideContact: plannedWindowIsClean)
             }
 
-            // Record if enabled (history always uses the SG-centered timestamp
-            // so downstream .mot/.sto exports are temporally consistent).
-            if self.isRecordingResults {
-                self.ikHistory.append((centerTimestamp, smoothedAngles, ikResult.markerRMSMeters))
-                if let id = idOutput {
-                    self.idHistory.append((centerTimestamp, id.jointTorques))
-                }
-            }
-
             self.publishResults(ik: smoothedIkOutput, id: idOutput, muscle: muscleOutput,
-                                motion: publishedMotion, isStaticHoldEstimate: solveAsStatics,
+                                motion: publishedMotion,
+                                isStaticHoldEstimate: solveAsStatics && idOutput != nil,
                                 ikTime: ikTime, idTime: idTime, muscleTime: muscleTime,
                                 ikResidual: ikResult.markerRMSMeters, maxTorqueNm: maxTorqueNm,
                                 groundY: self.bridge.groundHeightY,
                                 generation: frameGeneration,
+                                dynamicsAvailability: dynamicsAvailability,
                                 gait: gaitOutcome)
         }
     }
@@ -1277,22 +1374,22 @@ final class NimbleEngine: ObservableObject {
     static let rootVerticalDOFName = "pelvis_ty"
 
     /// Publishes pose and a verdict with NO ID and NO muscle magnitudes.
-    /// solverQueue-only (it touches `ikHistory`).
+    /// solverQueue-only until it hands the complete publication to main.
     private func publishPoseOnly(ik: IKOutput,
                                  motion: MotionClassification,
                                  smoothedAngles: [String: Double],
                                  markerRMS: Double,
                                  ikTime: Double,
-                                 generation: UInt64) {
-        if isRecordingResults {
-            ikHistory.append((ik.timestamp, smoothedAngles, markerRMS))
-        }
+                                 generation: UInt64,
+                                 availability: DynamicsAvailability? = nil) {
+        let resolvedAvailability = availability ?? .withheld(motion.verdict)
         publishResults(ik: ik, id: nil, muscle: nil,
                        motion: motion, isStaticHoldEstimate: false,
                        ikTime: ikTime, idTime: 0, muscleTime: 0,
                        ikResidual: markerRMS, maxTorqueNm: 0,
                        groundY: bridge.groundHeightY,
-                       generation: generation)
+                       generation: generation,
+                       dynamicsAvailability: resolvedAvailability)
     }
 
     private func publishResults(ik: IKOutput, id: IDOutput?, muscle: MuscleOutput?,
@@ -1302,7 +1399,14 @@ final class NimbleEngine: ObservableObject {
                                 ikResidual: Double, maxTorqueNm: Double,
                                 groundY: Double,
                                 generation: UInt64,
+                                dynamicsAvailability: DynamicsAvailability,
                                 gait: GaitFrameOutcome? = nil) {
+        precondition((id != nil) == dynamicsAvailability.hasInverseDynamics,
+                     "Dynamics availability must agree with the ID payload")
+        precondition(muscle == nil || id != nil,
+                     "Muscle output cannot exist without same-generation ID")
+        precondition(gait == nil || id != nil,
+                     "A gait outcome cannot be fabricated without ID")
         let mass = max(totalMassKg, 1e-6)
         let torquePerKg = maxTorqueNm / mass
         // Vertical load on each foot as a fraction of body weight. Useful for
@@ -1314,17 +1418,28 @@ final class NimbleEngine: ObservableObject {
         let displayMuscle = muscle.map(normalizeForDisplay)
         let solve = motion.map {
             SolveRecord(centerTimestamp: $0.timestamp, motion: $0, ik: ik, id: id,
-                        muscle: muscle, isStaticHoldEstimate: isStaticHoldEstimate,
+                        muscle: muscle, dynamicsAvailability: dynamicsAvailability,
+                        isStaticHoldEstimate: isStaticHoldEstimate,
                         gait: gait)
         }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             // Drop late publishes from a pre-reset generation so they don't
-            // overwrite the cleared @Published state.
+            // overwrite cleared state or enter a new recording session.
             guard self.readGeneration() == generation else { return }
+            if self.isRecordingResults, motion != nil {
+                // `ik` is the SG-centred output on every recordable path, so
+                // MOT and STO rows stay temporally aligned. Warm-up publishes
+                // have `motion == nil` and intentionally remain unrecorded.
+                self.ikHistory.append((ik.timestamp, ik.jointAngles, ikResidual))
+                if let id {
+                    self.idHistory.append((ik.timestamp, id.jointTorques))
+                }
+            }
             self.lastIKResult = ik
             self.lastIDResult = id
             self.lastMuscleResult = muscle
+            self.dynamicsAvailability = dynamicsAvailability
             // Only overwritten by a warm solve. A warm-up publish leaves the
             // previous record in place rather than blanking it, matching how
             // `lastMuscleResult` behaves.
@@ -1332,6 +1447,12 @@ final class NimbleEngine: ObservableObject {
             if let displayMuscle {
                 self.displayMuscleResult = displayMuscle
                 self.lastDisplayMuscleTimestamp = displayMuscle.timestamp
+            } else if case .groundPlaneUntrusted = dynamicsAvailability {
+                // Trust loss is a hard provenance boundary, not a visual hold:
+                // do not keep an older coloured muscle overlay alive while the
+                // current frame explicitly has no trustworthy dynamics.
+                self.displayMuscleResult = nil
+                self.lastDisplayMuscleTimestamp = nil
             } else if let lastTimestamp = self.lastDisplayMuscleTimestamp,
                       (ik.timestamp - lastTimestamp) > self.displayMuscleHoldDuration {
                 self.displayMuscleResult = nil
@@ -1362,14 +1483,19 @@ final class NimbleEngine: ObservableObject {
             // as "the samples that produced this ddq".
             self.holdDetector.reset()
             self.lastMuscleSolveTimestamp = nil
+            // `normalizeForDisplay` also runs on solverQueue before the main
+            // generation guard. Queue confinement prevents a reset racing its
+            // dictionary mutations; FIFO guarantees this clear follows an old
+            // solve and precedes every newly submitted frame.
+            self.activationFilters.removeAll(keepingCapacity: false)
         }
 
-        activationFilters.removeAll(keepingCapacity: false)
         lastDisplayMuscleTimestamp = nil
         lastIKResult = nil
         lastIDResult = nil
         lastMuscleResult = nil
         lastSolve = nil
+        dynamicsAvailability = .waitingForMotionWindow
         displayMuscleResult = nil
         ikSolveTimeMs = 0
         idSolveTimeMs = 0
@@ -1399,9 +1525,31 @@ final class NimbleEngine: ObservableObject {
     /// identical output (`testTwoIdenticalRunsProduceIdenticalActivations`).
     func resetSessionState() {
         resetRealtimeState()
+        // `resetRealtimeState` deliberately preserves the floor across a gap
+        // in one continuous world frame. A full session reset does not.
+        groundHeightY = 0
         solverQueue.async { [weak self] in
             self?.bridge.resetSessionState()
             self?.muscleSolver.resetSessionState()
+        }
+    }
+
+    /// Resets solver state between two passes over the same continuous clip
+    /// while preserving that clip's rolling ground estimate and provenance.
+    func resetAnalysisPassStatePreservingGround() {
+        resetRealtimeState()
+        solverQueue.async { [weak self] in
+            self?.bridge.resetIKWarmStart()
+            self?.muscleSolver.resetSessionState()
+        }
+    }
+
+    /// Pins a ground plane supplied by a calibrated external source. The call
+    /// is ordered on the same queue as subsequent solves, so a frame submitted
+    /// after this method observes the explicit plane without a race.
+    func setExplicitGroundHeightY(_ y: Double) {
+        solverQueue.async { [weak self] in
+            self?.bridge.setGroundHeightY(y)
         }
     }
 
@@ -1472,17 +1620,20 @@ final class NimbleEngine: ObservableObject {
     // MARK: - Recording
 
     func startRecordingResults() {
+        dispatchPrecondition(condition: .onQueue(.main))
         ikHistory.removeAll()
         idHistory.removeAll()
         isRecordingResults = true
     }
 
     func stopRecordingResults() {
+        dispatchPrecondition(condition: .onQueue(.main))
         isRecordingResults = false
     }
 
     /// Export IK results as .mot file.
     func exportMOT(filename: String = "BioMotion_ik") throws -> URL {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard !ikHistory.isEmpty else { throw ExportError.noData }
 
         let startTime = ikHistory.first!.timestamp
@@ -1519,6 +1670,7 @@ final class NimbleEngine: ObservableObject {
 
     /// Export ID results as .sto file.
     func exportSTO(filename: String = "BioMotion_id") throws -> URL {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard !idHistory.isEmpty else { throw ExportError.noData }
 
         let startTime = idHistory.first!.timestamp

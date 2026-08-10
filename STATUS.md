@@ -319,7 +319,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 506 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 514 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -3999,9 +3999,10 @@ accepted caller exclusions, and always appended the E1 skip — so asking it to 
 skipped the same class. The log could say success while no required test supplied evidence.
 
 The runner now has four explicit modes. `fast` owns the E1 exclusion and currently requires exactly
-**506** ordinary tests (488 when this gate itself landed, plus three temporal-isolation, two
+**514** ordinary tests (488 when this gate itself landed, plus three temporal-isolation, two
 atomic-payload regressions, two live-anatomy contracts, three model-scaling contracts below, and
-eight MHR-root/source-provenance and reload-lifecycle contracts).
+eight MHR-root/source-provenance and reload-lifecycle contracts, plus eight ground-trust,
+availability-provenance, queue-ownership and pass-reset contracts).
 `slow` owns the one exact E1
 selector and requires exactly **1** test. `all` runs both lanes and is the commit gate. `subset`
 requires at least one caller-selected
@@ -4222,6 +4223,62 @@ StaticHold keeps exact 0 warm→warm drift and allows only **<1e-8 rad** cold→
 The commit gate then passes in full: fast is **506/506** in **2225 s** and slow E1 is **1/1** in
 **6052 s**. Both lanes have `xcodebuild rc=0`, `xcresulttool rc=0`, `xcresult=Passed`, and zero
 failures, skips, expected failures or restarts; the combined runner reports **ALL GATE PASS**.
+
+
+## Dynamics stay pose-only until the ground plane is trusted (2026-08-10)
+
+The rolling ground estimator used to expose its provisional floor as though it were calibrated.
+On its very first call, `solveIDGRF` placed the floor 1 cm below the lowest observed foot. That
+construction guarantees an apparent contact even for an airborne or arbitrary first pose. Although
+the native bridge already distinguished provisional from trusted ground, Swift never read
+`groundHeightTrusted`: provisional torques, GRFs, CoPs and muscle output therefore escaped into the
+live UI, offline payload, gait residuals and export history.
+
+The boundary is now explicit and same-generation:
+
+- `DynamicsAvailability` travels with `SolveRecord` and `BiomechanicsPayload`. `.available` is
+  equivalent to a non-nil ID payload; waiting, policy withholding, missing root-y, untrusted ground
+  and native ID failure each keep dynamics nil and carry their own explanation. Missing is never
+  rendered or aggregated as a measured zero.
+- The native call still runs so it can observe the current feet, but trust is tested **after** it
+  returns. Samples 1–29 publish pose-only; sample 30 upgrades the rolling estimate and is the first
+  result from that same call allowed to publish ID/GRF/CoP/muscle. Untrusted frames cannot append ID
+  history or fabricate a `GaitFrameOutcome`, so residual/contact summaries have no synthetic
+  `0 BW / no contact` rows.
+- Savitzky–Golay endpoint replay supplies derivative context only. Repeating one photo does not
+  manufacture 30 independent floor observations, so a photo without a calibrated external floor is
+  honestly pose-only. `setExplicitGroundHeightY` remains the ordered seam for a real external floor.
+- A gait second pass over the same continuous clip clears SG/hold state, IK warm start and QP warm
+  start while preserving that clip's ground window. It invalidates all pass-one dynamics before the
+  first pass-two submission; an incomplete/timeout row stays explicitly pose-only rather than
+  retaining static physics. A new clip, tracking loss, or ARKit
+  `.resetTracking` boundary performs the full reset and discards both the floor and stale physics.
+- Live and offline presentation now show the availability reason instead of green `0.0 Nm/kg`,
+  `0.00 BW`, `0.00 N/kg`, an old muscle overlay, or a misleading “warming up” label. Offline payload
+  replacement clears old ID/muscle/gait fields atomically and reports the number of pose-only
+  ground-establishment frames.
+
+The RED contracts proved three concrete leaks: sample 29 still produced ID/muscle/history, an
+untrusted gait frame still produced numeric outcome/summary state, and the first warm solve after a
+session reset still published physics. All three failed before the implementation. The same
+selection then passed **3/3 in 58 s**; the bridge/orchestration/static related set passed **46/46 in
+149 s**. The gait falsifier was corrected to pin the estimator's own provisional floor and compare
+only contact-backed residuals: calm **0.030604 BW**, violent **1.782345 BW**, against the unchanged
+**0.5 BW** gate, and its focused run passed **1/1 in 208 s**. Five initial contracts pin atomic
+availability replacement and same-clip ground preservation. Review then found three fail-closed
+edges: the display-filter dictionary could race reset across queues; recording history was written
+before the generation guard; and an unavailable/timeout gait row could retain or aggregate old
+physics. Their RED ran **2/2 failed** with the exact residual and queue-ownership leaks, plus one
+expected compile RED for the missing replacement-pass seam. Moving filter cleanup onto the solver
+queue, recording only inside the guarded main publication, pre-clearing pass-one dynamics, and
+checking availability again in `GaitLoadSummary` makes the focused selection pass **3/3 in 10 s**.
+The complete related selection (`GaitDynamics`, `GaitLoadSummary`, bridge, disclosure,
+orchestration and static-hold suites) then passes **113/113 in 826 s**, with zero failures, skips,
+expected failures, or restarts. The eight new contracts move the reviewed fast count from 506 to
+**514**. The full `tools/run_tests.sh all` commit gate then passed: fast **514/514 in 2245 s** and
+slow E1 **1/1 in 6066 s**. Both lanes returned `xcodebuild = 0`, `xcresulttool = 0`, `Passed`, and
+zero failures, skips, expected failures, or test-host restarts; the runner ended with
+`ALL GATE PASS`.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

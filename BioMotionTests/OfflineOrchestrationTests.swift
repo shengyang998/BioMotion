@@ -1,4 +1,5 @@
 import simd
+import UIKit
 import XCTest
 @testable import BioMotion
 
@@ -67,6 +68,224 @@ final class OfflineOrchestrationTests: XCTestCase {
     }
 
     @MainActor
+    private func loadEngineForGroundTrustTest() async {
+        engine.loadBundledModel()
+        let deadline = Date().addingTimeInterval(60)
+        while !engine.isModelLoaded && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(engine.isModelLoaded, "model never finished loading")
+    }
+
+    /// Ground trust currently lives inside the bridge, while the contract being
+    /// exercised here is the engine's publication boundary. Reflection keeps
+    /// this RED test test-only until that boundary has a production seam of its
+    /// own; it is deliberately limited to seeding and observing trust state.
+    private func groundBridge() throws -> NimbleBridge {
+        let child = Mirror(reflecting: engine as NimbleEngine).children.first {
+            $0.label == "bridge"
+        }
+        return try XCTUnwrap(child?.value as? NimbleBridge,
+                             "NimbleEngine no longer exposes its bridge to the ground-trust test seam")
+    }
+
+    @MainActor
+    private func submitConstantFrames(count: Int,
+                                      startingAt start: TimeInterval = 0,
+                                      frameNumberBase: Int = 0) async {
+        let dt = 1.0 / 30.0
+        for index in 0..<count {
+            let published = await submitAndWait(
+                bodyFrame(timestamp: start + Double(index) * dt,
+                          frameNumber: frameNumberBase + index),
+                timeout: submissionLivenessTimeout)
+            XCTAssertTrue(published, "ground-trust push \(index) did not publish")
+        }
+    }
+
+    private func assertNoRecordedIDHistory(file: StaticString = #filePath,
+                                           line: UInt = #line) {
+        let filename = "GroundTrust_untrusted_id"
+        do {
+            let url = try engine.exportSTO(filename: filename)
+            try? FileManager.default.removeItem(at: url)
+            XCTFail("untrusted ground leaked inverse dynamics into ID history",
+                    file: file, line: line)
+        } catch NimbleEngine.ExportError.noData {
+            // The public export boundary is the observable ID-history contract.
+        } catch {
+            XCTFail("unexpected ID-history export error: \(error)", file: file, line: line)
+        }
+    }
+
+    /// Reset is allowed while an old solve is still on the serial queue. Every
+    /// mutable side effect that solve can reach before its main-thread publish
+    /// must therefore either share the queue or sit behind the generation
+    /// guard. This source contract pins the ownership boundary that makes the
+    /// otherwise timing-dependent race deterministic to review.
+    func testResetOwnedBuffersAreQueueAndGenerationConfined() throws {
+        let source = try nimbleEngineSource()
+        let resetStart = try XCTUnwrap(source.range(of: "    func resetRealtimeState()"))
+        let resetEnd = try XCTUnwrap(
+            source.range(of: "    func resetSessionState()", range: resetStart.upperBound..<source.endIndex))
+        let resetBody = String(source[resetStart.lowerBound..<resetEnd.lowerBound])
+        let queuedResetEnd = try XCTUnwrap(
+            resetBody.range(of: "\n        }\n\n        lastDisplayMuscleTimestamp"))
+        let queuedReset = String(resetBody[..<queuedResetEnd.upperBound])
+        XCTAssertTrue(
+            queuedReset.contains("activationFilters.removeAll(keepingCapacity: false)"),
+            "display filters are solverQueue-owned and must be cleared on that same queue"
+        )
+
+        XCTAssertEqual(
+            source.components(separatedBy: "ikHistory.append").count - 1,
+            1,
+            "history must have one main-thread publication owner, not solverQueue writers"
+        )
+        let publishStart = try XCTUnwrap(source.range(of: "    private func publishResults("))
+        let publishEnd = try XCTUnwrap(
+            source.range(of: "    func resetRealtimeState()", range: publishStart.upperBound..<source.endIndex))
+        let publication = String(source[publishStart.lowerBound..<publishEnd.lowerBound])
+        let guardIndex = try XCTUnwrap(
+            publication.range(of: "guard self.readGeneration() == generation else { return }"))
+        let historyIndex = try XCTUnwrap(publication.range(of: "self.ikHistory.append"))
+        XCTAssertLessThan(guardIndex.lowerBound, historyIndex.lowerBound,
+                          "a discarded generation must not enter recording history")
+    }
+
+    private func nimbleEngineSource() throws -> String {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "BioMotion/Nimble/NimbleEngine.swift"),
+            encoding: .utf8)
+    }
+
+    @MainActor
+    func testGroundSampleTwentyNineIsPoseOnlyAndSampleThirtyAllowsDynamics() async throws {
+        await loadEngineForGroundTrustTest()
+        let bridge = try groundBridge()
+
+        // The first centred dynamics candidate contributes sample 29 itself.
+        // Trust must therefore be checked after solveIDGRF has observed that
+        // frame, while still refusing all numerical physics at 29.
+        for _ in 0..<28 { bridge.observeLowestFootHeightY(0) }
+        engine.startRecordingResults()
+        defer { engine.stopRecordingResults() }
+
+        await submitConstantFrames(count: SavitzkyGolayFilter.windowSize)
+
+        XCTAssertEqual(bridge.groundHeightSource, .provisional)
+        XCTAssertFalse(bridge.groundHeightTrusted)
+        let rejected = try XCTUnwrap(engine.lastSolve,
+                                     "the warm solve should still publish its centred pose")
+        XCTAssertEqual(rejected.dynamicsAvailability, .groundPlaneUntrusted)
+        XCTAssertNil(rejected.id?.timestamp, "sample 29 may not publish inverse dynamics")
+        XCTAssertNil(rejected.muscle?.timestamp, "sample 29 may not publish muscle magnitudes")
+        XCTAssertNil(rejected.gait?.residualInBodyWeights,
+                     "sample 29 may not publish a numerical gait outcome")
+        XCTAssertNil(engine.lastIDResult?.timestamp)
+        XCTAssertNil(engine.lastMuscleResult?.timestamp)
+        assertNoRecordedIDHistory()
+
+        // The next centred candidate contributes sample 30. This is the first
+        // call whose post-call trust state permits inverse dynamics to escape.
+        await submitConstantFrames(count: 1,
+                                   startingAt: Double(SavitzkyGolayFilter.windowSize) / 30.0,
+                                   frameNumberBase: SavitzkyGolayFilter.windowSize)
+
+        XCTAssertEqual(bridge.groundHeightSource, .estimated)
+        XCTAssertTrue(bridge.groundHeightTrusted)
+        XCTAssertEqual(engine.lastSolve?.dynamicsAvailability, .available)
+        XCTAssertNotNil(engine.lastSolve?.id,
+                        "sample 30 is the first ground-backed dynamics result")
+    }
+
+    @MainActor
+    func testUntrustedGroundGaitHasNoOutcomeOrResidualSummary() async throws {
+        await loadEngineForGroundTrustTest()
+        let dt = 1.0 / 30.0
+        let taps = WindowedDerivativeFilter.minimumTaps
+        engine.gaitPlan = NimbleEngine.GaitPlan(
+            frames: (0..<taps).map { index in
+                NimbleEngine.GaitPlan.Frame(
+                    timestamp: Double(index) * dt,
+                    verticalForceInBodyWeights: 2,
+                    contactSide: -1,
+                    contactIndex: 0,
+                    derivativeWindowInsideContact: true)
+            },
+            filterTaps: taps,
+            sampleInterval: dt)
+
+        await submitConstantFrames(count: taps)
+
+        let solve = try XCTUnwrap(engine.lastSolve,
+                                  "the warm gait solve should still publish its centred pose")
+        XCTAssertEqual(solve.motion.verdict, .gaitStance)
+        XCTAssertEqual(solve.dynamicsAvailability, .groundPlaneUntrusted)
+        XCTAssertNil(solve.id?.timestamp)
+        XCTAssertNil(solve.muscle?.timestamp)
+        XCTAssertNil(solve.gait?.residualInBodyWeights,
+                     "untrusted contact geometry cannot become a numeric gait outcome")
+
+        let frame = OfflineResultStore.FrameResult(
+            id: 0,
+            sourceImage: UIImage(),
+            timestamp: solve.centerTimestamp,
+            status: .success,
+            usedFallbackBBox: false,
+            camT: nil,
+            modelChecksums: nil,
+            bodyFrame: nil,
+            ikResult: solve.ik,
+            idResult: solve.id,
+            muscleResult: solve.muscle,
+            isStaticHoldEstimate: solve.isStaticHoldEstimate,
+            motionState: .gait(verdict: solve.motion.verdict, outcome: solve.gait))
+        let fixture = try GaitClipFixture.load("video_012", bundle: Bundle(for: type(of: self)))
+        let report = try GaitAnalysis.analyse(frames: fixture.frames)
+        let summary = GaitLoadSummary.make(frames: [frame], report: report, filterTaps: taps)
+        XCTAssertNil(summary?.residualFrameCount,
+                     "untrusted ground must not manufacture a residual-bearing gait summary")
+    }
+
+    @MainActor
+    func testSessionResetClearsPhysicsAndRestartsGroundWarmupPoseOnly() async throws {
+        await loadEngineForGroundTrustTest()
+        let bridge = try groundBridge()
+
+        // The first warm solve contributes observation 30 and is trusted.
+        for _ in 0..<29 { bridge.observeLowestFootHeightY(0) }
+        await submitConstantFrames(count: SavitzkyGolayFilter.windowSize)
+        XCTAssertTrue(bridge.groundHeightTrusted)
+        XCTAssertNotNil(engine.lastSolve?.id, "precondition: trusted physics never published")
+
+        engine.resetSessionState()
+        XCTAssertNil(engine.lastSolve)
+        XCTAssertNil(engine.lastIDResult?.timestamp)
+        XCTAssertNil(engine.lastMuscleResult?.timestamp)
+
+        await submitConstantFrames(count: SavitzkyGolayFilter.windowSize,
+                                   startingAt: 10,
+                                   frameNumberBase: 100)
+
+        XCTAssertEqual(bridge.groundHeightSource, .provisional)
+        XCTAssertFalse(bridge.groundHeightTrusted,
+                       "a new session must not inherit the old floor")
+        let restarted = try XCTUnwrap(engine.lastSolve,
+                                      "the new session should still publish a centred pose")
+        XCTAssertEqual(restarted.dynamicsAvailability, .groundPlaneUntrusted)
+        XCTAssertNil(restarted.id?.timestamp)
+        XCTAssertNil(restarted.muscle?.timestamp)
+        XCTAssertNil(restarted.gait?.residualInBodyWeights)
+        XCTAssertNil(engine.lastIDResult?.timestamp)
+        XCTAssertNil(engine.lastMuscleResult?.timestamp)
+    }
+
+    @MainActor
     func testNineSubmissionsProduceMuscleOutput() async throws {
         engine.loadBundledModel()
 
@@ -76,6 +295,10 @@ final class OfflineOrchestrationTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertTrue(engine.isModelLoaded, "model never finished loading")
+        // This test isolates async routing and the muscle chain, not floor
+        // estimation. Give it the explicit calibrated plane that production
+        // would need before a one-frame photo could support dynamics.
+        engine.setExplicitGroundHeightY(0)
 
         // The offline runner's cadence: 4 head-pad + 1 real + 4 tail-pad, all
         // at the same pose, spaced on the clip's sample interval.

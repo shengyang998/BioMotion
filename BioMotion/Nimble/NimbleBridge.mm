@@ -483,6 +483,10 @@ static double modelMHRTrunkReferenceLength(
     _footHeightSamples.clear();
     _footHeightScratch.clear();
     _footHeightWriteIndex = 0;
+    [self resetIKWarmStart];
+}
+
+- (void)resetIKWarmStart {
     _lastIKPose.resize(0);
     _hasLastIKPose = NO;
 }

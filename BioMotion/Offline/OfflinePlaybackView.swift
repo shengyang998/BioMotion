@@ -234,6 +234,14 @@ struct OfflinePlaybackView: View {
         }
         switch frame.status {
         case .success:
+            switch frame.dynamicsAvailability {
+            case .waitingForMotionWindow, .groundPlaneUntrusted,
+                 .inverseDynamicsFailed, .missingRootVerticalDOF,
+                 .analysisPassIncomplete:
+                return frame.dynamicsAvailability.title
+            case .withheld, .available:
+                break
+            }
             // The gait cases come first: on a running clip they are what
             // decided the frame, and the stillness wording ("hold the
             // position") is advice a runner cannot act on.
@@ -302,6 +310,13 @@ struct OfflinePlaybackView: View {
         switch frame.status {
         case .success:
             if frame.hasFullBiomechanics { return .green }
+            switch frame.dynamicsAvailability {
+            case .inverseDynamicsFailed, .missingRootVerticalDOF,
+                 .analysisPassIncomplete: return .red
+            case .groundPlaneUntrusted: return .orange
+            case .waitingForMotionWindow: return .white
+            case .withheld, .available: break
+            }
             if frame.isPoseOnlyBecauseNotStill { return .orange }
             return .white
         case .poseEstimationFailed, .nimbleTimeout, .implausibleBody:
@@ -314,6 +329,14 @@ struct OfflinePlaybackView: View {
     private func motionDetail(_ frame: OfflineResultStore.FrameResult) -> String? {
         if let exclusion = frame.temporalAnalysisExclusion {
             return exclusion.badgeDetail
+        }
+        switch frame.dynamicsAvailability {
+        case .waitingForMotionWindow, .groundPlaneUntrusted,
+             .inverseDynamicsFailed, .missingRootVerticalDOF,
+             .analysisPassIncomplete:
+            return frame.dynamicsAvailability.detail
+        case .withheld, .available:
+            break
         }
         switch frame.motionState {
         case .undetermined:
@@ -436,6 +459,10 @@ struct OfflinePlaybackView: View {
         if rejected > 0 { label += ", \(rejected) rejected (body size)" }
         let excluded = resultStore.frames.filter { !$0.isEligibleForTemporalAnalysis }.count
         if excluded > 0 { label += ", \(excluded) pose-only (no person box)" }
+        let groundUntrusted = resultStore.groundUntrustedCount
+        if groundUntrusted > 0 {
+            label += ", \(groundUntrusted) pose-only (ground not established)"
+        }
         return label
     }
 }

@@ -158,6 +158,10 @@ final class OfflineResultStore: ObservableObject {
         let ikResult: NimbleEngine.IKOutput?
         let idResult: NimbleEngine.IDOutput?
         let muscleResult: NimbleEngine.MuscleOutput?
+        /// Same-generation explanation for `idResult`. Numeric dynamics UI is
+        /// permitted only for `.available`; every other case is pose-only with
+        /// a named reason rather than a zero sentinel.
+        let dynamicsAvailability: NimbleEngine.DynamicsAvailability
         /// True iff this frame's ID and muscle results were solved as a STATIC
         /// EQUILIBRIUM problem (q̇ = q̈ = 0) on a detected hold — i.e. the
         /// muscle numbers are a posture estimate, not a measurement of dynamics.
@@ -183,6 +187,7 @@ final class OfflineResultStore: ObservableObject {
             ikResult: NimbleEngine.IKOutput?,
             idResult: NimbleEngine.IDOutput?,
             muscleResult: NimbleEngine.MuscleOutput?,
+            dynamicsAvailability: NimbleEngine.DynamicsAvailability? = nil,
             isStaticHoldEstimate: Bool,
             motionState: MotionState
         ) {
@@ -198,6 +203,18 @@ final class OfflineResultStore: ObservableObject {
             self.ikResult = ikResult
             self.idResult = idResult
             self.muscleResult = muscleResult
+            if let dynamicsAvailability {
+                self.dynamicsAvailability = dynamicsAvailability
+            } else if idResult != nil || muscleResult != nil {
+                self.dynamicsAvailability = .available
+            } else {
+                switch motionState {
+                case .undetermined:
+                    self.dynamicsAvailability = .waitingForMotionWindow
+                case .measured(let verdict, _, _, _), .gait(let verdict, _):
+                    self.dynamicsAvailability = .withheld(verdict)
+                }
+            }
             self.isStaticHoldEstimate = isStaticHoldEstimate
             self.motionState = motionState
         }
@@ -205,7 +222,9 @@ final class OfflineResultStore: ObservableObject {
         var isEligibleForTemporalAnalysis: Bool { temporalAnalysisExclusion == nil }
         var hasFullBiomechanics: Bool {
             guard case .success = status else { return false }
-            return isEligibleForTemporalAnalysis && muscleResult != nil
+            return isEligibleForTemporalAnalysis
+                && dynamicsAvailability.hasInverseDynamics
+                && muscleResult != nil
         }
         /// Pose was solved fine, but the detector could not certify a still
         /// instant, so no muscle magnitudes are claimed. Distinct from the
@@ -245,6 +264,7 @@ final class OfflineResultStore: ObservableObject {
         /// Off the running path this is always true: a still-pose clip carries
         /// no gait outcome and is governed by the static-hold gate as before.
         var gaitLoadsAreComparable: Bool {
+            if isGaitStance && !dynamicsAvailability.hasInverseDynamics { return false }
             guard let outcome = motionState.gaitOutcome else { return true }
             return outcome.isUsableForLoadComparison
         }
@@ -253,6 +273,9 @@ final class OfflineResultStore: ObservableObject {
         /// when they are. Each case names a different lever, which is why they
         /// are not collapsed into one sentence.
         var gaitExclusionReason: String? {
+            if isGaitStance && !dynamicsAvailability.hasInverseDynamics {
+                return dynamicsAvailability.detail
+            }
             guard let outcome = motionState.gaitOutcome, !outcome.isUsableForLoadComparison else {
                 return nil
             }
@@ -285,8 +308,34 @@ final class OfflineResultStore: ObservableObject {
         let ikResult: NimbleEngine.IKOutput
         let idResult: NimbleEngine.IDOutput?
         let muscleResult: NimbleEngine.MuscleOutput?
+        let dynamicsAvailability: NimbleEngine.DynamicsAvailability
         let isStaticHoldEstimate: Bool
         let motionState: MotionState
+
+        init(ikResult: NimbleEngine.IKOutput,
+             idResult: NimbleEngine.IDOutput?,
+             muscleResult: NimbleEngine.MuscleOutput?,
+             dynamicsAvailability: NimbleEngine.DynamicsAvailability? = nil,
+             isStaticHoldEstimate: Bool,
+             motionState: MotionState) {
+            self.ikResult = ikResult
+            self.idResult = idResult
+            self.muscleResult = muscleResult
+            if let dynamicsAvailability {
+                self.dynamicsAvailability = dynamicsAvailability
+            } else if idResult != nil || muscleResult != nil {
+                self.dynamicsAvailability = .available
+            } else {
+                switch motionState {
+                case .undetermined:
+                    self.dynamicsAvailability = .waitingForMotionWindow
+                case .measured(let verdict, _, _, _), .gait(let verdict, _):
+                    self.dynamicsAvailability = .withheld(verdict)
+                }
+            }
+            self.isStaticHoldEstimate = isStaticHoldEstimate
+            self.motionState = motionState
+        }
     }
 
     @Published private(set) var frames: [FrameResult] = []
@@ -389,9 +438,41 @@ final class OfflineResultStore: ObservableObject {
             ikResult: payload.ikResult,
             idResult: payload.idResult,
             muscleResult: payload.muscleResult,
+            dynamicsAvailability: payload.dynamicsAvailability,
             isStaticHoldEstimate: payload.isStaticHoldEstimate,
             motionState: payload.motionState
         )
+    }
+
+    /// Begins a gait re-solve by invalidating every eligible pass-one dynamics
+    /// payload before pass two can publish anything.
+    ///
+    /// Successful centred solves replace this marker atomically. A timeout,
+    /// cancellation, missing window centre, or unrouted publication leaves the
+    /// explicit `.analysisPassIncomplete` reason instead of silently retaining
+    /// static torques/muscle output from a different analysis policy. Pose and
+    /// source/model provenance remain available for review.
+    func beginGaitReplacementPass() {
+        for index in frames.indices where frames[index].isEligibleForTemporalAnalysis {
+            let existing = frames[index]
+            frames[index] = FrameResult(
+                id: existing.id,
+                sourceImage: existing.sourceImage,
+                timestamp: existing.timestamp,
+                status: existing.status,
+                usedFallbackBBox: existing.usedFallbackBBox,
+                temporalAnalysisExclusion: existing.temporalAnalysisExclusion,
+                camT: existing.camT,
+                modelChecksums: existing.modelChecksums,
+                bodyFrame: existing.bodyFrame,
+                ikResult: existing.ikResult,
+                idResult: nil,
+                muscleResult: nil,
+                dynamicsAvailability: .analysisPassIncomplete,
+                isStaticHoldEstimate: false,
+                motionState: existing.motionState
+            )
+        }
     }
 
     var selectedFrame: FrameResult? {
@@ -410,6 +491,12 @@ final class OfflineResultStore: ObservableObject {
     }
 
     var biomechanicsCount: Int { frames.filter(\.hasFullBiomechanics).count }
+
+    /// Successful poses whose ID/GRF/muscle payload was withheld specifically
+    /// because the rolling floor had not reached its trust threshold.
+    var groundUntrustedCount: Int {
+        frames.filter { $0.dynamicsAvailability == .groundPlaneUntrusted }.count
+    }
 
     /// Frames whose pose was solved but whose muscle numbers were withheld
     /// because the subject was moving. Surfaced so "few frames have muscle

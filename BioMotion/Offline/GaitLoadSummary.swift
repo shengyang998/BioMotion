@@ -1006,6 +1006,7 @@ struct GaitLoadSummary {
 
         for frame in frames {
             guard frame.isGaitStance,
+                  frame.dynamicsAvailability.hasInverseDynamics,
                   let outcome = frame.motionState.gaitOutcome else { continue }
 
             claimedStance += 1

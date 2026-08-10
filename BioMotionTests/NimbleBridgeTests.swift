@@ -300,6 +300,23 @@ final class NimbleBridgeTests: XCTestCase {
                        "Tracking loss must invalidate the warm-start pose")
     }
 
+    func testIKOnlyResetPreservesTrustedGroundForASecondPass() {
+        loadModel()
+        for _ in 0..<30 { bridge.observeLowestFootHeightY(0.05) }
+        XCTAssertTrue(bridge.groundHeightTrusted)
+        let ground = bridge.groundHeightY
+
+        XCTAssertNotNil(solveStandingPose())
+        XCTAssertTrue(bridge.ikWarmStartAvailable)
+
+        bridge.resetIKWarmStart()
+        XCTAssertFalse(bridge.ikWarmStartAvailable)
+        XCTAssertEqual(bridge.groundHeightSource, .estimated)
+        XCTAssertTrue(bridge.groundHeightTrusted)
+        XCTAssertEqual(bridge.groundHeightY, ground, accuracy: 1e-12,
+                       "A second analysis pass belongs to the same floor")
+    }
+
     func testRepeatedIKOnIdenticalMarkersIsStable() {
         loadModel()
         _ = solveStandingPose()  // first solve is cold; warms the solver
