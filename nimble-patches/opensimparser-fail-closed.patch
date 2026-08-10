@@ -1,0 +1,562 @@
+diff --git a/dart/biomechanics/OpenSimParser.cpp b/dart/biomechanics/OpenSimParser.cpp
+index e2ca271..32ef5b5 100644
+--- a/dart/biomechanics/OpenSimParser.cpp
++++ b/dart/biomechanics/OpenSimParser.cpp
+@@ -235,6 +235,11 @@ std::vector<s_t> readVecX(tinyxml2::XMLElement* elem)
+ std::pair<dynamics::EulerJoint::AxisOrder, bool> getAxisOrder(
+     std::vector<Eigen::Vector3s> axisList)
+ {
++  if (axisList.size() != 3)
++  {
++    return std::make_pair<dynamics::EulerJoint::AxisOrder, bool>(
++        dynamics::EulerJoint::AxisOrder::XYZ, true);
++  }
+   if (axisList[0].cwiseAbs() == Eigen::Vector3s::UnitX()
+       && axisList[1].cwiseAbs() == Eigen::Vector3s::UnitY()
+       && axisList[2].cwiseAbs() == Eigen::Vector3s::UnitZ())
+@@ -4389,6 +4394,13 @@ createCustomJoint(
+     std::vector<Eigen::Vector3s> eulerAxisOrder,
+     std::vector<Eigen::Vector3s> transformAxisOrder)
+ {
++  NIMBLE_THROW_IF(
++      customFunctions.size() != 6 || drivenByDofs.size() != 6
++          || eulerAxisOrder.size() != 3 || transformAxisOrder.size() != 3,
++      "OpenSim CustomJoint \"" + jointName
++          + "\" must define exactly three rotation and three translation "
++            "axes.");
++
+   dynamics::CustomJoint<Dimension>* customJoint = nullptr;
+   dynamics::BodyNode* childBody = nullptr;
+   // Create a CustomJoint
+@@ -4410,8 +4422,6 @@ createCustomJoint(
+     childBody = pair.second;
+   }
+ 
+-  assert(customFunctions.size() == 6);
+-
+   auto axisOrderAndErrorFlag = getAxisOrder(eulerAxisOrder);
+   dynamics::EulerJoint::AxisOrder axisOrder = axisOrderAndErrorFlag.first;
+   bool axisOrderError = axisOrderAndErrorFlag.second;
+@@ -4420,25 +4430,21 @@ createCustomJoint(
+     NIMBLE_THROW("Invalid axis order for Euler joint: " + jointName);
+   }
+   Eigen::Vector3s flips = getAxisFlips(eulerAxisOrder);
++  NIMBLE_THROW_IF(
++      customJoint == nullptr || childBody == nullptr,
++      "OpenSimParser failed to allocate CustomJoint \"" + jointName + "\".");
+   customJoint->setAxisOrder(axisOrder);
+   customJoint->setFlipAxisMap(flips);
+ 
+-#ifndef NDEBUG
+-  std::vector<bool> setFunction;
+-  for (int i = 0; i < 6; i++)
+-  {
+-    setFunction.push_back(false);
+-  }
+-#endif
++  bool translationXSet = false;
++  bool translationYSet = false;
++  bool translationZSet = false;
+ 
+   for (int i = 0; i < customFunctions.size(); i++)
+   {
+     if (i < 3)
+     {
+       customJoint->setCustomFunction(i, customFunctions[i], drivenByDofs[i]);
+-#ifndef NDEBUG
+-      setFunction[i] = true;
+-#endif
+     }
+     else
+     {
+@@ -4446,38 +4452,44 @@ createCustomJoint(
+       Eigen::Vector3s axis = transformAxisOrder[i - 3];
+       if (axis == Eigen::Vector3s::UnitX())
+       {
++        NIMBLE_THROW_IF(
++            translationXSet,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" repeats its X translation axis.");
+         customJoint->setCustomFunction(3, customFunctions[i], drivenByDofs[i]);
+-#ifndef NDEBUG
+-        setFunction[3] = true;
+-#endif
++        translationXSet = true;
+       }
+       else if (axis == Eigen::Vector3s::UnitY())
+       {
++        NIMBLE_THROW_IF(
++            translationYSet,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" repeats its Y translation axis.");
+         customJoint->setCustomFunction(4, customFunctions[i], drivenByDofs[i]);
+-#ifndef NDEBUG
+-        setFunction[4] = true;
+-#endif
++        translationYSet = true;
+       }
+       else if (axis == Eigen::Vector3s::UnitZ())
+       {
++        NIMBLE_THROW_IF(
++            translationZSet,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" repeats its Z translation axis.");
+         customJoint->setCustomFunction(5, customFunctions[i], drivenByDofs[i]);
+-#ifndef NDEBUG
+-        setFunction[5] = true;
+-#endif
++        translationZSet = true;
+       }
+       else
+       {
+-        assert(false);
++        NIMBLE_THROW(
++            "OpenSim CustomJoint \"" + jointName
++            + "\" has a non-Cartesian translation axis.");
+       }
+     }
+   }
+ 
+-#ifndef NDEBUG
+-  for (int i = 0; i < 6; i++)
+-  {
+-    assert(setFunction[i]);
+-  }
+-#endif
++  NIMBLE_THROW_IF(
++      !translationXSet || !translationYSet || !translationZSet,
++      "OpenSim CustomJoint \"" + jointName
++          + "\" must define one translation axis for each of X, Y, and Z.");
+ 
+   return std::make_pair(customJoint, childBody);
+ }
+@@ -5010,6 +5022,10 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+   {
+     tinyxml2::XMLElement* spatialTransform
+         = jointDetail->FirstChildElement("SpatialTransform");
++    NIMBLE_THROW_IF(
++        spatialTransform == nullptr,
++        "OpenSim CustomJoint \"" + jointName
++            + "\" is missing its SpatialTransform.");
+     tinyxml2::XMLElement* transformAxisCursor
+         = spatialTransform->FirstChildElement("TransformAxis");
+ 
+@@ -5031,12 +5047,20 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+     bool first3Linear = true;
+     /// If any are splines, we need a full blown CustomJoint
+     bool anySpline = false;
++    /// The specialized DART joints below represent only zero constants and
++    /// identity linear functions. Anything else must remain a CustomJoint.
++    bool allSimpleFunctionsCanonical = true;
+     /// If all 6 DOFs are fixed at 0, then we're just a WeldJoint
+     bool allLocked = true;
+     while (transformAxisCursor)
+     {
+-      Eigen::Vector3s axis
+-          = readVec3(transformAxisCursor->FirstChildElement("axis"));
++      tinyxml2::XMLElement* axisElement
++          = transformAxisCursor->FirstChildElement("axis");
++      NIMBLE_THROW_IF(
++          axisElement == nullptr || axisElement->GetText() == nullptr,
++          "OpenSim CustomJoint \"" + jointName
++              + "\" contains a TransformAxis without an axis value.");
++      Eigen::Vector3s axis = readVec3(axisElement);
+ 
+       tinyxml2::XMLElement* function
+           = transformAxisCursor->FirstChildElement("function");
+@@ -5047,6 +5071,7 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       }
+ 
+       int drivenByDof = 0;
++      bool drivenByKnownDof = false;
+       tinyxml2::XMLElement* coordinates
+           = transformAxisCursor->FirstChildElement("coordinates");
+       if (coordinates != nullptr)
+@@ -5054,12 +5079,13 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+         const char* text_pointer = coordinates->GetText();
+         if (text_pointer != nullptr)
+         {
+-          std::string coordinateName(text_pointer);
++          std::string coordinateName = trim(std::string(text_pointer));
+           auto iterator
+               = std::find(dofNames.begin(), dofNames.end(), coordinateName);
+           if (iterator != dofNames.end())
+           {
+             drivenByDof = iterator - dofNames.begin();
++            drivenByKnownDof = true;
+           }
+         }
+       }
+@@ -5083,21 +5109,26 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       {
+         tinyxml2::XMLElement* childFunction
+             = multiplier->FirstChildElement("function");
+-        scale = atof(multiplier->FirstChildElement("scale")->GetText());
+-        assert(childFunction != nullptr);
+-        if (childFunction != nullptr)
+-        {
+-          constant = childFunction->FirstChildElement("Constant");
+-          simmSpline = childFunction->FirstChildElement("SimmSpline");
+-          piecewiseLinear
+-              = childFunction->FirstChildElement("PiecewiseLinearFunction");
+-          linearFunction = childFunction->FirstChildElement("LinearFunction");
+-          polynomialFunction
+-              = childFunction->FirstChildElement("PolynomialFunction");
+-          assert(
+-              constant || simmSpline || piecewiseLinear || linearFunction
+-              || polynomialFunction);
+-        }
++        tinyxml2::XMLElement* scaleElement
++            = multiplier->FirstChildElement("scale");
++        NIMBLE_THROW_IF(
++            childFunction == nullptr || scaleElement == nullptr
++                || scaleElement->GetText() == nullptr,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" contains an incomplete MultiplierFunction.");
++        scale = atof(scaleElement->GetText());
++        constant = childFunction->FirstChildElement("Constant");
++        simmSpline = childFunction->FirstChildElement("SimmSpline");
++        piecewiseLinear
++            = childFunction->FirstChildElement("PiecewiseLinearFunction");
++        linearFunction = childFunction->FirstChildElement("LinearFunction");
++        polynomialFunction
++            = childFunction->FirstChildElement("PolynomialFunction");
++        NIMBLE_THROW_IF(
++            !(constant || simmSpline || piecewiseLinear || linearFunction
++              || polynomialFunction),
++            "OpenSim CustomJoint \"" + jointName
++                + "\" contains an unsupported MultiplierFunction child.");
+       }
+ 
+       if (constant != nullptr)
+@@ -5114,12 +5145,18 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+         if (value != 0)
+         {
+           allLocked = false;
++          allSimpleFunctionsCanonical = false;
+         }
+         customFunctions.push_back(
+             std::make_shared<math::ConstantFunction>(value));
+       }
+       else if (linearFunction != nullptr)
+       {
++        NIMBLE_THROW_IF(
++            !drivenByKnownDof,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" has a non-constant TransformAxis without exactly one "
++                  "known coordinate.");
+         numLinear++;
+         if (firstLinearIndex == -1)
+         {
+@@ -5130,19 +5167,32 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+         Eigen::Vector2s coeffs
+             = readVec2(linearFunction->FirstChildElement("coefficients"));
+         // Bake coeff flips into the axis
+-        if (coeffs(0) == -1)
++        if (dofIndex < 3 && coeffs(0) == -1)
+         {
+           axis *= coeffs(0);
+           coeffs(0) = 1.0;
++          coeffs(1) *= -1.0;
++        }
++        s_t slope = coeffs(0) * scale;
++        s_t intercept = coeffs(1) * scale;
++        if (slope != 1.0 || intercept != 0.0)
++        {
++          allSimpleFunctionsCanonical = false;
+         }
+         // Example coeffs for linear: 1 0
+-        customFunctions.push_back(std::make_shared<math::LinearFunction>(
+-            coeffs(0) * scale, coeffs(1) * scale));
++        customFunctions.push_back(
++            std::make_shared<math::LinearFunction>(slope, intercept));
+       }
+       else if (polynomialFunction != nullptr)
+       {
++        NIMBLE_THROW_IF(
++            !drivenByKnownDof,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" has a non-constant TransformAxis without exactly one "
++                  "known coordinate.");
+         anySpline = true;
+         allLocked = false;
++        allSimpleFunctionsCanonical = false;
+         std::vector<s_t> coeffs
+             = readVecX(polynomialFunction->FirstChildElement("coefficients"));
+         std::reverse(coeffs.begin(), coeffs.end());
+@@ -5155,8 +5205,14 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       }
+       else if (simmSpline != nullptr)
+       {
++        NIMBLE_THROW_IF(
++            !drivenByKnownDof,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" has a non-constant TransformAxis without exactly one "
++                  "known coordinate.");
+         anySpline = true;
+         allLocked = false;
++        allSimpleFunctionsCanonical = false;
+         if (dofIndex < 3)
+         {
+           first3Linear = false;
+@@ -5172,8 +5228,14 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       }
+       else if (piecewiseLinear != nullptr)
+       {
++        NIMBLE_THROW_IF(
++            !drivenByKnownDof,
++            "OpenSim CustomJoint \"" + jointName
++                + "\" has a non-constant TransformAxis without exactly one "
++                  "known coordinate.");
+         anySpline = true;
+         allLocked = false;
++        allSimpleFunctionsCanonical = false;
+         if (dofIndex < 3)
+         {
+           first3Linear = false;
+@@ -5190,7 +5252,9 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       }
+       else
+       {
+-        assert(false && "Unrecognized function type");
++        NIMBLE_THROW(
++            "OpenSim CustomJoint \"" + jointName
++            + "\" contains an unsupported TransformAxis function.");
+       }
+ 
+       if (dofIndex < 3)
+@@ -5203,13 +5267,51 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+           = transformAxisCursor->NextSiblingElement("TransformAxis");
+     }
+ 
++    NIMBLE_THROW_IF(
++        customFunctions.size() != 6 || eulerAxisOrder.size() != 3
++            || transformAxisOrder.size() != 3,
++        "OpenSim CustomJoint \"" + jointName
++            + "\" must define exactly six TransformAxis entries.");
++
++    // Specialized DART joints bind their DOFs by joint-local index. Only use
++    // those representations when that implicit mapping matches the explicit
++    // OpenSim TransformAxis coordinate mapping; otherwise CustomJoint must
++    // preserve the XML semantics.
++    bool allAxesDrivenInOrder = true;
++    bool firstThreeAxesDrivenInOrder = true;
++    for (int i = 0; i < 6; i++)
++    {
++      if (drivenByDofs[i] != i)
++      {
++        allAxesDrivenInOrder = false;
++        if (i < 3)
++        {
++          firstThreeAxesDrivenInOrder = false;
++        }
++      }
++    }
++    bool singleLinearAxisDrivesFirstDof
++        = firstLinearIndex >= 0 && drivenByDofs[firstLinearIndex] == 0;
++    bool twoLinearAxesDriveInOrder
++        = firstLinearIndex >= 0 && lastLinearIndex > firstLinearIndex
++          && drivenByDofs[firstLinearIndex] == 0
++          && drivenByDofs[lastLinearIndex] == 1;
++
+     if (allLocked)
+     {
+       dynamics::WeldJoint::Properties props;
+       props.mName = jointName;
+-      auto pair
+-          = parentBody->createChildJointAndBodyNodePair<dynamics::WeldJoint>(
+-              props, bodyProps);
++      std::pair<dynamics::WeldJoint*, dynamics::BodyNode*> pair;
++      if (parentBody == nullptr)
++      {
++        pair = skel->createJointAndBodyNodePair<dynamics::WeldJoint>(
++            nullptr, props, bodyProps);
++      }
++      else
++      {
++        pair = parentBody->createChildJointAndBodyNodePair<dynamics::WeldJoint>(
++            props, bodyProps);
++      }
+       joint = pair.first;
+       childBody = pair.second;
+       std::cout << "WARNING! Creating a WeldJoint as an intermediate "
+@@ -5218,7 +5320,9 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+                    "way to remove this WeldJoint, things should run faster."
+                 << std::endl;
+     }
+-    else if (allLinear && !anySpline && dofNames.size() == 6)
++    else if (
++        allLinear && allSimpleFunctionsCanonical && !anySpline
++        && dofNames.size() == 6 && allAxesDrivenInOrder)
+     {
+       auto axisOrderAndErrorFlag = getAxisOrder(eulerAxisOrder);
+       dynamics::EulerJoint::AxisOrder axisOrder = axisOrderAndErrorFlag.first;
+@@ -5227,9 +5331,15 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       {
+         NIMBLE_THROW("Invalid axis order for Euler joint: " + jointName);
+       }
+-      dynamics::EulerJoint::AxisOrder transOrder
+-          = getAxisOrder(transformAxisOrder).first;
+-      if (transOrder != dynamics::EulerJoint::AxisOrder::XYZ)
++      auto transformOrderAndError = getAxisOrder(transformAxisOrder);
++      dynamics::EulerJoint::AxisOrder transOrder = transformOrderAndError.first;
++      bool translationsArePositiveXYZ
++          = transformAxisOrder[0] == Eigen::Vector3s::UnitX()
++            && transformAxisOrder[1] == Eigen::Vector3s::UnitY()
++            && transformAxisOrder[2] == Eigen::Vector3s::UnitZ();
++      if (transformOrderAndError.second
++          || transOrder != dynamics::EulerJoint::AxisOrder::XYZ
++          || !translationsArePositiveXYZ)
+       {
+         NIMBLE_THROW("Invalid transform order for Euler joint: " + jointName);
+       }
+@@ -5261,7 +5371,9 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       joint = eulerFreeJoint;
+     }
+     else if (
+-        first3Linear && !anySpline
++        first3Linear && numLinear == 3 && numConstant == 3
++        && allSimpleFunctionsCanonical && !anySpline
++        && firstThreeAxesDrivenInOrder
+         && (dofNames.size() == 3 || dofNames.size() == 6))
+     {
+       bool anyNonUnit = false;
+@@ -5358,7 +5470,9 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+         }
+         else
+         {
+-          assert(false && "3 rotation axis are not mutually orthogonal");
++          NIMBLE_THROW(
++              "OpenSim CustomJoint \"" + jointName
++              + "\" has three non-orthogonal rotation axes.");
+         }
+       }
+       else
+@@ -5398,7 +5512,10 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+         joint = eulerJoint;
+       }
+     }
+-    else if (numLinear == 1 && numConstant == 5 && !anySpline)
++    else if (
++        numLinear == 1 && numConstant == 5 && allSimpleFunctionsCanonical
++        && !anySpline && dofNames.size() == 1
++        && singleLinearAxisDrivesFirstDof)
+     {
+       if (lastLinearIndex < 3)
+       {
+@@ -5457,7 +5574,9 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       }
+     }
+     else if (
+-        numLinear == 2 && numConstant == 4 && lastLinearIndex < 3 && !anySpline)
++        numLinear == 2 && numConstant == 4 && lastLinearIndex < 3
++        && allSimpleFunctionsCanonical && !anySpline && dofNames.size() == 2
++        && twoLinearAxesDriveInOrder)
+     {
+       // Create a RevoluteJoint
+       dynamics::UniversalJoint* universalJoint = nullptr;
+@@ -5573,7 +5692,10 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+       }
+       else
+       {
+-        assert(false && "Unsupported number of DOFs in CustomJoint");
++        NIMBLE_THROW(
++            "OpenSim CustomJoint \"" + jointName + "\" has "
++            + std::to_string(dofNames.size())
++            + " coordinates; only one through six are supported.");
+       }
+     }
+   }
+@@ -5581,9 +5703,17 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+   {
+     dynamics::WeldJoint::Properties props;
+     props.mName = jointName;
+-    auto pair
+-        = parentBody->createChildJointAndBodyNodePair<dynamics::WeldJoint>(
+-            props, bodyProps);
++    std::pair<dynamics::WeldJoint*, dynamics::BodyNode*> pair;
++    if (parentBody == nullptr)
++    {
++      pair = skel->createJointAndBodyNodePair<dynamics::WeldJoint>(
++          nullptr, props, bodyProps);
++    }
++    else
++    {
++      pair = parentBody->createChildJointAndBodyNodePair<dynamics::WeldJoint>(
++          props, bodyProps);
++    }
+     joint = pair.first;
+     childBody = pair.second;
+     std::cout << "WARNING! Creating a WeldJoint as an intermediate "
+@@ -5761,7 +5891,11 @@ std::tuple<dynamics::Joint*, dynamics::BodyNode*, Eigen::Vector3s> createJoint(
+         "now, though, we're exiting with failure.");
+   }
+ 
+-  assert(childBody != nullptr);
++  NIMBLE_THROW_IF(
++      joint == nullptr || childBody == nullptr,
++      "OpenSimParser failed to construct joint \"" + jointName + "\" of type \""
++          + jointType + "\".");
++
+   joint->setName(jointName);
+   // std::cout << jointName << std::endl;
+ 
+@@ -6173,10 +6307,22 @@ OpenSimFile OpenSimParser::readOsim30(
+ 
+       if (jointDetail != nullptr)
+       {
+-        std::string parentName = trim(std::string(
+-            jointDetail->FirstChildElement("parent_body")->GetText()));
+-        dynamics::BodyNode* parentBody = bodyLookupMap[parentName];
+-        assert(parentName == "ground" || parentBody != nullptr);
++        tinyxml2::XMLElement* parentElement
++            = jointDetail->FirstChildElement("parent_body");
++        NIMBLE_THROW_IF(
++            parentElement == nullptr || parentElement->GetText() == nullptr,
++            "OpenSim Joint for body \"" + name + "\" has no parent_body.");
++        std::string parentName = trim(std::string(parentElement->GetText()));
++        dynamics::BodyNode* parentBody = nullptr;
++        if (parentName != "ground")
++        {
++          auto parentIt = bodyLookupMap.find(parentName);
++          NIMBLE_THROW_IF(
++              parentIt == bodyLookupMap.end() || parentIt->second == nullptr,
++              "OpenSim Joint for body \"" + name
++                  + "\" references unknown parent \"" + parentName + "\".");
++          parentBody = parentIt->second;
++        }
+         // Get shared properties across all joint types
+         Eigen::Vector3s locationInParent
+             = readVec3(jointDetail->FirstChildElement("location_in_parent"));
+@@ -6214,7 +6360,10 @@ OpenSimFile OpenSimParser::readOsim30(
+         file.bodyScales[name] = avgScale;
+       }
+     }
+-    assert(childBody != nullptr);
++    NIMBLE_THROW_IF(
++        childBody == nullptr,
++        "OpenSim body \"" + name
++            + "\" has no supported joint connecting it to the skeleton.");
+ 
+     double mass = atof(bodyCursor->FirstChildElement("mass")->GetText());
+     Eigen::Vector3s massCenter
+@@ -6701,6 +6850,10 @@ OpenSimFile OpenSimParser::readOsim40(
+     }
+     else
+     {
++      NIMBLE_THROW_IF(
++          parentName != "ground" && parentName != "/ground",
++          "Loading *.osim file: Joint " + name + " has parent \"" + parentName
++              + "\", yet the parent was not found in the <BodySet>");
+       joint.parent = nullptr;
+     }
+ 
+@@ -6773,7 +6926,7 @@ OpenSimFile OpenSimParser::readOsim40(
+               << std::endl;
+   }
+ 
+-  assert(root != nullptr);
++  NIMBLE_THROW_IF(root == nullptr, "OpenSim model has no root joint.");
+ 
+   //--------------------------------------------------------------------------
+   // Build out the physical structure

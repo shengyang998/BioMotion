@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-10.
+Last updated: 2026-08-11.
 
 ---
 
@@ -533,11 +533,12 @@ r2·r3 = 0.084746  → 85.14°  FAILS  (847× over)
 ```
 
 This is a deliberate anatomical convention (Holzbaur/Rajagopal humeral elevation plane), **not bad
-data**. nimble's `first3Linear` fast path (which tries to recognise a disguised EulerJoint) demands
-`|dot| < 1e-4`, hits `assert(false && "3 rotation axis are not mutually orthogonal")`
-(`OpenSimParser.cpp:5375`) — **a no-op in Release** — falls through with `joint == nullptr`, and
-BioMotion's own crash-guard patch at `OpenSimParser.cpp:5791` substitutes a `WeldJoint`.
-Of all 53 CustomJoints, **only these two** trip it.
+data**. At the time of this diagnosis, nimble's `first3Linear` fast path (which tries to recognise a
+disguised EulerJoint) demanded `|dot| < 1e-4`, hit a Release-disabled `assert()`, fell through with
+`joint == nullptr`, and BioMotion's then-local crash workaround substituted a `WeldJoint`. Of all
+53 CustomJoints, **only these two** triggered that historical path. The model's later unit-snap
+removed the trigger; the 2026-08-11 parser patch also deleted the substitution and now rejects such
+unsupported topology transactionally instead of returning a different joint.
 
 The generic `createCustomJoint<N>` path (`OpenSimParser.cpp:~5501`) does **not** require
 orthogonality and could represent this joint fine — it is simply never reached.
@@ -4366,6 +4367,73 @@ removed raw-ID selector/string. The shell gate passed **49/49**. Finally,
 `tools/run_tests.sh all` passed the exact commit gate: fast **519/519 in 1676 s** and slow E1
 **1/1 in 6150 s**. Both lanes returned `xcodebuild = 0`, `xcresulttool = 0`, `Passed`, and zero
 failures, skips, expected failures, or test-host restarts; the runner ended with `ALL GATE PASS`.
+
+
+## Vendored Nimble OpenSim parsing is fail-closed and semantics-preserving (2026-08-11)
+
+The vendored parser carried two different risks. Its upstream Release paths used disabled
+`assert()` checks and unchecked XML/topology dereferences. Their outcomes were path-dependent: a
+genuinely null joint could crash, the older local null-joint workaround could silently substitute a
+`WeldJoint`, and other malformed input could still select a wrong specialized joint and return
+success. Separately, successful specialized-joint fast paths
+could discard linear slope/intercept, ignore explicit coordinate mappings, accept an unrepresentable
+negative translation axis, or turn a remapped six-axis root into a three-DOF Euler joint. Those are
+scientific-data corruptions even when they do not crash.
+
+The parser slice is now isolated as two reviewed commits on the nested branch
+`biomotion/ios-static-c405b05`:
+
+- `7ecf61c` replaces Release-disabled/fallthrough rejection points for missing
+  `SpatialTransform`, unsupported transform functions, non-orthogonal specialized paths and
+  unsupported CustomJoint DOF counts, then refuses any null joint or child body before use.
+- `6b082fd` extends validation across exact six-axis, coordinate, parent and root topology; root
+  locked CustomJoints and root WeldJoints use the skeleton root API. It also preserves valid
+  CustomJoint semantics: specialized joints require canonical functions, exact dimensionality and
+  matching `drivenByDofs`; otherwise the parser retains a CustomJoint. Non-identity slope/intercept
+  survive, the `-q+b` axis-flip intercept sign is corrected, and six linear axes cannot fall into
+  the three-rotation Euler branch.
+
+The tracked `nimble-patches/opensimparser-fail-closed.patch` is the combined baseline-to-head diff
+from pinned Nimble `c405b056fc35068027e03e0c384e84e12870b475`. It reverse-checks against the current
+tree, is 562 lines, and has SHA-256
+`50701bb5ae848f9192c1c0e5ffcfdef4a94314f98a95c00e6f7390b751482b3b`. The earlier
+`opensimparser-null-joint-fallback.patch` was deleted because applying it would restore the silent
+Weld substitution this work proves unsafe.
+
+The regression was deliberately causal. Against the pre-fix archive, an unsupported function
+returned success without exercising the null/Weld path. Rajagopal remained at 37 total DOFs, but
+the bridge treated the malformed load as a successful replacement, cleared its one-DOF active mask
+and changed the free count from 36 to 37. Non-Cartesian/negative axes, unknown parents and unknown
+coordinates leaked similarly. A `2*q`
+translation moved only `0.1 m` at `q=0.1`, and a valid `pelvis_tx -> pelvis_ty` remapping still made
+`pelvis_tx` move X while `pelvis_ty` did not. The final linked-archive checks make all malformed
+cases fail transactionally, produce `0.2 m` for the scaled function, preserve `-q+0.5`, assert the
+reflected fixture's root as `CustomJoint<6>`, and make the remapped `pelvis_ty` drive X/Y exactly as
+the XML states. The same focused run logged the unmodified Rajagopal fixture at 37 total DOFs; that
+root/count description is a fixture receipt, not a general parser invariant.
+
+Final focused receipt: the transaction test, direct representation test and bundled-model test
+passed **3/3**, with zero failures, skips, expected failures or test-host restarts. Both simulator
+and device archives rebuilt successfully. The final source hash passed simulator Release, device
+Release and simulator non-`NDEBUG` `-fsyntax-only` compilation with zero warnings/errors; an
+independent staged-diff review reported no blocker/high issue.
+
+Full outer commit-gate receipt (`tools/run_tests.sh all`): fast passed **519/519 in 1690 s** and
+slow E1 passed **1/1 in 6170 s**. Both lanes returned `xcodebuild = 0`, `xcresulttool = 0`,
+`Passed`, and zero failures, skips, expected failures or test-host restarts; the runner ended with
+`ALL GATE PASS`.
+
+Fork publication receipt (`git ls-remote --symref`): remote `fork` is
+`https://github.com/shengyang998/nimblephysics.git`; public branch
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
+resolved to `6b082fd0feec9cac7bc2d21b15bc63bd6225c58f`. Its remote symbolic `HEAD`
+resolved to `refs/heads/master` at
+`c405b056fc35068027e03e0c384e84e12870b475`.
+
+This closes the OpenSim parser slice, not the complete iOS port. The nested working tree still has
+older, deliberately unstaged CMake/GUI/mesh/collision/dependency changes. They remain dirty because
+they have not yet been separated, licensed and validated; none was included in `7ecf61c` or
+`6b082fd`.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

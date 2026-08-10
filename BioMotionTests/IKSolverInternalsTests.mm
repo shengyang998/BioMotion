@@ -20,6 +20,7 @@
 
 #include "dart/dynamics/Skeleton.hpp"
 #include "dart/dynamics/BodyNode.hpp"
+#include "dart/dynamics/CustomJoint.hpp"
 #include "dart/dynamics/DegreeOfFreedom.hpp"
 #include "dart/math/MathTypes.hpp"
 #include "dart/math/IKSolver.hpp"
@@ -599,7 +600,7 @@ static double weightFor(const std::string& n) {
 /// coordinates show up at runtime with lo == hi == 0 even though their XML
 /// <range> is non-degenerate — i.e. the lock may be honoured as a
 /// zero-width position limit, not as a removed DOF. Check that on FullBody.
-- (void)testP8LockedCoordinateRepresentation {
+- (void)testP8ModelCoordinateRepresentation {
     for (NSString* model in @[@"Rajagopal2016", @"FullBody"]) {
         NimbleBridge* b = [[NimbleBridge alloc] init];
         NSString* p = [[NSBundle bundleForClass:[self class]] pathForResource:model
@@ -621,6 +622,172 @@ static double weightFor(const std::string& n) {
         printf("IKINT|P8|model=%s|pinnedNames=%s\n", model.UTF8String, names.c_str());
         fflush(stdout);
     }
+
+    // The all-linear six-DOF parser fast path used to discard LinearFunction
+    // slope/intercept and always instantiate an identity EulerFreeJoint. Force
+    // pelvis_tx to 2*q: the exact CustomJoint fallback must move the pelvis by
+    // 0.2 m when q is 0.1 m, rather than silently moving it by 0.1 m.
+    NSString* sourcePath = [[NSBundle bundleForClass:[self class]]
+        pathForResource:@"Rajagopal2016"
+                 ofType:@"osim"];
+    XCTAssertNotNil(sourcePath);
+    if (sourcePath == nil) return;
+
+    NSError* readError = nil;
+    NSString* source = [NSString stringWithContentsOfFile:sourcePath
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:&readError];
+    XCTAssertNotNil(source, @"%@", readError);
+    if (source == nil) return;
+
+    NSRange anchor = [source rangeOfString:@"<coordinates>pelvis_tx</coordinates>"];
+    XCTAssertNotEqual(anchor.location, NSNotFound);
+    if (anchor.location == NSNotFound) return;
+    NSRange search = NSMakeRange(NSMaxRange(anchor), source.length - NSMaxRange(anchor));
+    NSRange coefficients = [source rangeOfString:@"<coefficients> 1 0</coefficients>"
+                                          options:0
+                                            range:search];
+    XCTAssertNotEqual(coefficients.location, NSNotFound);
+    if (coefficients.location == NSNotFound) return;
+
+    NSMutableString* doubled = [source mutableCopy];
+    [doubled replaceCharactersInRange:coefficients
+                           withString:@"<coefficients> 2 0</coefficients>"];
+    NSString* tempPath = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"nonidentity-linear-%@.osim",
+                                   NSUUID.UUID.UUIDString]];
+    NSError* writeError = nil;
+    BOOL didWrite = [doubled writeToFile:tempPath
+                              atomically:YES
+                                encoding:NSUTF8StringEncoding
+                                   error:&writeError];
+    XCTAssertTrue(didWrite, @"%@", writeError);
+    if (!didWrite) return;
+
+    biomechanics::OpenSimFile parsed = biomechanics::OpenSimParser::parseOsim(
+        std::string(tempPath.UTF8String));
+    [[NSFileManager defaultManager] removeItemAtPath:tempPath error:nil];
+    XCTAssertTrue(parsed.skeleton != nullptr);
+    if (parsed.skeleton == nullptr) return;
+
+    dynamics::DegreeOfFreedom* pelvisTX = parsed.skeleton->getDof("pelvis_tx");
+    dynamics::BodyNode* pelvis = parsed.skeleton->getBodyNode("pelvis");
+    XCTAssertTrue(pelvisTX != nullptr);
+    XCTAssertTrue(pelvis != nullptr);
+    if (pelvisTX == nullptr || pelvis == nullptr) return;
+
+    Eigen::VectorXs q = Eigen::VectorXs::Zero(parsed.skeleton->getNumDofs());
+    parsed.skeleton->setPositions(q);
+    Eigen::Vector3s before = pelvis->getWorldTransform().translation();
+    q(pelvisTX->getIndexInSkeleton()) = 0.1;
+    parsed.skeleton->setPositions(q);
+    Eigen::Vector3s delta = pelvis->getWorldTransform().translation() - before;
+    XCTAssertEqualWithAccuracy(delta.x(), 0.2, 1e-12);
+    XCTAssertEqualWithAccuracy(delta.y(), 0.0, 1e-12);
+    XCTAssertEqualWithAccuracy(delta.z(), 0.0, 1e-12);
+
+    // Baking a -1 rotational slope into the axis must negate the intercept as
+    // well: a*(-q + b) == (-a)*(q - b). Preserve that exact pair in the
+    // CustomJoint fallback instead of silently changing the constant term.
+    NSRange tiltAnchor
+        = [source rangeOfString:@"<coordinates>pelvis_tilt</coordinates>"];
+    XCTAssertNotEqual(tiltAnchor.location, NSNotFound);
+    if (tiltAnchor.location == NSNotFound) return;
+    search = NSMakeRange(
+        NSMaxRange(tiltAnchor), source.length - NSMaxRange(tiltAnchor));
+    NSRange tiltCoefficients
+        = [source rangeOfString:@"<coefficients> 1 0</coefficients>"
+                        options:0
+                          range:search];
+    XCTAssertNotEqual(tiltCoefficients.location, NSNotFound);
+    if (tiltCoefficients.location == NSNotFound) return;
+
+    NSMutableString* reflected = [source mutableCopy];
+    [reflected replaceCharactersInRange:tiltCoefficients
+                             withString:@"<coefficients> -1 0.5</coefficients>"];
+    NSString* reflectedPath = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"reflected-linear-%@.osim",
+                                   NSUUID.UUID.UUIDString]];
+    writeError = nil;
+    didWrite = [reflected writeToFile:reflectedPath
+                           atomically:YES
+                             encoding:NSUTF8StringEncoding
+                                error:&writeError];
+    XCTAssertTrue(didWrite, @"%@", writeError);
+    if (!didWrite) return;
+
+    biomechanics::OpenSimFile reflectedFile
+        = biomechanics::OpenSimParser::parseOsim(
+            std::string(reflectedPath.UTF8String));
+    [[NSFileManager defaultManager] removeItemAtPath:reflectedPath error:nil];
+    XCTAssertTrue(reflectedFile.skeleton != nullptr);
+    if (reflectedFile.skeleton == nullptr) return;
+
+    auto* reflectedRoot = dynamic_cast<dynamics::CustomJoint<6>*>(
+        reflectedFile.skeleton->getJoint("ground_pelvis"));
+    XCTAssertTrue(reflectedRoot != nullptr);
+    if (reflectedRoot == nullptr) return;
+    XCTAssertEqualWithAccuracy(reflectedRoot->getFlipAxisMap()(0), -1.0, 1e-12);
+    XCTAssertEqualWithAccuracy(
+        reflectedRoot->getCustomFunction(0)->calcValue(0.0), -0.5, 1e-12);
+    XCTAssertEqualWithAccuracy(
+        reflectedRoot->getCustomFunction(0)->calcValue(0.1), -0.4, 1e-12);
+
+    // A specialized EulerFreeJoint can only preserve the XML when each
+    // TransformAxis is driven by the corresponding joint DOF. Point the X
+    // translation at another valid coordinate: an exact CustomJoint must now
+    // make pelvis_ty drive both X and Y, while pelvis_tx drives neither.
+    NSMutableString* remapped = [source mutableCopy];
+    [remapped replaceCharactersInRange:anchor
+                             withString:@"<coordinates>pelvis_ty</coordinates>"];
+    NSString* remappedPath = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"remapped-coordinate-%@.osim",
+                                   NSUUID.UUID.UUIDString]];
+    writeError = nil;
+    didWrite = [remapped writeToFile:remappedPath
+                          atomically:YES
+                            encoding:NSUTF8StringEncoding
+                               error:&writeError];
+    XCTAssertTrue(didWrite, @"%@", writeError);
+    if (!didWrite) return;
+
+    biomechanics::OpenSimFile remappedFile
+        = biomechanics::OpenSimParser::parseOsim(
+            std::string(remappedPath.UTF8String));
+    [[NSFileManager defaultManager] removeItemAtPath:remappedPath error:nil];
+    XCTAssertTrue(remappedFile.skeleton != nullptr);
+    if (remappedFile.skeleton == nullptr) return;
+
+    dynamics::DegreeOfFreedom* remappedTX
+        = remappedFile.skeleton->getDof("pelvis_tx");
+    dynamics::DegreeOfFreedom* remappedTY
+        = remappedFile.skeleton->getDof("pelvis_ty");
+    dynamics::BodyNode* remappedPelvis
+        = remappedFile.skeleton->getBodyNode("pelvis");
+    XCTAssertTrue(remappedTX != nullptr);
+    XCTAssertTrue(remappedTY != nullptr);
+    XCTAssertTrue(remappedPelvis != nullptr);
+    if (remappedTX == nullptr || remappedTY == nullptr
+        || remappedPelvis == nullptr)
+      return;
+
+    q = Eigen::VectorXs::Zero(remappedFile.skeleton->getNumDofs());
+    remappedFile.skeleton->setPositions(q);
+    before = remappedPelvis->getWorldTransform().translation();
+    q(remappedTX->getIndexInSkeleton()) = 0.1;
+    remappedFile.skeleton->setPositions(q);
+    delta = remappedPelvis->getWorldTransform().translation() - before;
+    XCTAssertEqualWithAccuracy(delta.x(), 0.0, 1e-12);
+    XCTAssertEqualWithAccuracy(delta.y(), 0.0, 1e-12);
+    XCTAssertEqualWithAccuracy(delta.z(), 0.0, 1e-12);
+
+    q.setZero();
+    q(remappedTY->getIndexInSkeleton()) = 0.1;
+    remappedFile.skeleton->setPositions(q);
+    delta = remappedPelvis->getWorldTransform().translation() - before;
+    XCTAssertEqualWithAccuracy(delta.x(), 0.1, 1e-12);
+    XCTAssertEqualWithAccuracy(delta.y(), 0.1, 1e-12);
+    XCTAssertEqualWithAccuracy(delta.z(), 0.0, 1e-12);
 }
 
 /// P6. At steady state, WHICH mutation moves q into the null space?

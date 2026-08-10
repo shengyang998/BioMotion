@@ -141,7 +141,8 @@ final class DOFMaskTests: XCTestCase {
     /// A failed replacement must be a transaction: the old skeleton remains
     /// usable with the exact runtime constraint the caller installed on it.
     func testFailedReloadPreservesActiveDOFMask() throws {
-        XCTAssertTrue(bridge.loadModel(fromPath: try modelPath("Rajagopal2016")))
+        let rajagopalPath = try modelPath("Rajagopal2016")
+        XCTAssertTrue(bridge.loadModel(fromPath: rajagopalPath))
         XCTAssertEqual(bridge.applyDOFMask(withNames: ["hip_flexion_r"]), 1)
 
         let oldDOFCount = bridge.numDOFs
@@ -159,6 +160,107 @@ final class DOFMaskTests: XCTestCase {
         XCTAssertTrue(bridge.isDOFMaskActive)
         XCTAssertEqual(bridge.numFreeDOFs, oldFreeDOFCount)
         XCTAssertEqual(bridge.maskedDOFNames, oldMaskedNames)
+
+        func replacingFirst(
+            in source: String,
+            after anchor: String,
+            target: String,
+            with replacement: String
+        ) throws -> String {
+            var result = source
+            let anchorRange = try XCTUnwrap(result.range(of: anchor))
+            let targetRange = try XCTUnwrap(
+                result.range(
+                    of: target,
+                    range: anchorRange.upperBound..<result.endIndex
+                )
+            )
+            result.replaceSubrange(targetRange, with: replacement)
+            return result
+        }
+
+        func assertRejected(_ contents: String, label: String) throws {
+            XCTAssertTrue(bridge.loadModel(fromPath: rajagopalPath), label)
+            XCTAssertEqual(bridge.applyDOFMask(withNames: ["hip_flexion_r"]), 1, label)
+
+            let malformedURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("malformed-joint-\(UUID().uuidString).osim")
+            try contents.write(to: malformedURL, atomically: true, encoding: .utf8)
+            defer { try? FileManager.default.removeItem(at: malformedURL) }
+
+            XCTAssertFalse(bridge.loadModel(fromPath: malformedURL.path),
+                           "\(label) must fail closed")
+            XCTAssertTrue(bridge.isModelLoaded,
+                          "\(label) must leave the prior model loaded")
+            XCTAssertEqual(bridge.numDOFs, oldDOFCount, label)
+            XCTAssertTrue(bridge.isDOFMaskActive, label)
+            XCTAssertEqual(bridge.numFreeDOFs, oldFreeDOFCount, label)
+            XCTAssertEqual(bridge.maskedDOFNames, oldMaskedNames, label)
+        }
+
+        let source = try String(contentsOfFile: rajagopalPath, encoding: .utf8)
+        let pelvisTilt = "<coordinates>pelvis_tilt</coordinates>"
+        let linearOpening = "<LinearFunction name=\"function\">"
+        let unsupportedOpening = "<UnsupportedFunction name=\"function\">"
+        var unsupported = try replacingFirst(
+            in: source,
+            after: pelvisTilt,
+            target: linearOpening,
+            with: unsupportedOpening
+        )
+        unsupported = try replacingFirst(
+            in: unsupported,
+            after: unsupportedOpening,
+            target: "</LinearFunction>",
+            with: "</UnsupportedFunction>"
+        )
+        try assertRejected(unsupported, label: "unsupported CustomJoint function")
+
+        let invalidAxis = try replacingFirst(
+            in: source,
+            after: "<coordinates>pelvis_tz</coordinates>",
+            target: "<axis>0 0 1</axis>",
+            with: "<axis>0.5 0.5 0</axis>"
+        )
+        try assertRejected(invalidAxis, label: "non-Cartesian translation axis")
+
+        let negativeAxis = try replacingFirst(
+            in: source,
+            after: "<coordinates>pelvis_tz</coordinates>",
+            target: "<axis>0 0 1</axis>",
+            with: "<axis>0 0 -1</axis>"
+        )
+        try assertRejected(negativeAxis, label: "negative translation axis")
+
+        var missingAxis = try replacingFirst(
+            in: source,
+            after: "<coordinates>pelvis_ty</coordinates>",
+            target: "<TransformAxis name=\"translation3\">",
+            with: "<IgnoredTransformAxis name=\"translation3\">"
+        )
+        missingAxis = try replacingFirst(
+            in: missingAxis,
+            after: "<IgnoredTransformAxis name=\"translation3\">",
+            target: "</TransformAxis>",
+            with: "</IgnoredTransformAxis>"
+        )
+        try assertRejected(missingAxis, label: "incomplete SpatialTransform")
+
+        let missingParent = try replacingFirst(
+            in: source,
+            after: "<PhysicalOffsetFrame name=\"ground_offset\">",
+            target: "<socket_parent>/ground</socket_parent>",
+            with: "<socket_parent>/missing_parent</socket_parent>"
+        )
+        try assertRejected(missingParent, label: "unknown parent frame")
+
+        let missingCoordinate = try replacingFirst(
+            in: source,
+            after: "<TransformAxis name=\"translation3\">",
+            target: "<coordinates>pelvis_tz</coordinates>",
+            with: "<coordinates>missing_coordinate</coordinates>"
+        )
+        try assertRejected(missingCoordinate, label: "unknown TransformAxis coordinate")
     }
 
     /// A successful replacement has a different DOF layout, so retaining the

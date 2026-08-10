@@ -79,6 +79,7 @@ cd labs/BioMotion
 
 ```bash
 git clone https://github.com/keenon/nimblephysics.git
+git -C nimblephysics checkout --detach c405b056fc35068027e03e0c384e84e12870b475
 ```
 
 Then apply the iOS-specific patches. Search the existing tree for `DART_IOS_BUILD` to find the exact diff sites; the touched files are:
@@ -97,14 +98,26 @@ Replace `nimblephysics/CMakeLists.txt` with the iOS-specific version (the upstre
 Then apply the reviewed behaviour patches recorded by this repository:
 
 ```bash
-git -C nimblephysics apply ../nimble-patches/opensimparser-null-joint-fallback.patch
+git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
 ```
 
 See `nimble-patches/README.md` for pinned SHAs, reverse-checks and regression
 commands. That directory does not yet reconstruct every older iOS-port change,
-so keep the patched tree in a private fork or reproducible archive until the
+so keep the patched tree in a maintained fork or reproducible archive until the
 remaining port diff has also been exported.
+
+The reviewed nested commits are published on the maintained
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
+branch. At the 2026-08-11 receipt that branch resolved to
+`6b082fd0feec9cac7bc2d21b15bc63bd6225c58f`; the fork's remote symbolic `HEAD`
+remained `refs/heads/master` at the pinned upstream baseline
+`c405b056fc35068027e03e0c384e84e12870b475`.
+
+The OpenSim parser patch rejects unsupported or incomplete joint topology
+instead of substituting a plausible-but-wrong joint. For valid CustomJoints it
+also preserves non-identity functions and explicit coordinate mappings rather
+than silently simplifying them to a different motion.
 
 Here “linear extrapolation” means continuation along an endpoint tangent only:
 SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses

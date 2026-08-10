@@ -11,62 +11,109 @@ repository's iOS-port setup in addition to these patches. Do not describe a
 fresh Nimble checkout as reproducible until those remaining changes have also
 been exported and checked.
 
-## `opensimparser-null-joint-fallback.patch`
+## `opensimparser-fail-closed.patch`
 
 **Applies to**: `nimblephysics/dart/biomechanics/OpenSimParser.cpp`
-**Introduced in**: build 13 (BioMotion accuracy-overhaul branch)
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commits** on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05):
+
+- `7ecf61c` — fail closed on unsupported or incomplete joint topology
+- `6b082fd` — preserve CustomJoint functions and coordinate mappings
+
+**Patch receipt**: 562 lines; SHA-256
+`50701bb5ae848f9192c1c0e5ffcfdef4a94314f98a95c00e6f7390b751482b3b`.
 
 ### Problem
 
-`dart::biomechanics::createJoint()` has several paths where it uses
-`assert(false && "...")` to signal that it couldn't construct a joint —
-for example when a `CustomJoint`'s `dofNames.size()` doesn't match any
-of the 1-6 `createCustomJoint<N>` specializations, or when a
-`TransformAxis` uses a function type the parser doesn't recognize.
+`dart::biomechanics::createJoint()` used release-disabled `assert()` calls for
+unsupported `CustomJoint` functions, non-orthogonal rotation axes and invalid
+coordinate counts. Missing `SpatialTransform`, parent and axis elements could
+also reach unchecked dereferences or invalid topology.
 
-In **release** builds `assert()` is a no-op, so those paths fall
-through with the local `joint` variable left as `nullptr`. Later, at
-line 5779, `joint->setName(jointName)` dereferences a null `this` and
-the app segfaults at `this + 0x3f` inside `Joint::setName`.
+In **Release**, these checks did not have one uniform failure mode. A path that
+never constructed a joint could reach `joint->setName(jointName)` with
+`joint == nullptr`; the first local workaround converted only that null-joint
+case into a silent `WeldJoint`. The unsupported-function RED followed a
+different path: the Rajagopal fixture still selected a specialized joint and
+returned success. Its total remained 37 DOFs, but the bridge accepted the load
+as a replacement, cleared the installed one-DOF mask and changed the free count
+from 36 to 37.
 
-This was discovered when swapping the bundled osim to
-`cyclistFullBodyMuscle.osim`, which has 53 CustomJoints — at least one
-triggers the uncovered branch and takes the whole parse down.
+The successful paths also changed valid model semantics. Specialized DART
+joints were selected without checking non-identity slope/intercept, translation
+axis sign, or the `TransformAxis` coordinate mapping. That could turn `2*q`
+into `q`, bind a transform to a different coordinate, or drop all three root
+translations when a six-axis joint fell through to the looser Euler branch.
 
 ### Fix
 
-Before `joint->setName(jointName)`, check for null and substitute a
-`WeldJoint` in place. Log the failing joint name + type to stderr so
-we can later decide whether to (a) extend nimble's parser to handle
-that joint type or (b) pre-process the XML.
+The patch replaces the release-disabled failure paths with descriptive runtime
+errors; validates parent/root topology, exactly six transform axes, coordinate
+references, function structure, and Cartesian translation-axis allocation;
+and requires both `joint` and `childBody` before use. Root Weld joints are
+constructed through the skeleton root API. `NimbleBridge.loadModel` catches a
+rejection and keeps the previously loaded skeleton transactionally. No
+substitute joint and no partial skeleton may cross the bridge.
 
-```cpp
-if (joint == nullptr) {
-    std::cerr << "OpenSimParser: failed to construct joint \""
-              << jointName << "\" of type \"" << jointType << "\" "
-              << "— substituting a WeldJoint so parse can continue."
-              << std::endl;
-    dynamics::WeldJoint::Properties props;
-    props.mName = jointName;
-    // create through skel/parentBody as usual...
-}
-```
+Specialized EulerFree/Euler/Revolute/Prismatic/Universal joints are now used
+only for the exact canonical function and coordinate layout they can represent.
+Everything else remains a `CustomJoint`, including non-identity linear
+functions and permuted valid coordinate mappings. Baking a `-1` rotation slope
+into the axis also negates its intercept, preserving
+`a*(-q+b) == (-a)*(q-b)`.
 
-The affected joint becomes immobile in the kinematic chain, but the
-skeleton structure stays valid and the rest of the model keeps working.
+Regression coverage links the rebuilt simulator archive rather than merely
+inspecting source:
+
+- `DOFMaskTests.testFailedReloadPreservesActiveDOFMask` rejects unsupported
+  functions, non-Cartesian/negative translation axes, incomplete transforms,
+  unknown parents and unknown coordinates while preserving the old DOF count
+  and active mask.
+- `IKSolverInternalsTests.testP8ModelCoordinateRepresentation` proves `2*q`
+  produces `0.2 m` at `q=0.1`, pins the `-q+0.5` intercept sign, and verifies a
+  valid remapping makes `pelvis_ty` drive both X and Y. The focused receipt also
+  recorded the reflected fixture's root as `CustomJoint<6>` and the unmodified
+  Rajagopal fixture at 37 total DOFs; those are fixture observations, not
+  general parser guarantees.
+- Both bundled models still load through their reviewed paths. The final
+  focused receipt was **3/3**, with no failures, skips, expected failures or
+  test-host restarts. Simulator Release, device Release and simulator
+  non-`NDEBUG` syntax builds all passed with zero warnings/errors; an
+  independent staged-diff review found no blocker/high issue.
+- The enclosing product commit gate passed fast **519/519 in 1690 s** and slow
+  E1 **1/1 in 6170 s**, with zero failures, skips, expected failures or
+  test-host restarts; the runner ended with `ALL GATE PASS`.
 
 ### How to apply after a fresh `nimblephysics/` clone
 
 ```sh
 cd labs/BioMotion/nimblephysics
-git apply ../nimble-patches/opensimparser-null-joint-fallback.patch
-cd build_ios && cmake --build .   # rebuild static archive for device
-cd ../build_sim && cmake --build .   # rebuild for simulator
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/opensimparser-fail-closed.patch
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
 ```
 
-After that the BioMotion Xcode build will link against the patched
-`libnimble_ios.a` automatically because the project.yml points at
-`nimblephysics/build_ios/libnimble_ios.a`.
+Then run the product regressions:
+
+```sh
+cd ..
+tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/DOFMaskTests/testFailedReloadPreservesActiveDOFMask \
+  -only-testing:BioMotionTests/IKSolverInternalsTests/testP8ModelCoordinateRepresentation \
+  -only-testing:BioMotionTests/NimbleBridgeTests/testBundledModelsFailClosedWithoutValidatedFootContactSupport
+```
+
+On an already patched tree, verify provenance with:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/opensimparser-fail-closed.patch
+```
 
 ## `simmspline-linear-extrapolation.patch`
 
