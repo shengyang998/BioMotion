@@ -555,11 +555,12 @@ final class StaticHoldTests: XCTestCase {
         return engine
     }
 
-    /// A held sequence — the offline runner's own 4 + 1 + 4 cadence on one pose
-    /// — must still produce muscle output, and must say it came from a static
-    /// solve.
+    /// A held sequence still produces a centred IK and a hold verdict, but the
+    /// bundled model/solver pair has no validated foot-support mechanics. A
+    /// trusted explicit floor cannot turn that missing capability into GRF,
+    /// torque, muscle effort, or a gait-load result.
     @MainActor
-    func testHeldSequenceProducesStaticHoldMuscleOutput() async throws {
+    func testBundledHeldPosePublishesIKOnlyWithoutContactSupport() async throws {
         let engine = try await loadedEngine()
         engine.staticHoldGating = true
 
@@ -573,13 +574,20 @@ final class StaticHoldTests: XCTestCase {
         let solve = try XCTUnwrap(engine.lastSolve, "no solve published after a full window")
         print("HOLD-METRIC engine-held isHold=\(solve.motion.isHold) "
             + "static=\(solve.isStaticHoldEstimate) muscle=\(solve.muscle != nil) "
+            + "availability=\(solve.dynamicsAvailability) "
             + "peak_cm_s=\(solve.motion.peakMarkerSpeedMetersPerSecond * 100) "
             + "window_s=\(solve.motion.windowSeconds) center=\(solve.centerTimestamp)")
 
         XCTAssertTrue(solve.motion.isHold, "nine replays of one pose must be a hold")
-        XCTAssertTrue(solve.isStaticHoldEstimate, "and must be solved as statics")
-        XCTAssertNotNil(solve.muscle, "a hold must still produce muscle output")
-        XCTAssertNotNil(solve.id)
+        XCTAssertEqual(solve.dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertFalse(solve.isStaticHoldEstimate,
+                       "no static dynamics estimate was actually solved")
+        XCTAssertNil(solve.id)
+        XCTAssertNil(solve.muscle)
+        XCTAssertNil(solve.gait)
+        XCTAssertNil(engine.lastIDResult)
+        XCTAssertNil(engine.lastMuscleResult)
+        XCTAssertNil(engine.displayMuscleResult)
         XCTAssertEqual(solve.centerTimestamp, 0.0, accuracy: 1e-6,
                        "the record is dated at the window centre, which the runner routes on")
     }
@@ -597,13 +605,20 @@ final class StaticHoldTests: XCTestCase {
         engine.staticHoldGating = true
 
         let dt = 0.5
-        let step = 0.50                     // 100 cm/s, 5x the cap
+        // Alternate between two nearby translations instead of walking the
+        // synthetic skeleton metres away from its seed. The old cumulative
+        // 0.50 m step still proved motion (100 cm/s), but by the final sample
+        // it asked IK to follow a 5.5 m displacement and the pose solve—not the
+        // motion policy this test owns—failed first. Fifteen centimetres per
+        // sample is 30 cm/s, still 1.5x the static cap, while every target stays
+        // in the same locally solvable IK neighbourhood.
+        let step = 0.15
         let base = Self.dancerMarkers
         var sawMuscle = false
         var lastMotion: NimbleEngine.MotionClassification?
 
         for push in 0..<(SavitzkyGolayFilter.windowSize + 3) {
-            let shift = SIMD3<Double>(step * Double(push), 0, 0)
+            let shift = SIMD3<Double>(push.isMultiple(of: 2) ? 0 : step, 0, 0)
             let markers = base.map { ($0.0, $0.1 + shift) }
             _ = await submitAndWait(engine, bodyFrame(markers, timestamp: Double(push) * dt,
                                                       frameNumber: push))
@@ -626,51 +641,16 @@ final class StaticHoldTests: XCTestCase {
                        "a moving frame must report pose only — no muscle magnitudes")
         XCTAssertNil(engine.lastSolve?.muscle)
         XCTAssertNil(engine.lastSolve?.id)
+        XCTAssertEqual(engine.lastSolve?.dynamicsAvailability,
+                       .withheld(.movingBeyondStaticBudget),
+                       "motion policy is the reason here; contact capability is never consulted")
     }
 
-    /// Does turning the gate ON change the numbers on the single-photo path
-    /// that already worked? This is a CONTROLLED comparison, because a naive
-    /// one is confounded.
-    ///
-    /// ─────────────────────────────────────────────────────────────────────
-    /// THE TRIPWIRE BELOW FIRED, AS DESIGNED. Re-derived 2026-08-07.
-    /// ─────────────────────────────────────────────────────────────────────
-    /// The original reasoning: the offline padding replays one pose, so `ddq`
-    /// should be ~1e-16 and zeroing it a no-op — yet peak torque read 75.196 Nm
-    /// dynamic vs 75.249 Nm static, a 0.052 Nm gap. The explanation was that
-    /// the ENGINE re-solves IK on every push and IK on identical markers did
-    /// not return the same answer, so the filter differentiated that drift into
-    /// an acceleration the subject never had. Removing that artifact was the
-    /// stated point of the feature, and this test asserted the artifact existed
-    /// (`maxConsecutive > 0`) so that its disappearance could not go unnoticed.
-    ///
-    /// It has disappeared. The 2026-08-07 IK work replaced nimble's
-    /// error-change termination with a stationarity test, so a repeated solve
-    /// on identical markers is now a fixed point. Measured here, same fixture,
-    /// same harness:
-    ///
-    ///   max_from_first_rad        0.0    (was ~0.17)
-    ///   max_consecutive_warm_rad  0.0    (was > 0, the artifact)
-    ///   dynamicA / dynamicB / static peak torque
-    ///                             84.10433817558118 Nm, all three IDENTICAL
-    ///   control_delta 0.0 · treatment_delta 0.0 · budget 0.00815
-    ///
-    /// **Consequence, recorded rather than hidden: static-hold gating is now a
-    /// measurable no-op on a hold.** Its remaining value is entirely on the
-    /// other branch — refusing to publish muscle magnitudes for a frame where
-    /// the subject was MOVING, which the pose source cannot supply the
-    /// accelerations for. That is `testMovingSequenceIsMarkedPoseOnly`, and it
-    /// is where this feature's justification now lives.
-    ///
-    /// The assertion is inverted rather than deleted, so a solver regression
-    /// that reintroduces the drift fails here and re-opens the question.
-    ///
-    /// Attribution still needs a control, because `NimbleBridge.mm:296`
-    /// documents the skeleton as SHARED across instances and IK warm-starts
-    /// from wherever the last run left it. The gate-OFF configuration is run
-    /// TWICE and comes back bit-identical.
+    /// Repeated IK on the photo-padding pose remains a fixed point, but neither
+    /// the gate-on nor gate-off branch may bypass missing contact support. The
+    /// historical torque comparison now lives only in the raw diagnostic seam.
     @MainActor
-    func testStaticSolveEffectOnAStillPoseIsBelowRunToRunVariation() async throws {
+    func testStaticHoldGatingDoesNotBypassMissingContactSupport() async throws {
         let markers = Self.dancerMarkers
         let dt = 0.5
 
@@ -725,7 +705,7 @@ final class StaticHoldTests: XCTestCase {
                           "cold-to-warm IK movement exceeded the numerical floor "
                           + "(\(maxDriftFromFirst) rad)")
 
-        func run(gating: Bool) async throws -> (maxTorque: Double, muscles: Int) {
+        func run(gating: Bool) async throws -> NimbleEngine.SolveRecord {
             let engine = try await loadedEngine()
             engine.staticHoldGating = gating
             for push in 0..<SavitzkyGolayFilter.windowSize {
@@ -733,42 +713,21 @@ final class StaticHoldTests: XCTestCase {
                 _ = await submitAndWait(engine, bodyFrame(markers, timestamp: ts, frameNumber: push))
             }
             let solve = try XCTUnwrap(engine.lastSolve)
-            XCTAssertEqual(solve.isStaticHoldEstimate, gating,
-                           "the fixture is a hold, so gating should decide the solve type")
-            let id = try XCTUnwrap(solve.id)
-            let maxT = id.jointTorques.values.map(abs).max() ?? 0
-            return (maxT, solve.muscle?.activations.count ?? 0)
+            XCTAssertTrue(solve.motion.isHold)
+            XCTAssertEqual(solve.dynamicsAvailability, .contactSupportUnavailable)
+            XCTAssertFalse(solve.isStaticHoldEstimate,
+                           "no static estimate exists when contact support is unavailable")
+            XCTAssertNil(solve.id)
+            XCTAssertNil(solve.muscle)
+            XCTAssertNil(solve.gait)
+            XCTAssertNil(engine.lastIDResult)
+            XCTAssertNil(engine.lastMuscleResult)
+            return solve
         }
 
-        let dynamicA = try await run(gating: false)
-        let dynamicB = try await run(gating: false)   // control
-        let statics  = try await run(gating: true)
-
-        let controlDelta = abs(dynamicB.maxTorque - dynamicA.maxTorque)
-        let treatmentDelta = abs(statics.maxTorque - dynamicB.maxTorque)
-        print("HOLD-METRIC parity dynamicA=\(dynamicA.maxTorque) dynamicB=\(dynamicB.maxTorque) "
-            + "static=\(statics.maxTorque) control_delta=\(controlDelta) "
-            + "treatment_delta=\(treatmentDelta) "
-            + "muscles A=\(dynamicA.muscles) B=\(dynamicB.muscles) static=\(statics.muscles)")
-
-        XCTAssertEqual(statics.muscles, dynamicB.muscles,
-                       "the gate must not change how many muscles are solved for")
-        XCTAssertEqual(controlDelta, 0,
-                       "two identical gate-OFF runs must agree exactly — without that the "
-                       + "treatment delta below cannot be attributed to the gate at all")
-
-        // The tripwire, derived rather than fitted. The detector's whole promise
-        // is that on a hold the discarded mean acceleration is under
-        // `maxDiscardedMeanAccel` = 5% of g. If zeroing q̇/q̈ moved the peak
-        // torque by MORE than that fraction, the removed term was never a small
-        // correction and the static reading would be a different answer rather
-        // than a cleaner one. Measured on this fixture: 0.052 Nm of 75.2 Nm =
-        // 0.07%, an order of magnitude inside the budget.
-        let budget = StaticHoldDetector.discardedAccelFractionOfG
-        print(String(format: "HOLD-METRIC parity treatment_fraction=%.5f budget_fraction=%.5f",
-                     treatmentDelta / dynamicB.maxTorque, budget))
-        XCTAssertLessThan(treatmentDelta / dynamicB.maxTorque, budget,
-                          "the gate's effect on an already-still pose must stay inside the "
-                          + "acceleration budget the hold criterion is built on")
+        let ungated = try await run(gating: false)
+        let gated = try await run(gating: true)
+        XCTAssertEqual(ungated.ik.jointAngles, gated.ik.jointAngles,
+                       "the policy gate must not change the centred pose")
     }
 }

@@ -1,11 +1,12 @@
 import XCTest
 @testable import BioMotion
 
-/// Reproduces the offline photo path's biomechanics chain stage by stage, to
-/// find where muscle output stops being produced.
+/// Preserves the former offline photo biomechanics chain as a raw numerical
+/// diagnostic. Product code now stops before contact-dependent ID because the
+/// bundled model/solver pair has no validated foot-support mechanics.
 ///
-/// On device, a single imported photo reports "Pose only (warming up)" and
-/// "0 with muscle data" — the skeleton renders but no muscle ever appears. The
+/// Historically, a single imported photo reported "Pose only (warming up)" and
+/// "0 with muscle data" — the skeleton rendered but no muscle ever appeared. The
 /// skeleton and the muscle solve do NOT share an input: the skeleton is drawn
 /// straight from `BodyFrame.joints`, whereas muscle output requires
 /// IK -> Savitzky-Golay warm-up -> ID -> moment arms -> QP. A visible skeleton
@@ -43,7 +44,7 @@ final class OfflineMuscleChainTests: XCTestCase {
 
     /// Walks the whole chain and reports the first stage that fails, so the
     /// failure message names the culprit instead of just "no muscle".
-    func testPhotoPathProducesMuscleOutput() throws {
+    func testUnvalidatedPhotoDiagnosticProducesMuscleOutput() throws {
         try loadFullBody()
 
         var positions: [NSNumber] = []
@@ -90,17 +91,18 @@ final class OfflineMuscleChainTests: XCTestCase {
 
         // --- Stage 3: inverse dynamics -----------------------------------
         let id = try XCTUnwrap(
-            bridge.solveIDGRF(withJointAngles: smoothedQ.map { NSNumber(value: $0) },
-                              jointVelocities: smoothedDQ.map { NSNumber(value: $0) },
-                              jointAccelerations: smoothedDDQ.map { NSNumber(value: $0) }),
-            "STAGE 3 FAILED: solveIDGRF returned nil (DOF count mismatch is the only non-fallback nil path)")
+            bridge.solveUnvalidatedIDGRFForDiagnostics(
+                withJointAngles: smoothedQ.map { NSNumber(value: $0) },
+                jointVelocities: smoothedDQ.map { NSNumber(value: $0) },
+                jointAccelerations: smoothedDDQ.map { NSNumber(value: $0) }),
+            "STAGE 3 FAILED: unvalidated diagnostic ID+GRF solve returned nil")
         let torqueMags = id.jointTorques.map { abs($0.doubleValue) }
         let maxTorque = torqueMags.max() ?? 0
         print("CHAIN-METRIC id_torques=\(id.jointTorques.count) max_torque_Nm=\(maxTorque) leftContact=\(id.leftFootInContact) rightContact=\(id.rightFootInContact)")
-        // With no foot in contact, solveIDGRF falls back to plain inverse
-        // dynamics with ZERO external force, so bodyweight has to be carried
-        // entirely by joint torques. That inflates the torques the muscle QP is
-        // asked to match, and muscles slam into their bounds.
+        // This diagnostic helper preserves the legacy no-contact fallback to
+        // plain inverse dynamics with ZERO external force. It is intentionally
+        // unavailable to product code: the resulting torques do not establish
+        // foot support or a publishable GRF.
         print("CHAIN-METRIC groundHeightY=\(bridge.groundHeightY)")
 
         // Where the torque actually lands, and whether the pose is even in

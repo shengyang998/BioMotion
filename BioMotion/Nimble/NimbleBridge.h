@@ -150,30 +150,30 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 - (nullable NimbleIKResult *)solveIKWithMarkerPositions:(NSArray<NSNumber *> *)markerPositions
                                             markerNames:(NSArray<NSString *> *)markerNames;
 
-/// Run inverse dynamics: given joint angles and accelerations, solve for joint torques.
-/// @param jointAngles Current joint angles (from IK).
-/// @param jointVelocities Current joint velocities (finite difference from IK).
-/// @param jointAccelerations Current joint accelerations (finite difference from velocities).
-/// @return ID result with joint torques, or nil on failure.
-- (nullable NimbleIDResult *)solveIDWithJointAngles:(NSArray<NSNumber *> *)jointAngles
-                                   jointVelocities:(NSArray<NSNumber *> *)jointVelocities
-                               jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations;
-
-/// Run inverse dynamics with automatic ground reaction force estimation.
+/// Whether the loaded model and active solver provide validated foot-contact
+/// support mechanics for product GRF/CoP/torque output.
 ///
-/// Detects which feet are in contact with the ground (based on `calcn_l` and
-/// `calcn_r` body position versus the current ground height) and uses
-/// Nimble's multi-contact near-CoP ID solver to decompose the system wrench
-/// into per-foot GRFs + joint torques. This is the physically correct way
-/// to run ID for any scenario where the subject has ground contact (standing,
-/// walking, squatting, sit-to-stand). Use `solveIDWithJointAngles:...` only
-/// for pure flight-phase motions.
+/// This is a capability statement, not a model-load statement. A model can
+/// load successfully for IK while this remains NO. The current bridge does
+/// not parse a foot contact domain or enforce unilateral/friction constraints,
+/// so both bundled models report NO. A successful reload replaces this value
+/// transactionally with the rest of the model; a failed reload and
+/// `resetSessionState` preserve it.
+@property (nonatomic, readonly) BOOL hasValidatedFootContactSupport;
+
+/// Run inverse dynamics with validated ground-contact support.
+///
+/// This public product entry point fails closed unless
+/// `hasValidatedFootContactSupport` is YES. Rejection happens before changing
+/// skeleton state or feeding the ground-height estimator, so a missing contact
+/// model cannot publish an unconstrained wrench or perturb later analysis.
 ///
 /// @param jointAngles       Smoothed joint angles from IK (q).
 /// @param jointVelocities   Smoothed joint velocities (dq), temporally aligned with q.
 /// @param jointAccelerations Smoothed joint accelerations (ddq), aligned with q.
-/// @return An NimbleIDResult with jointTorques populated plus per-foot
-///         force / CoP / contact-state fields. Returns nil on failure.
+/// @return A NimbleIDResult with jointTorques populated plus per-foot force /
+///         CoP / contact-state fields, or nil when validated contact support
+///         is unavailable or the solve fails.
 - (nullable NimbleIDResult *)solveIDGRFWithJointAngles:(NSArray<NSNumber *> *)jointAngles
                                        jointVelocities:(NSArray<NSNumber *> *)jointVelocities
                                     jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations;
@@ -190,11 +190,11 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// Feeds one observation of the lowest foot height (ARKit world-frame y, in
 /// meters) into the rolling ground-height estimator.
 ///
-/// `solveIDGRFWithJointAngles:...` calls this itself with min(calcn_l.y,
-/// calcn_r.y) every frame, so normal callers never need to. It is public so
-/// that a caller with a better contact cue (e.g. a depth-derived floor plane)
-/// can drive the same estimator, and so the estimator is testable without a
-/// full IK/ID frame.
+/// Callers may feed this directly from a trusted contact cue (for example, a
+/// depth-derived floor plane). The legacy Debug-host GRF diagnostic also feeds
+/// it from min(calcn_l.y, calcn_r.y); that selector is absent from Release, and
+/// the fail-closed public GRF entry point does not mutate this estimator when
+/// contact support is unavailable.
 ///
 /// The estimate is a low percentile of a bounded window of recent samples, so
 /// it tolerates transient dips (one bad frame, a landing spike, a momentary
@@ -206,8 +206,8 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// Current ground height used for contact detection.
 @property (nonatomic, readonly) double groundHeightY;
 
-/// Vertical clearance, in metres, under which `solveIDGRFWithJointAngles:...`
-/// calls a foot planted: `calcn_y − groundHeightY < this`.
+/// Vertical clearance, in metres, used by the legacy diagnostic to call a foot
+/// planted: `calcn_y − groundHeightY < this`.
 ///
 /// Exposed so that "how often would this detector see BOTH feet down?" can be
 /// measured against the shipped number rather than against a copy of it. That

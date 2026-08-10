@@ -34,13 +34,15 @@ biggest links were **not** where the effort had been going.
   It is necessary and **not sufficient**: the depth channel carries 3.1 g of pure acceleration noise
   at 30 fps, and all three of the owner's clips are tracking shots with no inertial frame at all. See
   [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
-- **The gait-cycle route to muscle force on running footage is OPEN but UNPROVEN** (2026-08-07).
-  The reasoning stands — root acceleration need not be measured, because flight is free fall and
-  stance is closed by the stride's vertical impulse. The evidence does NOT: the probe that produced
+- **The gait-cycle route still supports KINEMATIC CONTACT TIMING; its load route is CLOSED on the
+  bundled models** (updated 2026-08-10). The historical reasoning treated root acceleration and
+  stance impulse as a possible load model. The evidence did NOT validate foot support: the probe that produced
   it wrote 41 distinct frames for 120 requested, so the headline "contact 200 ms, zero spread across
   a 2.5× threshold span" measured a quantisation staircase. Corrected extraction gives contact
-  167–247 ms and peak GRF 2.08–2.85 BW at **±32%**, with no robustness result at all. Not
-  implemented; a first attempt is parked on `wip/gait-dynamics-broken`. See
+  167–247 ms and a raw, hypothetical peak of 2.08–2.85 BW at **±32%**, with no robustness result.
+  More decisively, both bundled `ContactGeometrySet`s are empty and the active near-CoP routine has
+  no validated support-domain, unilateral-contact, or friction constraint. The product preserves
+  contact timing but publishes no GRF, CoP, torque, muscle, or gait-load value. See
   [Gait-cycle dynamics](#gait-cycle-dynamics-the-route-survives-its-evidence-did-not-2026-08-07).
 - **The per-muscle LEFT/RIGHT claim is RETIRED** (2026-08-08). The measurement that certified it ran
   on a rig where it could not fail — the QP is linear in the joint torques, so a right leg scaled
@@ -69,9 +71,10 @@ biggest links were **not** where the effort had been going.
   against a 5 % nominal. **No pinned clip publishes a contact-time claim, and none did before
   either** — `video_012` 2.90 % against a 10.145 % floor, `video_015` −0.54 % against a floor that
   rises 8.086 → **16.464 %**, `video_013` refused. The claim can honestly find a 20-25 % left/right
-  contact difference on a 4 s clip and not much finer. The LIVE screen's undisclosed "L/R load"
-  badge is a `GRF sum` diagnostic now, the muscle block states the model's permanent limit before
-  any clip refusal, and the solver's saturated/floored counts are no longer printed as facts about
+  contact difference on a 4 s clip and not much finer. The LIVE screen's former undisclosed "L/R
+  load" value was first narrowed to a raw `GRF sum` diagnostic and is now unreachable for both
+  bundled models: the contact-support gate withholds the whole dynamics row. The muscle block states
+  the model's permanent limit before any clip refusal, and solver bound counts are no longer facts about
   a body. See
   [Seventh round](#seventh-round-the-surviving-claim-was-gated-on-the-wrong-variance-too-2026-08-08).
 - **The moment arms finally have an AUTHORITATIVE REFERENCE, and the defect that retired the muscle
@@ -319,7 +322,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 514 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 519 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -635,20 +638,18 @@ Full accounting, measurements and pre-registered gates: `labs/sam-3d-body/findin
 - In quasi-static posture, activation is a **deterministic function of pose + bodyweight +
   anthropometry**. Same pose ⇒ same numbers, regardless of who is standing there. It renders the
   *posture*, not the *person*.
-- Double-support L/R load split is **statically indeterminate**: `F_L·x_L^cop + F_R·x_R^cop =
-  mg·x_com` is 4 unknowns / 2 equations with each foot's CoP free inside its polygon. With a
-  *perfectly known* CoM and a 25 cm stance this alone gives **±18 pp**. Healthy adults sit ~2 pp
-  from 50/50 and ~10 pp is the clinically meaningful threshold — **the instrument cannot resolve
-  the effect it would be measuring**. `NimbleBridge.mm:652` additionally hardcodes a 50/50 wrench
-  prior that the near-CoP objective pulls toward, so any L/R asymmetry reported today is an
-  artifact.
-  **Single-leg stance is statically determinate** and is the way out.
+- The earlier double-support analysis was already a counterexample under a *more favourable* model:
+  if each foot had a valid support polygon, `F_L·x_L^cop + F_R·x_R^cop = mg·x_com` would still
+  leave the split underdetermined (historical bound: **±18 pp** with perfect CoM). The shipping
+  model/solver pair is less constrained than that hypothetical calculation: both contact-geometry
+  sets are empty, and the near-CoP routine enforces no support polygon, unilateral force, or friction
+  cone at all. Its 50/50 seed and returned wrenches are raw diagnostics, not an instrument. No L/R
+  or total GRF is reported today. Single-leg stance does not repair the absent support model.
 
-**What *is* defensibly quantitative:** joint angles in the sagittal plane, plumb-line deviation (cm),
-hold duration and sway, CoM position within the base of support, and — once GRF is known
-(single-leg) — **joint moments** (Nm/kg). Joint moments are uniquely determined by inverse dynamics;
-the redundancy problem lives strictly *downstream* of them. That is the honest muscle-adjacent
-number.
+**What is currently defensibly quantitative:** joint angles in observable planes, plumb-line
+deviation, hold duration/sway, kinematics-only posture findings, and resolution-qualified contact
+timing. Joint moments could become a defensible muscle-adjacent number only after GRF/contact
+support is independently validated; neither bundled model meets that prerequisite.
 
 ---
 
@@ -951,6 +952,11 @@ gravity, pulling along the wrong axis.
 
 **Every torque this project ever computed was wrong, because the skeleton's gravity vector ran along
 the subject's medio-lateral axis.**
+
+> **Historical raw-diagnostic scope (added 2026-08-10):** the values in this section verify gravity,
+> coordinate frames, and statics algebra inside the old unconstrained contact solve. They do not
+> validate the bundled models' empty foot contact geometry and are not publishable joint torque,
+> GRF, or CoP measurements. The production path now refuses them.
 
 DART's `Skeleton` defaults gravity to `Eigen::Vector3s(0, 0, -9.81)` — a **Z-up** convention
 (`nimblephysics/dart/dynamics/detail/SkeletonAspect.hpp:82`). OpenSim models are **Y-up**.
@@ -1612,8 +1618,10 @@ The real answer to the falsifiability requirement, and the (a)/(b) choice: **(a)
 because (b) is not available on this pose source.** `MHRRetarget` pins the raw source root, so measured
 `a_root ≡ 0` and a plain-ID root residual would read `‖m·a_artic − m·g − F_gait‖ ≈ 3.9·m·g` on every
 stance frame of every clip — the same failure on good and bad footage alike, i.e. a constant, not a
-falsifier. (b) unlocks when `cam_t` is composed in AND its depth is usable (3.11 g of noise at
-30 fps today). Three quantities carry the burden instead, and they gate together through
+falsifier. At this historical stage, (b) was treated as available once `cam_t` was composed in AND
+its depth became usable (3.11 g of noise at 30 fps). The 2026-08-10 contact audit supersedes that:
+`cam_t` can repair kinematics but cannot create the missing support model, so dynamics remains
+unavailable. Three quantities were then made to carry the burden, gated together through
 `GaitLoadSummary.arePublishable`: **(1)** `‖a_artic‖/g` over frames both contact detectors agree on;
 **(2)** the ID solver's geometric contact detector against the kinematic one; **(3)** per-muscle
 saturation, which is exactly and only where a peak-force error stops cancelling out of a ratio. The
@@ -2397,20 +2405,25 @@ left/right contact difference on a 4 s clip and not much finer. Longer clips are
 moves it and it moves as `1/√n`: the term is `t·√(s²_L/n_L + s²_R/n_R)`, so halving the floor needs
 roughly four times the contacts — about 20 a side, i.e. a ~16 s steady run.
 
-#### M1 — the LIVE screen's undisclosed left/right load claim: it is a diagnostic now
+#### M1 — the LIVE screen's undisclosed left/right load claim (historical; now withheld entirely)
 
 `ContentView` drew `AccuracyBadge(label: "L/R load", value: "0.62|0.38")` with no caption and no
 floor, on the app's most-used screen, in the exact framing the offline path spent four rounds
 retiring. Its `good` indicator was `abs(total − 1.0) < 0.3` — keyed to the SUM, which the near-CoP
 solver constrains exactly — while the VALUE showed the split, which nothing checks.
 
-**Decision: show the sum, do not show the split.** There is no discipline that could have rescued
-it. `NimbleBridge.mm:1499` seeds the solve with a hardcoded 50/50 wrench guess whenever both feet are
+**Decision at that stage: show the sum, do not show the split.** There is no discipline that could
+have rescued it. `NimbleBridge.mm:1499` seeds the solve with a hardcoded 50/50 wrench guess whenever both feet are
 down, and this file already records the double-support split as statically indeterminate at ±18 pp
 with a perfectly known CoM against a ~10 pp clinically meaningful threshold. It is an artifact with a
 plausible shape. The badge reads `GRF sum 1.00 BW`, its label and its indicator now measure the same
 quantity, and `NimbleEngine.footLoadSplitIsNotMeasuredNote` sits under it on **the same `if`** as the
 badges — the live path had already shipped one picture whose caption had a different gate.
+
+**Superseded 2026-08-10:** the sum was still produced by a model/solver pair with empty contact
+geometry and no support-domain, unilateral, or friction constraint. Both bundled models now fail
+the capability gate before ID, so neither the sum nor the split is a current product diagnostic;
+the availability explanation appears instead.
 
 #### M2 — a data-gate failure sold a re-shoot that cannot help
 
@@ -2552,10 +2565,11 @@ this claim is limited by the runner, not the sampling grid. The half-width falls
 calls ≈ 5.6 min at 0.7 s/frame, ~850 MB peak for 576×768 (it would NOT fit at 1080p). That is a
 bounded engineering change and it is the obvious next step; it is out of scope for build 30.
 
-**What build 30 does deliver:** a skeleton whose legs finally track the stride (the `upperBodyOnly`
+**What build 30 delivered at that historical stage:** a skeleton whose legs finally track the stride (the `upperBodyOnly`
 crop fix), gait timing per side with its scatter and step counts, a per-clip resolution figure the
-app computes rather than disclaims, the kinematics posture findings, static-hold muscle output
-unchanged, and a commit gate (`tools/run_tests.sh`) whose green actually means green.
+app computes rather than disclaims, the kinematics posture findings, then-active raw static-hold
+muscle diagnostics, and a commit gate (`tools/run_tests.sh`) whose green actually means green. The
+2026-08-10 contact-support gate now withholds those diagnostics from the product.
 
 
 ## The moment arms now have a REFERENCE, and the defect is measured (2026-08-08)
@@ -3967,6 +3981,11 @@ from 486 to **487** at that commit; no sampling, gait, dynamics or claim arithme
 
 ## Contact timing stays visible without a muscle summary (2026-08-10)
 
+> **Superseded later on 2026-08-10 by the contact-support publication boundary below.** The
+> intermediate design still published a full `GaitReport` and accepted an optional
+> `GaitLoadSummary`; the final product contract publishes detached `GaitTimingReport` only and the
+> panel has no load-summary initializer.
+
 An `.analysed` report replaces the posture panel because a run has no single representative pose.
 When `GaitLoadSummary.make` returned nil, `GaitReportPanel` then skipped both the resolution and
 contact-time blocks and showed only “The strides were measured but no contact produced muscle
@@ -4225,7 +4244,11 @@ The commit gate then passes in full: fast is **506/506** in **2225 s** and slow 
 failures, skips, expected failures or restarts; the combined runner reports **ALL GATE PASS**.
 
 
-## Dynamics stay pose-only until the ground plane is trusted (2026-08-10)
+## Ground-plane trust is necessary but not sufficient for dynamics (2026-08-10)
+
+This section records the earlier floor-provenance repair. It remains a real necessary gate for any
+future dynamics path, but it is **not** sufficient: the contact-support audit immediately below
+found that neither bundled model can pass the earlier model/solver capability gate.
 
 The rolling ground estimator used to expose its provisional floor as though it were calibrated.
 On its very first call, `solveIDGRF` placed the floor 1 cm below the lowest observed foot. That
@@ -4236,18 +4259,20 @@ live UI, offline payload, gait residuals and export history.
 
 The boundary is now explicit and same-generation:
 
-- `DynamicsAvailability` travels with `SolveRecord` and `BiomechanicsPayload`. `.available` is
-  equivalent to a non-nil ID payload; waiting, policy withholding, missing root-y, untrusted ground
-  and native ID failure each keep dynamics nil and carry their own explanation. Missing is never
-  rendered or aggregated as a measured zero.
-- The native call still runs so it can observe the current feet, but trust is tested **after** it
-  returns. Samples 1–29 publish pose-only; sample 30 upgrades the rolling estimate and is the first
-  result from that same call allowed to publish ID/GRF/CoP/muscle. Untrusted frames cannot append ID
-  history or fabricate a `GaitFrameOutcome`, so residual/contact summaries have no synthetic
-  `0 BW / no contact` rows.
+- `DynamicsAvailability` travels with `SolveRecord` and `BiomechanicsPayload`. The current product
+  store additionally requires a successful, temporally eligible tracked body plus owner-matched
+  body/IK timestamps; `.available` requires a same-generation ID, and muscle has its own timestamp
+  gate. Waiting, policy withholding, missing root-y, untrusted ground and native ID failure each
+  keep dynamics nil and carry their own explanation. Missing is never rendered or aggregated as a
+  measured zero.
+- For a capability-valid model, the native call can observe the current feet and trust is tested
+  after the observation. Samples 1–29 remain pose-only; sample 30 can satisfy the floor requirement
+  on that same call. It is only *eligible for later gates*, not automatically publishable. The
+  bundled models stop earlier at `.contactSupportUnavailable` and never run this load solve.
 - Savitzky–Golay endpoint replay supplies derivative context only. Repeating one photo does not
-  manufacture 30 independent floor observations, so a photo without a calibrated external floor is
-  honestly pose-only. `setExplicitGroundHeightY` remains the ordered seam for a real external floor.
+  manufacture 30 independent floor observations. `setExplicitGroundHeightY` remains the ordered
+  seam for a real external floor, but with either floor source both bundled models remain pose-only
+  because contact support fails first.
 - A gait second pass over the same continuous clip clears SG/hold state, IK warm start and QP warm
   start while preserving that clip's ground window. It invalidates all pass-one dynamics before the
   first pass-two submission; an incomplete/timeout row stays explicitly pose-only rather than
@@ -4255,8 +4280,7 @@ The boundary is now explicit and same-generation:
   `.resetTracking` boundary performs the full reset and discards both the floor and stale physics.
 - Live and offline presentation now show the availability reason instead of green `0.0 Nm/kg`,
   `0.00 BW`, `0.00 N/kg`, an old muscle overlay, or a misleading “warming up” label. Offline payload
-  replacement clears old ID/muscle/gait fields atomically and reports the number of pose-only
-  ground-establishment frames.
+  replacement clears old ID/muscle/gait fields atomically and keeps pose-only availability explicit.
 
 The RED contracts proved three concrete leaks: sample 29 still produced ID/muscle/history, an
 untrusted gait frame still produced numeric outcome/summary state, and the first warm solve after a
@@ -4279,6 +4303,69 @@ expected failures, or restarts. The eight new contracts move the reviewed fast c
 slow E1 **1/1 in 6066 s**. Both lanes returned `xcodebuild = 0`, `xcresulttool = 0`, `Passed`, and
 zero failures, skips, expected failures, or test-host restarts; the runner ended with
 `ALL GATE PASS`.
+
+
+## Bundled models fail closed without validated foot contact support (2026-08-10)
+
+The model/solver pair had no load-bearing contact representation. Static inspection finds an empty
+`ContactGeometrySet` in both production resources (`FullBody.osim:51285-51288` and
+`Rajagopal2016.osim:14282-14285`). The near-CoP call takes foot bodies and wrench guesses, then
+closes Newton–Euler near those guesses; it does **not** impose a foot support polygon, a unilateral
+normal-force constraint, or a friction cone. A low heel and a trusted ground height can say where a
+foot appears to be. They cannot say where or in which directions that foot may transmit force.
+
+That makes every prior floor-only release condition insufficient. An explicit floor, observation
+30, a static hold, a gait second pass, a longer clip, or a cleaner re-shoot still cannot create the
+missing mechanics. The production policy is now fail-closed:
+
+- `NimbleBridge.hasValidatedFootContactSupport` is false for both bundled models, and production
+  `solveIDGRF` returns nil before mutating the rolling floor or exposing an unconstrained wrench.
+- `NimbleEngine` publishes `.contactSupportUnavailable` before both static and gait dynamics. IK,
+  fixed-colour anatomy, kinematics-only posture findings, bilateral mean contact duration,
+  variation/count, timing resolution, and the resolution-qualified left/right contact-time
+  comparison remain available. Specific contact intervals and cadence/stride period stay internal.
+  Joint torque, GRF, CoP, muscle effort, and gait-load fields stay nil; no history or old coloured
+  overlay survives.
+- The availability explanation states the missing capability and explicitly says re-filming cannot
+  enable it. Ground trust remains a second gate for a future model/solver pair, never an alternative
+  to contact support.
+- The research `GaitForceModel`, `GaitLoadSummary`, earlier static-equilibrium probes, and all
+  figures such as 780.71 N, 18.55 Nm, or 0.030604 BW are retained as **historical raw diagnostics**.
+  They checked algebra, units, frames, or falsifiers inside an unconstrained solver; they are not
+  validated biological measurements and are not product output.
+- The publication seam itself is timing-only, rather than relying on the UI to hide optional data.
+  `GaitOutcome.refused` and `.analysed` carry a detached `GaitTimingReport`; it contains copied
+  resolution, contact duration/count/uncertainty, timing refusals and flags, and cannot retain the
+  research report's force/peak fields, a `GaitPlan`, residuals or `GaitLoadSummary`.
+  `GaitReportPanel` has no load-summary initializer, and every stored frame strips the native gait
+  force/residual outcome while preserving stance/flight/outside verdicts.
+- Append, replacement, and late capability downgrade share one product frame projector. It requires
+  success, temporal eligibility, a tracked body, and owner-matched body/IK timestamps before pose
+  state survives. Same-generation ID and muscle timestamps are gated independently: stale ID
+  becomes `.inverseDynamicsFailed` without erasing valid IK/verdict, while stale muscle removes only
+  muscle. Capability false still clears all ID/muscle output from an otherwise valid generation.
+- `OfflineResultStore.hasValidatedFootContactSupport` records the model/session capability instead
+  of inferring it from a count of second-pass frames. Its permanent notice remains beside immediate
+  moving/flight/outside advice. For both bundled models the runner publishes analysed timing, then
+  returns before `makePlan`, pass-two invalidation or frame replay. A
+  `.contactTooShortForACleanDerivative` refusal blocks only that future private plan; it neither
+  refuses timing nor suppresses a contact asymmetry that clears the timing floor.
+
+Reopening dynamics requires a model/solver pair with an explicit, reviewed foot-support
+representation and adversarial tests for at least the support domain, unilateral loading, friction,
+contact selection, and wrench-frame conversion. It then still has to pass ground provenance and all
+downstream claim gates. Merely setting `hasValidatedFootContactSupport` true is not evidence.
+
+Test receipt: after the implementation and documentation were frozen, the broad focused selection
+(`GaitLoadSummary`, disclosure/orchestration, gait dynamics, claim surface, TRC export, bridge and
+static-hold suites) passed **139/139 in 240 s** with `xcodebuild = 0`, `xcresulttool = 0`, `Passed`,
+and zero failures, skips, expected failures, or test-host restarts. The unsigned arm64-simulator
+Release build passed in **30 s** (`xcodebuild = 0`); its 13,006,072-byte Mach-O retained only the
+public fail-closed `solveIDGRF` selector and contained neither the test-diagnostic selectors nor the
+removed raw-ID selector/string. The shell gate passed **49/49**. Finally,
+`tools/run_tests.sh all` passed the exact commit gate: fast **519/519 in 1676 s** and slow E1
+**1/1 in 6150 s**. Both lanes returned `xcodebuild = 0`, `xcresulttool = 0`, `Passed`, and zero
+failures, skips, expected failures, or test-host restarts; the runner ended with `ALL GATE PASS`.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4665,8 +4752,9 @@ arms must differ in the work that PRECEDES the mask.
 ### Newly opened by the 2026-08-08 contact-claim repair (seventh round)
 
 20. ~~**Restore the contact-time finding on `.analysed` with no summary.**~~
-    **DONE 2026-08-10.** `GaitTimingSummary(report:)` now feeds the resolution and contact blocks
-    regardless of the optional muscle summary; report flags stay visible as before. (Minor 9.)
+    **DONE, then strengthened 2026-08-10.** `GaitTimingReport` now detaches resolution, contact
+    timing and flags from the research report. The final panel has no optional muscle summary at
+    all, and the unsupported bundled path does not build or run a dynamics plan. (Minor 9.)
 21. **Longer clips are the only lever on the contact-claim floor, and it is `1/√n`.** The sampling
     half-width is `t·√(s²_L/n_L + s²_R/n_R)`, so halving `video_015`'s 16.5 % needs ~4× the
     contacts — about 20 a side, a ~16 s steady run against the current 4 s window and the 601-frame

@@ -1,7 +1,9 @@
 import XCTest
 @testable import BioMotion
 
-/// A KNOWN-ANSWER benchmark for the inverse-dynamics stage.
+/// A KNOWN-ANSWER benchmark for the historical raw inverse-dynamics stage.
+/// It checks gravity/frame algebra through a test-only unconstrained solver;
+/// none of its torques, GRFs, or CoPs are product measurements.
 ///
 /// `OfflineMuscleChainTests` runs a real dancer pose. That pose is
 /// representative but useless as a reference, because nobody can say by hand
@@ -217,10 +219,10 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         }
     }
 
-    /// Runs the production photo path on a marker set: IK -> Savitzky-Golay
-    /// warm-up on a repeated frame (so dq, ddq collapse to ~0) -> ID with GRF.
-    /// Same call sequence as `OfflineMuscleChainTests`, so nothing here is a
-    /// special-cased solver path.
+    /// Runs the former photo chain on a marker set: IK -> Savitzky-Golay
+    /// warm-up on a repeated frame (so dq, ddq collapse to ~0) -> test-only,
+    /// unvalidated ID with GRF. It shares the historical diagnostic sequence
+    /// with `OfflineMuscleChainTests`; the current product path cannot call it.
     private func solve(markers: [(String, SIMD3<Double>)], tag: String) throws -> Solved {
         var positions: [NSNumber] = []
         var names: [String] = []
@@ -260,10 +262,11 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         print("BENCH-METRIC [\(tag)] max_dq=\(dq.map { abs($0) }.max() ?? 0) max_ddq=\(ddq.map { abs($0) }.max() ?? 0)")
 
         let id = try XCTUnwrap(
-            bridge.solveIDGRF(withJointAngles: q.map { NSNumber(value: $0) },
-                              jointVelocities: dq.map { NSNumber(value: $0) },
-                              jointAccelerations: ddq.map { NSNumber(value: $0) }),
-            "solveIDGRF returned nil")
+            bridge.solveUnvalidatedIDGRFForDiagnostics(
+                withJointAngles: q.map { NSNumber(value: $0) },
+                jointVelocities: dq.map { NSNumber(value: $0) },
+                jointAccelerations: ddq.map { NSNumber(value: $0) }),
+            "unvalidated diagnostic ID+GRF solve returned nil")
         return Solved(ik: ik, id: id, dofNames: ik.dofNames,
                       torques: id.jointTorques.map { $0.doubleValue })
     }
@@ -417,8 +420,9 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
     /// moment — "torque decreases distally" is a statement about how much mass
     /// hangs below a joint, and it does not survive as an ordering rule for a
     /// balanced upright pose, where every lever arm is a few centimetres. The
-    /// pose-independent statement that DOES hold is the support-polygon bound
-    /// asserted below.
+    /// broad ceiling below is only a plausibility tripwire for this
+    /// quasi-static fixture; the unvalidated diagnostic solver does not
+    /// enforce it as a contact constraint.
     func testQuietStandingAnkleMomentIsTensOfNewtonMetres() throws {
         try loadFullBody()
         let markers = Self.standingMarkers(leanRad: -0.070027)   // -4.012°
@@ -446,18 +450,15 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
                 "\(name) = \(t) Nm. Hand-derived value for this pose is 19.1 Nm.")
         }
 
-        // --- the pose-independent bound ----------------------------------
-        // The centre of pressure cannot leave the foot. The foot spans from
-        // the heel (0.049 m behind the ankle JC) to the toe tip (~0.19 m
-        // ahead of it), so for a foot carrying at most the whole bodyweight
-        //     |M_ankle| <= 780.71 N * 0.19 m = 148 Nm
-        // and for a symmetric two-foot stance (390 N per foot) half that.
-        // This holds for ANY human pose, not just this one.
+        // --- broad fixture plausibility ceiling --------------------------
+        // 148 Nm is a deliberately loose quiet-stance diagnostic ceiling from
+        // bodyweight times the fixture foot's longest heel/toe lever. The raw
+        // solver does not constrain its inferred CoP to that domain, so passing
+        // this check is not evidence that its contact mechanics are valid.
         for name in ["ankle_angle_r", "ankle_angle_l"] {
             XCTAssertLessThan(abs(s.torque(name)), 148.0,
-                "\(name) = \(s.torque(name)) Nm exceeds the support-polygon bound " +
-                "|F| * max foot lever = 780.71 * 0.19 = 148 Nm. No CoP inside a " +
-                "human foot can produce this.")
+                "\(name) = \(s.torque(name)) Nm exceeds the 148 Nm " +
+                "quiet-stance plausibility ceiling")
         }
         // Frontal-plane lever at the subtalar joint is at most the foot's
         // half-width, ~0.045 m: |M| <= 390.36 * 0.045 = 17.6 Nm, and the
@@ -480,7 +481,7 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         for name in Self.legDOFs {
             XCTAssertLessThan(abs(s.torque(name)), 150.0,
                 "\(name) = \(s.torque(name)) Nm. In a balanced two-foot stance " +
-                "no leg moment can exceed the support-polygon bound.")
+                "this exceeds the diagnostic fixture's broad plausibility ceiling.")
         }
 
         // --- symmetry -----------------------------------------------------
@@ -536,7 +537,8 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         }
         for name in Self.legDOFs {
             XCTAssertLessThan(abs(s.torque(name)), 150.0,
-                "\(name) = \(s.torque(name)) Nm exceeds the support-polygon bound")
+                "\(name) = \(s.torque(name)) Nm exceeds the diagnostic " +
+                "fixture's broad plausibility ceiling")
         }
         assertLeftRightSymmetric(s, tag: "upright")
         assertContactForceIsUprightBodyweight(s, tag: "upright")
@@ -841,9 +843,10 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         let zeros = [NSNumber](repeating: NSNumber(value: 0.0), count: n)
         let qz = [NSNumber](repeating: NSNumber(value: 0.0), count: n)
         func torques(ddq: [Double]) -> [Double] {
-            bridge.solveID(withJointAngles: qz,
-                           jointVelocities: zeros,
-                           jointAccelerations: ddq.map { NSNumber(value: $0) })!
+            bridge.solveUnvalidatedIDForDiagnostics(
+                withJointAngles: qz,
+                jointVelocities: zeros,
+                jointAccelerations: ddq.map { NSNumber(value: $0) })!
                 .jointTorques.map { $0.doubleValue }
         }
         func index(_ name: String) throws -> Int {
@@ -928,8 +931,10 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         let names = bridge.dofNames
         let zeros = [NSNumber](repeating: NSNumber(value: 0.0), count: n)
         func gravity(_ q: [Double]) -> [Double] {
-            bridge.solveID(withJointAngles: q.map { NSNumber(value: $0) },
-                           jointVelocities: zeros, jointAccelerations: zeros)!
+            bridge.solveUnvalidatedIDForDiagnostics(
+                withJointAngles: q.map { NSNumber(value: $0) },
+                jointVelocities: zeros,
+                jointAccelerations: zeros)!
                 .jointTorques.map { $0.doubleValue }
         }
         func index(_ name: String) throws -> Int {
@@ -986,9 +991,11 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         let zeros = [NSNumber](repeating: NSNumber(value: 0.0), count: n)
         let qz = [NSNumber](repeating: NSNumber(value: 0.0), count: n)
 
-        let g = try XCTUnwrap(bridge.solveID(withJointAngles: qz,
-                                             jointVelocities: zeros,
-                                             jointAccelerations: zeros))
+        let g = try XCTUnwrap(
+            bridge.solveUnvalidatedIDForDiagnostics(
+                withJointAngles: qz,
+                jointVelocities: zeros,
+                jointAccelerations: zeros))
         let gt = g.jointTorques.map { $0.doubleValue }
         let iTx = try XCTUnwrap(names.firstIndex(of: "pelvis_tx"))
         let iTy = try XCTUnwrap(names.firstIndex(of: "pelvis_ty"))
@@ -1000,9 +1007,11 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
         // the index.
         var ddq = [Double](repeating: 0.0, count: n)
         ddq[iTx] = 1.0
-        let a = try XCTUnwrap(bridge.solveID(withJointAngles: qz,
-                                             jointVelocities: zeros,
-                                             jointAccelerations: ddq.map { NSNumber(value: $0) }))
+        let a = try XCTUnwrap(
+            bridge.solveUnvalidatedIDForDiagnostics(
+                withJointAngles: qz,
+                jointVelocities: zeros,
+                jointAccelerations: ddq.map { NSNumber(value: $0) }))
         let mtx = a.jointTorques[iTx].doubleValue - gt[iTx]
         print("BENCH-METRIC mass_matrix M[pelvis_tx][pelvis_tx]=\(mtx) expected=\(mass)")
         XCTAssertEqual(mtx, mass, accuracy: 0.05,
@@ -1044,15 +1053,18 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
     /// which root translation coordinate the weight lands on) and then rotates
     /// the root so the body is aligned with it, so it stays valid after the
     /// gravity vector is corrected. No IK, no contact solver, no filtering —
-    /// just `solveID` on hand-written coordinate vectors.
+    /// just the test-only zero-external-force ID diagnostic on hand-written
+    /// coordinate vectors.
     func testAligningTheBodyWithGravityCollapsesTheGravityMoments() throws {
         try loadFullBody()
         let n = bridge.numDOFs
         let names = bridge.dofNames
         let zeros = [NSNumber](repeating: NSNumber(value: 0.0), count: n)
         func gravityTorques(_ q: [Double]) -> [Double] {
-            bridge.solveID(withJointAngles: q.map { NSNumber(value: $0) },
-                           jointVelocities: zeros, jointAccelerations: zeros)!
+            bridge.solveUnvalidatedIDForDiagnostics(
+                withJointAngles: q.map { NSNumber(value: $0) },
+                jointVelocities: zeros,
+                jointAccelerations: zeros)!
                 .jointTorques.map { $0.doubleValue }
         }
         func index(_ name: String) throws -> Int {

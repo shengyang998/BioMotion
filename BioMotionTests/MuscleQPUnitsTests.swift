@@ -27,9 +27,11 @@ import XCTest
 ///      importantly, whether the moment-arm magnitudes separate cleanly enough
 ///      that the cut is a structural fact rather than a tuned constant.
 ///
-/// Everything here runs the production call sequence
-/// (IK → Savitzky-Golay → `solveIDGRF` → `computeMomentArms` → `solveReal`),
-/// so nothing measured is a special-cased solver path.
+/// Everything here preserves the former calculation sequence
+/// (IK → Savitzky-Golay → unvalidated diagnostic ID+GRF →
+/// `computeMomentArms` → `solveReal`),
+/// so its algebra remains characterisable without exposing the unconstrained
+/// ID result to product code.
 ///
 /// ─────────────────────────────────────────────────────────────────────────
 /// WHAT THE MEASUREMENTS SAID (2026-08-07). Two of the three starting
@@ -98,7 +100,7 @@ final class MuscleQPUnitsTests: XCTestCase {
     // the answer:
     //   * `NimbleBridge` carries a rolling ground-height estimate and an IK warm
     //     start, so a pose solved after a taller one can be told it is not
-    //     touching the floor — which silently switches `solveIDGRF` to
+    //     touching the floor — which silently switches the legacy diagnostic to
     //     zero-external-force inverse dynamics. `resetSessionState()` clears
     //     both, which is what `perPose()` below is for.
     //   * `MuscleSolver` warm-starts OSQP from the previous activations and
@@ -223,7 +225,7 @@ final class MuscleQPUnitsTests: XCTestCase {
         }
     }
 
-    // MARK: - Shared plumbing (same call sequence as the production photo path)
+    // MARK: - Shared plumbing (historical photo-chain diagnostic)
 
     private struct Solved {
         let dofNames: [String]
@@ -265,10 +267,11 @@ final class MuscleQPUnitsTests: XCTestCase {
               "per_marker_rms_m=\((ik.error / Double(names.count)).squareRoot()) " +
               "q_norm=\(q.reduce(0) { $0 + $1 * $1 }.squareRoot())")
         let id = try XCTUnwrap(
-            bridge.solveIDGRF(withJointAngles: q.map { NSNumber(value: $0) },
-                              jointVelocities: dq.map { NSNumber(value: $0) },
-                              jointAccelerations: ddq.map { NSNumber(value: $0) }),
-            "[\(tag)] solveIDGRF returned nil")
+            bridge.solveUnvalidatedIDGRFForDiagnostics(
+                withJointAngles: q.map { NSNumber(value: $0) },
+                jointVelocities: dq.map { NSNumber(value: $0) },
+                jointAccelerations: ddq.map { NSNumber(value: $0) }),
+            "[\(tag)] unvalidated diagnostic ID+GRF solve returned nil")
         return Solved(dofNames: ik.dofNames,
                       q: q.map { NSNumber(value: $0) },
                       dq: dq.map { NSNumber(value: $0) },

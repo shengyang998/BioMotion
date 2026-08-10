@@ -11,45 +11,173 @@ import UIKit
 /// pinned here.
 final class ClaimSurfaceTests: XCTestCase {
 
-    // MARK: - The LIVE screen's foot-load badge
+    // MARK: - The product-wide contact-support refusal
 
-    /// **The live screen showed `L/R load 0.62|0.38` with no caption, no floor
-    /// and nothing validating it** — the product's own deliverable framing, on
-    /// its most-used surface, while the offline path spent four rounds learning
-    /// it cannot support that comparison.
-    ///
-    /// Its green/amber indicator was `abs(total - 1.0) < 0.3`: keyed to the SUM,
-    /// which the near-CoP solver constrains exactly, while the VALUE printed the
-    /// split, which nothing checks and which starts from a hardcoded 50/50
-    /// wrench guess (`NimbleBridge.mm:1499`). The badge shows the sum now and
-    /// this note says what is missing.
-    func testTheFootLoadNoteStatesThatTheSplitIsNotMeasured() {
-        let note = NimbleEngine.footLoadSplitIsNotMeasuredNote
-        print("UI-METRIC foot_load_note=\(note)")
+    /// The old live repair narrowed an unsupported L/R split to a `GRF sum`.
+    /// The contact audit found that the SUM is unvalidated too: neither bundled
+    /// model defines contact geometry, and the active solver supplies no valid
+    /// support mechanics. The surface must refuse the whole dynamics family,
+    /// not merely explain one split.
+    func testContactSupportRefusalNamesEveryWithheldDynamicsFamily() {
+        let availability = NimbleEngine.DynamicsAvailability.contactSupportUnavailable
+        let detail = availability.detail
+        print("UI-METRIC contact_support_refusal=\(detail)")
 
-        // The absence, in the words a reader would look for.
-        XCTAssertTrue(note.contains("NOT measured"),
-                      "the absence has to be stated, not implied: \(note)")
-        XCTAssertTrue(note.lowercased().contains("splits between your two feet")
-                        || note.lowercased().contains("split"),
-                      "and it has to name the SPLIT specifically: \(note)")
-        // The mechanism, so it does not read as caution.
-        XCTAssertTrue(note.contains("50/50"), "it names the prior: \(note)")
-        XCTAssertTrue(note.lowercased().contains("not determined by the pose"),
-                      "and the indeterminacy: \(note)")
-        // And it must not itself become a claim: no per-side figure in it.
-        XCTAssertFalse(note.contains("|"), note)
-        XCTAssertFalse(note.contains("%"), note)
+        XCTAssertFalse(availability.hasInverseDynamics)
+        XCTAssertTrue(availability.title.lowercased().contains("pose only"), availability.title)
+        XCTAssertTrue(availability.title.lowercased().contains("foot contact"), availability.title)
+        for term in ["joint torque", "ground force", "centre of pressure",
+                     "muscle effort", "gait-load"] {
+            XCTAssertTrue(detail.lowercased().contains(term),
+                          "the refusal omitted \(term): \(detail)")
+        }
     }
 
-    /// The sum is a consistency check, and the note says so rather than letting
-    /// "GRF sum 1.00" read as "you are balanced". `rootResidualPerKg`'s own
-    /// comment already makes this distinction for the frame check; this is the
-    /// same distinction one badge to its left.
-    func testTheFootLoadNoteRefusesTheBalanceReading() {
-        let note = NimbleEngine.footLoadSplitIsNotMeasuredNote
-        XCTAssertTrue(note.lowercased().contains("consistency check"), note)
-        XCTAssertTrue(note.lowercased().contains("not a balance score"), note)
+    /// This is a model capability, not a capture-quality gate. The same text
+    /// must preserve the outputs that genuinely remain and close the tempting
+    /// "try a better video" workaround. Ground trust has its own text, but it
+    /// must also say that trust is not sufficient by itself.
+    func testContactSupportRefusalPreservesKinematicsAndCannotSellAReshoot() throws {
+        let detail = NimbleEngine.DynamicsAvailability.contactSupportUnavailable.detail
+        for term in ["Pose", "anatomy", "contact timing"] {
+            XCTAssertTrue(detail.contains(term), "the refusal hid surviving \(term): \(detail)")
+        }
+        XCTAssertTrue(detail.lowercased().contains("refilming cannot"), detail)
+
+        let ground = NimbleEngine.DynamicsAvailability.groundPlaneUntrusted.detail.lowercased()
+        XCTAssertTrue(ground.contains("trusted floor"), ground)
+        XCTAssertTrue(ground.contains("validated foot-support mechanics"),
+                      "ground trust must not read as sufficient: \(ground)")
+
+        // A per-frame reason remains useful, but it cannot be the only thing
+        // shown for a bundled model: holding still or filming longer will not
+        // cure the independent capability boundary.
+        let alongsideMotion = NimbleEngine.DynamicsAvailability
+            .permanentContactSupportNotice(
+                isModelLoaded: true,
+                hasValidatedFootContactSupport: false,
+                current: .withheld(.movingBeyondStaticBudget))
+        XCTAssertEqual(alongsideMotion, .contactSupportUnavailable)
+        XCTAssertNil(NimbleEngine.DynamicsAvailability.permanentContactSupportNotice(
+            isModelLoaded: true,
+            hasValidatedFootContactSupport: false,
+            current: .contactSupportUnavailable),
+            "the permanent refusal should not be printed twice")
+        XCTAssertNil(NimbleEngine.DynamicsAvailability.permanentContactSupportNotice(
+            isModelLoaded: true,
+            hasValidatedFootContactSupport: true,
+            current: .withheld(.movingBeyondStaticBudget)),
+            "a future capability-valid model must not inherit this warning")
+
+        // The detailed live IK panel must obey the same two-part publication
+        // gate as the main badges. A stale ID cannot override an unavailable
+        // generation, and `.available` without its ID must fail closed rather
+        // than presenting an empty-but-successful dynamics state.
+        let staleID = NimbleEngine.IDOutput(
+            jointTorques: ["knee_angle_r": 42], timestamp: 0)
+        let stalePanel = IKReadoutPanel(
+            ikResult: NimbleEngine.IKOutput(
+                jointAngles: ["knee_angle_r": 0], markerRMSMeters: 0,
+                ikLossSquaredMeters: 0, timestamp: 0),
+            idResult: staleID,
+            dynamicsAvailability: .contactSupportUnavailable,
+            hasValidatedFootContactSupport: false)
+        XCTAssertFalse(stalePanel.hasValidatedDynamicsPayload)
+        XCTAssertEqual(stalePanel.displayedDynamicsAvailability,
+                       .contactSupportUnavailable)
+
+        let missingPanel = IKReadoutPanel(
+            ikResult: stalePanel.ikResult,
+            idResult: nil,
+            dynamicsAvailability: .available,
+            hasValidatedFootContactSupport: true)
+        XCTAssertFalse(missingPanel.hasValidatedDynamicsPayload)
+        XCTAssertEqual(missingPanel.displayedDynamicsAvailability,
+                       .inverseDynamicsFailed)
+
+        let validPanel = IKReadoutPanel(
+            ikResult: stalePanel.ikResult,
+            idResult: staleID,
+            dynamicsAvailability: .available,
+            hasValidatedFootContactSupport: true)
+        XCTAssertTrue(validPanel.hasValidatedDynamicsPayload)
+        XCTAssertEqual(validPanel.displayedDynamicsAvailability, .available)
+
+        let misdatedID = NimbleEngine.IDOutput(
+            jointTorques: ["knee_angle_r": 42], timestamp: 0.002)
+        let misdatedPanel = IKReadoutPanel(
+            ikResult: stalePanel.ikResult,
+            idResult: misdatedID,
+            dynamicsAvailability: .available,
+            hasValidatedFootContactSupport: true)
+        XCTAssertFalse(misdatedPanel.hasValidatedDynamicsPayload,
+                       "a non-nil ID from another centred solve must not accompany this IK")
+        XCTAssertEqual(misdatedPanel.displayedDynamicsAvailability,
+                       .inverseDynamicsFailed)
+        XCTAssertTrue(NimbleEngine.inverseDynamicsPayloadIsSameGeneration(
+            ikResult: stalePanel.ikResult,
+            idResult: staleID))
+        XCTAssertFalse(NimbleEngine.inverseDynamicsPayloadIsSameGeneration(
+            ikResult: stalePanel.ikResult,
+            idResult: misdatedID))
+        XCTAssertFalse(NimbleEngine.inverseDynamicsPayloadIsSameGeneration(
+            ikResult: stalePanel.ikResult,
+            idResult: nil))
+        XCTAssertFalse(NimbleEngine.inverseDynamicsPayloadIsSameGeneration(
+            ikResult: stalePanel.ikResult,
+            idResult: NimbleEngine.IDOutput(jointTorques: [:], timestamp: .infinity)))
+
+        let unsupportedPanel = IKReadoutPanel(
+            ikResult: stalePanel.ikResult,
+            idResult: staleID,
+            dynamicsAvailability: .available,
+            hasValidatedFootContactSupport: false)
+        XCTAssertFalse(unsupportedPanel.hasValidatedDynamicsPayload)
+        XCTAssertEqual(unsupportedPanel.displayedDynamicsAvailability,
+                       .contactSupportUnavailable)
+
+        XCTAssertFalse(NimbleEngine.recordedInverseDynamicsIsPublishable(
+            hasValidatedFootContactSupport: false, rowCount: 10),
+            "stale recorded torque rows cannot outrank the current model capability")
+        XCTAssertFalse(NimbleEngine.recordedInverseDynamicsIsPublishable(
+            hasValidatedFootContactSupport: true, rowCount: 0))
+        XCTAssertTrue(NimbleEngine.recordedInverseDynamicsIsPublishable(
+            hasValidatedFootContactSupport: true, rowCount: 10))
+
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let engineSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "BioMotion/Nimble/NimbleEngine.swift"),
+            encoding: .utf8)
+        let contentSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "BioMotion/App/ContentView.swift"),
+            encoding: .utf8)
+        let liveGateStart = try XCTUnwrap(
+            contentSource.range(of: "    private var liveDynamicsAvailability"))
+        let liveGateEnd = try XCTUnwrap(contentSource.range(
+            of: "    private var liveHasValidatedDynamicsPayload",
+            range: liveGateStart.upperBound..<contentSource.endIndex))
+        let liveGate = String(contentSource[liveGateStart.lowerBound..<liveGateEnd.lowerBound])
+        XCTAssertTrue(liveGate.contains("inverseDynamicsPayloadIsSameGeneration"),
+                      "the main live badges must compare IK/ID provenance, not only ID presence")
+        XCTAssertTrue(liveGate.contains("ikResult: nimble.lastIKResult"))
+        XCTAssertTrue(liveGate.contains("idResult: nimble.lastIDResult"))
+
+        let loadStart = try XCTUnwrap(engineSource.range(of: "    func loadBundledModel()"))
+        let loadEnd = try XCTUnwrap(engineSource.range(
+            of: "    func scaleModel(", range: loadStart.upperBound..<engineSource.endIndex))
+        let loadBody = String(engineSource[loadStart.lowerBound..<loadEnd.lowerBound])
+        XCTAssertTrue(loadBody.contains("self.ikHistory.removeAll(keepingCapacity: false)"))
+        XCTAssertTrue(loadBody.contains("self.idHistory.removeAll(keepingCapacity: false)"),
+                      "a successful model replacement must erase older torque rows")
+
+        let exportStart = try XCTUnwrap(engineSource.range(of: "    func exportSTO("))
+        let exportBody = String(engineSource[exportStart.lowerBound...])
+        XCTAssertTrue(exportBody.contains("guard hasPublishableIDHistory else"),
+                      "STO export must re-check the current model capability")
     }
 
     // MARK: - The muscle block's two causes
@@ -263,7 +391,10 @@ final class ClaimSurfaceTests: XCTestCase {
         return OfflineResultStore.FrameResult(
             id: id, sourceImage: UIImage(), timestamp: Double(id) / 30.0,
             status: .success, usedFallbackBBox: false, camT: nil, modelChecksums: nil,
-            bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: muscle,
+            bodyFrame: nil, ikResult: nil,
+            idResult: NimbleEngine.IDOutput(jointTorques: [:], timestamp: Double(id) / 30.0),
+            muscleResult: muscle,
+            dynamicsAvailability: .available,
             isStaticHoldEstimate: false,
             motionState: .gait(verdict: .gaitStance, outcome: outcome))
     }

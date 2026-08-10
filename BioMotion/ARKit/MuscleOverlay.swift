@@ -6,6 +6,11 @@ import simd
 /// It carries no effort reading, and it cannot be handed one — `update(joints:)`
 /// takes no muscle solve.
 ///
+/// That separation is also why this layer remains available while both bundled
+/// models report `.contactSupportUnavailable`. Empty contact geometry prevents
+/// torque/GRF/CoP/muscle-effort output; it does not prevent a fixed-colour
+/// anatomical drawing derived from tracked joint positions alone.
+///
 /// # What this used to draw, and why it is gone (2026-08-08)
 ///
 /// It filtered `rawActivations`, sorted them descending, kept the strongest 24

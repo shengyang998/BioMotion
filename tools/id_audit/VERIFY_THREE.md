@@ -1,5 +1,12 @@
 # VERIFY_THREE — adversarial verification of the 2026-08-07 three-change wave
 
+> **Historical raw-solver receipt — not a current muscle-output contract.** The static-hold and
+> inverse-dynamics observations below predate the 2026-08-10 contact-support audit. Both bundled
+> models have empty `ContactGeometrySet`s, and the active near-CoP routine has no validated support
+> polygon, unilateral-contact, or friction constraint. Current production therefore keeps ID, GRF,
+> CoP, muscle effort, and gait load nil even for a perfectly held pose or explicit floor. The old
+> numbers remain useful only for unit, queue, and policy regression work.
+
 Scope: muscle-QP units, Background Assets delivery, static-hold detection.
 Method: read `git diff` first; re-derive every load-bearing number by an independent
 route; run the tests myself. No source was edited.
@@ -126,7 +133,7 @@ structurally uncancellable. The worst upright rows are `T6_r6{R,L}_X` at ∓3.46
 against `τ = 1e-23`, in an exact antisymmetric L/R pair. That is the floor field, not
 unmet biomechanics.
 
-### 1.5 Non-physical activations? — No
+### 1.5 Did the historical raw QP leave its activation box? — No
 
 The diff does not touch the box constraint, the clamp, or `forceScale`. Activations are
 still `clamp(x, aMin, aMax)` post-solve and `force = a · forceScale` with
@@ -208,7 +215,7 @@ agent quotes are unverified by me. Everything upstream of the render is verified
 
 ---
 
-## 3. Static-hold detection — CONFIRMED
+## 3. Static-hold classification — historical detector receipt
 
 ### 3.1 I re-implemented the detector and reproduced the Swift bit-for-bit
 
@@ -221,7 +228,7 @@ Ported `StaticHoldDetector.ingest/classify` to Python, then replayed the Swift f
 
 So my adversarial sequences below are testing the shipped algorithm, not a paraphrase.
 
-### 3.2 A moving sequence is NOT reported with muscle numbers
+### 3.2 The historical raw path withheld a moving sequence
 
 From the run I did:
 
@@ -235,14 +242,16 @@ constant-acceleration ramp from 0.005 to 0.08 m/s² → not a hold. The contamin
 is exactly `motion + 8 frames`, i.e. a frame adjacent to real motion never claims
 statics.
 
-### 3.3 A single photo still produces muscle output
+### 3.3 The historical raw path produced muscle output for one photo (now refused)
 
 ```
 HOLD-METRIC photo        isHold=true peak=0.0 window_s=0.2667 samples=9 implied_accel=0.0
 HOLD-METRIC engine-held  isHold=true static=true muscle=true peak_cm_s=0.0 center=0.0
 ```
-Engine level, gate ON, the runner's own 4+1+4 cadence. Muscle and ID are both non-nil
-and flagged as a static solve.
+At that historical engine state, gate ON, the runner's own 4+1+4 cadence, muscle and
+ID were both non-nil and flagged as a static solve. This is no longer the product
+contract: `.contactSupportUnavailable` now keeps the centred IK/hold verdict but
+returns nil ID and muscle even with an explicit floor.
 
 ### 3.4 Threshold: defensible, but the "derived, not a knob" framing is circular
 
@@ -287,8 +296,8 @@ exactly at `peak = 0.020` with no tolerance slack.
 
 | change | verdict |
 |---|---|
-| Muscle QP units | **CONFIRMED.** Row rule verified independently on 4 poses (159/10, ≥9-decade gap). The locked-row exclusion removes real rows but they are the model's own locked rib axes carrying ~1e-23 Nm of demand, and the biggest floor-field rows are *kept*. Not a physics removal. Two reporting gaps: shipped row count is 109 not 159, and the dancer's 0.467 force-row residual is unreported. |
+| Muscle QP units | **CONFIRMED inside the raw QP.** Row rule verified independently on 4 poses (159/10, ≥9-decade gap). The locked-row exclusion removes real rows but they are the model's own locked rib axes carrying ~1e-23 Nm of demand, and the biggest floor-field rows are *kept*. It did not remove rows from that raw objective; it says nothing about missing contact support. Two reporting gaps: shipped row count is 109 not 159, and the dancer's 0.467 force-row residual is unreported. |
 | Background Assets | **PARTIAL.** Builds, ships without the model, extension has an executable, failure surfaces as a red error and never blocks on the transfer. But **no path in this checkout loads the model**, and the resolution ladder has zero test coverage. |
-| Static hold | **CONFIRMED.** Moving sequences (theirs and mine) yield no muscle. Single photo still does. Thresholds are not fixture-fitted, though the "0.5 s is derived" framing is circular. Blind spots are real and mostly documented; I quantified two of them and found a third (frame-rate inversion). |
+| Static hold | **Historical classifier confirmed; load output superseded.** Moving sequences were refused and one photo then reached raw muscle output. The 2026-08-10 capability gate now refuses load output for both. Thresholds were not fixture-fitted, though the "0.5 s is derived" framing is circular. Blind spots are real and mostly documented; I quantified two of them and found a third (frame-rate inversion). |
 
 Regressions found: **none**.

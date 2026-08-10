@@ -35,6 +35,10 @@ import XCTest
 ///   standing iterations   0 -> 123, converged YES -> NO,
 ///                         per-solve drift 0 -> 9.3e-5 rad
 ///
+/// Torque/residual figures in this characterization come from the test-only,
+/// unconstrained contact diagnostic. They help compare masks on identical
+/// algebra but are not validated product dynamics.
+///
 /// So the coordinate is WEAKLY OBSERVED, not unobservable, and pinning it
 /// trades accuracy on the pose where it matters while breaking the fixed-point
 /// property on the pose where it does not. The tests below assert that verdict:
@@ -405,10 +409,11 @@ final class ShoulderRotMaskTests: XCTestCase {
                 }
                 guard q.count == n else { XCTFail("[\(tag)/\(armTag)] SG never warmed"); continue }
 
-                guard let id = bridge.solveIDGRF(withJointAngles: q.map { NSNumber(value: $0) },
-                                                 jointVelocities: dq.map { NSNumber(value: $0) },
-                                                 jointAccelerations: ddq.map { NSNumber(value: $0) }) else {
-                    XCTFail("[\(tag)/\(armTag)] solveIDGRF nil"); continue
+                guard let id = bridge.solveUnvalidatedIDGRFForDiagnostics(
+                    withJointAngles: q.map { NSNumber(value: $0) },
+                    jointVelocities: dq.map { NSNumber(value: $0) },
+                    jointAccelerations: ddq.map { NSNumber(value: $0) }) else {
+                    XCTFail("[\(tag)/\(armTag)] unvalidated diagnostic ID+GRF nil"); continue
                 }
                 guard let arms = computer.computeMomentArms(withJointAngles: q.map { NSNumber(value: $0) },
                                                            dofNames: ik.dofNames) else {

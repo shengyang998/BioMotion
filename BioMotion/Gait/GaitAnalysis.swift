@@ -191,12 +191,19 @@ struct GaitSteadiness: Equatable {
     }
 }
 
-/// The whole result of a gait analysis: what was measured, what may be claimed,
-/// and what — if anything — contradicted the model.
+/// The whole research/internal result of a gait analysis. The product projection
+/// copies only bilateral mean contact duration, variation and count; timing
+/// resolution; the resolution-qualified left/right CONTACT-TIME comparison; and
+/// timing refusals/flags. Specific intervals, cadence/stride period, detector
+/// state, and force fields remain internal. Force fields are inputs to a
+/// historical research plan, not published load measurements. Current bundled
+/// models fail the foot-support capability gate before any such plan reaches
+/// inverse dynamics.
 struct GaitReport {
 
-    /// A reason to withhold the clip's force and asymmetry output entirely.
-    /// Every case carries the number that produced it.
+    /// A reason to withhold the clip's timing-model result. Every case carries
+    /// the number that produced it. Clearing a refusal is not permission to
+    /// publish dynamics; contact-support capability is a separate hard gate.
     enum Refusal: Equatable, CustomStringConvertible {
         case tooFewContacts(side: GaitSide, count: Int)
         case stridePeriodDisagreesBetweenLegs(frames: Double)
@@ -231,8 +238,8 @@ struct GaitReport {
                               + "measured between contacts and flight implied by closing the stride "
                               + "differ by %.2f frames", frames)
             case .strideNotSteady(let side, let percent, let bound):
-                return String(format: "%@ stride period varies %.2f%% (bound %.2f%%); the periodic "
-                              + "force model assumes one stride is like the next",
+                return String(format: "%@ stride period varies %.2f%% (bound %.2f%%); the timing "
+                              + "comparison assumes one stride is like the next",
                               side.rawValue, percent, bound)
             case .notRunning(let duty, let ratio):
                 return String(format: "duty factor %.3f, flight/contact %.3f — no flight phase, so the "
@@ -283,17 +290,17 @@ struct GaitReport {
                      + "side, and it only counts contacts that start and end inside the window."
             case .stridePeriodDisagreesBetweenLegs, .strideNotSteady:
                 return "Run at one steady pace through the whole clip. Accelerating, slowing or "
-                     + "turning makes one stride unlike the next, and the force model closes the "
-                     + "impulse over a stride by assuming they are alike."
+                     + "turning makes one stride unlike the next, so a left/right timing "
+                     + "comparison cannot treat them as repeats of one cycle."
             case .contactSequenceNotPeriodic:
                 return "Film a stretch you are already up to pace in, side-on, so the feet "
                      + "alternate cleanly. A missed or doubled contact in the middle of the clip "
                      + "puts these two flight estimates apart."
             case .notRunning:
                 return "This clip has no flight phase, so it is walking, standing or holding a "
-                     + "position — not running. The running model does not apply to it and "
-                     + "nothing here is withheld from you; the posture measurements below are "
-                     + "what this clip supports."
+                     + "position — not running. This running-timing analysis does not apply; the "
+                     + "posture measurements below remain available. Dynamics are governed "
+                     + "separately by foot-support capability, not by re-filming this clip."
             case .stanceBudgetInconsistent:
                 return "Film a longer stretch at one pace. The detector's estimate of the cycle "
                      + "length and the contacts it then found do not describe the same run, so "
@@ -410,15 +417,16 @@ struct GaitReport {
         abs(modelledFlightSeconds - measuredFlightSeconds) / sampleInterval
     }
 
-    /// The whole-clip force model. `dutyFactor` and `describesRunning` are
-    /// clip-level questions and read from here.
+    /// Historical whole-clip force hypothesis used to classify a periodic
+    /// contact sequence. Not a publishable force result.
     let force: GaitForceModel
-    /// Peak vertical GRF per leg, body weights — each closed on its own contact
+    /// Unvalidated peak-force hypothesis per leg, body weights — each closed on its own contact
     /// time `Fmax_side = (π/2)(1 + tf/tc_side)` **where this clip can resolve the
     /// difference between the two contact times**, and on the MEAN contact time
     /// where it cannot. `peakVerticalForceIsSharedBetweenLegs` says which
     /// happened. See `GaitForceModel.perLegPeaksInBodyWeights` for why one gate
-    /// has to govern both the displayed timing claim and this force scale.
+    /// has to govern both the displayed timing claim and this internal force scale.
+    /// Neither bundled model can publish this value as GRF or gait load.
     ///
     /// One clip-wide peak applied to both feet unconditionally would set the
     /// timing model's own left/right peak-force asymmetry to zero by

@@ -253,6 +253,19 @@ final class TRCExporterTests: XCTestCase {
         let warning = try String(contentsOf: warningURL, encoding: .utf8)
         XCTAssertTrue(warning.contains("Partial export"))
         XCTAssertTrue(warning.contains("TRC: marker source changed from MHR_ROOT to PELVIS"))
+
+        let blocked = try ExportDisclosure.prepareShareURLs(
+            successfulURLs: [motURL],
+            errors: ["STO: unavailable — no validated foot-support mechanics"],
+            hasValidatedFootContactSupport: false,
+            directory: directory)
+        let blockedWarning = try String(
+            contentsOf: try XCTUnwrap(blocked.last), encoding: .utf8)
+        XCTAssertTrue(blockedWarning.contains("permanently unavailable"), blockedWarning)
+        XCTAssertTrue(blockedWarning.lowercased().contains("refilming"), blockedWarning)
+        XCTAssertFalse(blockedWarning.contains("record for at least a few seconds"),
+                       blockedWarning)
+        XCTAssertFalse(blockedWarning.contains("model must load"), blockedWarning)
     }
 
     // MARK: - Edge cases

@@ -249,6 +249,7 @@ final class BodyPlausibilityTests: XCTestCase {
                                      statureMeters: v.statureMeters),
             usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
             ikResult: nil, idResult: nil, muscleResult: nil,
+            dynamicsAvailability: .waitingForMotionWindow,
             isStaticHoldEstimate: false, motionState: .undetermined))
 
         XCTAssertEqual(store.implausibleBodyCount, 1)

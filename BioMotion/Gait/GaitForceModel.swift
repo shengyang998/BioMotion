@@ -1,7 +1,15 @@
 import Foundation
 
-/// Peak vertical ground reaction force during stance, from contact and flight
-/// TIMING alone, expressed in body weights.
+/// **Research-only, unvalidated load hypothesis retained for regression work.**
+///
+/// This turns contact/flight TIMING into a hypothetical peak vertical ground
+/// reaction force in body weights. It is not a product measurement and no
+/// current bundled-model frame may publish it. Both bundled `ContactGeometrySet`s
+/// are empty, and the active near-CoP routine supplies no validated support
+/// polygon, unilateral-contact, or friction constraint. The production engine
+/// therefore stops at `.contactSupportUnavailable` before ID, GRF, CoP, muscle,
+/// or gait-load output. The derivation below documents the historical timing
+/// model; it does not fill that missing mechanics layer.
 ///
 /// # The derivation, written out because the formula alone cannot be checked
 ///
@@ -30,9 +38,10 @@ import Foundation
 ///
 /// Nothing in that chain needs the runner's mass, the camera, the depth channel,
 /// or the root's acceleration: `Fmax/(m·g)` is a pure function of the RATIO of
-/// flight time to contact time. That is why this module can produce a force
-/// number from a hand-held tracking shot at all, and why it publishes body
-/// weights rather than newtons.
+/// flight time to contact time. That is why the historical model could derive
+/// a hypothetical force-shaped number from a hand-held tracking shot and
+/// expressed it in body weights rather than newtons. Derivability is not
+/// validation, and production publishes neither form.
 ///
 /// # What the half-sine assumption is worth
 ///
@@ -43,7 +52,8 @@ import Foundation
 /// no muscle is saturated, so muscle-to-muscle and left-to-right ratios survive
 /// it exactly. It degrades only where activations reach `a ≤ 1`, which running
 /// peaks do reach — so it is a caveat on the ratios, not a free pass, and it is
-/// one more reason this module's headline is a ratio and not a newton figure.
+/// one more reason the historical diagnostic used a ratio and not a newton
+/// figure. It is not permission to surface either one.
 ///
 /// # What would refute this model
 ///
@@ -97,8 +107,9 @@ struct GaitForceModel: Equatable {
         return (Double.pi / 2) * (1 + flightSeconds / contactSeconds)
     }
 
-    /// The two legs' peaks — **per leg only where the clip can resolve the
-    /// contact-time difference they are built from.**
+    /// The two legs' hypothetical peaks — **an internal research value, and
+    /// per leg only where the clip can resolve the contact-time difference they
+    /// are built from.**
     ///
     /// # The circularity this closes
     ///
@@ -119,12 +130,11 @@ struct GaitForceModel: Equatable {
     /// gate, and so due to be refused — reads 10.5 % and gets published as
     /// "11 % harder on the left".
     ///
-    /// So ONE gate governs both uses. Above the clip's resolution the difference
-    /// is a finding, it is displayed, and each leg carries its own peak. Below
-    /// it the difference is noise, it is refused on screen, and both legs carry
-    /// the peak closed on the MEAN contact — which is the minimum-variance
-    /// choice when the difference cannot be resolved, not a claim that the legs
-    /// are identical.
+    /// So ONE timing gate governs the displayed contact-time finding and this
+    /// internal hypothesis. Above the clip's resolution the timing difference
+    /// may be displayed and the research plan carries separate peaks. Below it
+    /// the timing difference is refused and the plan uses the peak closed on
+    /// the MEAN contact. Neither regime makes the peak a product output.
     ///
     /// The stride impulse closes exactly in BOTH regimes. Shared:
     /// `Σ Fᵢ·2·tcᵢ/π = (π/2)(1 + tf/t̄c)·(2/π)(tcL + tcR) = (1 + tf/t̄c)·2·t̄c

@@ -5,12 +5,8 @@ import XCTest
 
 /// Drives `NimbleEngine` the way `OfflineSessionRunner` does — one frame at a
 /// time, waiting for each publish before submitting the next — and checks that
-/// muscle output actually appears.
-///
-/// `OfflineMuscleChainTests` already proves the biomechanics chain itself works
-/// on this exact pose (IK -> SG -> ID -> moment arms -> QP all succeed). So if
-/// the app still reports "0 with muscle data", the fault is in this async
-/// orchestration layer, not in the solver. This test isolates that layer.
+/// centred pose routing remains live while the bundled model's missing contact
+/// support keeps every contact-dependent result fail-closed.
 final class OfflineOrchestrationTests: XCTestCase {
 
     private var engine: NimbleEngine!
@@ -151,6 +147,12 @@ final class OfflineOrchestrationTests: XCTestCase {
         let historyIndex = try XCTUnwrap(publication.range(of: "self.ikHistory.append"))
         XCTAssertLessThan(guardIndex.lowerBound, historyIndex.lowerBound,
                           "a discarded generation must not enter recording history")
+
+        let idHistoryIndex = try XCTUnwrap(publication.range(of: "self.idHistory.append"))
+        let idProvenanceIndex = try XCTUnwrap(publication.range(
+            of: "Self.inverseDynamicsPayloadIsSameGeneration("))
+        XCTAssertLessThan(idProvenanceIndex.lowerBound, idHistoryIndex.lowerBound,
+                          "ID history must verify its IK/ID timestamps before relabelling the row")
     }
 
     private func nimbleEngineSource() throws -> String {
@@ -164,48 +166,46 @@ final class OfflineOrchestrationTests: XCTestCase {
     }
 
     @MainActor
-    func testGroundSampleTwentyNineIsPoseOnlyAndSampleThirtyAllowsDynamics() async throws {
+    func testTrustedGroundStillCannotUnlockMissingContactSupport() async throws {
         await loadEngineForGroundTrustTest()
         let bridge = try groundBridge()
 
-        // The first centred dynamics candidate contributes sample 29 itself.
-        // Trust must therefore be checked after solveIDGRF has observed that
-        // frame, while still refusing all numerical physics at 29.
-        for _ in 0..<28 { bridge.observeLowestFootHeightY(0) }
+        for _ in 0..<30 { bridge.observeLowestFootHeightY(0) }
+        XCTAssertEqual(bridge.groundHeightSource, .estimated)
+        XCTAssertTrue(bridge.groundHeightTrusted)
+        XCTAssertFalse(bridge.hasValidatedFootContactSupport)
+
         engine.startRecordingResults()
         defer { engine.stopRecordingResults() }
-
         await submitConstantFrames(count: SavitzkyGolayFilter.windowSize)
 
-        XCTAssertEqual(bridge.groundHeightSource, .provisional)
-        XCTAssertFalse(bridge.groundHeightTrusted)
         let rejected = try XCTUnwrap(engine.lastSolve,
                                      "the warm solve should still publish its centred pose")
-        XCTAssertEqual(rejected.dynamicsAvailability, .groundPlaneUntrusted)
-        XCTAssertNil(rejected.id?.timestamp, "sample 29 may not publish inverse dynamics")
-        XCTAssertNil(rejected.muscle?.timestamp, "sample 29 may not publish muscle magnitudes")
+        XCTAssertEqual(rejected.dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertNil(rejected.id?.timestamp)
+        XCTAssertNil(rejected.muscle?.timestamp)
         XCTAssertNil(rejected.gait?.residualInBodyWeights,
-                     "sample 29 may not publish a numerical gait outcome")
+                     "trusted ground is necessary but cannot create contact mechanics")
         XCTAssertNil(engine.lastIDResult?.timestamp)
         XCTAssertNil(engine.lastMuscleResult?.timestamp)
         assertNoRecordedIDHistory()
 
-        // The next centred candidate contributes sample 30. This is the first
-        // call whose post-call trust state permits inverse dynamics to escape.
+        // Nor may the explicit-floor seam bypass the model/solver capability.
+        engine.setExplicitGroundHeightY(0)
         await submitConstantFrames(count: 1,
                                    startingAt: Double(SavitzkyGolayFilter.windowSize) / 30.0,
                                    frameNumberBase: SavitzkyGolayFilter.windowSize)
-
-        XCTAssertEqual(bridge.groundHeightSource, .estimated)
         XCTAssertTrue(bridge.groundHeightTrusted)
-        XCTAssertEqual(engine.lastSolve?.dynamicsAvailability, .available)
-        XCTAssertNotNil(engine.lastSolve?.id,
-                        "sample 30 is the first ground-backed dynamics result")
+        XCTAssertEqual(engine.lastSolve?.dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertNil(engine.lastSolve?.id)
+        XCTAssertNil(engine.lastSolve?.muscle)
+        assertNoRecordedIDHistory()
     }
 
     @MainActor
-    func testUntrustedGroundGaitHasNoOutcomeOrResidualSummary() async throws {
+    func testUnsupportedContactGaitKeepsTimingButHasNoLoadSummary() async throws {
         await loadEngineForGroundTrustTest()
+        engine.setExplicitGroundHeightY(0)
         let dt = 1.0 / 30.0
         let taps = WindowedDerivativeFilter.minimumTaps
         engine.gaitPlan = NimbleEngine.GaitPlan(
@@ -225,11 +225,11 @@ final class OfflineOrchestrationTests: XCTestCase {
         let solve = try XCTUnwrap(engine.lastSolve,
                                   "the warm gait solve should still publish its centred pose")
         XCTAssertEqual(solve.motion.verdict, .gaitStance)
-        XCTAssertEqual(solve.dynamicsAvailability, .groundPlaneUntrusted)
+        XCTAssertEqual(solve.dynamicsAvailability, .contactSupportUnavailable)
         XCTAssertNil(solve.id?.timestamp)
         XCTAssertNil(solve.muscle?.timestamp)
         XCTAssertNil(solve.gait?.residualInBodyWeights,
-                     "untrusted contact geometry cannot become a numeric gait outcome")
+                     "kinematic stance timing cannot become a gait-load outcome")
 
         let frame = OfflineResultStore.FrameResult(
             id: 0,
@@ -243,25 +243,28 @@ final class OfflineOrchestrationTests: XCTestCase {
             ikResult: solve.ik,
             idResult: solve.id,
             muscleResult: solve.muscle,
+            dynamicsAvailability: solve.dynamicsAvailability,
             isStaticHoldEstimate: solve.isStaticHoldEstimate,
             motionState: .gait(verdict: solve.motion.verdict, outcome: solve.gait))
         let fixture = try GaitClipFixture.load("video_012", bundle: Bundle(for: type(of: self)))
         let report = try GaitAnalysis.analyse(frames: fixture.frames)
         let summary = GaitLoadSummary.make(frames: [frame], report: report, filterTaps: taps)
-        XCTAssertNil(summary?.residualFrameCount,
-                     "untrusted ground must not manufacture a residual-bearing gait summary")
+        XCTAssertNil(summary,
+                     "missing contact support must not manufacture a gait-load summary")
     }
 
     @MainActor
-    func testSessionResetClearsPhysicsAndRestartsGroundWarmupPoseOnly() async throws {
+    func testSessionResetClearsPoseOnlyStateWithoutChangingContactCapability() async throws {
         await loadEngineForGroundTrustTest()
         let bridge = try groundBridge()
 
-        // The first warm solve contributes observation 30 and is trusted.
-        for _ in 0..<29 { bridge.observeLowestFootHeightY(0) }
+        for _ in 0..<30 { bridge.observeLowestFootHeightY(0) }
         await submitConstantFrames(count: SavitzkyGolayFilter.windowSize)
         XCTAssertTrue(bridge.groundHeightTrusted)
-        XCTAssertNotNil(engine.lastSolve?.id, "precondition: trusted physics never published")
+        XCTAssertFalse(bridge.hasValidatedFootContactSupport)
+        XCTAssertEqual(engine.lastSolve?.dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertNil(engine.lastSolve?.id)
+        XCTAssertNil(engine.lastSolve?.muscle)
 
         engine.resetSessionState()
         XCTAssertNil(engine.lastSolve)
@@ -272,12 +275,15 @@ final class OfflineOrchestrationTests: XCTestCase {
                                    startingAt: 10,
                                    frameNumberBase: 100)
 
-        XCTAssertEqual(bridge.groundHeightSource, .provisional)
+        XCTAssertEqual(bridge.groundHeightSource, .uncalibrated,
+                       "the rejected production path must not refill the floor estimator")
         XCTAssertFalse(bridge.groundHeightTrusted,
                        "a new session must not inherit the old floor")
+        XCTAssertFalse(bridge.hasValidatedFootContactSupport,
+                       "session reset does not change model/solver capability")
         let restarted = try XCTUnwrap(engine.lastSolve,
                                       "the new session should still publish a centred pose")
-        XCTAssertEqual(restarted.dynamicsAvailability, .groundPlaneUntrusted)
+        XCTAssertEqual(restarted.dynamicsAvailability, .contactSupportUnavailable)
         XCTAssertNil(restarted.id?.timestamp)
         XCTAssertNil(restarted.muscle?.timestamp)
         XCTAssertNil(restarted.gait?.residualInBodyWeights)
@@ -286,7 +292,7 @@ final class OfflineOrchestrationTests: XCTestCase {
     }
 
     @MainActor
-    func testNineSubmissionsProduceMuscleOutput() async throws {
+    func testNineSubmissionsPublishCentredPoseWithoutContactDynamics() async throws {
         engine.loadBundledModel()
 
         // Model load is async with only `isModelLoaded` as a signal.
@@ -295,9 +301,8 @@ final class OfflineOrchestrationTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertTrue(engine.isModelLoaded, "model never finished loading")
-        // This test isolates async routing and the muscle chain, not floor
-        // estimation. Give it the explicit calibrated plane that production
-        // would need before a one-frame photo could support dynamics.
+        // An explicit floor isolates async routing while proving that floor
+        // calibration cannot bypass missing foot-support mechanics.
         engine.setExplicitGroundHeightY(0)
 
         // The offline runner's cadence: 4 head-pad + 1 real + 4 tail-pad, all
@@ -331,40 +336,16 @@ final class OfflineOrchestrationTests: XCTestCase {
         XCTAssertEqual(engine.droppedFrameCount, 0,
                        "frames were dropped — the runner submitted while a solve was in flight")
 
-        let muscle = try XCTUnwrap(engine.lastMuscleResult,
-                                   "no muscle output after \(SavitzkyGolayFilter.windowSize) submissions")
-        print("ORCH-METRIC activations=\(muscle.activations.count) muscle_ts=\(muscle.timestamp)")
-
-        // --- Rendering diagnostics ------------------------------------
-        // MuscleOverlay's path pass draws a capsule for EVERY muscle whose
-        // activation clears 0.08. If most of the 520 clear it, the result is a
-        // thicket of capsules rather than a readable figure.
-        let threshold: Float = 0.08
-        let acts = muscle.activations.values.map { Float($0) }
-        let over = acts.filter { $0 >= threshold }.count
-        let sorted = acts.sorted()
-        print("RENDER-METRIC muscles=\(acts.count) over_threshold=\(over) "
-            + "min=\(sorted.first ?? 0) median=\(sorted[sorted.count/2]) max=\(sorted.last ?? 0)")
-
-        // Muscle capsules are drawn from world-space endpoints produced by the
-        // OpenSim skeleton's FK, while the joint/bone context is drawn from the
-        // MHR marker positions. If those two occupy different regions of space
-        // the muscles appear detached from the body.
-        var pathPts: [SIMD3<Float>] = []
-        for (_, p) in muscle.paths { pathPts.append(p.start); pathPts.append(p.end) }
-        let jointPts = OfflineMuscleChainFixture.markers.map { $0.2 }
-        func bounds(_ ps: [SIMD3<Float>]) -> String {
-            guard var lo = ps.first, var hi = ps.first else { return "empty" }
-            for p in ps { lo = simd_min(lo, p); hi = simd_max(hi, p) }
-            return "min(\(lo.x.rounded3),\(lo.y.rounded3),\(lo.z.rounded3)) max(\(hi.x.rounded3),\(hi.y.rounded3),\(hi.z.rounded3))"
-        }
-        print("RENDER-METRIC path_count=\(muscle.paths.count) path_bounds=\(bounds(pathPts))")
-        print("RENDER-METRIC joint_bounds=\(bounds(jointPts))")
-
-        // The offline runner files results by timestamp; the centred window
-        // means this must equal the MIDDLE push, not the last one.
-        XCTAssertEqual(muscle.timestamp, 0.0, accuracy: 1e-6,
-                       "muscle timestamp is not the centre of the window — timestamp routing in OfflineSessionRunner would misfile or discard it")
+        let solve = try XCTUnwrap(engine.lastSolve,
+                                  "no centred solve after \(SavitzkyGolayFilter.windowSize) submissions")
+        XCTAssertEqual(solve.centerTimestamp, 0.0, accuracy: 1e-6,
+                       "the publication belongs to the middle push, not the newest one")
+        XCTAssertEqual(solve.dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertNil(solve.id)
+        XCTAssertNil(solve.muscle)
+        XCTAssertNil(solve.gait)
+        XCTAssertNil(engine.lastIDResult)
+        XCTAssertNil(engine.lastMuscleResult)
 
         // A temporal gap clears SG/hold/display state but keeps the clip's IK
         // warm start. The reset happens BEFORE the next waiter subscribes; if
@@ -399,6 +380,9 @@ final class OfflineOrchestrationTests: XCTestCase {
         XCTAssertEqual(postGapSolve.centerTimestamp,
                        resetStart + Double(SavitzkyGolayFilter.halfWindow) * dt,
                        accuracy: 1e-6)
+        XCTAssertEqual(postGapSolve.dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertNil(postGapSolve.id)
+        XCTAssertNil(postGapSolve.muscle)
         XCTAssertEqual(engine.droppedFrameCount, 0,
                        "reset and resubmission must preserve offline backpressure")
     }

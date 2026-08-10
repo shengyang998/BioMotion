@@ -157,11 +157,12 @@ using namespace dart;
 // The estimator answers "where is the floor in the current ARKit world frame"
 // from nothing but the subject's own feet. A running minimum cannot do this:
 // it only ever descends, so one crouch, one landing spike or one bout of
-// vertical ARKit drift permanently sinks the floor, both feet then read as
-// airborne forever, and ID silently switches to the zero-external-force
-// (flight) branch for the rest of the session — joint torques then absorb
-// bodyweight as internal torque and every muscle activation is wrong by order
-// of bodyweight. A low percentile over a bounded window of recent samples has
+// vertical ARKit drift permanently sinks the floor. In the legacy raw
+// diagnostic, both feet then read as airborne and the solver switches to its
+// zero-external-force branch — joint torques absorb bodyweight as internal
+// torque and every derived activation is wrong by order of bodyweight. Current
+// product code stops before that diagnostic unless contact support is validated.
+// A low percentile over a bounded window of recent samples has
 // the same "the floor is where the feet get lowest" intuition but forgets, so
 // it can rise as well as fall.
 //
@@ -418,10 +419,22 @@ static double modelMHRTrunkReferenceLength(
     return std::isfinite(length) && length > 0.0 ? length : NAN;
 }
 
+#if defined(BIOMOTION_TEST_DIAGNOSTICS) && BIOMOTION_TEST_DIAGNOSTICS
+@interface NimbleBridge ()
+- (nullable NimbleIDResult *)solveUnvalidatedIDForDiagnosticsWithJointAngles:(NSArray<NSNumber *> *)jointAngles
+                                                                jointVelocities:(NSArray<NSNumber *> *)jointVelocities
+                                                            jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations;
+- (nullable NimbleIDResult *)solveUnvalidatedIDGRFForDiagnosticsWithJointAngles:(NSArray<NSNumber *> *)jointAngles
+                                                                  jointVelocities:(NSArray<NSNumber *> *)jointVelocities
+                                                              jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations;
+@end
+#endif  // BIOMOTION_TEST_DIAGNOSTICS
+
 @implementation NimbleBridge {
     std::shared_ptr<dynamics::Skeleton> _skeleton;
     std::map<std::string, std::pair<dynamics::BodyNode*, Eigen::Vector3s>> _markers;
     BOOL _modelLoaded;
+    BOOL _hasValidatedFootContactSupport;
 
     // Immutable-for-one-load scaling baseline. Every subject scale is derived
     // from these values, never from the skeleton's current (possibly already
@@ -466,6 +479,7 @@ static double modelMHRTrunkReferenceLength(
     self = [super init];
     if (self) {
         _modelLoaded = NO;
+        _hasValidatedFootContactSupport = NO;
         _loadedLowerReferenceLength = NAN;
         _loadedPelvisTrunkReferenceLength = NAN;
         _loadedMHRTrunkReferenceLength = NAN;
@@ -549,6 +563,10 @@ static double modelMHRTrunkReferenceLength(
 
 - (BOOL)ikWarmStartAvailable { return _hasLastIKPose; }
 
+- (BOOL)hasValidatedFootContactSupport {
+    return _hasValidatedFootContactSupport;
+}
+
 - (BOOL)loadModelFromPath:(NSString *)path {
     try {
         std::string pathStr = std::string([path UTF8String]);
@@ -569,6 +587,15 @@ static double modelMHRTrunkReferenceLength(
         // than pairing a new skeleton with old markers or scale baselines.
         std::shared_ptr<dynamics::Skeleton> candidateSkeleton = osimFile.skeleton;
         decltype(_markers) candidateMarkers;
+
+        // Capability belongs to the exact model+solver pair being installed.
+        // The current bridge only identifies heel body origins and optimises
+        // wrenches near guessed CoPs. It does not parse contact geometry or
+        // enforce a foot support domain, unilateral force, or friction, so it
+        // cannot validate product GRF output for any successfully parsed model.
+        // Keep this candidate beside the other load-time state so a future
+        // validator can replace it without making failed reloads destructive.
+        const BOOL candidateHasValidatedFootContactSupport = NO;
 
         // The .osim declares `<gravity>0 -9.8066 0</gravity>` (OpenSim models
         // are Y-up), but `OpenSimParser` never reads that element — it builds
@@ -817,6 +844,7 @@ static double modelMHRTrunkReferenceLength(
         _loadedPelvisTrunkReferenceLength = candidatePelvisTrunkReferenceLength;
         _loadedMHRTrunkReferenceLength = candidateMHRTrunkReferenceLength;
         _loadedUpperReferenceLength = candidateUpperReferenceLength;
+        _hasValidatedFootContactSupport = candidateHasValidatedFootContactSupport;
 
         _modelLoaded = YES;
         // A different skeleton invalidates the runtime mask (its vectors hold
@@ -1618,9 +1646,13 @@ static double modelMHRTrunkReferenceLength(
     }
 }
 
-- (nullable NimbleIDResult *)solveIDWithJointAngles:(NSArray<NSNumber *> *)jointAngles
-                                   jointVelocities:(NSArray<NSNumber *> *)jointVelocities
-                               jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations {
+#if defined(BIOMOTION_TEST_DIAGNOSTICS) && BIOMOTION_TEST_DIAGNOSTICS
+// Test-only characterization path. With no external wrench this attributes
+// ground-supported bodyweight to generalized forces; it is useful for mass,
+// gravity-axis, and indexing diagnostics but is not publishable biomechanics.
+- (nullable NimbleIDResult *)solveUnvalidatedIDForDiagnosticsWithJointAngles:(NSArray<NSNumber *> *)jointAngles
+                                                                jointVelocities:(NSArray<NSNumber *> *)jointVelocities
+                                                            jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations {
     if (!_modelLoaded) return nil;
 
     NSInteger numDOFs = (NSInteger)_skeleton->getNumDofs();
@@ -1653,30 +1685,54 @@ static double modelMHRTrunkReferenceLength(
 
         return [[NimbleIDResult alloc] initWithTorques:torqueArray];
     } catch (const std::exception& e) {
-        NSLog(@"NimbleBridge: ID exception: %s", e.what());
+        NSLog(@"NimbleBridge: Unvalidated diagnostic ID exception: %s", e.what());
         return nil;
     } catch (...) {
-        NSLog(@"NimbleBridge: ID unknown exception");
+        NSLog(@"NimbleBridge: Unvalidated diagnostic ID unknown exception");
         return nil;
     }
 }
+#endif  // BIOMOTION_TEST_DIAGNOSTICS
 
 // MARK: - ID with ground reaction force estimation
 //
-// This is the production ID path — it uses Nimble's built-in multi-contact,
-// near-CoP inverse-dynamics solver to decompose the system wrench into
-// per-foot GRFs plus joint torques. Foot contact is detected from the y
-// coordinate of `calcn_l` / `calcn_r` versus a running ground-height
-// estimate. When neither foot is in contact (flight), we fall back to
-// plain getInverseDynamics which implicitly assumes zero external force.
+// The public product path is deliberately just the capability gate below.
+// The legacy near-CoP solve remains available to selected test diagnostics so
+// its numerical behaviour can be measured while it is being replaced. It is
+// not a validated contact solve: it has no foot support domain, unilateral
+// force constraint, friction cone, or model contact geometry. Its no-contact
+// and missing-calcn branches retain the historical zero-external-force ID
+// fallback only for those diagnostics.
 
+#if defined(BIOMOTION_TEST_DIAGNOSTICS) && BIOMOTION_TEST_DIAGNOSTICS
 static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
     return @[@(v.x()), @(v.y()), @(v.z())];
 }
+#endif  // BIOMOTION_TEST_DIAGNOSTICS
 
 - (nullable NimbleIDResult *)solveIDGRFWithJointAngles:(NSArray<NSNumber *> *)jointAngles
                                        jointVelocities:(NSArray<NSNumber *> *)jointVelocities
                                     jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations {
+    // This must precede DOF validation and every read/write that can mutate
+    // the skeleton or ground estimator. Product callers get no partial solve
+    // when the model/solver pair lacks validated contact support.
+    if (!_modelLoaded || !_hasValidatedFootContactSupport) return nil;
+
+#if defined(BIOMOTION_TEST_DIAGNOSTICS) && BIOMOTION_TEST_DIAGNOSTICS
+    return [self solveUnvalidatedIDGRFForDiagnosticsWithJointAngles:jointAngles
+                                                   jointVelocities:jointVelocities
+                                               jointAccelerations:jointAccelerations];
+#else
+    // Release contains no raw diagnostic selector to invoke dynamically.
+    // A future validated contact solver must replace this branch explicitly.
+    return nil;
+#endif  // BIOMOTION_TEST_DIAGNOSTICS
+}
+
+#if defined(BIOMOTION_TEST_DIAGNOSTICS) && BIOMOTION_TEST_DIAGNOSTICS
+- (nullable NimbleIDResult *)solveUnvalidatedIDGRFForDiagnosticsWithJointAngles:(NSArray<NSNumber *> *)jointAngles
+                                                                  jointVelocities:(NSArray<NSNumber *> *)jointVelocities
+                                                              jointAccelerations:(NSArray<NSNumber *> *)jointAccelerations {
     if (!_modelLoaded) return nil;
 
     NSInteger numDOFs = (NSInteger)_skeleton->getNumDofs();
@@ -1711,7 +1767,9 @@ static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
         dynamics::BodyNode* calcnL = _skeleton->getBodyNode("calcn_l");
         dynamics::BodyNode* calcnR = _skeleton->getBodyNode("calcn_r");
         if (!calcnL || !calcnR) {
-            // No foot bodies → can't do GRF; fall back to regular ID.
+            // Diagnostic compatibility only. Product callers never reach this
+            // helper without a validated contact capability; this fallback is
+            // not evidence of GRF or support mechanics.
             Eigen::VectorXs torques = _skeleton->getInverseDynamics(ddq);
             NSMutableArray<NSNumber *> *ta = [NSMutableArray arrayWithCapacity:numDOFs];
             for (NSInteger i = 0; i < numDOFs; i++) [ta addObject:@(torques(i))];
@@ -1795,10 +1853,10 @@ static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
 
         // --- 4. Solve ---
         // getMultipleContactInverseDynamicsNearCoP finds per-foot wrenches
-        // that (a) satisfy the Newton-Euler acceleration constraint, (b) sit
-        // as close as possible to the wrench guesses, and (c) have their
-        // center-of-pressure inside each foot's support polygon / on the
-        // ground plane. Vertical axis = 1 (y).
+        // that satisfy the floating-base acceleration equations while staying
+        // near the supplied force/CoP guesses on the ground plane. Despite its
+        // name, it does NOT constrain CoP to a foot polygon, enforce upward
+        // force, or apply friction/contact geometry. Vertical axis = 1 (y).
         auto result = _skeleton->getMultipleContactInverseDynamicsNearCoP(
             ddq,
             contactBodies,
@@ -1887,5 +1945,6 @@ static inline NSArray<NSNumber *> *vec3ToNSArray(const Eigen::Vector3s& v) {
         return nil;
     }
 }
+#endif  // BIOMOTION_TEST_DIAGNOSTICS
 
 @end

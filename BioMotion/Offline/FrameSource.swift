@@ -41,8 +41,9 @@ enum FrameSource {
         /// 5-7 samples, which is what makes the left/right claim possible at
         /// all — and it is also what BOUNDS it, because the edges of a contact
         /// sampled `N` times are located to ±½ frame each. That quantisation is
-        /// the binding limit on this whole product (`GaitResolution`), and the
-        /// only lever on it is the capture frame rate.
+        /// a binding term on the published CONTACT-TIMING claim
+        /// (`GaitResolution`), and the only camera lever on that term is the
+        /// capture frame rate. It does not validate foot-support dynamics.
         ///
         /// At 30 fps only, 4 s is 120 frames — the same call count as the old
         /// sparse cap. Higher native rates use more calls, up to 601 at 240 fps.
@@ -77,7 +78,8 @@ enum FrameSource {
     ///
     /// # Why this is not `maxFramesPerRun`
     ///
-    /// The product's one piece of advice is "film at a higher frame rate". A
+    /// The gait-timing surface's frame-rate advice is "film at a higher frame
+    /// rate". A
     /// FRAME budget turns that advice into a refusal: at 120 fps a 120-frame cap
     /// is 1.0 s of footage, which holds one contact per side, and the analysis
     /// then refuses as `.tooFewContacts` — from footage that is strictly better
@@ -93,7 +95,7 @@ enum FrameSource {
     ///
     /// It is a real cost: at the ~0.7-1 s/frame the pose model takes on device,
     /// 601 frames is 7-10 minutes. That is the user's own choice to film at
-    /// 240 fps, it is bounded, and `GaitLoadSummary.resolutionSentence` will not
+    /// 240 fps, it is bounded, and `GaitTimingSummary.resolutionSentence` will not
     /// recommend a rate this budget cannot cover — see
     /// `highestAnalysableFrameRate`.
     static let maxNativeWindowFrames = Int(minimumAnalysisSeconds * plausibleFrameRates.upperBound) + 1
@@ -183,7 +185,8 @@ enum FrameSource {
     /// this repo. It is the decoded cost of the configuration that already
     /// ships: `maxFramesPerRun` frames of 1080p. Consequences, all arithmetic:
     ///
-    /// * 30 fps up to 1080p — the validated path, and every clip the product
+    /// * 30 fps up to 1080p — the validated DECODE/MEMORY path, and every clip
+    ///   the product
     ///   was built on (measured 576×1024 and 576×768) — is **unchanged**, because
     ///   its cost is already at or under the budget and the cap never upscales.
     /// * The one action the app recommends, filming faster, no longer multiplies
@@ -201,8 +204,8 @@ enum FrameSource {
     /// that warp is upsampling. Measured on the owner's three clips the box side
     /// is 360-711 px, i.e. the pipeline already both up- and downsamples there.
     /// This trades spatial resolution for temporal resolution — which is the
-    /// trade this product's binding limit actually calls for, since resolvable
-    /// left/right asymmetry is set by frames per contact and nothing else. It is
+    /// trade the contact-timing grid calls for. It does not make dynamics
+    /// available: the bundled models still lack validated foot support. It is
     /// still a trade, and it is the reason this constant is one line.
     static let decodedWindowBudgetBytes =
         maxFramesPerRun * 1920 * 1080 * bytesPerDecodedPixel

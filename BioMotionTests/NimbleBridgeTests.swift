@@ -102,7 +102,7 @@ final class NimbleBridgeTests: XCTestCase {
 
     // MARK: - Inverse Dynamics
 
-    func testIDWithSyntheticData() {
+    func testUnvalidatedIDDiagnosticWithSyntheticData() {
         loadModel()
         let numDOFs = Int(bridge.numDOFs)
         guard numDOFs > 0 else { return }
@@ -112,10 +112,11 @@ final class NimbleBridgeTests: XCTestCase {
         let velocities = Array(repeating: NSNumber(value: 0.0), count: numDOFs)
         let accelerations = Array(repeating: NSNumber(value: 0.0), count: numDOFs)
 
-        let result = bridge.solveID(withJointAngles: angles,
-                                    jointVelocities: velocities,
-                                    jointAccelerations: accelerations)
-        XCTAssertNotNil(result, "ID should return a result")
+        let result = bridge.solveUnvalidatedIDForDiagnostics(
+            withJointAngles: angles,
+            jointVelocities: velocities,
+            jointAccelerations: accelerations)
+        XCTAssertNotNil(result, "the zero-external-force ID diagnostic should return a result")
 
         if let result {
             XCTAssertEqual(result.jointTorques.count, numDOFs,
@@ -144,12 +145,13 @@ final class NimbleBridgeTests: XCTestCase {
         XCTAssertNil(result, "Mismatched arrays should return nil")
     }
 
-    func testIDWithWrongDOFCount() {
+    func testUnvalidatedIDDiagnosticWithWrongDOFCount() {
         loadModel()
         // Pass wrong number of angles
-        let result = bridge.solveID(withJointAngles: [NSNumber(value: 0)],
-                                    jointVelocities: [NSNumber(value: 0)],
-                                    jointAccelerations: [NSNumber(value: 0)])
+        let result = bridge.solveUnvalidatedIDForDiagnostics(
+            withJointAngles: [NSNumber(value: 0)],
+            jointVelocities: [NSNumber(value: 0)],
+            jointAccelerations: [NSNumber(value: 0)])
         XCTAssertNil(result, "Wrong DOF count should return nil")
     }
 
@@ -263,21 +265,168 @@ final class NimbleBridgeTests: XCTestCase {
         XCTAssertEqual(bridge.groundHeightY, 0.04, accuracy: 1e-9)
     }
 
-    func testGRFSolveFeedsTheGroundHeightEstimator() {
-        loadModel()
-        XCTAssertFalse(bridge.groundHeightCalibrated)
+    func testBundledModelsFailClosedWithoutValidatedFootContactSupport() {
+        for resource in ["FullBody", "Rajagopal2016"] {
+            let candidate = NimbleBridge()
+            let path = Bundle(for: type(of: self)).path(forResource: resource, ofType: "osim")
+                ?? Bundle.main.path(forResource: resource, ofType: "osim")
+            guard let path else {
+                XCTFail("\(resource).osim must be in the test or app bundle")
+                continue
+            }
 
-        let n = bridge.numDOFs
-        let zeros = (0..<n).map { _ in NSNumber(value: 0.0) }
-        _ = bridge.solveIDGRF(withJointAngles: zeros,
-                              jointVelocities: zeros,
-                              jointAccelerations: zeros)
+            XCTAssertTrue(candidate.loadModel(fromPath: path), resource)
+            XCTAssertFalse(candidate.hasValidatedFootContactSupport,
+                           "bundled models and the active solver do not define validated foot support")
 
-        // Pins the wiring: the ID+GRF path must drive the rolling estimator
-        // rather than maintaining its own ground height.
-        XCTAssertTrue(bridge.groundHeightCalibrated)
-        XCTAssertEqual(bridge.groundHeightSource, .provisional,
-                       "One ID frame is one sample — provisional, not trusted")
+            let zeros = (0..<candidate.numDOFs).map { _ in NSNumber(value: 0.0) }
+            XCTAssertNil(candidate.solveIDGRF(withJointAngles: zeros,
+                                               jointVelocities: zeros,
+                                               jointAccelerations: zeros),
+                         "production GRF must fail closed instead of publishing an unconstrained wrench")
+            XCTAssertEqual(candidate.groundHeightSource, .uncalibrated,
+                           "a rejected solve must not mutate the floor estimator")
+
+            candidate.setGroundHeightY(0)
+            XCTAssertNil(candidate.solveIDGRF(withJointAngles: zeros,
+                                               jointVelocities: zeros,
+                                               jointAccelerations: zeros),
+                         "an explicit floor cannot manufacture a missing contact-support model")
+            XCTAssertEqual(candidate.groundHeightSource, .explicit)
+
+            candidate.resetSessionState()
+            XCTAssertFalse(candidate.hasValidatedFootContactSupport,
+                           "session reset must not invent or erase model capability")
+            XCTAssertFalse(candidate.loadModel(fromPath: "/nonexistent/model.osim"))
+            XCTAssertTrue(candidate.isModelLoaded,
+                          "a failed reload must retain the last successful model")
+            XCTAssertFalse(candidate.hasValidatedFootContactSupport,
+                           "a failed reload must retain the old capability value")
+        }
+    }
+
+    func testUnvalidatedDynamicsDiagnosticSelectorsRemainTestOnly() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        let testHeader = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "BioMotionTests/BioMotionTests-Bridging-Header.h"),
+            encoding: .utf8)
+        for selector in [
+            "solveUnvalidatedIDForDiagnosticsWithJointAngles",
+            "solveUnvalidatedIDGRFForDiagnosticsWithJointAngles",
+        ] {
+            for relativePath in [
+                "BioMotion/Nimble/NimbleBridge.h",
+                "BioMotion/Nimble/BioMotion-Bridging-Header.h",
+                "BioMotion/Nimble/NimbleEngine.swift",
+            ] {
+                let source = try String(
+                    contentsOf: repositoryRoot.appendingPathComponent(relativePath),
+                    encoding: .utf8)
+                XCTAssertFalse(source.contains(selector),
+                               "\(selector) leaked into production surface \(relativePath)")
+            }
+            XCTAssertTrue(testHeader.contains(selector),
+                          "the legacy numerical diagnostics need their test-only category")
+        }
+
+        let publicZeroForceSelector = "solveIDWithJointAngles"
+        let publicHeader = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "BioMotion/Nimble/NimbleBridge.h"),
+            encoding: .utf8)
+        XCTAssertFalse(publicHeader.contains(publicZeroForceSelector),
+                       "zero-external-force ID must not regain a production selector")
+
+        let implementation = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "BioMotion/Nimble/NimbleBridge.mm"),
+            encoding: .utf8)
+        let diagnosticsGuard =
+            "#if defined(BIOMOTION_TEST_DIAGNOSTICS) && BIOMOTION_TEST_DIAGNOSTICS"
+        var inDiagnosticsBranch: Bool?
+        var implementationCounts = [String: Int]()
+        let selectors = [
+            "solveUnvalidatedIDForDiagnosticsWithJointAngles",
+            "solveUnvalidatedIDGRFForDiagnosticsWithJointAngles",
+        ]
+        for rawLine in implementation.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line == diagnosticsGuard {
+                XCTAssertNil(inDiagnosticsBranch, "diagnostics guards must not nest")
+                inDiagnosticsBranch = true
+                continue
+            }
+            if inDiagnosticsBranch != nil && line == "#else" {
+                inDiagnosticsBranch = false
+                continue
+            }
+            if inDiagnosticsBranch != nil && line.hasPrefix("#endif") {
+                inDiagnosticsBranch = nil
+                continue
+            }
+            for selector in selectors where line.contains(selector) {
+                implementationCounts[selector, default: 0] += 1
+                XCTAssertEqual(inDiagnosticsBranch, true,
+                               "\(selector) must compile only in the Debug diagnostics branch")
+            }
+        }
+        XCTAssertNil(inDiagnosticsBranch, "unterminated diagnostics guard")
+        XCTAssertEqual(implementationCounts[selectors[0]], 2,
+                       "plain ID should have one private declaration and one implementation")
+        XCTAssertEqual(implementationCounts[selectors[1]], 3,
+                       "GRF should have a declaration, guarded delegate, and implementation")
+
+        let projectSpec = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("project.yml"),
+            encoding: .utf8)
+        let macroDefinition = "- \"BIOMOTION_TEST_DIAGNOSTICS=1\""
+        XCTAssertEqual(
+            projectSpec.components(separatedBy: macroDefinition).count - 1,
+            1,
+            "the diagnostics macro must be defined exactly once, by the app Debug config")
+        let appStart = try XCTUnwrap(projectSpec.range(of: "  BioMotion:\n"))
+        let appEnd = try XCTUnwrap(projectSpec.range(
+            of: "\n  AssetPackDownloader:",
+            range: appStart.upperBound..<projectSpec.endIndex))
+        let appTarget = String(projectSpec[appStart.lowerBound..<appEnd.lowerBound])
+        XCTAssertTrue(appTarget.contains("      configs:\n        Debug:"))
+        let macroRange = try XCTUnwrap(
+            appTarget.range(of: macroDefinition))
+        let beforeMacro = appTarget[..<macroRange.lowerBound]
+        let nearestDebug = try XCTUnwrap(
+            beforeMacro.range(of: "\n        Debug:", options: .backwards))
+        if let nearestRelease = beforeMacro.range(
+            of: "\n        Release:", options: .backwards) {
+            XCTAssertGreaterThan(nearestDebug.lowerBound, nearestRelease.lowerBound,
+                                 "the macro's nearest configuration must be Debug")
+        }
+
+        let generatedProject = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "BioMotion.xcodeproj/project.pbxproj"),
+            encoding: .utf8)
+        let generatedMacro = "\"BIOMOTION_TEST_DIAGNOSTICS=1\","
+        XCTAssertEqual(
+            generatedProject.components(separatedBy: generatedMacro).count - 1,
+            1,
+            "xcodegen output must carry the Debug-only macro exactly once")
+        let generatedMacroRange = try XCTUnwrap(
+            generatedProject.range(of: generatedMacro))
+        let generatedConfigStart = try XCTUnwrap(generatedProject.range(
+            of: "isa = XCBuildConfiguration;",
+            options: .backwards,
+            range: generatedProject.startIndex..<generatedMacroRange.lowerBound))
+        let generatedConfigEnd = try XCTUnwrap(generatedProject.range(
+            of: "\n\t\t};",
+            range: generatedMacroRange.upperBound..<generatedProject.endIndex))
+        let generatedConfig = String(
+            generatedProject[generatedConfigStart.lowerBound..<generatedConfigEnd.upperBound])
+        XCTAssertTrue(generatedConfig.contains("name = Debug;"))
+        XCTAssertFalse(generatedConfig.contains("name = Release;"))
     }
 
     // MARK: - IK warm start

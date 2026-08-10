@@ -1,14 +1,18 @@
-# Offline import (photo/video → pose, trusted dynamics when available)
+# Offline import (photo/video → pose, anatomy, and gait timing)
 
 Adds a second input path alongside live ARKit tracking: pick a photo or video
 from the library, run the frozen `SAM3DBodyPose` Core ML model over sampled
-frames, feed the existing IK → ID → muscle pipeline, and scrub through the
-result in a non-AR 3D view. Pose output does not imply dynamics output: ID,
-ground-reaction force, centre of pressure, and muscle output remain withheld
-until the ground plane has explicit external provenance or enough independent
-observations to be trusted. In particular, a single photo with no externally
-supplied floor is pose-only. The path is covered by the ordinary test gate; the
-remaining external boundary is real-device/UI validation called out below.
+frames, feed the shared IK path, and scrub through the result in a non-AR 3D
+view. The shipped contract is pose, fixed-colour anatomy, kinematics-only
+posture findings, and gait contact timing. Both bundled OpenSim files have an
+empty `ContactGeometrySet`, while the active near-CoP routine supplies no
+validated support polygon, unilateral-contact, or friction constraint.
+Production therefore stops at `.contactSupportUnavailable`: ID,
+ground-reaction force, centre of pressure, muscle effort, and gait-load output
+remain nil even with an explicit or statistically trusted floor. Refilming
+cannot change that model/solver capability. The path is covered by the ordinary
+test gate; the remaining external boundary is real-device/UI validation called
+out below.
 
 ## Flow
 
@@ -28,10 +32,17 @@ OfflineImportView (PhotosPicker: photo or video)
        -> edge-pad trusted requested endpoints so the centred Savitzky-Golay
           window can produce results for the first/last real frames
           [filter support only; replay is not independent ground evidence]
-       -> if the clip is a usable run:
-            nimble.resetAnalysisPassStatePreservingGround()
-            resultStore.beginGaitReplacementPass()  [clear pass-one dynamics first]
-            re-solve the same clip with the gait plan
+       -> if the clip has usable product timing:
+            snapshot hasValidatedFootContactSupport
+            future validated-contact branch only:
+              resultStore.beginGaitReplacementPass() before analysed publication
+            publish detached GaitTimingReport
+            guard the capability snapshot
+            [both bundled models return here; no plan and no second pass]
+            future validated-contact branch continues:
+              apply load-only refusal gates and build the private gait plan
+              nimble.resetAnalysisPassStatePreservingGround()
+              re-submit the same clip
   -> OfflinePlaybackView (RealityKit .nonAR ARView + MuscleOverlay + scrubber)
 ```
 
@@ -61,14 +72,15 @@ of the external device verification boundary.
 ### 9-frame Savitzky-Golay warm-up is not ground calibration
 
 `SavitzkyGolayFilter` (`BioMotion/Nimble/SavitzkyGolayFilter.swift`) needs 9
-pushes before it emits ANYTHING, and ID/muscle output only exists once it's
-warmed up. That is a derivative-window requirement, not permission to treat
-replayed poses as new observations of the floor. This means:
+pushes before it emits a centred derivative window. That is a filtering
+requirement, not evidence of foot support and not permission to treat replayed
+poses as new observations of the floor. This means:
 
-- **A single photo can produce a centred pose/IK result, but without an
-  explicitly supplied external floor it remains pose-only.** Edge replay can
-  fill the derivative window; it cannot manufacture the 30 independent ground
-  observations required to publish ID/GRF/CoP/muscle output.
+- **A single photo can produce a centred pose/IK result, but it remains
+  pose-only with either floor source.** Edge replay can fill the derivative
+  window; it cannot manufacture missing contact-support mechanics. It also
+  cannot manufacture the 30 independent observations a future validated
+  dynamics path would require for a rolling floor.
 - `OfflineSessionRunner` replays a real endpoint pose over the leading and
   trailing half-window, at the decoded clip's median cadence. A photo is the
   degenerate 4 head + 1 real + 4 tail sequence. Because every padded push is
@@ -76,9 +88,9 @@ replayed poses as new observations of the floor. This means:
   coefficients (which sum to zero for a constant input by construction —
   verified: `[86,-142,-193,-126,0,126,193,142,-86]` sums to 0) come out at
   ~0 regardless of the exact spacing. This licenses a static-hold derivative
-  assumption only. A static-equilibrium ID/muscle result is published only if
-  the separate ground-trust gate has already passed (for a single photo, that
-  requires an explicit external floor).
+  assumption only. It is not permission to publish static-equilibrium ID or
+  muscle values. Both bundled models fail the earlier contact-support gate;
+  supplying an explicit floor does not change that.
 - Padding creates no independent ground observation. Head-pad publications are
   centred on synthetic timestamps and discarded; tail padding advances the
   centred window onto the remaining distinct real frames. Thus one photo still
@@ -91,60 +103,70 @@ replayed poses as new observations of the floor. This means:
   waiter.
 - This is surfaced honestly, not silently: `OfflineResultStore.FrameResult`
   carries both `isStaticHoldEstimate` and `DynamicsAvailability`.
-  `OfflinePlaybackView` labels a trusted static result "Pose + muscle (static
-  hold)", but labels an untrusted floor "Pose only — establishing the ground
-  plane" instead of displaying zero-valued dynamics or implying continuous
-  dynamics were measured.
+  `OfflinePlaybackView` labels the current bundled-model result "Pose only —
+  foot contact is not supported" instead of displaying zero-valued dynamics.
+  Pose, the anatomy overlay, and kinematic gait timing remain available.
 - The padding rewrites the ORIGINAL frame's stored result in place
   (`OfflineResultStore.replaceBiomechanics`) rather than appending a phantom
   extra scrubber row.
 - Every routed `SolveRecord` becomes one `BiomechanicsPayload`: IK, optional ID,
   optional muscle, `DynamicsAvailability`, the static-hold flag, and motion
-  state replace the prior generation together. Availability is same-generation
-  provenance, not a UI inference: `.available` requires ID, and muscle or a gait
-  outcome cannot exist without that same ID. A nil ID or muscle erases the old
-  value; it is never converted into a measured zero. Image/frame/model
-  provenance and `FrameStatus` are not owned by the solve and remain unchanged.
+  state replace the prior generation together. The result-store projector first
+  requires success, temporal eligibility, a tracked body, and body/IK timestamps
+  within 1 ms of the owner frame. `.available` then requires a same-generation
+  ID; muscle has its own same-generation timestamp gate. A stale ID clears ID
+  and muscle while keeping valid IK/motion; a stale muscle clears only muscle.
+  Missing pose provenance clears the solve envelope. A nil/stale value is never
+  converted into a measured zero. Image/frame/model provenance and `FrameStatus`
+  are not owned by the solve and remain unchanged.
   Starting the gait replacement pass first clears every eligible pass-one ID,
   muscle, and static flag to `.analysisPassIncomplete`; each successful
   same-generation gait solve then replaces that marker. A timeout or missing
   centred publication therefore cannot leave static physics under a running
   result.
 
-### Ground-plane trust gates every dynamics result
+### Contact support gates dynamics before ground-plane trust
 
-Contact detection is meaningful only after the floor used by it is trustworthy.
-An external caller may pin an explicit ground height; that source is trusted
-immediately and observed foot heights cannot overwrite it during the session.
-Without one, `NimbleBridge` maintains a bounded rolling low-percentile estimate
-from the solved model's lowest heel height: the 10th percentile of the most
-recent 180 observations, shifted down by the 1 cm contact offset. The estimate
-is provisional for the first 29 independent ground observations and becomes
-trusted at observation 30.
+The two requirements answer different questions. Ground provenance says where
+the floor is. Contact support says how a foot may transmit force through it.
+Both bundled models have empty `ContactGeometrySet`s, and the active solver does
+not impose a validated support domain itself, so knowing the floor is not
+enough. `hasValidatedFootContactSupport` is checked first and both bundled
+models remain pose-only. An explicit floor, 30 observations, a session reset,
+or a second pass cannot unlock a missing capability.
 
-The ordering at that boundary is deliberate. `solveIDGRF` first absorbs the
-current observation and computes the updated floor, then performs contact/ID;
-`NimbleEngine` checks `groundHeightTrusted` after the call. Therefore:
+The rolling estimator remains as a necessary second gate for a future
+model/solver pair that does define validated support. An external caller may
+pin an explicit ground height; that source is trusted immediately and observed
+foot heights cannot overwrite it during the session. Without one,
+`NimbleBridge` maintains a bounded rolling low-percentile estimate from the
+solved model's lowest heel height: the 10th percentile of the most recent 180
+observations, shifted down by the 1 cm contact offset. The estimate is
+provisional for the first 29 independent observations and becomes trusted at
+observation 30.
 
-- observations 1–29 may run native ID only to advance the estimator, but their
-  torques, GRFs, CoPs, muscle output, and gait outcome are discarded and the
-  frame carries `.groundPlaneUntrusted`;
-- observation 30 upgrades the estimate and unlocks that **same call**; if native
-  ID returns a result, it is the first one allowed through as `.available`—there
-  is no 31st-observation delay;
+For a future capability-valid model, ordering at that second boundary remains
+deliberate: the current observation updates the floor before trust is checked.
+Therefore:
+
+- observations 1–29 remain `.groundPlaneUntrusted` and publish no dynamics;
+- observation 30 can satisfy the floor requirement on that **same call**, but
+  only a separately validated contact-support model could then proceed to ID;
 - a ground observation is evidence from a distinct real centred frame, not a
   `processFrame` push. Savitzky-Golay head/tail replay supplies filter context
   and does not turn one endpoint pose into several observations.
 
 State reset follows coordinate provenance. Starting a new imported clip calls
 `resetSessionState()`, clearing the rolling floor, IK warm start, and muscle-QP
-warm start. The gait second pass is over the **same clip**, so
+warm start. For a future capability-valid model, the private gait second pass
+would be over the **same clip**, so
 `resetAnalysisPassStatePreservingGround()` clears the SG/hold/display state and
 resets IK/QP warm starts while retaining that clip's ground samples and trusted
 source. Clearing the floor there would force the second pass to rediscover the
 same ground and would withhold its first 29 observations again. Pass-one
 dynamics are invalidated before that re-solve begins, so an incomplete second
-pass remains pose-only rather than mixing policies. On the live AR
+pass remains pose-only rather than mixing policies. Bundled models return
+before this reset/invalidation/replay branch. On the live AR
 path, tracking loss or an AR world-origin reset uses the full session reset,
 because a floor expressed in the old world frame is no longer valid.
 
@@ -246,13 +268,16 @@ fabricated number) until at least one frame has completed.
 The video's nominal track rate is used only where it is the relevant fact: native-rate sampling,
 decode-memory sizing, and the budget notice. Analysis cadence comes from the median interval of the
 surviving `BodyFrame` timestamps and is stored in `GaitReport.framesPerSecond`. `GaitOutcome.analysed`
-and `GaitLoadSummary.make` deliberately carry no second FPS value, so a sparse 10 fps analysis of a
-nominal 30 fps track cannot print 30 fps or scale camera advice from it.
+publishes a detached `GaitTimingReport` whose `GaitTimingSummary` copies that rate; it carries no
+second FPS value, full research report, dynamics plan, residual or load summary. A sparse 10 fps
+analysis of a nominal 30 fps track therefore cannot print 30 fps or scale camera advice from it.
 
-An `.analysed` `GaitReport` always owns the timing UI: resolution, left/right contact time, and
-report flags render whether or not the downstream `GaitLoadSummary` exists. `GaitTimingSummary`
-holds that non-optional presentation data. A nil load summary replaces only the muscle section with
-an unavailable explanation; it never removes the already-computed contact-time result.
+An `.analysed` `GaitTimingReport` owns the whole product gait UI: resolution, left/right contact
+time and timing flags. `GaitReportPanel` has no `GaitLoadSummary` initializer, so hiding a load
+block is not the safety mechanism — load data cannot cross the type boundary. For the bundled
+models `hasValidatedFootContactSupport` is false; the runner publishes timing, then returns before
+`makePlan` and before the second dynamics pass. A derivative-window refusal belongs only to that
+unreached plan and does not remove timestamp-derived timing.
 
 ### Model loading
 

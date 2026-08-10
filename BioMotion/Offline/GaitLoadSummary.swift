@@ -1,8 +1,8 @@
 import Foundation
 
-/// Timing-only presentation data for an analysed run. Every field comes from
-/// `GaitReport`, so it remains available when the downstream muscle solve has
-/// no usable stance frame and `GaitLoadSummary.make` returns nil.
+/// Timing-only presentation data for an analysed run. This is a value copy of
+/// the kinematic resolution terms; it retains no `GaitReport`, force model,
+/// dynamics plan, residual, or muscle/load summary.
 struct GaitTimingSummary: Equatable {
     let resolvableAsymmetryPercent: Double
     let quantisationFloorPercent: Double
@@ -80,9 +80,146 @@ extension GaitTimingSummary {
     }
 }
 
+/// The complete product-facing gait result.
+///
+/// `GaitReport` intentionally remains a research/internal analysis object: it
+/// also owns the historical half-sine force hypothesis and the inputs used to
+/// build a dynamics plan. Publishing that object through an `@Published`
+/// store leaked those fields even when every bundled model failed the contact
+/// capability gate and the UI happened not to draw them. This projection
+/// copies only timestamp-derived contact timing, its uncertainty, refusals and
+/// flags. There is no reference back to the source report.
+struct GaitTimingReport: Equatable {
+    let timing: GaitTimingSummary
+    let contactSeconds: Bilateral<Double>
+    let contactVariationPercent: Bilateral<Double>
+    let contactCounts: Bilateral<Int>
+    let contactAsymmetryPercent: Double
+    let contactClaimFloorPercent: Double
+    let contactSamplingUncertaintyPercent: Double
+    let asymmetryClaim: Double?
+    let refusals: [GaitReport.Refusal]
+    let flags: [GaitReport.Flag]
+
+    var framesPerSecond: Double { timing.framesPerSecond }
+    var isUsable: Bool { refusals.isEmpty }
+
+    /// Refusals that invalidate timestamp-derived timing. A centred
+    /// derivative window is needed only by the internal dynamics replay, so
+    /// that one refusal cannot turn valid contact timing into a refusal.
+    static func timingRefusals(
+        from refusals: [GaitReport.Refusal]
+    ) -> [GaitReport.Refusal] {
+        refusals.compactMap { refusal -> GaitReport.Refusal? in
+            switch refusal {
+            case .tooFewContacts(let side, let count):
+                return .tooFewContacts(side: side, count: count)
+            case .stridePeriodDisagreesBetweenLegs(let frames):
+                return .stridePeriodDisagreesBetweenLegs(frames: frames)
+            case .contactSequenceNotPeriodic(let frames):
+                return .contactSequenceNotPeriodic(frames: frames)
+            case .strideNotSteady(let side, let percent, let boundPercent):
+                return .strideNotSteady(
+                    side: side,
+                    percent: percent,
+                    boundPercent: boundPercent)
+            case .notRunning(let dutyFactor, let flightToContactRatio):
+                return .notRunning(
+                    dutyFactor: dutyFactor,
+                    flightToContactRatio: flightToContactRatio)
+            case .stanceBudgetInconsistent(let assumed, let measured):
+                return .stanceBudgetInconsistent(assumed: assumed, measured: measured)
+            case .contactTooShortToResolve(let framesPerContact):
+                return .contactTooShortToResolve(framesPerContact: framesPerContact)
+            case .droppedSamplesInContact(let side, let inside, let atEdges):
+                return .droppedSamplesInContact(
+                    side: side,
+                    inside: inside,
+                    atEdges: atEdges)
+            case .contactTooShortForACleanDerivative:
+                return nil
+            }
+        }
+    }
+
+    /// Product timing flags are an explicit whitelist. The exhaustive switch
+    /// makes any future research/mechanics flag a compile-time classification
+    /// decision instead of silently widening this projection.
+    static func timingFlags(
+        from flags: [GaitReport.Flag]
+    ) -> [GaitReport.Flag] {
+        flags.map { flag -> GaitReport.Flag in
+            switch flag {
+            case .droppedFrames(let count, let largestGapInFrames):
+                return .droppedFrames(
+                    count: count,
+                    largestGapInFrames: largestGapInFrames)
+            case .edgeClippedRunsExcluded(let count):
+                return .edgeClippedRunsExcluded(count: count)
+            case .asymmetryBelowResolution(let measuredPercent, let resolvablePercent):
+                return .asymmetryBelowResolution(
+                    measuredPercent: measuredPercent,
+                    resolvablePercent: resolvablePercent)
+            }
+        }
+    }
+
+    static func timingAsymmetryClaim(
+        measuredPercent: Double,
+        floorPercent: Double,
+        refusals: [GaitReport.Refusal]
+    ) -> Double? {
+        guard timingRefusals(from: refusals).isEmpty,
+              measuredPercent.isFinite,
+              abs(measuredPercent) >= floorPercent else { return nil }
+        return measuredPercent
+    }
+
+    init(report: GaitReport) {
+        let timingRefusals = Self.timingRefusals(from: report.refusals)
+        let measuredAsymmetry = report.contactAsymmetryPercent
+        let claim = Self.timingAsymmetryClaim(
+            measuredPercent: measuredAsymmetry,
+            floorPercent: report.contactClaimFloorPercent,
+            refusals: report.refusals)
+        var timingFlags = Self.timingFlags(from: report.flags)
+        if timingRefusals.isEmpty, claim == nil,
+           !timingFlags.contains(where: {
+               if case .asymmetryBelowResolution = $0 { return true }
+               return false
+           }) {
+            timingFlags.append(.asymmetryBelowResolution(
+                measuredPercent: measuredAsymmetry,
+                resolvablePercent: report.contactClaimFloorPercent))
+        }
+
+        timing = GaitTimingSummary(report: report)
+        contactSeconds = report.contactSeconds
+        contactVariationPercent = report.contactVariationPercent
+        contactCounts = report.stance.map(\.count)
+        contactAsymmetryPercent = measuredAsymmetry
+        contactClaimFloorPercent = report.contactClaimFloorPercent
+        contactSamplingUncertaintyPercent = report.contactSamplingUncertaintyPercent
+        asymmetryClaim = claim
+        refusals = timingRefusals
+        flags = timingFlags
+    }
+}
+
 /// The RELATIVE view of a running clip — **left against right, one muscle at a
 /// time** — plus the per-clip resolution that says which of those comparisons
 /// the clip is actually allowed to make.
+///
+/// # ⛔ No bundled model can construct a product load summary
+///
+/// This type is retained as an experimental diagnostic and regression harness.
+/// Both bundled models have empty `ContactGeometrySet`s, and the active near-CoP
+/// routine supplies no validated support polygon, unilateral-contact, or
+/// friction constraint. `NimbleEngine` therefore emits
+/// `.contactSupportUnavailable` before ID; `make` receives no full-biomechanics
+/// stance frames and returns nil. A trusted floor, cleaner clip, longer clip,
+/// or higher frame rate cannot unlock it. Only `GaitTimingSummary`'s pure
+/// kinematic contact timing remains a product result.
 ///
 /// # ⚠️ The per-muscle left/right claim is RETIRED in this build
 ///
@@ -216,11 +353,13 @@ extension GaitTimingSummary {
 ///
 /// # The clip-level gates
 ///
-/// `arePublishable` is the single answer to "did this clip measure loads at
-/// all". It is a DATA gate, and it is no longer the last one: since the
+/// `arePublishable` is a legacy downstream answer for a capability-valid test
+/// fixture; it is not the product's first gate. The bundled-model capability
+/// gate fails before this type is built. Within the research harness it remains
+/// a DATA gate, and it is no longer the last one: since the
 /// per-muscle comparison was retired, a clip can pass every gate below and still
-/// state no muscle finding. The 3-D overlay is off on the running path for the
-/// same reason (`OfflinePlaybackView.muscleMagnitudesArePublishable`).
+/// state no muscle finding. The 3-D overlay is now fixed-colour anatomy driven
+/// by pose alone, so none of these load gates govern its visibility.
 ///
 /// 1. **`residualGatePassed`** — the VERTICAL disagreement between the timing
 ///    model's force and the one inverse dynamics solved,
@@ -636,7 +775,8 @@ struct GaitLoadSummary {
             / Double(claimedStanceFrameCount)
     }
 
-    /// **The single question every consumer of `muscles` must ask.** Bars,
+    /// A downstream experimental gate after foot-support capability has already
+    /// been established. No bundled-model product frame reaches it. Bars,
     /// numbers, ordering and the 3-D overlay are all withheld together when this
     /// is false — they all rest on the same assumptions.
     var arePublishable: Bool { residualGatePassed && contactGatePassed && !muscles.isEmpty }
@@ -659,8 +799,10 @@ struct GaitLoadSummary {
             + "paragraph above."
     }
 
-    /// Why the loads are withheld, naming the measurement AND the lever. Nil
-    /// when they are not.
+    /// Why an experimental load summary is withheld after it already passed the
+    /// external capability gate, naming the measurement AND the lever. The
+    /// product-level `.contactSupportUnavailable` reason is owned by
+    /// `DynamicsAvailability` and cannot be cured by any lever here.
     ///
     /// ⚠️ **The lever here is a lever for the DATA.** It is not a lever for the
     /// per-muscle rows, and the panel must not present it as one — see
@@ -893,7 +1035,8 @@ struct GaitLoadSummary {
         timingSummary.resolutionBreakdownSentence
     }
 
-    /// **What is NOT measured on the fore-aft axis — which is not the same as
+    /// Historical raw-solver disclosure: **what is NOT measured on the
+    /// fore-aft axis — which is not the same as
     /// what is missing from it.**
     ///
     /// This sentence used to say braking and push-off were "not modelled, so
@@ -925,7 +1068,9 @@ struct GaitLoadSummary {
         + "two legs when they load the joints differently."
     }
 
-    /// The falsifier line, named for the axis it actually measures.
+    /// Historical raw-solver falsifier line, named for the axis it actually
+    /// measures. It is unreachable on bundled-model product frames and does
+    /// not validate contact support.
     var verticalFalsifierSentence: String {
         guard residualWasMeasured else {
             return "Vertical disagreement between the timing model and inverse dynamics: NOT "
@@ -1006,7 +1151,7 @@ struct GaitLoadSummary {
 
         for frame in frames {
             guard frame.isGaitStance,
-                  frame.dynamicsAvailability.hasInverseDynamics,
+                  frame.hasValidatedDynamicsPayload,
                   let outcome = frame.motionState.gaitOutcome else { continue }
 
             claimedStance += 1
@@ -1014,12 +1159,12 @@ struct GaitLoadSummary {
             if outcome.solverSawDoubleContact { doubleContacts += 1 }
             if !outcome.derivativeWindowInsideContact { noCleanWindow += 1 }
 
-            // A frame whose two contact detectors disagree was solved with the
-            // WRONG external load — `solveIDGRF` returns no ground force at all
-            // when its geometric detector sees no foot down — and a frame whose
-            // derivative window crossed a contact edge carries an acceleration
-            // fitted across a discontinuity. Neither belongs in a load, and
-            // neither belongs in the residual statistic.
+            // In the historical raw diagnostic, a frame whose two contact
+            // detectors disagreed was solved with the WRONG external load —
+            // `solveIDGRF` returns no ground force at all when its geometric
+            // detector sees no foot down — and a frame whose derivative window
+            // crossed a contact edge carries an acceleration fitted across a
+            // discontinuity. Neither belongs in a load or residual statistic.
             guard outcome.isUsableForLoadComparison else { continue }
             residuals.append(outcome.residualInBodyWeights)
 

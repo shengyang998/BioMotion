@@ -68,10 +68,11 @@ final class OfflineDisclosureTests: XCTestCase {
         let hold = OfflineResultStore.FrameResult(
             id: 0, sourceImage: UIImage(), timestamp: 0, status: .success,
             usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
-            ikResult: nil, idResult: nil,
+            ikResult: Self.ik(generation: 1), idResult: Self.id(generation: 1),
             muscleResult: NimbleEngine.MuscleOutput(activations: ["soleus_l": 0.4],
                                                     forces: ["soleus_l": 400],
                                                     converged: true, timestamp: 0),
+            dynamicsAvailability: .available,
             isStaticHoldEstimate: true,
             motionState: .measured(verdict: .hold, peakSpeedMetersPerSecond: 0.001,
                                    windowSeconds: 1.0, noiseFloorMetersPerSecond: 0.004))
@@ -81,7 +82,8 @@ final class OfflineDisclosureTests: XCTestCase {
         let undetermined = OfflineResultStore.FrameResult(
             id: 1, sourceImage: UIImage(), timestamp: 0, status: .success,
             usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
-            ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false,
+            ikResult: nil, idResult: nil, muscleResult: nil,
+            dynamicsAvailability: .waitingForMotionWindow, isStaticHoldEstimate: false,
             motionState: .undetermined)
         XCTAssertTrue(undetermined.gaitLoadsAreComparable)
     }
@@ -149,31 +151,44 @@ final class OfflineDisclosureTests: XCTestCase {
                        + "calculations.")
 
         let store = OfflineResultStore()
+        store.setValidatedFootContactSupport(true)
         store.append(OfflineResultStore.FrameResult(
             id: 0, sourceImage: UIImage(), timestamp: 0, status: .success,
             usedFallbackBBox: true, temporalAnalysisExclusion: exclusion,
-            camT: nil, modelChecksums: nil, bodyFrame: nil,
-            ikResult: nil, idResult: nil, muscleResult: nil,
-            isStaticHoldEstimate: false, motionState: .undetermined))
+            camT: nil, modelChecksums: nil,
+            bodyFrame: Self.trackedBodyFrame(timestamp: 0, frameNumber: 0),
+            ikResult: Self.ik(generation: 9, timestamp: 0),
+            idResult: Self.id(generation: 9, timestamp: 0),
+            muscleResult: Self.muscle(generation: 9, timestamp: 0),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: true,
+            motionState: .measured(verdict: .hold,
+                                   peakSpeedMetersPerSecond: 0,
+                                   windowSeconds: 1,
+                                   noiseFloorMetersPerSecond: 0.001)))
         store.append(OfflineResultStore.FrameResult(
             id: 1, sourceImage: UIImage(), timestamp: 1, status: .success,
             usedFallbackBBox: true,
-            camT: nil, modelChecksums: nil, bodyFrame: nil,
+            camT: nil, modelChecksums: nil,
+            bodyFrame: Self.trackedBodyFrame(timestamp: 1, frameNumber: 1),
             ikResult: nil, idResult: nil, muscleResult: nil,
+            dynamicsAvailability: .waitingForMotionWindow,
             isStaticHoldEstimate: false, motionState: .undetermined))
 
-        let muscle = NimbleEngine.MuscleOutput(
-            activations: ["soleus_l": 0.4],
-            forces: ["soleus_l": 400],
-            converged: true,
-            timestamp: 0)
         for id in [0, 1] {
+            let timestamp = Double(id)
+            let muscle = NimbleEngine.MuscleOutput(
+                activations: ["soleus_l": 0.4],
+                forces: ["soleus_l": 400],
+                converged: true,
+                timestamp: timestamp)
             store.replaceBiomechanics(
                 forFrameID: id,
                 with: OfflineResultStore.BiomechanicsPayload(
-                    ikResult: Self.ik(generation: 1),
-                    idResult: nil,
+                    ikResult: Self.ik(generation: 1, timestamp: timestamp),
+                    idResult: Self.id(generation: 1, timestamp: timestamp),
                     muscleResult: muscle,
+                    dynamicsAvailability: .available,
                     isStaticHoldEstimate: true,
                     motionState: .measured(verdict: .hold,
                                            peakSpeedMetersPerSecond: 0,
@@ -203,26 +218,28 @@ final class OfflineDisclosureTests: XCTestCase {
     func testBiomechanicsReplacementNeverMixesSolveGenerations() {
         struct Scenario {
             let name: String
-            let id: NimbleEngine.IDOutput?
-            let muscle: NimbleEngine.MuscleOutput?
+            let includesID: Bool
+            let includesMuscle: Bool
         }
 
         let scenarios = [
-            Scenario(name: "pose only", id: nil, muscle: nil),
-            Scenario(name: "ID only", id: Self.id(generation: 2), muscle: nil),
-            Scenario(name: "full", id: Self.id(generation: 2),
-                     muscle: Self.muscle(generation: 2))
+            Scenario(name: "pose only", includesID: false, includesMuscle: false),
+            Scenario(name: "ID only", includesID: true, includesMuscle: false),
+            Scenario(name: "full", includesID: true, includesMuscle: true),
         ]
 
         for (frameID, scenario) in scenarios.enumerated() {
+            let ownerTimestamp = Double(frameID)
             let store = OfflineResultStore()
+            store.setValidatedFootContactSupport(true)
             store.append(Self.emptyFrame(id: frameID))
             store.replaceBiomechanics(
                 forFrameID: frameID,
                 with: OfflineResultStore.BiomechanicsPayload(
-                    ikResult: Self.ik(generation: 1),
-                    idResult: Self.id(generation: 1),
-                    muscleResult: Self.muscle(generation: 1),
+                    ikResult: Self.ik(generation: 1, timestamp: ownerTimestamp),
+                    idResult: Self.id(generation: 1, timestamp: ownerTimestamp),
+                    muscleResult: Self.muscle(generation: 1, timestamp: ownerTimestamp),
+                    dynamicsAvailability: .available,
                     isStaticHoldEstimate: true,
                     motionState: .measured(verdict: .hold,
                                            peakSpeedMetersPerSecond: 0,
@@ -234,12 +251,21 @@ final class OfflineDisclosureTests: XCTestCase {
                 peakSpeedMetersPerSecond: 2,
                 windowSeconds: 2,
                 noiseFloorMetersPerSecond: 0.02)
+            let passTwoID = scenario.includesID
+                ? Self.id(generation: 2, timestamp: ownerTimestamp)
+                : nil
+            let passTwoMuscle = scenario.includesMuscle
+                ? Self.muscle(generation: 2, timestamp: ownerTimestamp)
+                : nil
             store.replaceBiomechanics(
                 forFrameID: frameID,
                 with: OfflineResultStore.BiomechanicsPayload(
-                    ikResult: Self.ik(generation: 2),
-                    idResult: scenario.id,
-                    muscleResult: scenario.muscle,
+                    ikResult: Self.ik(generation: 2, timestamp: ownerTimestamp),
+                    idResult: passTwoID,
+                    muscleResult: passTwoMuscle,
+                    dynamicsAvailability: passTwoID == nil
+                        ? .withheld(.movingBeyondStaticBudget)
+                        : .available,
                     isStaticHoldEstimate: false,
                     motionState: passTwoState))
 
@@ -247,10 +273,10 @@ final class OfflineDisclosureTests: XCTestCase {
             XCTAssertEqual(frame.ikResult?.jointAngles["generation"], 2,
                            scenario.name)
             XCTAssertEqual(frame.idResult?.jointTorques["generation"],
-                           scenario.id?.jointTorques["generation"],
+                           passTwoID?.jointTorques["generation"],
                            scenario.name)
             XCTAssertEqual(frame.muscleResult?.activations["generation"],
-                           scenario.muscle?.activations["generation"],
+                           passTwoMuscle?.activations["generation"],
                            scenario.name)
             XCTAssertFalse(frame.isStaticHoldEstimate, scenario.name)
             XCTAssertEqual(frame.motionState, passTwoState, scenario.name)
@@ -263,13 +289,14 @@ final class OfflineDisclosureTests: XCTestCase {
     @MainActor
     func testGroundUntrustedReplacementErasesPhysicsAndCarriesItsReason() {
         let store = OfflineResultStore()
+        store.setValidatedFootContactSupport(true)
         store.append(Self.emptyFrame(id: 0))
         store.replaceBiomechanics(
             forFrameID: 0,
             with: OfflineResultStore.BiomechanicsPayload(
-                ikResult: Self.ik(generation: 1),
-                idResult: Self.id(generation: 1),
-                muscleResult: Self.muscle(generation: 1),
+                ikResult: Self.ik(generation: 1, timestamp: 0),
+                idResult: Self.id(generation: 1, timestamp: 0),
+                muscleResult: Self.muscle(generation: 1, timestamp: 0),
                 dynamicsAvailability: .available,
                 isStaticHoldEstimate: true,
                 motionState: .measured(verdict: .hold,
@@ -281,7 +308,7 @@ final class OfflineDisclosureTests: XCTestCase {
         store.replaceBiomechanics(
             forFrameID: 0,
             with: OfflineResultStore.BiomechanicsPayload(
-                ikResult: Self.ik(generation: 2),
+                ikResult: Self.ik(generation: 2, timestamp: 0),
                 idResult: nil,
                 muscleResult: nil,
                 dynamicsAvailability: .groundPlaneUntrusted,
@@ -302,25 +329,472 @@ final class OfflineDisclosureTests: XCTestCase {
         XCTAssertTrue(frame.dynamicsAvailability.detail.contains("30"))
     }
 
+    /// Missing foot-support mechanics is a model capability boundary, not a
+    /// temporary solve failure. Replacing a previously available gait frame
+    /// must erase every load-bearing field while leaving the report-owned gait
+    /// timing intact.
+    @MainActor
+    func testContactSupportUnavailableReplacementErasesLoadsButKeepsGaitTiming() throws {
+        let report = try GaitAnalysis.analyse(
+            frames: try GaitClipFixture.load(
+                "video_012", bundle: Bundle(for: type(of: self))).frames)
+        let timing = GaitTimingReport(report: report)
+        let staleOutcome = try XCTUnwrap(Self.stanceFrame(side: -1).motionState.gaitOutcome)
+
+        let store = OfflineResultStore()
+        store.setValidatedFootContactSupport(false)
+        store.append(Self.emptyFrame(id: 0))
+        store.setGait(.analysed(report: timing))
+        store.replaceBiomechanics(
+            forFrameID: 0,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 1, timestamp: 0),
+                idResult: Self.id(generation: 1, timestamp: 0),
+                muscleResult: Self.muscle(generation: 1, timestamp: 0),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: false,
+                motionState: .gait(verdict: .gaitStance, outcome: staleOutcome)))
+        XCTAssertFalse(store.frames[0].hasFullBiomechanics,
+                       "false session capability rejects even a nominally available payload")
+        XCTAssertNil(store.frames[0].idResult)
+        XCTAssertNil(store.frames[0].muscleResult)
+        XCTAssertNil(store.frames[0].motionState.gaitOutcome,
+                     "the published store retains the stance verdict, never dynamics evidence")
+        XCTAssertEqual(store.frames[0].motionState.verdict, .gaitStance)
+        XCTAssertEqual(store.frames[0].dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertFalse(OfflinePlaybackView.frameLabelText(for: store)
+            .contains("with load data"))
+
+        // Deliberately carry the old per-frame outcome into the replacement.
+        // The store owns the atomic seam and must not let that stale force /
+        // residual survive an unavailable generation.
+        store.replaceBiomechanics(
+            forFrameID: 0,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 2, timestamp: 0),
+                idResult: nil,
+                muscleResult: nil,
+                dynamicsAvailability: .contactSupportUnavailable,
+                isStaticHoldEstimate: false,
+                motionState: .gait(verdict: .gaitStance, outcome: staleOutcome)))
+
+        let frame = store.frames[0]
+        XCTAssertEqual(frame.ikResult?.jointAngles["generation"], 2)
+        XCTAssertNil(frame.idResult)
+        XCTAssertNil(frame.muscleResult)
+        XCTAssertNil(frame.motionState.gaitOutcome,
+                     "an unavailable generation cannot retain a gait force or residual")
+        XCTAssertEqual(frame.motionState.verdict, .gaitStance,
+                       "the contact classifier remains useful without load mechanics")
+        XCTAssertEqual(frame.dynamicsAvailability, .contactSupportUnavailable)
+        XCTAssertFalse(frame.hasFullBiomechanics)
+        XCTAssertEqual(store.contactSupportUnavailableCount, 1)
+        XCTAssertEqual(store.hasValidatedFootContactSupport, false)
+        XCTAssertNotNil(store.gait?.report,
+                        "report-owned mean contact timing/count projection must survive a load refusal")
+        let label = OfflinePlaybackView.frameLabelText(for: store)
+        XCTAssertTrue(label.contains("1 pose result"), label)
+        XCTAssertTrue(label.contains("foot contact permanently unsupported"), label)
+        XCTAssertFalse(label.contains("0 with load data"), label)
+        XCTAssertFalse(label.contains("with load data"), label)
+
+        let runnerSource = try Self.source(at: "BioMotion/Offline/OfflineSessionRunner.swift")
+        let gaitStart = try XCTUnwrap(
+            runnerSource.range(of: "    private func runGaitPassIfThisIsARun("))
+        let gaitEnd = try XCTUnwrap(
+            runnerSource.range(of: "    nonisolated static func makePlan(",
+                               range: gaitStart.upperBound..<runnerSource.endIndex))
+        let gaitBody = String(runnerSource[gaitStart.lowerBound..<gaitEnd.lowerBound])
+        let publishTiming = try XCTUnwrap(
+            gaitBody.range(of: "resultStore.setGait(.analysed(report: timingReport))"))
+        let capabilitySnapshot = try XCTUnwrap(
+            gaitBody.range(of: "let supportsFootContact = nimble.hasValidatedFootContactSupport"))
+        let capabilityGate = try XCTUnwrap(
+            gaitBody.range(of: "guard supportsFootContact else { return }"))
+        let fullReportGate = try XCTUnwrap(
+            gaitBody.range(of: "guard report.isUsable else { return }"))
+        let planBuild = try XCTUnwrap(
+            gaitBody.range(of: "guard let plan = Self.makePlan(from: report) else"))
+        let replacementPass = try XCTUnwrap(
+            gaitBody.range(of: "resultStore.beginGaitReplacementPass()"))
+        XCTAssertLessThan(capabilitySnapshot.lowerBound, replacementPass.lowerBound)
+        XCTAssertLessThan(replacementPass.lowerBound, publishTiming.lowerBound,
+                          "future pass-one physics clears before analysed is observable")
+        XCTAssertLessThan(publishTiming.lowerBound, capabilityGate.lowerBound,
+                          "bundled timing publishes before the permanent capability return")
+        XCTAssertLessThan(capabilityGate.lowerBound, fullReportGate.lowerBound,
+                          "the bundled path must return before load-only refusals are considered")
+        XCTAssertLessThan(fullReportGate.lowerBound, planBuild.lowerBound)
+
+        let storeSource = try Self.source(at: "BioMotion/Offline/OfflineResultStore.swift")
+        let outcomeStart = try XCTUnwrap(storeSource.range(of: "    enum GaitOutcome {"))
+        let outcomeEnd = try XCTUnwrap(
+            storeSource.range(of: "    func setGait(",
+                              range: outcomeStart.upperBound..<storeSource.endIndex))
+        let outcomeSource = String(storeSource[outcomeStart.lowerBound..<outcomeEnd.lowerBound])
+        XCTAssertTrue(outcomeSource.contains("case analysed(report: GaitTimingReport)"))
+        XCTAssertFalse(outcomeSource.contains("case analysed(report: GaitReport"))
+        XCTAssertFalse(outcomeSource.contains("GaitPlan"))
+
+        let panelSource = try Self.source(at: "BioMotion/Offline/GaitReportPanel.swift")
+        XCTAssertFalse(panelSource.contains("let summary: GaitLoadSummary"))
+        XCTAssertFalse(panelSource.contains("residualInBodyWeights"))
+        XCTAssertFalse(panelSource.contains("GaitPlan"))
+        XCTAssertFalse(panelSource.contains("contactSupportBlock("),
+                       "the generic permanent limit belongs outside the capped gait panel")
+
+        let playbackSource = try Self.source(at: "BioMotion/Offline/OfflinePlaybackView.swift")
+        let fixedBanner = try XCTUnwrap(
+            playbackSource.range(of: "if resultStore.hasValidatedFootContactSupport == false {"))
+        let gaitConditional = try XCTUnwrap(
+            playbackSource.range(of: "if let gait = resultStore.gait, gait.replacesPostureFindings"))
+        XCTAssertLessThan(fixedBanner.lowerBound, gaitConditional.lowerBound,
+                          "the permanent limit must precede capped/refilming gait content")
+
+        let genericCapability = GaitReportPanel.contactSupportUnavailableMessage
+        XCTAssertFalse(genericCapability.lowercased().contains("contact-time result above"),
+                       "photos/refusals cannot claim that timing is complete")
+        let analysedCapability = try XCTUnwrap(
+            GaitReportPanel.analysedContactSupportMessage(
+                hasValidatedFootContactSupport: false))
+        XCTAssertTrue(analysedCapability.lowercased().contains("contact-time result above"))
+    }
+
+    /// `FrameResult` stays able to represent adversarial input so the single
+    /// product projector can prove every provenance layer fails closed. A pose
+    /// needs a successful/eligible tracked body plus owner-matched IK; ID and
+    /// muscle then need their own same-generation timestamps and capability.
+    @MainActor
+    func testFullBiomechanicsRequiresAnExplicitInverseDynamicsPayload() throws {
+        let contradictory = OfflineResultStore.FrameResult(
+            id: 0, sourceImage: UIImage(), timestamp: 0, status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
+            ikResult: Self.ik(generation: 1), idResult: nil,
+            muscleResult: Self.muscle(generation: 1),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: true,
+            motionState: .measured(verdict: .hold,
+                                   peakSpeedMetersPerSecond: 0,
+                                   windowSeconds: 1,
+                                   noiseFloorMetersPerSecond: 0.001))
+
+        XCTAssertFalse(contradictory.hasFullBiomechanics)
+        XCTAssertFalse(contradictory.hasValidatedDynamicsPayload)
+
+        let staleGait = try XCTUnwrap(Self.stanceFrame(side: -1).motionState.gaitOutcome)
+        let gaitContradiction = OfflineResultStore.FrameResult(
+            id: 1, sourceImage: UIImage(), timestamp: 0, status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil,
+            bodyFrame: Self.trackedBodyFrame(timestamp: 0, frameNumber: 1),
+            ikResult: Self.ik(generation: 1, timestamp: 0), idResult: nil,
+            muscleResult: Self.muscle(generation: 1, timestamp: 0),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: false,
+            motionState: .gait(verdict: .gaitStance, outcome: staleGait))
+        XCTAssertFalse(gaitContradiction.hasValidatedDynamicsPayload)
+        XCTAssertFalse(gaitContradiction.gaitLoadsAreComparable)
+        XCTAssertNotNil(gaitContradiction.gaitExclusionReason)
+        XCTAssertTrue(OfflinePlaybackView.frameStatusText(gaitContradiction)
+            .lowercased().contains("inverse dynamics"))
+
+        let report = try GaitAnalysis.analyse(
+            frames: try GaitClipFixture.load(
+                "video_012", bundle: Bundle(for: type(of: self))).frames)
+        let timing = GaitTimingReport(report: report)
+        XCTAssertNil(GaitLoadSummary.make(
+            frames: [gaitContradiction], report: report, filterTaps: 5),
+            "availability without its ID payload cannot contribute a residual")
+
+        let unknownCapability = OfflineResultStore()
+        unknownCapability.append(Self.stanceFrame(side: -1))
+        XCTAssertEqual(unknownCapability.frames[0].dynamicsAvailability,
+                       .waitingForMotionWindow)
+        XCTAssertNil(unknownCapability.frames[0].idResult)
+        XCTAssertNil(unknownCapability.frames[0].muscleResult)
+        XCTAssertNil(unknownCapability.frames[0].motionState.gaitOutcome)
+        XCTAssertNotNil(unknownCapability.frames[0].ikResult,
+                        "unknown capability with valid pose provenance keeps pose")
+
+        let validatedCapability = OfflineResultStore()
+        validatedCapability.setValidatedFootContactSupport(true)
+        validatedCapability.setGait(.analysed(report: timing))
+        validatedCapability.append(gaitContradiction)
+        XCTAssertEqual(validatedCapability.frames[0].dynamicsAvailability,
+                       .inverseDynamicsFailed)
+        XCTAssertEqual(validatedCapability.frames[0].ikResult?.jointAngles["generation"], 1)
+        XCTAssertNil(validatedCapability.frames[0].idResult)
+        XCTAssertNil(validatedCapability.frames[0].muscleResult)
+        XCTAssertNil(validatedCapability.frames[0].motionState.gaitOutcome)
+        XCTAssertEqual(validatedCapability.frames[0].motionState.verdict, .gaitStance)
+        XCTAssertEqual(validatedCapability.gait?.report, timing)
+
+        // Replacement uses the same projector as append, rather than trusting
+        // the payload initializer to enforce the missing-ID contract.
+        validatedCapability.replaceBiomechanics(
+            forFrameID: 1,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 2, timestamp: 0),
+                idResult: nil,
+                muscleResult: Self.muscle(generation: 2, timestamp: 0),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
+        XCTAssertEqual(validatedCapability.frames[0].dynamicsAvailability,
+                       .inverseDynamicsFailed)
+        XCTAssertEqual(validatedCapability.frames[0].ikResult?.jointAngles["generation"], 2)
+        XCTAssertNil(validatedCapability.frames[0].muscleResult)
+        XCTAssertEqual(validatedCapability.frames[0].motionState.verdict, .gaitStance)
+        XCTAssertEqual(validatedCapability.gait?.report, timing)
+
+        // A stale ID invalidates only the load generation. The owner-matched IK
+        // pose and report-neutral stance verdict remain usable.
+        validatedCapability.replaceBiomechanics(
+            forFrameID: 1,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 3, timestamp: 0),
+                idResult: Self.id(generation: 3, timestamp: 0.002),
+                muscleResult: Self.muscle(generation: 3, timestamp: 0),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
+        XCTAssertEqual(validatedCapability.frames[0].dynamicsAvailability,
+                       .inverseDynamicsFailed)
+        XCTAssertEqual(validatedCapability.frames[0].ikResult?.jointAngles["generation"], 3)
+        XCTAssertNil(validatedCapability.frames[0].idResult)
+        XCTAssertNil(validatedCapability.frames[0].muscleResult)
+        XCTAssertFalse(validatedCapability.frames[0].isStaticHoldEstimate)
+        XCTAssertEqual(validatedCapability.frames[0].motionState.verdict, .gaitStance)
+        XCTAssertEqual(validatedCapability.gait?.report, timing)
+
+        // A stale muscle solve cannot erase a valid same-generation IK + ID.
+        validatedCapability.replaceBiomechanics(
+            forFrameID: 1,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 4, timestamp: 0),
+                idResult: Self.id(generation: 4, timestamp: 0),
+                muscleResult: Self.muscle(generation: 4, timestamp: 0.002),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
+        XCTAssertEqual(validatedCapability.frames[0].dynamicsAvailability, .available)
+        XCTAssertEqual(validatedCapability.frames[0].ikResult?.jointAngles["generation"], 4)
+        XCTAssertEqual(validatedCapability.frames[0].idResult?.jointTorques["generation"], 4)
+        XCTAssertNil(validatedCapability.frames[0].muscleResult)
+        XCTAssertFalse(validatedCapability.frames[0].isStaticHoldEstimate)
+        XCTAssertEqual(validatedCapability.frames[0].motionState.verdict, .gaitStance)
+        XCTAssertNil(validatedCapability.frames[0].motionState.gaitOutcome)
+        XCTAssertEqual(validatedCapability.gait?.report, timing)
+
+        // Direct admission rejects missing/stale pose provenance before the
+        // capability or ID gates. Every case clears the entire solve envelope.
+        for scenario in 0..<5 {
+            let ownerTimestamp = 10.0 + Double(scenario)
+            let bodyFrame: BodyFrame?
+            let ikResult: NimbleEngine.IKOutput?
+            switch scenario {
+            case 0:
+                bodyFrame = nil
+                ikResult = Self.ik(generation: 10, timestamp: ownerTimestamp)
+            case 1:
+                bodyFrame = Self.trackedBodyFrame(
+                    timestamp: ownerTimestamp,
+                    frameNumber: scenario)
+                ikResult = nil
+            case 2:
+                bodyFrame = BodyFrame(
+                    timestamp: ownerTimestamp,
+                    frameNumber: scenario,
+                    joints: [TrackedJoint(
+                        id: "hips_joint", name: "Pelvis",
+                        worldPosition: .zero, isTracked: false)])
+                ikResult = Self.ik(generation: 10, timestamp: ownerTimestamp)
+            case 3:
+                bodyFrame = Self.trackedBodyFrame(
+                    timestamp: ownerTimestamp + 0.002,
+                    frameNumber: scenario)
+                ikResult = Self.ik(generation: 10, timestamp: ownerTimestamp)
+            default:
+                bodyFrame = Self.trackedBodyFrame(
+                    timestamp: ownerTimestamp,
+                    frameNumber: scenario)
+                ikResult = Self.ik(generation: 10, timestamp: ownerTimestamp + 0.002)
+            }
+
+            let store = OfflineResultStore()
+            store.setValidatedFootContactSupport(true)
+            store.append(OfflineResultStore.FrameResult(
+                id: 10 + scenario,
+                sourceImage: UIImage(),
+                timestamp: ownerTimestamp,
+                status: .success,
+                usedFallbackBBox: false,
+                camT: nil,
+                modelChecksums: nil,
+                bodyFrame: bodyFrame,
+                ikResult: ikResult,
+                idResult: Self.id(generation: 10, timestamp: ownerTimestamp),
+                muscleResult: Self.muscle(generation: 10, timestamp: ownerTimestamp),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
+            let projected = store.frames[0]
+            XCTAssertEqual(projected.dynamicsAvailability, .withheld(.noMeasurement),
+                           "pose provenance scenario \(scenario)")
+            XCTAssertNil(projected.ikResult, "pose provenance scenario \(scenario)")
+            XCTAssertNil(projected.idResult, "pose provenance scenario \(scenario)")
+            XCTAssertNil(projected.muscleResult, "pose provenance scenario \(scenario)")
+            XCTAssertFalse(projected.isStaticHoldEstimate,
+                           "pose provenance scenario \(scenario)")
+            XCTAssertEqual(projected.motionState, .undetermined,
+                           "pose provenance scenario \(scenario)")
+        }
+
+        // Replacement cannot manufacture provenance missing from the stored
+        // owner frame, and it applies the same owner/IK timestamp tolerance.
+        let missingBodyStore = OfflineResultStore()
+        missingBodyStore.setValidatedFootContactSupport(true)
+        missingBodyStore.append(OfflineResultStore.FrameResult(
+            id: 20, sourceImage: UIImage(), timestamp: 20, status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
+            ikResult: nil, idResult: nil, muscleResult: nil,
+            dynamicsAvailability: .waitingForMotionWindow,
+            isStaticHoldEstimate: false, motionState: .undetermined))
+        missingBodyStore.replaceBiomechanics(
+            forFrameID: 20,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 20, timestamp: 20),
+                idResult: Self.id(generation: 20, timestamp: 20),
+                muscleResult: Self.muscle(generation: 20, timestamp: 20),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
+        XCTAssertEqual(missingBodyStore.frames[0].dynamicsAvailability,
+                       .withheld(.noMeasurement))
+        XCTAssertNil(missingBodyStore.frames[0].ikResult)
+        XCTAssertNil(missingBodyStore.frames[0].idResult)
+        XCTAssertNil(missingBodyStore.frames[0].muscleResult)
+        XCTAssertEqual(missingBodyStore.frames[0].motionState, .undetermined)
+
+        let staleIKStore = OfflineResultStore()
+        staleIKStore.setValidatedFootContactSupport(true)
+        staleIKStore.append(Self.emptyFrame(id: 21))
+        staleIKStore.replaceBiomechanics(
+            forFrameID: 21,
+            with: OfflineResultStore.BiomechanicsPayload(
+                ikResult: Self.ik(generation: 21, timestamp: 21.002),
+                idResult: Self.id(generation: 21, timestamp: 21.002),
+                muscleResult: Self.muscle(generation: 21, timestamp: 21.002),
+                dynamicsAvailability: .available,
+                isStaticHoldEstimate: true,
+                motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
+        XCTAssertEqual(staleIKStore.frames[0].dynamicsAvailability,
+                       .withheld(.noMeasurement))
+        XCTAssertNil(staleIKStore.frames[0].ikResult)
+        XCTAssertNil(staleIKStore.frames[0].idResult)
+        XCTAssertNil(staleIKStore.frames[0].muscleResult)
+        XCTAssertEqual(staleIKStore.frames[0].motionState, .undetermined)
+
+        // A late capability downgrade reprojects an already-valid generation:
+        // pose/verdict/timing survive, every load-bearing value disappears.
+        let downgradeStore = OfflineResultStore()
+        downgradeStore.setValidatedFootContactSupport(true)
+        downgradeStore.setGait(.analysed(report: timing))
+        downgradeStore.append(OfflineResultStore.FrameResult(
+            id: 30, sourceImage: UIImage(), timestamp: 30, status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil,
+            bodyFrame: Self.trackedBodyFrame(timestamp: 30, frameNumber: 30),
+            ikResult: Self.ik(generation: 30, timestamp: 30),
+            idResult: Self.id(generation: 30, timestamp: 30),
+            muscleResult: Self.muscle(generation: 30, timestamp: 30),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: true,
+            motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
+        XCTAssertTrue(downgradeStore.frames[0].hasFullBiomechanics)
+        downgradeStore.setValidatedFootContactSupport(false)
+        XCTAssertEqual(downgradeStore.hasValidatedFootContactSupport, false)
+        XCTAssertEqual(downgradeStore.frames[0].dynamicsAvailability,
+                       .contactSupportUnavailable)
+        XCTAssertNotNil(downgradeStore.frames[0].ikResult)
+        XCTAssertNil(downgradeStore.frames[0].idResult)
+        XCTAssertNil(downgradeStore.frames[0].muscleResult)
+        XCTAssertFalse(downgradeStore.frames[0].isStaticHoldEstimate)
+        XCTAssertEqual(downgradeStore.frames[0].motionState.verdict, .gaitStance)
+        XCTAssertNil(downgradeStore.frames[0].motionState.gaitOutcome)
+        XCTAssertEqual(downgradeStore.gait?.report, timing)
+    }
+
+    /// Muscle capsules are anatomy, not a visualization of ID or the muscle
+    /// QP. A successful tracked pose remains eligible when foot-support
+    /// mechanics are permanently unavailable, while a failed or untracked pose
+    /// does not become drawable merely because it carries a body frame.
+    @MainActor
+    func testOfflineAnatomyEligibilityDependsOnPoseNotDynamics() {
+        let trackedBody = BodyFrame(
+            timestamp: 0,
+            frameNumber: 0,
+            joints: [TrackedJoint(id: "hips_joint", name: "Pelvis",
+                                  worldPosition: .zero, isTracked: true)])
+        let untrackedBody = BodyFrame(
+            timestamp: 0,
+            frameNumber: 0,
+            joints: [TrackedJoint(id: "hips_joint", name: "Pelvis",
+                                  worldPosition: .zero, isTracked: false)])
+
+        func frame(status: OfflineResultStore.FrameStatus,
+                   body: BodyFrame?) -> OfflineResultStore.FrameResult {
+            OfflineResultStore.FrameResult(
+                id: 0, sourceImage: UIImage(), timestamp: 0, status: status,
+                usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: body,
+                ikResult: Self.ik(generation: 1), idResult: nil, muscleResult: nil,
+                dynamicsAvailability: .contactSupportUnavailable,
+                isStaticHoldEstimate: false,
+                motionState: .measured(verdict: .hold,
+                                       peakSpeedMetersPerSecond: 0,
+                                       windowSeconds: 1,
+                                       noiseFloorMetersPerSecond: 0.001))
+        }
+
+        let poseOnly = frame(status: .success, body: trackedBody)
+        XCTAssertTrue(poseOnly.hasDrawableAnatomy)
+        XCTAssertTrue(OfflinePlaybackView.anatomyIsVisible(
+            showingSourceImage: false, anatomyEnabled: true, frame: poseOnly))
+        XCTAssertFalse(OfflinePlaybackView.anatomyIsVisible(
+            showingSourceImage: true, anatomyEnabled: true, frame: poseOnly))
+        XCTAssertFalse(OfflinePlaybackView.anatomyIsVisible(
+            showingSourceImage: false, anatomyEnabled: false, frame: poseOnly))
+        XCTAssertFalse(frame(status: .poseEstimationFailed("no pose"), body: trackedBody)
+            .hasDrawableAnatomy)
+        XCTAssertFalse(frame(status: .success, body: untrackedBody).hasDrawableAnatomy)
+        XCTAssertFalse(frame(status: .success, body: nil).hasDrawableAnatomy)
+    }
+
     /// A gait pass replaces the static pass. Clearing first makes a timeout or
     /// missing centred publication fail closed instead of leaving pass-one
     /// torques and muscle output under an analysed-running result.
     @MainActor
     func testGaitReplacementPassClearsOldPhysicsBeforeAnyNewSolve() throws {
         let store = OfflineResultStore()
+        store.setValidatedFootContactSupport(true)
         store.append(Self.emptyFrame(id: 0))
         store.replaceBiomechanics(
             forFrameID: 0,
             with: OfflineResultStore.BiomechanicsPayload(
-                ikResult: Self.ik(generation: 1),
-                idResult: Self.id(generation: 1),
-                muscleResult: Self.muscle(generation: 1),
+                ikResult: Self.ik(generation: 1, timestamp: 0),
+                idResult: Self.id(generation: 1, timestamp: 0),
+                muscleResult: Self.muscle(generation: 1, timestamp: 0),
                 dynamicsAvailability: .available,
                 isStaticHoldEstimate: true,
                 motionState: .measured(verdict: .hold,
                                        peakSpeedMetersPerSecond: 0,
                                        windowSeconds: 1,
                                        noiseFloorMetersPerSecond: 0.001)))
+
+        store.append(Self.gaitFrame(id: 1, contactSide: -1,
+                                    solverLeft: true, solverRight: false,
+                                    cleanWindow: true))
+        XCTAssertNil(store.frames[1].motionState.gaitOutcome,
+                     "append is itself a product boundary for raw gait diagnostics")
+        XCTAssertEqual(store.frames[1].motionState.verdict, .gaitStance)
 
         store.beginGaitReplacementPass()
 
@@ -331,6 +805,10 @@ final class OfflineDisclosureTests: XCTestCase {
         XCTAssertEqual(cleared.dynamicsAvailability, .analysisPassIncomplete)
         XCTAssertFalse(cleared.isStaticHoldEstimate)
         XCTAssertFalse(cleared.hasFullBiomechanics)
+        XCTAssertEqual(store.frames[1].motionState.verdict, .gaitStance,
+                       "the kinematic stance label survives replacement")
+        XCTAssertNil(store.frames[1].motionState.gaitOutcome,
+                     "an incomplete pass cannot retain an older load residual")
 
         let runner = try Self.source(at: "BioMotion/Offline/OfflineSessionRunner.swift")
         let clear = try XCTUnwrap(runner.range(of: "resultStore.beginGaitReplacementPass()"))
@@ -347,6 +825,7 @@ final class OfflineDisclosureTests: XCTestCase {
         let image = UIImage()
         let body = BodyFrame(timestamp: 9, frameNumber: 99, joints: [])
         let store = OfflineResultStore()
+        store.setValidatedFootContactSupport(true)
         store.append(OfflineResultStore.FrameResult(
             id: 7,
             sourceImage: image,
@@ -356,11 +835,22 @@ final class OfflineDisclosureTests: XCTestCase {
             camT: SIMD3<Float>(1, 2, 3),
             modelChecksums: (input: 10, output: 11, source: 12, bbox: 13, warp: 14),
             bodyFrame: body,
-            ikResult: nil,
-            idResult: nil,
-            muscleResult: nil,
-            isStaticHoldEstimate: false,
-            motionState: .undetermined))
+            ikResult: Self.ik(generation: 9),
+            idResult: Self.id(generation: 9),
+            muscleResult: Self.muscle(generation: 9),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: true,
+            motionState: .measured(verdict: .hold,
+                                   peakSpeedMetersPerSecond: 0,
+                                   windowSeconds: 1,
+                                   noiseFloorMetersPerSecond: 0.001)))
+
+        XCTAssertNil(store.frames[0].ikResult,
+                     "append rejects solve payload on a non-success envelope")
+        XCTAssertNil(store.frames[0].idResult)
+        XCTAssertNil(store.frames[0].muscleResult)
+        XCTAssertEqual(store.frames[0].dynamicsAvailability, .withheld(.noMeasurement))
+        XCTAssertEqual(store.frames[0].motionState, .undetermined)
 
         store.replaceBiomechanics(
             forFrameID: 7,
@@ -368,6 +858,7 @@ final class OfflineDisclosureTests: XCTestCase {
                 ikResult: Self.ik(generation: 2),
                 idResult: Self.id(generation: 2),
                 muscleResult: Self.muscle(generation: 2),
+                dynamicsAvailability: .available,
                 isStaticHoldEstimate: true,
                 motionState: .measured(verdict: .hold,
                                        peakSpeedMetersPerSecond: 0,
@@ -389,6 +880,11 @@ final class OfflineDisclosureTests: XCTestCase {
         XCTAssertEqual(frame.modelChecksums?.warp, 14)
         XCTAssertEqual(frame.bodyFrame?.timestamp, 9)
         XCTAssertEqual(frame.bodyFrame?.frameNumber, 99)
+        XCTAssertNil(frame.ikResult)
+        XCTAssertNil(frame.idResult)
+        XCTAssertNil(frame.muscleResult)
+        XCTAssertEqual(frame.dynamicsAvailability, .withheld(.noMeasurement))
+        XCTAssertEqual(frame.motionState, .undetermined)
         XCTAssertFalse(frame.hasFullBiomechanics,
                        "a non-success envelope must stay fail-closed in UI/load gates")
     }
@@ -531,11 +1027,28 @@ final class OfflineDisclosureTests: XCTestCase {
 
     // MARK: - Fixtures
 
+    private static func trackedBodyFrame(
+        timestamp: TimeInterval,
+        frameNumber: Int
+    ) -> BodyFrame {
+        BodyFrame(
+            timestamp: timestamp,
+            frameNumber: frameNumber,
+            joints: [TrackedJoint(
+                id: "hips_joint",
+                name: "Pelvis",
+                worldPosition: .zero,
+                isTracked: true)])
+    }
+
     private static func emptyFrame(id: Int) -> OfflineResultStore.FrameResult {
-        OfflineResultStore.FrameResult(
-            id: id, sourceImage: UIImage(), timestamp: Double(id), status: .success,
-            usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
+        let timestamp = Double(id)
+        return OfflineResultStore.FrameResult(
+            id: id, sourceImage: UIImage(), timestamp: timestamp, status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil,
+            bodyFrame: trackedBodyFrame(timestamp: timestamp, frameNumber: id),
             ikResult: nil, idResult: nil, muscleResult: nil,
+            dynamicsAvailability: .waitingForMotionWindow,
             isStaticHoldEstimate: false, motionState: .undetermined)
     }
 
@@ -548,25 +1061,34 @@ final class OfflineDisclosureTests: XCTestCase {
             encoding: .utf8)
     }
 
-    private static func ik(generation: Double) -> NimbleEngine.IKOutput {
+    private static func ik(
+        generation: Double,
+        timestamp: TimeInterval? = nil
+    ) -> NimbleEngine.IKOutput {
         NimbleEngine.IKOutput(
             jointAngles: ["generation": generation],
             markerRMSMeters: generation,
             ikLossSquaredMeters: generation,
-            timestamp: generation)
+            timestamp: timestamp ?? generation)
     }
 
-    private static func id(generation: Double) -> NimbleEngine.IDOutput {
+    private static func id(
+        generation: Double,
+        timestamp: TimeInterval? = nil
+    ) -> NimbleEngine.IDOutput {
         NimbleEngine.IDOutput(jointTorques: ["generation": generation],
-                              timestamp: generation)
+                              timestamp: timestamp ?? generation)
     }
 
-    private static func muscle(generation: Double) -> NimbleEngine.MuscleOutput {
+    private static func muscle(
+        generation: Double,
+        timestamp: TimeInterval? = nil
+    ) -> NimbleEngine.MuscleOutput {
         NimbleEngine.MuscleOutput(
             activations: ["generation": generation],
             forces: ["generation": generation],
             converged: true,
-            timestamp: generation)
+            timestamp: timestamp ?? generation)
     }
 
     static func stanceFrame(id: Int = 0, side: Int,
@@ -581,7 +1103,7 @@ final class OfflineDisclosureTests: XCTestCase {
     static func gaitFrame(id: Int = 0, contactSide: Int,
                           solverLeft: Bool, solverRight: Bool,
                           cleanWindow: Bool,
-                          dynamicsAvailability: NimbleEngine.DynamicsAvailability? = nil)
+                          dynamicsAvailability: NimbleEngine.DynamicsAvailability = .available)
         -> OfflineResultStore.FrameResult {
         let outcome = NimbleEngine.GaitFrameOutcome(
             modelledVerticalForceInBodyWeights: 2.0,
@@ -594,14 +1116,18 @@ final class OfflineDisclosureTests: XCTestCase {
             rootVerticalAccelerationMetersPerSecondSquared: 9.81,
             horizontalRootAccelerationModelled: false,
             derivativeWindowInsideContact: cleanWindow)
+        let timestamp = Double(id) / 30.0
         let muscle = NimbleEngine.MuscleOutput(
             activations: ["soleus_l": 0.5, "soleus_r": 0.5],
             forces: ["soleus_l": 500, "soleus_r": 500],
-            converged: true, timestamp: Double(id) / 30.0)
+            converged: true, timestamp: timestamp)
         return OfflineResultStore.FrameResult(
-            id: id, sourceImage: UIImage(), timestamp: Double(id) / 30.0,
+            id: id, sourceImage: UIImage(), timestamp: timestamp,
             status: .success, usedFallbackBBox: false, camT: nil, modelChecksums: nil,
-            bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: muscle,
+            bodyFrame: trackedBodyFrame(timestamp: timestamp, frameNumber: id),
+            ikResult: Self.ik(generation: Double(id), timestamp: timestamp),
+            idResult: Self.id(generation: Double(id), timestamp: timestamp),
+            muscleResult: muscle,
             dynamicsAvailability: dynamicsAvailability,
             isStaticHoldEstimate: false,
             motionState: .gait(verdict: contactSide == 0 ? .gaitFlight : .gaitStance,

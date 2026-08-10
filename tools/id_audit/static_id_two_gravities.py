@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-Rigorous quasi-static inverse dynamics of the RIGHT LEG of FullBody.osim under
-the two candidate gravity vectors.  READ-ONLY; no Xcode, no build.
+Historical quasi-static inverse-dynamics diagnostic for the RIGHT LEG of
+FullBody.osim under the two candidate gravity vectors. READ-ONLY; no Xcode,
+no build.
+
+It checks gravity/frame algebra, not foot-support validity. FullBody's
+ContactGeometrySet is empty and the near-CoP routine has no validated support
+polygon, unilateral-contact, or friction constraint. Do not interpret the
+reported torques/forces as product measurements.
 
 The measured pose has max_ddq = 1.7e-16 and max_dq ~ 0, and FullBody.osim
 declares no <stiffness> and no <damping>, and BioMotion never calls

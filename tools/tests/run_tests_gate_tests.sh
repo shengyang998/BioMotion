@@ -104,74 +104,74 @@ GOOD_LOG="$TEST_TMP/good.log"
 GOOD_FAST="$TEST_TMP/good-fast.json"
 GOOD_SLOW="$TEST_TMP/good-slow.json"
 write_log "$GOOD_LOG" '** TEST SUCCEEDED **' 0
-write_summary "$GOOD_FAST" 514 514 0 0 0 Passed
+write_summary "$GOOD_FAST" 519 519 0 0 0 Passed
 write_summary "$GOOD_SLOW" 1 1 0 0 0 Passed
 
 expect_status 'fast accepts its exact clean receipt' 0 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$GOOD_FAST"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$GOOD_FAST"
 expect_status 'slow accepts exactly one clean E1 test' 0 \
   evaluate_gate slow 1 0 "$GOOD_LOG" "$GOOD_SLOW"
 
 ZERO="$TEST_TMP/zero.json"
 write_summary "$ZERO" 0 0 0 0 0 Passed
 expect_status 'fast rejects zero tests' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$ZERO"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$ZERO"
 expect_status 'subset rejects zero tests' 1 \
   evaluate_gate subset 1 0 "$GOOD_LOG" "$ZERO"
 expect_status 'slow rejects zero tests' 1 \
   evaluate_gate slow 1 0 "$GOOD_LOG" "$ZERO"
 
 expect_status 'missing xcresult summary fails closed' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$TEST_TMP/missing.json"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$TEST_TMP/missing.json"
 
 EMPTY_SUMMARY="$TEST_TMP/summary-tool-failed.json"
 : > "$EMPTY_SUMMARY"
 expect_status 'an empty summary from xcresulttool failure fails closed' 1 \
-  test_gate_evaluate fast 514 0 64 "$GOOD_LOG" "$EMPTY_SUMMARY"
+  test_gate_evaluate fast 519 0 64 "$GOOD_LOG" "$EMPTY_SUMMARY"
 expect_status 'nonzero xcresulttool rc fails even with valid-looking JSON' 1 \
-  test_gate_evaluate fast 514 0 64 "$GOOD_LOG" "$GOOD_FAST"
+  test_gate_evaluate fast 519 0 64 "$GOOD_LOG" "$GOOD_FAST"
 
 SKIPPED="$TEST_TMP/skipped.json"
-write_summary "$SKIPPED" 514 513 0 1 0 Passed
+write_summary "$SKIPPED" 519 518 0 1 0 Passed
 expect_status 'one XCTSkip fails the gate' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$SKIPPED"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$SKIPPED"
 
 EXPECTED_FAILURE="$TEST_TMP/expected-failure.json"
-write_summary "$EXPECTED_FAILURE" 514 513 0 0 1 Passed
+write_summary "$EXPECTED_FAILURE" 519 518 0 0 1 Passed
 expect_status 'an expected failure is not a pass' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$EXPECTED_FAILURE"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$EXPECTED_FAILURE"
 
 FAILED_SUMMARY="$TEST_TMP/failed.json"
-write_summary "$FAILED_SUMMARY" 514 513 1 0 0 Failed
+write_summary "$FAILED_SUMMARY" 519 518 1 0 0 Failed
 expect_status 'a failed test fails the gate' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$FAILED_SUMMARY"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$FAILED_SUMMARY"
 
 UNKNOWN_SUMMARY="$TEST_TMP/unknown.json"
-write_summary "$UNKNOWN_SUMMARY" 514 514 0 0 0 unknown
+write_summary "$UNKNOWN_SUMMARY" 519 519 0 0 0 unknown
 expect_status 'xcresult result is case-sensitive Passed' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$UNKNOWN_SUMMARY"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$UNKNOWN_SUMMARY"
 
 expect_status 'nonzero xcodebuild rc cannot be hidden by a success verdict' 1 \
-  evaluate_gate fast 514 65 "$GOOD_LOG" "$GOOD_FAST"
+  evaluate_gate fast 519 65 "$GOOD_LOG" "$GOOD_FAST"
 
 RESTART_LOG="$TEST_TMP/restart.log"
 write_log "$RESTART_LOG" '** TEST SUCCEEDED **' 1
 expect_status 'a restarted test host fails the gate' 1 \
-  evaluate_gate fast 514 0 "$RESTART_LOG" "$GOOD_FAST"
+  evaluate_gate fast 519 0 "$RESTART_LOG" "$GOOD_FAST"
 
 NO_VERDICT_LOG="$TEST_TMP/no-verdict.log"
 write_log "$NO_VERDICT_LOG" '' 0
 expect_status 'a missing textual verdict fails closed' 1 \
-  evaluate_gate fast 514 0 "$NO_VERDICT_LOG" "$GOOD_FAST"
+  evaluate_gate fast 519 0 "$NO_VERDICT_LOG" "$GOOD_FAST"
 
 TOO_FEW="$TEST_TMP/too-few.json"
 TOO_MANY="$TEST_TMP/too-many.json"
-write_summary "$TOO_FEW" 513 513 0 0 0 Passed
-write_summary "$TOO_MANY" 515 515 0 0 0 Passed
+write_summary "$TOO_FEW" 518 518 0 0 0 Passed
+write_summary "$TOO_MANY" 520 520 0 0 0 Passed
 expect_status 'fast rejects fewer than its exact count' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$TOO_FEW"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$TOO_FEW"
 expect_status 'fast rejects more than its exact count until reviewed' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$TOO_MANY"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$TOO_MANY"
 
 SUBSET_TWO="$TEST_TMP/subset-two.json"
 write_summary "$SUBSET_TWO" 2 2 0 0 0 Passed
@@ -179,9 +179,9 @@ expect_status 'subset accepts one or more clean selected tests' 0 \
   evaluate_gate subset 1 0 "$GOOD_LOG" "$SUBSET_TWO"
 
 MALFORMED="$TEST_TMP/malformed.json"
-printf '%s\n' '{"totalTestCount":514}' > "$MALFORMED"
+printf '%s\n' '{"totalTestCount":519}' > "$MALFORMED"
 expect_status 'missing structured fields fail closed' 1 \
-  evaluate_gate fast 514 0 "$GOOD_LOG" "$MALFORMED"
+  evaluate_gate fast 519 0 "$GOOD_LOG" "$MALFORMED"
 
 expect_output 'fast owns the E1 exclusion selector' \
   '-skip-testing:BioMotionTests/E1MarkerSetComparisonTests' \
@@ -189,7 +189,7 @@ expect_output 'fast owns the E1 exclusion selector' \
 expect_output 'slow owns the exact E1 selector' \
   '-only-testing:BioMotionTests/E1MarkerSetComparisonTests/testE1RunAll' \
   test_gate_lane_selector slow
-expect_output 'fast exact count is reviewed independently of slow' 514 \
+expect_output 'fast exact count is reviewed independently of slow' 519 \
   test_gate_expected_count fast
 expect_output 'slow exact count is one E1 method' 1 \
   test_gate_expected_count slow

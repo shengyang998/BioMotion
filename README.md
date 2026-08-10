@@ -1,6 +1,18 @@
 # BioMotion
 
-Real-time musculoskeletal analysis iOS app. ARKit body tracking → Nimble IK/ID → OSQP muscle optimization → 3D visualization.
+Real-time pose-analysis iOS app. ARKit or imported-video tracking feeds Nimble
+IK, kinematics-only findings, gait contact timing, and a 3-D anatomy view.
+
+The two bundled OpenSim models do **not** currently publish dynamics. Their
+`ContactGeometrySet`s are empty, and the active near-CoP routine does not add a
+validated support polygon, unilateral-contact, or friction constraint in their
+place. Production therefore fails closed before inverse dynamics: joint torque,
+ground-reaction force, centre of pressure, muscle effort, and gait-load values
+stay absent. A cleaner clip, a longer clip, or an explicit floor cannot supply
+the missing foot-support model. The native raw-ID entry points are absent from
+the public header and every Release binary. A Debug-host diagnostics category,
+declared only to XCTest, retains the older numbers solely for unvalidated
+engineering characterization; Release-configuration tests do not support it.
 
 ## Repo layout
 
@@ -149,7 +161,7 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 # Tests on simulator — always via the script, never a hand-typed xcodebuild line.
 # It provisions a private simulator (naming one shared with another xcodebuild
 # process is what made this suite untrustworthy) and emits an xcresult receipt.
-tools/run_tests.sh fast    # exactly 514; 0 failed/skipped/restarted
+tools/run_tests.sh fast    # exactly 519; 0 failed/skipped/restarted
 tools/run_tests.sh slow    # only testE1RunAll; exactly 1; 0 failed/skipped
 tools/run_tests.sh all     # commit gate: fast, then slow
 

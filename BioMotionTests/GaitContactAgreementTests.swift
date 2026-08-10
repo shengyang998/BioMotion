@@ -321,7 +321,10 @@ final class GaitContactAgreementTests: XCTestCase {
         return OfflineResultStore.FrameResult(
             id: id, sourceImage: UIImage(), timestamp: Double(id) / 30.0,
             status: .success, usedFallbackBBox: false, camT: nil, modelChecksums: nil,
-            bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: muscle,
+            bodyFrame: nil, ikResult: nil,
+            idResult: NimbleEngine.IDOutput(jointTorques: [:], timestamp: Double(id) / 30.0),
+            muscleResult: muscle,
+            dynamicsAvailability: .available,
             isStaticHoldEstimate: false,
             motionState: .gait(verdict: .gaitStance, outcome: outcome))
     }

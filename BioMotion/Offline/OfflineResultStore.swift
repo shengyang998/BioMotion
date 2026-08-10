@@ -66,8 +66,9 @@ final class OfflineResultStore: ObservableObject {
                       windowSeconds: Double,
                       noiseFloorMetersPerSecond: Double)
         /// RUNNING. The gait cycle, not the stillness test, decided this frame.
-        /// `outcome` is non-nil only where a contact was claimed and dynamics
-        /// actually ran, and it carries the falsifier.
+        /// The optional native outcome is accepted at the runner seam so raw
+        /// diagnostics remain testable, but every value entering this
+        /// published store is projected through `withoutGaitLoadEvidence`.
         ///
         /// A separate CASE rather than a separate TYPE: the vocabulary the UI
         /// renders stays one enum wide, which is the whole reason
@@ -103,6 +104,15 @@ final class OfflineResultStore: ObservableObject {
         var gaitOutcome: NimbleEngine.GaitFrameOutcome? {
             if case .gait(_, let outcome) = self { return outcome }
             return nil
+        }
+
+        /// Removes force/residual evidence while retaining the report-neutral
+        /// contact classification. Published mean contact timing/count belongs
+        /// to the detached `GaitTimingReport`; the optional outcome here is
+        /// downstream dynamics and must disappear at the product boundary.
+        var withoutGaitLoadEvidence: MotionState {
+            guard case .gait(let verdict, _) = self else { return self }
+            return .gait(verdict: verdict, outcome: nil)
         }
     }
 
@@ -187,7 +197,7 @@ final class OfflineResultStore: ObservableObject {
             ikResult: NimbleEngine.IKOutput?,
             idResult: NimbleEngine.IDOutput?,
             muscleResult: NimbleEngine.MuscleOutput?,
-            dynamicsAvailability: NimbleEngine.DynamicsAvailability? = nil,
+            dynamicsAvailability: NimbleEngine.DynamicsAvailability,
             isStaticHoldEstimate: Bool,
             motionState: MotionState
         ) {
@@ -203,28 +213,35 @@ final class OfflineResultStore: ObservableObject {
             self.ikResult = ikResult
             self.idResult = idResult
             self.muscleResult = muscleResult
-            if let dynamicsAvailability {
-                self.dynamicsAvailability = dynamicsAvailability
-            } else if idResult != nil || muscleResult != nil {
-                self.dynamicsAvailability = .available
-            } else {
-                switch motionState {
-                case .undetermined:
-                    self.dynamicsAvailability = .waitingForMotionWindow
-                case .measured(let verdict, _, _, _), .gait(let verdict, _):
-                    self.dynamicsAvailability = .withheld(verdict)
-                }
-            }
+            self.dynamicsAvailability = dynamicsAvailability
             self.isStaticHoldEstimate = isStaticHoldEstimate
             self.motionState = motionState
         }
 
         var isEligibleForTemporalAnalysis: Bool { temporalAnalysisExclusion == nil }
+
+        /// Whether a successful pose contains anything the non-AR scene can use
+        /// to draw the anatomy layer. Muscle capsules are fixed anatomy, not a
+        /// rendering of ID/muscle magnitudes, so dynamics availability does not
+        /// enter this gate.
+        var hasDrawableAnatomy: Bool {
+            guard case .success = status, let bodyFrame else { return false }
+            return bodyFrame.joints.contains(where: \.isTracked)
+        }
+
         var hasFullBiomechanics: Bool {
             guard case .success = status else { return false }
             return isEligibleForTemporalAnalysis
-                && dynamicsAvailability.hasInverseDynamics
+                && hasValidatedDynamicsPayload
                 && muscleResult != nil
+        }
+
+        /// Raw/research consistency predicate: `.available` is backed by an ID
+        /// payload. This is not product authorization. Product frames must also
+        /// pass the store projector's session-capability, envelope, tracked-body,
+        /// IK, and same-generation timestamp checks before they can retain ID.
+        var hasValidatedDynamicsPayload: Bool {
+            dynamicsAvailability.hasInverseDynamics && idResult != nil
         }
         /// Pose was solved fine, but the detector could not certify a still
         /// instant, so no muscle magnitudes are claimed. Distinct from the
@@ -264,7 +281,7 @@ final class OfflineResultStore: ObservableObject {
         /// Off the running path this is always true: a still-pose clip carries
         /// no gait outcome and is governed by the static-hold gate as before.
         var gaitLoadsAreComparable: Bool {
-            if isGaitStance && !dynamicsAvailability.hasInverseDynamics { return false }
+            if isGaitStance && !hasValidatedDynamicsPayload { return false }
             guard let outcome = motionState.gaitOutcome else { return true }
             return outcome.isUsableForLoadComparison
         }
@@ -273,8 +290,10 @@ final class OfflineResultStore: ObservableObject {
         /// when they are. Each case names a different lever, which is why they
         /// are not collapsed into one sentence.
         var gaitExclusionReason: String? {
-            if isGaitStance && !dynamicsAvailability.hasInverseDynamics {
-                return dynamicsAvailability.detail
+            if isGaitStance && !hasValidatedDynamicsPayload {
+                return dynamicsAvailability.hasInverseDynamics
+                    ? NimbleEngine.DynamicsAvailability.inverseDynamicsFailed.detail
+                    : dynamicsAvailability.detail
             }
             guard let outcome = motionState.gaitOutcome, !outcome.isUsableForLoadComparison else {
                 return nil
@@ -315,24 +334,17 @@ final class OfflineResultStore: ObservableObject {
         init(ikResult: NimbleEngine.IKOutput,
              idResult: NimbleEngine.IDOutput?,
              muscleResult: NimbleEngine.MuscleOutput?,
-             dynamicsAvailability: NimbleEngine.DynamicsAvailability? = nil,
+             dynamicsAvailability: NimbleEngine.DynamicsAvailability,
              isStaticHoldEstimate: Bool,
              motionState: MotionState) {
+            // Deliberately accept contradictory inputs here. This is the
+            // orchestration seam, and the store's one projection function must
+            // prove it fails closed for `.available + nil ID`, stale muscle,
+            // or a session whose contact capability is false/unknown.
             self.ikResult = ikResult
             self.idResult = idResult
             self.muscleResult = muscleResult
-            if let dynamicsAvailability {
-                self.dynamicsAvailability = dynamicsAvailability
-            } else if idResult != nil || muscleResult != nil {
-                self.dynamicsAvailability = .available
-            } else {
-                switch motionState {
-                case .undetermined:
-                    self.dynamicsAvailability = .waitingForMotionWindow
-                case .measured(let verdict, _, _, _), .gait(let verdict, _):
-                    self.dynamicsAvailability = .withheld(verdict)
-                }
-            }
+            self.dynamicsAvailability = dynamicsAvailability
             self.isStaticHoldEstimate = isStaticHoldEstimate
             self.motionState = motionState
         }
@@ -343,6 +355,11 @@ final class OfflineResultStore: ObservableObject {
     /// What the gait pass concluded about the clip as a whole, or why it never
     /// ran. Nil until the batch finishes.
     @Published private(set) var gait: GaitOutcome?
+    /// Model/session capability, independent of any individual frame verdict.
+    /// `nil` means the model has not finished loading for this session. `false`
+    /// is permanent for both bundled models and must remain visible beside
+    /// moving/flight/outside verdicts, none of which can unlock load mechanics.
+    @Published private(set) var hasValidatedFootContactSupport: Bool?
 
     /// What `GaitAnalysis` concluded about this clip.
     enum GaitOutcome {
@@ -351,18 +368,16 @@ final class OfflineResultStore: ObservableObject {
         case notAttempted(reason: String)
         /// A run, but the clip's own model refused it. Every refusal carries the
         /// number that produced it.
-        case refused(report: GaitReport)
-        /// A usable run: dynamics were solved on its stance frames. The report
-        /// owns the timestamp-derived cadence; no nominal track rate travels
-        /// beside it as a second source of truth.
-        case analysed(report: GaitReport,
-                      plan: NimbleEngine.GaitPlan)
+        case refused(report: GaitTimingReport)
+        /// A usable kinematic run. The published value is deliberately unable
+        /// to carry a force hypothesis, dynamics plan, residual, or load.
+        case analysed(report: GaitTimingReport)
 
-        var report: GaitReport? {
+        var report: GaitTimingReport? {
             switch self {
             case .notAttempted: return nil
             case .refused(let r): return r
-            case .analysed(let r, _): return r
+            case .analysed(let r): return r
             }
         }
 
@@ -396,18 +411,118 @@ final class OfflineResultStore: ObservableObject {
 
     func setGait(_ outcome: GaitOutcome) { gait = outcome }
 
+    func setValidatedFootContactSupport(_ isValidated: Bool) {
+        // Clear existing payloads before publishing a downgrade so an observer
+        // can never see `capability == false` beside stale load values.
+        frames = frames.map {
+            productProjectedFrame($0, contactSupportCapability: isValidated)
+        }
+        hasValidatedFootContactSupport = isValidated
+    }
+
     func reset() {
         frames.removeAll()
         selectedIndex = 0
         gait = nil
+        hasValidatedFootContactSupport = nil
     }
 
     /// Appends a new frame result and pins the scrubber to it — while a run is
     /// in progress this keeps playback following the newest processed frame;
     /// the user can still drag the scrubber back at any time.
     func append(_ result: FrameResult) {
-        frames.append(result)
+        frames.append(productProjectedFrame(result))
         selectedIndex = frames.count - 1
+    }
+
+    /// The single product publication seam used by append, replacement, and a
+    /// late session-capability downgrade.
+    ///
+    /// Immediate per-frame absence reasons survive: moving, flight, outside
+    /// analysis, warm-up, and pose failure remain actionable. Only a claimed
+    /// `.available` payload is remapped, because it is contradictory unless
+    /// the frame succeeded, is temporally eligible, and carries a solved IK pose
+    /// backed by a tracked body frame at the owner timestamp. ID and muscle each
+    /// have an additional same-generation timestamp gate; stale load payloads
+    /// cannot erase a valid pose or its report-neutral motion verdict.
+    private func productProjectedFrame(
+        _ input: FrameResult,
+        contactSupportCapability: Bool? = nil
+    ) -> FrameResult {
+        let capability: Bool? = contactSupportCapability != nil
+            ? contactSupportCapability
+            : hasValidatedFootContactSupport
+        let timestampTolerance: TimeInterval = 0.001
+        func timestampsMatch(_ lhs: TimeInterval, _ rhs: TimeInterval) -> Bool {
+            lhs.isFinite && rhs.isFinite && abs(lhs - rhs) <= timestampTolerance
+        }
+        let hasPoseProvenance: Bool = {
+            guard case .success = input.status else { return false }
+            guard input.isEligibleForTemporalAnalysis,
+                  let ikResult = input.ikResult,
+                  let bodyFrame = input.bodyFrame,
+                  bodyFrame.joints.contains(where: \.isTracked),
+                  timestampsMatch(bodyFrame.timestamp, input.timestamp) else {
+                return false
+            }
+            return timestampsMatch(ikResult.timestamp, input.timestamp)
+        }()
+        let hasSameGenerationID: Bool = {
+            guard hasPoseProvenance,
+                  let ikResult = input.ikResult,
+                  let idResult = input.idResult else { return false }
+            return timestampsMatch(idResult.timestamp, ikResult.timestamp)
+        }()
+        let hasSameGenerationMuscle: Bool = {
+            guard hasSameGenerationID,
+                  let ikResult = input.ikResult,
+                  let muscleResult = input.muscleResult else { return false }
+            return timestampsMatch(muscleResult.timestamp, ikResult.timestamp)
+        }()
+
+        let mappedAvailability: NimbleEngine.DynamicsAvailability
+        if input.dynamicsAvailability.hasInverseDynamics {
+            if !hasPoseProvenance {
+                mappedAvailability = .withheld(.noMeasurement)
+            } else if let capability {
+                mappedAvailability = .productFacing(
+                    current: input.dynamicsAvailability,
+                    hasValidatedFootContactSupport: capability,
+                    hasInverseDynamicsPayload: hasSameGenerationID)
+            } else {
+                // Frames cannot precede model/capability establishment in the
+                // normal runner. If an adversarial caller does so, use the
+                // existing explicit startup absence rather than trusting ID.
+                mappedAvailability = .waitingForMotionWindow
+            }
+        } else {
+            mappedAvailability = input.dynamicsAvailability
+        }
+
+        let retainsID = hasPoseProvenance
+            && capability == true
+            && mappedAvailability.hasInverseDynamics
+            && hasSameGenerationID
+        let retainsMuscle = retainsID && hasSameGenerationMuscle
+
+        return FrameResult(
+            id: input.id,
+            sourceImage: input.sourceImage,
+            timestamp: input.timestamp,
+            status: input.status,
+            usedFallbackBBox: input.usedFallbackBBox,
+            temporalAnalysisExclusion: input.temporalAnalysisExclusion,
+            camT: input.camT,
+            modelChecksums: input.modelChecksums,
+            bodyFrame: input.bodyFrame,
+            ikResult: hasPoseProvenance ? input.ikResult : nil,
+            idResult: retainsID ? input.idResult : nil,
+            muscleResult: retainsMuscle ? input.muscleResult : nil,
+            dynamicsAvailability: mappedAvailability,
+            isStaticHoldEstimate: retainsMuscle && input.isStaticHoldEstimate,
+            motionState: hasPoseProvenance
+                ? input.motionState.withoutGaitLoadEvidence
+                : .undetermined)
     }
 
     /// Atomically replaces frame `id`'s biomechanics generation.
@@ -416,8 +531,8 @@ final class OfflineResultStore: ObservableObject {
     /// frame that was just pushed — `OfflineSessionRunner` matches on the
     /// solve's own timestamp and calls this to file it against the frame it
     /// actually belongs to. A gait pass may replace a static-pass solve, so all
-    /// five fields travel together: optional nil values erase the old ID or
-    /// muscle rather than mixing two solve generations.
+    /// solve fields travel together: optional nil values erase the old ID,
+    /// muscle, and gait-load evidence rather than mixing two generations.
     func replaceBiomechanics(
         forFrameID id: Int,
         with payload: BiomechanicsPayload
@@ -425,7 +540,7 @@ final class OfflineResultStore: ObservableObject {
         guard let index = frames.firstIndex(where: { $0.id == id }),
               frames[index].isEligibleForTemporalAnalysis else { return }
         let existing = frames[index]
-        frames[index] = FrameResult(
+        let candidate = FrameResult(
             id: existing.id,
             sourceImage: existing.sourceImage,
             timestamp: existing.timestamp,
@@ -442,6 +557,7 @@ final class OfflineResultStore: ObservableObject {
             isStaticHoldEstimate: payload.isStaticHoldEstimate,
             motionState: payload.motionState
         )
+        frames[index] = productProjectedFrame(candidate)
     }
 
     /// Begins a gait re-solve by invalidating every eligible pass-one dynamics
@@ -470,7 +586,7 @@ final class OfflineResultStore: ObservableObject {
                 muscleResult: nil,
                 dynamicsAvailability: .analysisPassIncomplete,
                 isStaticHoldEstimate: false,
-                motionState: existing.motionState
+                motionState: existing.motionState.withoutGaitLoadEvidence
             )
         }
     }
@@ -496,6 +612,14 @@ final class OfflineResultStore: ObservableObject {
     /// because the rolling floor had not reached its trust threshold.
     var groundUntrustedCount: Int {
         frames.filter { $0.dynamicsAvailability == .groundPlaneUntrusted }.count
+    }
+
+    /// Successful poses whose loads are unavailable because the loaded model
+    /// and native solver have no validated foot-support representation. This is
+    /// a permanent capability boundary for the current model, not warm-up or a
+    /// filming problem.
+    var contactSupportUnavailableCount: Int {
+        frames.filter { $0.dynamicsAvailability == .contactSupportUnavailable }.count
     }
 
     /// Frames whose pose was solved but whose muscle numbers were withheld

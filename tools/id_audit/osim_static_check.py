@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-READ-ONLY numerical check for the BioMotion inverse-dynamics audit.
+READ-ONLY numerical check for the historical BioMotion inverse-dynamics audit.
+
+This checks gravity/frame algebra inside a raw solver. It does not validate foot
+support: both bundled ContactGeometrySets are empty, and the near-CoP routine
+has no support-polygon, unilateral-contact, or friction constraint. Values from
+this script are engineering diagnostics, not product torque/GRF/CoP output.
 
 Does NOT build or touch the Xcode project. Parses FullBody.osim, builds the
 kinematic tree at the model's default pose (all coordinates = 0, i.e. upright

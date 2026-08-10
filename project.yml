@@ -74,6 +74,16 @@ targets:
         GCC_PREPROCESSOR_DEFINITIONS:
           - "DART_IOS_BUILD=1"
           - "DART_USE_IDENTITY_JACOBIAN=1"
+      configs:
+        Debug:
+          # Compiles the zero-external-force and unconstrained near-CoP
+          # selectors used by numerical characterization tests. Release omits
+          # both implementations, so they cannot be invoked dynamically from
+          # the shipped app binary.
+          GCC_PREPROCESSOR_DEFINITIONS:
+            - "DART_IOS_BUILD=1"
+            - "DART_USE_IDENTITY_JACOBIAN=1"
+            - "BIOMOTION_TEST_DIAGNOSTICS=1"
     info:
       path: BioMotion/Info.plist
       properties:
@@ -157,6 +167,9 @@ targets:
       base:
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: "YES"
+        # Exposes the legacy unconstrained near-CoP selector only inside the
+        # test module. The app bridging header intentionally omits it.
+        SWIFT_OBJC_BRIDGING_HEADER: BioMotionTests/BioMotionTests-Bridging-Header.h
         # TEMPORARY (IK drift diagnosis): lets an ObjC++ XCTestCase in this
         # target call nimblephysics directly. Remove with
         # BioMotionTests/IKSolverInternalsTests.mm.

@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-Predict the RIGHT-LEG joint moments for the ACTUAL test pose under both gravity
-vectors, and compare with the measured torques.  READ-ONLY, no build.
+Predict the RIGHT-LEG joint moments for the historical raw test pose under both
+gravity vectors, and compare with the raw solver torques. READ-ONLY, no build.
+
+This isolates gravity/frame algebra only. Both bundled ContactGeometrySets are
+empty and the near-CoP routine has no validated support-domain, unilateral, or
+friction constraint, so these values are engineering diagnostics rather than
+product torque/GRF/CoP measurements.
 
 Pose = OfflineMuscleChainFixture.markers (BioMotionTests/OfflineOrchestrationTests.swift:129),
 i.e. the real SAM 3D Body output that OfflineMuscleChainTests feeds through IK.

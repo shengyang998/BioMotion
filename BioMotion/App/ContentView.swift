@@ -9,6 +9,7 @@ enum ExportDisclosure {
 
     static func prepareShareURLs(successfulURLs: [URL],
                                  errors: [String],
+                                 hasValidatedFootContactSupport: Bool? = nil,
                                  directory: URL = FileManager.default.temporaryDirectory) throws
         -> [URL] {
         guard !errors.isEmpty else { return successfulURLs }
@@ -17,6 +18,26 @@ enum ExportDisclosure {
         let exported = successfulURLs.isEmpty
             ? "None"
             : successfulURLs.map(\.lastPathComponent).joined(separator: "\n")
+        var tips: [String] = []
+        if errors.contains(where: {
+            $0 == "No recording data" || $0.hasPrefix("TRC:") || $0.hasPrefix("MOT:")
+        }) {
+            tips.append("For missing marker or joint-angle files, record for at least a few "
+                        + "seconds with body tracking active.")
+        }
+        if errors.contains(where: { $0.hasPrefix("STO:") }) {
+            if hasValidatedFootContactSupport == false {
+                tips.append("Joint-torque STO export is permanently unavailable for this "
+                            + "model/solver pair; recording longer, refilming, or reloading the "
+                            + "model cannot create validated foot-support mechanics.")
+            } else {
+                tips.append("For a missing joint-torque file, make sure the musculoskeletal "
+                            + "model loaded and the current solve reports validated dynamics.")
+            }
+        }
+        let tipsSection = tips.isEmpty
+            ? ""
+            : "\n\nTips:\n" + tips.map { "- \($0)" }.joined(separator: "\n")
         let summary = """
         BioMotion Export — \(outcome)
 
@@ -24,12 +45,7 @@ enum ExportDisclosure {
         \(exported)
 
         Warnings:
-        \(errors.joined(separator: "\n"))
-
-        Tips:
-        - Make sure body tracking is active (green status)
-        - Record for at least a few seconds
-        - The Nimble model must load successfully
+        \(errors.joined(separator: "\n"))\(tipsSection)
         """
         let warningURL = directory.appendingPathComponent(warningFilename)
         try summary.write(to: warningURL, atomically: true, encoding: .utf8)
@@ -60,6 +76,20 @@ struct ContentView: View {
             hasCurrentFrame: bodyTracking.currentFrame != nil,
             isEnabled: showAnatomyOverlay
         )
+    }
+
+    private var liveDynamicsAvailability: NimbleEngine.DynamicsAvailability {
+        .productFacing(
+            current: nimble.dynamicsAvailability,
+            hasValidatedFootContactSupport: nimble.hasValidatedFootContactSupport,
+            hasInverseDynamicsPayload:
+                NimbleEngine.inverseDynamicsPayloadIsSameGeneration(
+                    ikResult: nimble.lastIKResult,
+                    idResult: nimble.lastIDResult))
+    }
+
+    private var liveHasValidatedDynamicsPayload: Bool {
+        liveDynamicsAvailability.hasInverseDynamics
     }
 
     var body: some View {
@@ -166,10 +196,12 @@ struct ContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
 
-                // Accuracy diagnostics: two rows of small pills.
-                // Row 1 — IK residual, max joint torque per kg, model mass.
-                // Row 2 — left/right foot load (fraction of body weight),
-                //         GRF root residual. Target ranges after full overhaul:
+                // Accuracy diagnostics. The dynamics rows are deliberately
+                // conditional on `.available`, which in turn requires validated
+                // foot-support mechanics. Neither bundled model has them, so the
+                // shipped UI shows pose/model diagnostics plus the fail-closed
+                // availability explanation, never these legacy load numbers.
+                // Targets retained for a future validated dynamics path:
                 //   residual ≈ 0.01–0.03 m (ARKit-limited floor)
                 //   |τ|/m    ≈ 1–3 Nm/kg for walking/squat (physiological)
                 //   L+R load ≈ 1.0 ± 0.1 in stance (weight supported by feet)
@@ -189,8 +221,7 @@ struct ContentView: View {
                                 value: String(format: "%.0f mm", nimble.ikMarkerResidualMeters * 1000),
                                 good: nimble.ikMarkerResidualMeters < 0.020
                             )
-                            if nimble.dynamicsAvailability.hasInverseDynamics,
-                               nimble.lastIDResult != nil {
+                            if liveHasValidatedDynamicsPayload {
                                 AccuracyBadge(
                                     label: "max |τ|/m",
                                     value: String(format: "%.1f Nm/kg", nimble.maxTorquePerKg),
@@ -206,8 +237,7 @@ struct ContentView: View {
                             }
                             Spacer()
                         }
-                        if nimble.dynamicsAvailability.hasInverseDynamics,
-                           nimble.lastIDResult != nil {
+                        if liveHasValidatedDynamicsPayload {
                             HStack(spacing: 6) {
                             // **This badge used to print the LEFT/RIGHT SPLIT,
                             // and it was the app's most-used screen making the
@@ -220,17 +250,14 @@ struct ContentView: View {
                             // `good` was `abs(total - 1.0) < 0.3`, keyed to the
                             // sum alone, while the value read "0.62|0.38".
                             //
-                            // There is no discipline that could have rescued the
-                            // split instead. `NimbleBridge.mm:1499` seeds the
-                            // near-CoP solver with a hardcoded 50/50 wrench
-                            // guess when both feet are down, and the solver's
-                            // constraint fixes ΣF exactly while leaving each
-                            // foot's CoP free inside its own polygon — so the
-                            // split is statically indeterminate (STATUS sizes it
-                            // at ±18 pp with a perfectly known CoM against a
-                            // ~10 pp clinical threshold) AND anchored to a
-                            // prior. It is an artifact with a plausible shape,
-                            // which is the worst kind of number to draw.
+                            // The old raw near-CoP path is less constrained than
+                            // that discussion assumed: it starts from a 50/50
+                            // wrench guess, but neither bundled model defines
+                            // contact geometry and the routine enforces no
+                            // support polygon, unilateral-contact, or friction
+                            // constraint. Its total and split are unvalidated
+                            // diagnostics, so the capability gate keeps this
+                            // whole branch unreachable for the bundled models.
                             let totalLoad = nimble.leftFootLoadFraction + nimble.rightFootLoadFraction
                             AccuracyBadge(
                                 label: "GRF sum",
@@ -258,11 +285,25 @@ struct ContentView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
-                            Text(nimble.dynamicsAvailability.title)
+                            Text(liveDynamicsAvailability.title)
                                 .font(.caption2.bold())
                                 .foregroundStyle(.orange)
-                            if !nimble.dynamicsAvailability.detail.isEmpty {
-                                Text(nimble.dynamicsAvailability.detail)
+                            if !liveDynamicsAvailability.detail.isEmpty {
+                                Text(liveDynamicsAvailability.detail)
+                                    .font(.caption2)
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let capability = NimbleEngine.DynamicsAvailability
+                                .permanentContactSupportNotice(
+                                    isModelLoaded: nimble.isModelLoaded,
+                                    hasValidatedFootContactSupport:
+                                        nimble.hasValidatedFootContactSupport,
+                                    current: liveDynamicsAvailability) {
+                                Text(capability.title)
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.red)
+                                Text(capability.detail)
                                     .font(.caption2)
                                     .foregroundStyle(.white.opacity(0.75))
                                     .fixedSize(horizontal: false, vertical: true)
@@ -298,10 +339,10 @@ struct ContentView: View {
                 // support, and the offline panel retired the same comparison on
                 // 2026-08-08.
                 //
-                // What replaces it is the absence, stated. The engineering
-                // diagnostics above (marker residual, |τ|/kg, foot-load
-                // fractions, frame check) are unchanged: they are labelled with
-                // their units and none of them is a per-muscle claim.
+                // What replaces it is the absence, stated. Marker residual and
+                // model mass remain pose/model diagnostics. The torque, GRF and
+                // frame-check branch exists only for a future capability-valid
+                // model+solver pair and is unreachable for both bundled models.
                 if liveAnatomyPresentation.anatomyIsPresented {
                     Text(MuscleOverlay.anatomyOnlyNote)
                         .font(.caption2)
@@ -315,7 +356,9 @@ struct ContentView: View {
                 if showIKPanel, let ik = nimble.lastIKResult {
                     IKReadoutPanel(ikResult: ik,
                                    idResult: nimble.lastIDResult,
-                                   dynamicsAvailability: nimble.dynamicsAvailability)
+                                   dynamicsAvailability: nimble.dynamicsAvailability,
+                                   hasValidatedFootContactSupport:
+                                       nimble.hasValidatedFootContactSupport)
                         .padding(.horizontal, 12)
                 } else if bodyTracking.isTracking, let frame = bodyTracking.currentFrame {
                     JointReadoutPanel(frame: frame).padding(.horizontal, 12)
@@ -327,7 +370,7 @@ struct ContentView: View {
                     HStack(spacing: 8) {
                         if nimble.isModelLoaded && bodyTracking.isTracking {
                             Button { withAnimation { showIKPanel.toggle() } } label: {
-                                Text(showIKPanel ? "Positions" : "IK/ID")
+                                Text(showIKPanel ? "Positions" : "IK details")
                                     .font(.caption2).foregroundStyle(.white)
                                     .padding(.horizontal, 10).padding(.vertical, 4)
                                     .background(.black.opacity(0.5), in: Capsule())
@@ -429,17 +472,26 @@ struct ContentView: View {
             errors.append("MOT: no IK data")
         }
 
-        // Export .sto (joint torques from ID)
-        do {
-            let url = try nimble.exportSTO()
-            urls.append(url)
-        } catch {
-            errors.append("STO: no ID data")
+        // Export .sto (joint torques from capability-valid ID only).
+        if nimble.isModelLoaded && !nimble.hasValidatedFootContactSupport {
+            errors.append("STO: unavailable — this model and solver have no validated "
+                          + "foot-support mechanics; refilming cannot enable joint torque")
+        } else {
+            do {
+                let url = try nimble.exportSTO()
+                urls.append(url)
+            } catch {
+                errors.append("STO: no validated inverse-dynamics data")
+            }
         }
 
         do {
             urls = try ExportDisclosure.prepareShareURLs(successfulURLs: urls,
-                                                          errors: errors)
+                                                          errors: errors,
+                                                          hasValidatedFootContactSupport:
+                                                              nimble.isModelLoaded
+                                                                  ? nimble.hasValidatedFootContactSupport
+                                                                  : nil)
         } catch {
             // If even the warning artifact cannot be written, do not share a
             // misleading partial bundle. Surface the same errors in an alert.
@@ -539,6 +591,24 @@ struct IKReadoutPanel: View {
     let ikResult: NimbleEngine.IKOutput
     let idResult: NimbleEngine.IDOutput?
     let dynamicsAvailability: NimbleEngine.DynamicsAvailability
+    let hasValidatedFootContactSupport: Bool
+
+    /// A payload is publishable only when the same generation says dynamics
+    /// are available and carries an ID dated with the displayed IK. Either half
+    /// on its own can be a stale/adversarial state and must fail closed.
+    var hasValidatedDynamicsPayload: Bool {
+        displayedDynamicsAvailability.hasInverseDynamics
+    }
+
+    var displayedDynamicsAvailability: NimbleEngine.DynamicsAvailability {
+        .productFacing(
+            current: dynamicsAvailability,
+            hasValidatedFootContactSupport: hasValidatedFootContactSupport,
+            hasInverseDynamicsPayload:
+                NimbleEngine.inverseDynamicsPayloadIsSameGeneration(
+                    ikResult: ikResult,
+                    idResult: idResult))
+    }
 
     // Show a curated set of important DOFs
     private let keyDOFs = [
@@ -566,7 +636,8 @@ struct IKReadoutPanel: View {
                                     .font(.caption2.bold())
                                 Text(String(format: "%.1f\u{00B0}", angle * 180.0 / .pi))
                                     .font(.system(.caption2, design: .monospaced))
-                                if let torque = idResult?.jointTorques[dof] {
+                                if hasValidatedDynamicsPayload,
+                                   let torque = idResult?.jointTorques[dof] {
                                     Text(String(format: "%.1f Nm", torque))
                                         .font(.system(.caption2, design: .monospaced))
                                         .foregroundStyle(.yellow)
@@ -576,12 +647,12 @@ struct IKReadoutPanel: View {
                     }
                 }
             }
-            if idResult == nil {
-                Text(dynamicsAvailability.title)
+            if !hasValidatedDynamicsPayload {
+                Text(displayedDynamicsAvailability.title)
                     .font(.caption2.bold())
                     .foregroundStyle(.orange)
-                if !dynamicsAvailability.detail.isEmpty {
-                    Text(dynamicsAvailability.detail)
+                if !displayedDynamicsAvailability.detail.isEmpty {
+                    Text(displayedDynamicsAvailability.detail)
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.75))
                 }

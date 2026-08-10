@@ -61,10 +61,10 @@ final class GaitLoadSummaryTests: XCTestCase {
         XCTAssertFalse(OfflineResultStore.GaitOutcome
             .notAttempted(reason: "1 usable frame").isAboutRunning)
         let report = try Self.usableReport()
-        XCTAssertTrue(OfflineResultStore.GaitOutcome.refused(report: report).isAboutRunning)
-        let plan = try XCTUnwrap(OfflineSessionRunner.makePlan(from: report))
+        let timing = GaitTimingReport(report: report)
+        XCTAssertTrue(OfflineResultStore.GaitOutcome.refused(report: timing).isAboutRunning)
         XCTAssertTrue(OfflineResultStore.GaitOutcome
-            .analysed(report: report, plan: plan).isAboutRunning)
+            .analysed(report: timing).isAboutRunning)
     }
 
     /// A solve that stopped on its iteration cap is now reported as itself. It
@@ -967,14 +967,14 @@ final class GaitLoadSummaryTests: XCTestCase {
     /// computed and were sitting in the store.
     func testOnlyAnAnalysedRunReplacesThePostureFindings() throws {
         let report = try Self.usableReport()
-        let plan = try XCTUnwrap(OfflineSessionRunner.makePlan(from: report))
+        let timing = GaitTimingReport(report: report)
         XCTAssertFalse(OfflineResultStore.GaitOutcome
             .notAttempted(reason: "1 usable frame").replacesPostureFindings)
-        XCTAssertFalse(OfflineResultStore.GaitOutcome.refused(report: report)
+        XCTAssertFalse(OfflineResultStore.GaitOutcome.refused(report: timing)
             .replacesPostureFindings,
             "a refused run has nothing to put in the findings' place")
         XCTAssertTrue(OfflineResultStore.GaitOutcome
-            .analysed(report: report, plan: plan).replacesPostureFindings)
+            .analysed(report: timing).replacesPostureFindings)
     }
 
     /// The gait screen carries the SAME not-a-diagnosis note as the panel it
@@ -987,45 +987,53 @@ final class GaitLoadSummaryTests: XCTestCase {
                       GaitReportPanel.alwaysVisibleNote)
     }
 
-    /// Contact timing is owned by `GaitReport`, not by the downstream muscle
-    /// solve. A valid run must keep its one supported finding when the downstream
-    /// `GaitLoadSummary.make` result is nil.
+    /// Product publication is a value projection, not a reference to the
+    /// research report. A valid run keeps timing while force hypotheses, a
+    /// dynamics plan and muscle/load summaries have no route into the panel.
     func testAnAnalysedRunWithoutALoadSummaryKeepsItsTimingPresentation() throws {
         let report = try Self.usableReport()
-        XCTAssertNil(GaitLoadSummary.make(frames: [], report: report, filterTaps: 5))
-        let presentation = GaitReportPanel.analysedPresentation(
-            report: report, summary: nil)
-        XCTAssertNil(presentation.muscleSummary)
+        let timing = GaitTimingReport(report: report)
+        let presentation = GaitReportPanel.analysedPresentation(report: timing)
         XCTAssertTrue(presentation.showsResolution)
         XCTAssertTrue(presentation.showsContactTime)
         XCTAssertTrue(presentation.showsFlags)
-        XCTAssertEqual(presentation.muscleSection, .unavailable)
         XCTAssertEqual(presentation.timing.framesPerSecond,
                        report.framesPerSecond, accuracy: 1e-12)
         XCTAssertFalse(presentation.timing.resolutionSentence.isEmpty)
-        XCTAssertTrue(GaitReportPanel.noMuscleSummaryMessage.contains("contact-time result above"),
-                      GaitReportPanel.noMuscleSummaryMessage)
-        XCTAssertTrue(GaitReportPanel.noMuscleSummaryMessage.lowercased()
-            .contains("no stance frame"),
-                      GaitReportPanel.noMuscleSummaryMessage)
-        XCTAssertFalse(GaitReportPanel.noMuscleSummaryMessage
-            .contains("no contact produced muscle output"),
-            GaitReportPanel.noMuscleSummaryMessage)
+        XCTAssertEqual(presentation.timing, timing.timing)
 
-        let frames = [
-            Self.gaitFrame(id: 0, side: -1, activations: ["soleus_l": 0.6]),
-            Self.gaitFrame(id: 1, side: 1, activations: ["soleus_r": 0.5]),
-        ]
-        let summary = try XCTUnwrap(GaitLoadSummary.make(
-            frames: frames, report: report, filterTaps: 5))
-        let complete = GaitReportPanel.analysedPresentation(
-            report: report, summary: summary)
-        XCTAssertTrue(complete.showsResolution)
-        XCTAssertTrue(complete.showsContactTime)
-        XCTAssertTrue(complete.showsFlags)
-        XCTAssertEqual(complete.muscleSection, .summary)
-        XCTAssertEqual(complete.timing, summary.timingSummary,
-                       "both branches must use the same timing arithmetic")
+        let publishedLabels = Set(Mirror(reflecting: timing).children.compactMap(\.label))
+        for forbidden in ["force", "peakVerticalForceInBodyWeights", "plan",
+                          "residualInBodyWeights", "loadSummary"] {
+            XCTAssertFalse(publishedLabels.contains(forbidden),
+                           "timing-only publication leaked ‘\(forbidden)’")
+        }
+    }
+
+    /// Contact timing comes from the report and remains valid, but the missing
+    /// load block must name the permanent model capability boundary rather than
+    /// sounding like more frames or a cleaner clip could make it appear.
+    func testNoLoadPanelNamesUnsupportedFootContactWithoutHidingTiming() throws {
+        let report = try Self.usableReport()
+        let timing = GaitTimingReport(report: report)
+        let presentation = GaitReportPanel.analysedPresentation(
+            report: timing,
+            hasValidatedFootContactSupport: false)
+
+        XCTAssertTrue(presentation.showsResolution)
+        XCTAssertTrue(presentation.showsContactTime)
+        let message = try XCTUnwrap(presentation.contactSupportMessage)
+        XCTAssertTrue(message.contains("contact-time result above"), message)
+        XCTAssertTrue(message.lowercased().contains("independent"), message)
+        XCTAssertFalse(message.lowercased().contains("refilming"),
+                       "the fixed banner, not this analysed-only sentence, owns the limitation")
+
+        let generic = GaitReportPanel.contactSupportUnavailableMessage
+        XCTAssertTrue(generic.lowercased().contains("foot-support"), generic)
+        XCTAssertTrue(generic.lowercased().contains("not available"), generic)
+        XCTAssertTrue(generic.lowercased().contains("refilming cannot"), generic)
+        XCTAssertFalse(generic.lowercased().contains("contact-time result above"),
+                       "photos/refusals cannot claim complete timing")
     }
 
     /// **Every refusal names its own cause and its own lever**, and the two that
@@ -1059,6 +1067,28 @@ final class GaitLoadSummaryTests: XCTestCase {
         XCTAssertTrue(GaitReport.Refusal
             .contactTooShortForACleanDerivative(medianSamples: 4, neededSamples: 5)
             .advice(framesPerSecond: 30).contains("38 fps"))
+
+        // A clean derivative is a load-plan requirement, not a contact-timing
+        // requirement. Filtering that sole refusal must preserve an L/R timing
+        // claim that clears its own statistical floor.
+        let derivativeOnly: [GaitReport.Refusal] = [
+            .contactTooShortForACleanDerivative(medianSamples: 4, neededSamples: 5)
+        ]
+        XCTAssertTrue(GaitTimingReport.timingRefusals(from: derivativeOnly).isEmpty)
+        XCTAssertEqual(GaitTimingReport.timingAsymmetryClaim(
+            measuredPercent: 14, floorPercent: 10, refusals: derivativeOnly), 14)
+        XCTAssertNil(GaitTimingReport.timingAsymmetryClaim(
+            measuredPercent: 14,
+            floorPercent: 10,
+            refusals: derivativeOnly + [.notRunning(dutyFactor: 0.6,
+                                                     flightToContactRatio: 0)]))
+        let timingFlags: [GaitReport.Flag] = [
+            .droppedFrames(count: 2, largestGapInFrames: 3),
+            .edgeClippedRunsExcluded(count: 1),
+            .asymmetryBelowResolution(measuredPercent: 6, resolvablePercent: 10),
+        ]
+        XCTAssertEqual(GaitTimingReport.timingFlags(from: timingFlags), timingFlags,
+                       "the product projection must explicitly preserve every timing flag")
         // And the one sentence that used to be printed under all nine is not the
         // sentence any of these gets.
         let old = NimbleEngine.MotionVerdict.gaitRefused.advice
@@ -1129,7 +1159,10 @@ final class GaitLoadSummaryTests: XCTestCase {
         return OfflineResultStore.FrameResult(
             id: id, sourceImage: UIImage(), timestamp: Double(id) / 30.0,
             status: .success, usedFallbackBBox: false, camT: nil, modelChecksums: nil,
-            bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: muscle,
+            bodyFrame: nil, ikResult: nil,
+            idResult: NimbleEngine.IDOutput(jointTorques: [:], timestamp: Double(id) / 30.0),
+            muscleResult: muscle,
+            dynamicsAvailability: .available,
             isStaticHoldEstimate: false,
             motionState: .gait(verdict: .gaitStance, outcome: outcome))
     }

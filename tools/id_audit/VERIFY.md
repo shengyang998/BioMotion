@@ -1,10 +1,17 @@
 # Adversarial verification of the inverse-dynamics fix
 
+> **Historical raw-solver receipt — not product validation.** This 2026-08-07 audit correctly checks
+> gravity direction, wrench-frame transforms, and statics algebra inside the then-active solver. It
+> predates the finding that both bundled `ContactGeometrySet`s are empty and the near-CoP routine
+> enforces no support polygon, unilateral-contact, or friction constraint. Its torques, GRFs, and
+> CoPs are unvalidated engineering diagnostics; production now returns pose-only and does not expose
+> them. "CONFIRMED" below applies only to the two frame/convention fixes it names.
+
 Auditor: independent agent, 2026-08-07. Source was read but never edited. Everything below was
 either measured on this machine or derived from `FullBody.osim` from scratch.
 
-**Verdict: CONFIRMED.** I could not break it. Two named defects are real, both are frame/convention
-errors rather than tuned numbers, and the corrected pipeline reproduces from-scratch free-body
+**Historical verdict: CONFIRMED within that raw diagnostic.** I could not break the two named
+defects. They are frame/convention errors rather than tuned numbers, and the corrected pipeline reproduces from-scratch free-body
 statics to 4 decimal places on six poses I built myself. Three secondary claims are wrong or
 overstated and are listed at the end.
 
@@ -114,13 +121,16 @@ anatomically plausible configurations. The identity held there anyway, which is 
 an identity, not a fit. A/B/C/E are anatomically sensible (toe ahead of heel, knee below hip,
 CoP between heel and toe on A and E).
 
-Magnitudes are physically sensible where the pose is:
+Within the historical free-body assumptions, these magnitudes are internally
+consistent. This is **not** physical validation of the absent contact-support
+model:
 
 * A — CoP−ankle lever 3.90 cm × 390.4 N × 0.979 (talocrural axis z-component) − 0.98 Nm of foot
-  weight = **14.0 Nm**; reported 14.26. Ankle is the largest leg moment. Textbook quiet stance.
+  weight = **14.0 Nm**; reported 14.26. Ankle is the largest raw leg moment in this construction.
 * B — 12° lean, lever 15.9 cm → **60.2 Nm** ankle, CoP right at the front of the foot. That is the
-  physiological limit of a forward lean, and it lands there.
-* C — CoM behind the ankles → ankle torque **flips sign** (+42.0, dorsiflexor). Correct.
+  edge assumed by this free-body construction.
+* C — CoM behind the ankles → raw ankle torque **flips sign** (+42.0, dorsiflexor), as the assumed
+  moment equation requires.
 * E — one foot carries |F| = 780.71 N (full bodyweight), CoP between heel and toe.
 
 Non-quasi-static check (`idcheck3`): with `ddq(pelvis_ty) = +3 m/s²` the solved GRF rises to

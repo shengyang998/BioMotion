@@ -7,24 +7,28 @@ import os
 /// Manages the Nimble physics engine lifecycle and provides real-time IK/ID results.
 /// Runs Nimble on a background queue to avoid blocking the main thread.
 final class NimbleEngine: ObservableObject {
-    @Published var isModelLoaded = false
-    @Published var lastIKResult: IKOutput?
-    @Published var lastIDResult: IDOutput?
-    @Published var lastMuscleResult: MuscleOutput?
-    @Published var displayMuscleResult: MuscleOutput?
-    @Published var ikSolveTimeMs: Double = 0
-    @Published var idSolveTimeMs: Double = 0
-    @Published var muscleSolveTimeMs: Double = 0
+    @Published private(set) var isModelLoaded = false
+    /// Model+solver capability, separate from the per-frame reason dynamics
+    /// were or were not attempted. This lets UI preserve a motion verdict while
+    /// also naming a permanent model limitation.
+    @Published private(set) var hasValidatedFootContactSupport = false
+    @Published private(set) var lastIKResult: IKOutput?
+    @Published private(set) var lastIDResult: IDOutput?
+    @Published private(set) var lastMuscleResult: MuscleOutput?
+    @Published private(set) var displayMuscleResult: MuscleOutput?
+    @Published private(set) var ikSolveTimeMs: Double = 0
+    @Published private(set) var idSolveTimeMs: Double = 0
+    @Published private(set) var muscleSolveTimeMs: Double = 0
 
     // --- Accuracy metrics (for UI diagnostics) ---
     /// RMS marker residual from the most recent IK solve, in meters.
-    @Published var ikMarkerResidualMeters: Double = 0
+    @Published private(set) var ikMarkerResidualMeters: Double = 0
     /// Max |joint torque| / total body mass from the most recent ID solve, in Nm/kg.
     /// Physiological range for walking/squat: ~1–3 Nm/kg. Values above 10 indicate
     /// broken pipeline (usually missing GRF or bad ddq).
-    @Published var maxTorquePerKg: Double = 0
+    @Published private(set) var maxTorquePerKg: Double = 0
     /// Total mass of the loaded (possibly scaled) skeleton, in kg.
-    @Published var totalMassKg: Double = 0
+    @Published private(set) var totalMassKg: Double = 0
     /// Left/right foot vertical GRF as fractions of body weight (0-1.x typically).
     /// Sum should be ~1.0 in steady stance, 0 in flight, 1.0-3.0 during impact.
     ///
@@ -41,11 +45,12 @@ final class NimbleEngine: ObservableObject {
     /// CoM, against a ~10 pp clinically meaningful threshold: the instrument
     /// cannot resolve the effect it would be measuring.
     ///
-    /// The live screen printed `%.2f|%.2f` from these two for the whole life of
-    /// the project, with a green/amber indicator keyed to the sum. It shows the
-    /// sum now, with `footLoadSplitIsNotMeasuredNote` beside it.
-    @Published var leftFootLoadFraction: Double = 0
-    @Published var rightFootLoadFraction: Double = 0
+    /// The live screen historically printed `%.2f|%.2f` from these two, with a
+    /// green/amber indicator keyed to the sum. A later repair narrowed that to
+    /// the sum plus `footLoadSplitIsNotMeasuredNote`; the contact audit then
+    /// made the entire branch unreachable for both bundled models.
+    @Published private(set) var leftFootLoadFraction: Double = 0
+    @Published private(set) var rightFootLoadFraction: Double = 0
 
     /// The caption that makes the GRF badge a diagnostic instead of a finding.
     ///
@@ -60,9 +65,9 @@ final class NimbleEngine: ObservableObject {
     /// ‖ΣF_contact + m·g − m·a_com‖ / m. A correct pipeline reports ~0 every
     /// frame — it is a consistency check on the contact-wrench readback, not a
     /// measure of how balanced the pose is. See `NimbleIDResult.rootResidualNorm`.
-    @Published var rootResidualPerKg: Double = 0
+    @Published private(set) var rootResidualPerKg: Double = 0
     /// Current ground-plane height (ARKit world y), for display only.
-    @Published var groundHeightY: Double = 0
+    @Published private(set) var groundHeightY: Double = 0
     /// The most recent complete solve, or nil while the Savitzky-Golay window
     /// is still filling. Prefer this over the individual fields above when you
     /// need IK, ID, muscle and the motion verdict to describe the SAME instant.
@@ -73,10 +78,11 @@ final class NimbleEngine: ObservableObject {
     /// an absence sentinel.
     @Published private(set) var dynamicsAvailability: DynamicsAvailability = .waitingForMotionWindow
 
-    /// When true, inverse dynamics and the muscle solve run ONLY on frames the
-    /// hold detector marks as static, and they run as a static-equilibrium
-    /// problem (q̇ = q̈ = 0). Frames that fail the hold test publish pose and a
-    /// `MotionClassification` with no ID/muscle at all.
+    /// When true, a static verdict is required before contact-dependent
+    /// dynamics may be attempted. A validated contact capability and every
+    /// later provenance gate are still required; both bundled models therefore
+    /// remain pose-only even on a hold. Frames that fail the hold test publish
+    /// pose and a `MotionClassification` with no ID/muscle at all.
     ///
     /// Default OFF, and the offline import path turns it on. The reason it is
     /// a switch rather than unconditional is that the two input paths differ in
@@ -192,8 +198,9 @@ final class NimbleEngine: ObservableObject {
     /// different causes and different remedies, and two of them are not the
     /// user's fault at all.
     enum MotionVerdict: Equatable {
-        /// Measured still to within the budget. ID and the muscle QP run as a
-        /// static-equilibrium problem (q̇ = q̈ = 0).
+        /// Measured still to within the budget. This makes the frame eligible
+        /// for a static-equilibrium attempt (q̇ = q̈ = 0) only after the
+        /// independent contact-capability and ground-provenance gates pass.
         case hold
         /// Measurably moving, by more than the budget static equilibrium can
         /// absorb AND by more than the instrument's own noise. Withhold: the
@@ -224,10 +231,9 @@ final class NimbleEngine: ObservableObject {
         /// happen. On the running path it was worse: the frame fell out of the
         /// gait vocabulary entirely.
         case poseDidNotConverge
-        /// RUNNING. This instant is inside a foot contact, and inverse dynamics
-        /// ran with the root acceleration the gait cycle implies rather than
-        /// with one differentiated out of the data. Muscle magnitudes exist and
-        /// are to be read as RELATIVE loads within this contact.
+        /// RUNNING. The kinematic detector places this instant inside a foot
+        /// contact. A capability-valid future path may attempt dynamics here;
+        /// the bundled models retain the stance label but publish no load.
         case gaitStance
         /// RUNNING. This instant is in flight. Neither foot is on the ground,
         /// so there is no stance load to report and none is claimed.
@@ -240,8 +246,9 @@ final class NimbleEngine: ObservableObject {
         /// or there are too few complete contacts — so no dynamics ran at all.
         case gaitRefused
 
-        /// One sentence the user can act on. Lives here rather than in the view
-        /// so it is covered by unit tests and cannot drift from the numbers.
+        /// The immediate frame/clip advice. A separate session-level capability
+        /// notice must remain visible when this advice cannot unlock dynamics.
+        /// Lives here rather than in the view so it is covered by unit tests.
         ///
         /// Every case has to answer "what do I do differently?". Two of them
         /// answer "film at a higher frame rate", which is a real, actionable
@@ -295,8 +302,12 @@ final class NimbleEngine: ObservableObject {
         /// The gait model cannot inject its vertical acceleration because the
         /// loaded skeleton has no supported root-y coordinate.
         case missingRootVerticalDOF
-        /// The native solve ran to advance the rolling floor estimator, but the
-        /// estimate did not yet have the 30 observations required for trust.
+        /// The loaded model/solver pair has no validated representation of how
+        /// the feet support the ground. A known-unconstrained contact wrench is
+        /// absence, not a publishable estimate.
+        case contactSupportUnavailable
+        /// Contact capability exists, but the rolling floor estimate does not
+        /// yet have the 30 observations required for trust.
         case groundPlaneUntrusted
         /// Ground provenance was trusted, but native inverse dynamics failed.
         case inverseDynamicsFailed
@@ -309,6 +320,38 @@ final class NimbleEngine: ObservableObject {
         case available
 
         var hasInverseDynamics: Bool { self == .available }
+
+        /// Resolves the only state allowed to publish a dynamics payload. A
+        /// stale `.available` flag cannot outrank the model/session capability,
+        /// and availability without its same-generation ID is a failed solve.
+        /// Other per-frame reasons retain their own wording; the permanent
+        /// capability notice is rendered alongside them separately.
+        static func productFacing(
+            current: Self,
+            hasValidatedFootContactSupport: Bool,
+            hasInverseDynamicsPayload: Bool
+        ) -> Self {
+            guard current.hasInverseDynamics else { return current }
+            guard hasValidatedFootContactSupport else {
+                return .contactSupportUnavailable
+            }
+            guard hasInverseDynamicsPayload else { return .inverseDynamicsFailed }
+            return .available
+        }
+
+        /// A session/model-level notice shown beside a more immediate frame
+        /// reason (moving, flight, warm-up, and so on). Returning nil when the
+        /// current availability already names contact support avoids printing
+        /// the same refusal twice.
+        static func permanentContactSupportNotice(
+            isModelLoaded: Bool,
+            hasValidatedFootContactSupport: Bool,
+            current: Self
+        ) -> Self? {
+            guard isModelLoaded, !hasValidatedFootContactSupport,
+                  current != .contactSupportUnavailable else { return nil }
+            return .contactSupportUnavailable
+        }
 
         var title: String {
             switch self {
@@ -328,6 +371,8 @@ final class NimbleEngine: ObservableObject {
                 }
             case .missingRootVerticalDOF:
                 return "Pose only — this model cannot solve running dynamics"
+            case .contactSupportUnavailable:
+                return "Pose only — foot contact is not supported"
             case .groundPlaneUntrusted:
                 return "Pose only — establishing the ground plane"
             case .inverseDynamicsFailed:
@@ -347,8 +392,10 @@ final class NimbleEngine: ObservableObject {
                 return verdict.advice
             case .missingRootVerticalDOF:
                 return "The loaded musculoskeletal model has no supported world-vertical root coordinate."
+            case .contactSupportUnavailable:
+                return "This model and solver do not provide validated foot-support mechanics, so joint torque, ground force, centre of pressure, muscle effort and gait-load values are withheld. Pose, anatomy and contact timing remain available; refilming cannot enable the missing outputs."
             case .groundPlaneUntrusted:
-                return "Ground reaction force, centre of pressure and muscle output stay hidden until the rolling floor estimate has 30 observations."
+                return "Ground reaction force, centre of pressure and muscle output require a trusted floor as well as validated foot-support mechanics; this rolling floor estimate does not yet have 30 observations."
             case .inverseDynamicsFailed:
                 return "The pose is available, but no torque, ground-force or muscle number is claimed for this frame."
             case .analysisPassIncomplete:
@@ -357,10 +404,26 @@ final class NimbleEngine: ObservableObject {
                 return ""
             }
         }
+
+        /// A hard provenance/model boundary must erase an older coloured
+        /// dynamics overlay immediately. Motion-policy withholding keeps the
+        /// short visual hold used between adjacent valid frames; these cases
+        /// must never do so because the current stream cannot justify it.
+        var invalidatesPreviousDynamics: Bool {
+            switch self {
+            case .missingRootVerticalDOF, .contactSupportUnavailable,
+                 .groundPlaneUntrusted, .inverseDynamicsFailed,
+                 .analysisPassIncomplete:
+                return true
+            case .waitingForMotionWindow, .withheld, .available:
+                return false
+            }
+        }
     }
 
-    /// What the gait dynamics path did on ONE frame, and the number that can
-    /// contradict it.
+    /// Historical research outcome for one capability-valid gait-dynamics
+    /// frame. Neither bundled model constructs or publishes this type; product
+    /// gait output is a kinematics-only timing projection.
     ///
     /// # The falsifier, and why it is not closed by construction
     ///
@@ -381,8 +444,8 @@ final class NimbleEngine: ObservableObject {
     /// is a real, computed disagreement between the timing model and the
     /// articulated body, in body weights. It is exactly the term the
     /// whole-body half-sine model throws away, and when it is large the
-    /// model's force is not a common rescaling of the contact any more — which
-    /// is the assumption every ratio this product reports rests on.
+    /// model's force is not a common rescaling of the contact any more — the
+    /// assumption the retired load-ratio experiment depended on.
     ///
     /// ⚠️ **What it does NOT test, stated without a substitute that does.** The
     /// half-sine SHAPE and the peak magnitude enter both sides (`a_root` was
@@ -392,11 +455,10 @@ final class NimbleEngine: ObservableObject {
     /// `GaitReport.contactSequencePeriodicityErrorFrames` is an algebraic
     /// identity on any periodic alternating schedule (proved in
     /// `GaitReportTests`) and `GaitReport.steadiness` tests periodicity, not
-    /// force. That gap is admissible only because of what the product claims —
-    /// see `GaitLoadSummary`: a peak-force error is a COMMON SCALE over every
-    /// muscle in a contact and cancels out of every ratio, provided (i) it
-    /// really is common, which is what this residual tests, and (ii) the muscle
-    /// QP stays linear, which fails at `a ≤ 1` and is gated per muscle.
+    /// force. The earlier experiment treated that gap as admissible because a
+    /// common peak-force scale could cancel from a ratio. The contact audit
+    /// supersedes that argument: missing support mechanics stops the bundled
+    /// path before this outcome, and no such ratio is product output.
     ///
     /// # Why the root acceleration is overridden rather than left to residual
     ///
@@ -734,6 +796,35 @@ final class NimbleEngine: ObservableObject {
     private(set) var idHistory: [(timestamp: TimeInterval, jointTorques: [String: Double])] = []
     private var isRecordingResults = false
 
+    /// True only when the live IK and ID payloads can describe one solver
+    /// publication. The engine copies one centre timestamp into both outputs;
+    /// the 1 ms slack matches the offline publication boundary while still
+    /// rejecting an older result left behind by an independent `@Published`
+    /// update.
+    static func inverseDynamicsPayloadIsSameGeneration(
+        ikResult: IKOutput?,
+        idResult: IDOutput?
+    ) -> Bool {
+        guard let ikTimestamp = ikResult?.timestamp,
+              let idTimestamp = idResult?.timestamp,
+              ikTimestamp.isFinite,
+              idTimestamp.isFinite else { return false }
+        return abs(ikTimestamp - idTimestamp) <= 0.001
+    }
+
+    static func recordedInverseDynamicsIsPublishable(
+        hasValidatedFootContactSupport: Bool,
+        rowCount: Int
+    ) -> Bool {
+        hasValidatedFootContactSupport && rowCount > 0
+    }
+
+    var hasPublishableIDHistory: Bool {
+        Self.recordedInverseDynamicsIsPublishable(
+            hasValidatedFootContactSupport: hasValidatedFootContactSupport,
+            rowCount: idHistory.count)
+    }
+
     // Generation token bumped on reset. Frames captured before the bump are
     // still in flight on solverQueue; their late publishes are discarded by
     // comparing against the current generation on main.
@@ -833,12 +924,19 @@ final class NimbleEngine: ObservableObject {
                     // previous model. The queued solver reset runs before any
                     // subsequently submitted frame on the serial queue.
                     self.resetRealtimeState()
+                    // Recording may remain armed across the asynchronous load,
+                    // but an export must never mix model generations or retain
+                    // torque rows after switching to an unsupported model.
+                    self.ikHistory.removeAll(keepingCapacity: false)
+                    self.idHistory.removeAll(keepingCapacity: false)
                 }
                 // The bridge load is transactional. If a replacement fails it
                 // keeps the previous skeleton; the solver and moment-arm
                 // objects above also remain untouched. Publish that still-
                 // usable model instead of turning the Swift gate off.
                 self.isModelLoaded = self.bridge.isModelLoaded
+                self.hasValidatedFootContactSupport =
+                    self.bridge.hasValidatedFootContactSupport
                 if success {
                     let modelMarkers = self.bridge.markerNames as [String]
                     self.totalMassKg = self.bridge.totalMass
@@ -1091,6 +1189,20 @@ final class NimbleEngine: ObservableObject {
                                          ikTime: ikTime, generation: frameGeneration)
                     return
                 }
+
+                // The gait/contact classifier is still useful without load
+                // mechanics, so retain its stance label before the capability
+                // gate. What stops here is only contact-dependent dynamics.
+                publishedMotion = motion.replacingVerdict(.gaitStance)
+                guard self.bridge.hasValidatedFootContactSupport else {
+                    self.publishPoseOnly(ik: smoothedIkOutput,
+                                         motion: publishedMotion,
+                                         smoothedAngles: smoothedAngles,
+                                         markerRMS: ikResult.markerRMSMeters,
+                                         ikTime: ikTime, generation: frameGeneration,
+                                         availability: .contactSupportUnavailable)
+                    return
+                }
                 guard let rootTY = dofNames.firstIndex(of: Self.rootVerticalDOFName) else {
                     // Defensive: both shipped models carry `pelvis_ty`
                     // (asserted in `GaitDynamicsTests`). Without it there is no
@@ -1132,7 +1244,6 @@ final class NimbleEngine: ObservableObject {
                 plannedSide = entry.contactSide
                 plannedContactIndex = entry.contactIndex
                 plannedWindowIsClean = entry.derivativeWindowInsideContact
-                publishedMotion = motion.replacingVerdict(.gaitStance)
             } else {
                 guard !gateOnHolds || motion.isHold else {
                     // Measurably moving. Publish the pose and the verdict; publish
@@ -1147,6 +1258,18 @@ final class NimbleEngine: ObservableObject {
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
                                          ikTime: ikTime, generation: frameGeneration)
+                    return
+                }
+
+                // A hold answers only "should grounded dynamics be tried?".
+                // It cannot manufacture the missing model/solver capability.
+                guard self.bridge.hasValidatedFootContactSupport else {
+                    self.publishPoseOnly(ik: smoothedIkOutput,
+                                         motion: motion,
+                                         smoothedAngles: smoothedAngles,
+                                         markerRMS: ikResult.markerRMSMeters,
+                                         ikTime: ikTime, generation: frameGeneration,
+                                         availability: .contactSupportUnavailable)
                     return
                 }
 
@@ -1172,10 +1295,10 @@ final class NimbleEngine: ObservableObject {
             let dynamicsAvailability: DynamicsAvailability
 
             let idStart = CACurrentMediaTime()
-            // Use the GRF-aware ID solver. It runs Nimble's near-CoP
-            // multi-contact inverse dynamics which auto-detects foot contact
-            // and decomposes the system wrench into GRFs + joint torques.
-            let rawIDResult = self.bridge.solveIDGRF(
+            // This branch is unreachable for the bundled models. A future
+            // model+solver pair may enter only after the bridge has validated
+            // its contact support mechanics and raised the capability above.
+            let contactIDResult = self.bridge.solveIDGRF(
                 withJointAngles: smoothedQNS,
                 jointVelocities: smoothedDQNS,
                 jointAccelerations: smoothedDDQNS
@@ -1185,11 +1308,11 @@ final class NimbleEngine: ObservableObject {
             // `solveIDGRF` observes the current feet before it solves contact,
             // so trust must be checked AFTER the call. Observation 30 upgrades
             // the rolling estimate and is the first same-call result allowed
-            // through. The first 29 raw solves exist only to establish the
-            // floor; none of their torques/GRFs/CoPs may escape this boundary.
+            // through. The first 29 contact attempts exist only to establish
+            // the floor; none of their torques/GRFs/CoPs may escape this boundary.
             if !self.bridge.groundHeightTrusted {
                 dynamicsAvailability = .groundPlaneUntrusted
-            } else if let idResult = rawIDResult {
+            } else if let idResult = contactIDResult {
                 dynamicsAvailability = .available
 
                 var torques: [String: Double] = [:]
@@ -1217,8 +1340,8 @@ final class NimbleEngine: ObservableObject {
             }
 
             // --- Muscle static optimization (on same SG-centered state) ---
-            // Production path: real moment arms from FK + soft-equality QP +
-            // real Hill-model force-length/velocity. Requires that the
+            // Capability-valid path: real moment arms from FK + soft-equality
+            // QP + real Hill-model force-length/velocity. Requires that the
             // skeleton is at the smoothed pose, which solveIDGRF() already
             // sets when it runs — MomentArmComputer picks up from there.
             var muscleOutput: MuscleOutput?
@@ -1432,7 +1555,12 @@ final class NimbleEngine: ObservableObject {
                 // MOT and STO rows stay temporally aligned. Warm-up publishes
                 // have `motion == nil` and intentionally remain unrecorded.
                 self.ikHistory.append((ik.timestamp, ik.jointAngles, ikResidual))
-                if let id {
+                if let id,
+                   Self.inverseDynamicsPayloadIsSameGeneration(
+                       ikResult: ik,
+                       idResult: id) {
+                    // Keep the canonical IK timestamp only after proving that
+                    // the ID came from the same centred publication.
                     self.idHistory.append((ik.timestamp, id.jointTorques))
                 }
             }
@@ -1447,10 +1575,10 @@ final class NimbleEngine: ObservableObject {
             if let displayMuscle {
                 self.displayMuscleResult = displayMuscle
                 self.lastDisplayMuscleTimestamp = displayMuscle.timestamp
-            } else if case .groundPlaneUntrusted = dynamicsAvailability {
-                // Trust loss is a hard provenance boundary, not a visual hold:
-                // do not keep an older coloured muscle overlay alive while the
-                // current frame explicitly has no trustworthy dynamics.
+            } else if dynamicsAvailability.invalidatesPreviousDynamics {
+                // A hard provenance/model failure is not a visual hold: do not
+                // keep an older coloured muscle overlay alive while the current
+                // frame explicitly has no trustworthy dynamics.
                 self.displayMuscleResult = nil
                 self.lastDisplayMuscleTimestamp = nil
             } else if let lastTimestamp = self.lastDisplayMuscleTimestamp,
@@ -1671,7 +1799,7 @@ final class NimbleEngine: ObservableObject {
     /// Export ID results as .sto file.
     func exportSTO(filename: String = "BioMotion_id") throws -> URL {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard !idHistory.isEmpty else { throw ExportError.noData }
+        guard hasPublishableIDHistory else { throw ExportError.noData }
 
         let startTime = idHistory.first!.timestamp
         let allDOFs = Array(idHistory.first!.jointTorques.keys).sorted()

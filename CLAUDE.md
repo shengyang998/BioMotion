@@ -24,11 +24,11 @@ photo or video through a Core ML SAM 3D Body model.
                               ↓
    NimbleEngine ─→ Nimble IK  (app-side Levenberg-Marquardt, NOT nimble's
                  │             refineIK — see NimbleBridge.mm)
+                 ├→ kinematics-only posture findings and gait contact timing
                  ├→ Savitzky-Golay, 9-tap CENTRED (dates results 4 samples back)
-                 ├→ static-hold gate (offline only: marker speed <= 0.02 m/s)
-                 ├→ Nimble ID with GRF decomposition (near-CoP, multi-contact)
-                 ├→ Computed moment arms (FK + numerical diff)
-                 └→ OSQP muscle optimization
+                 └→ validated foot-support capability gate
+                       ├→ bundled models: ABSENT → pose/anatomy/timing only
+                       └→ future validated model: floor trust → ID → moment arms → QP
                               ↓
         ┌─────────────────────┴─────────────────────┐
    3-D muscle ANATOMY overlay            posture findings layer
@@ -46,7 +46,7 @@ photo or video through a Core ML SAM 3D Body model.
 ### Swift ↔ C++ Bridge
 
 ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
-- `NimbleBridge.h/.mm` — loads .osim, runs IK/ID, owns the runtime DOF mask. Registers virtual markers at joint centers for ARKit compatibility. **The IK solve is the app's own Levenberg-Marquardt**, not `Skeleton::fitMarkersToWorldPositions` / `math::refineIK`; the vendored nimble tree is untouched.
+- `NimbleBridge.h/.mm` — loads .osim, runs IK, and owns the runtime DOF mask. Raw zero-external-force and near-CoP ID live in a Debug-host diagnostics category declared only to XCTest; Release contains neither selector, and Release-configuration tests do not support the diagnostics. The only product ID entry checks `hasValidatedFootContactSupport` first, and both bundled models return false. Registers virtual markers at joint centers for ARKit compatibility. **The IK solve is the app's own Levenberg-Marquardt**, not `Skeleton::fitMarkersToWorldPositions` / `math::refineIK`; the vendored nimble tree is untouched.
 - `MuscleSolver.h/.mm` — parses the model's muscles (520 in FullBody.osim, 80 in Rajagopal2016), runs OSQP static optimization
 - `MomentArmComputer.h/.mm` — parses muscle paths, computes moment arms via FK + numerical differentiation. Shares the bridge's skeleton (`NimbleBridge+Internal.h`) rather than parsing a second copy. Applies path WRAPPING, and picks a one-sided difference where the wrap state changes inside the stencil. FullBody's four `MovingPathPoint`s all survive; their `SimmSpline`s use Nimble's OpenSim-compatible evaluator (`parsed 4 / approximated 0`).
 - `MusclePathWrap.h/.cpp` — the cylinder AND ellipsoid wrap solvers, ported from opensim-core (Apache 2.0; licence header in the file, attribution in `./NOTICE`). Length only: no `wrap_pts` leave the solver, and only the ellipsoid's `hybrid` `<method>` is implemented — the other two are refused, not approximated. All 76 `PathWrap` references in `FullBody.osim` and all 46 in `Rajagopal2016.osim` are solved. Every intentional difference is listed under DEVIATIONS at the top of the .cpp (12 of them).
@@ -61,7 +61,7 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `BioMotion/Resources/Rajagopal2016.osim` | Fallback only (lower extremity: 80 muscles, 39 DOFs, 66 markers). Loaded when FullBody.osim is missing from the bundle. |
 | `BioMotion/ARKit/BodyTrackingSession.swift` | ARKit body tracking + 1-euro filter |
 | `BioMotion/ARKit/MuscleOverlay.swift` | 3-D muscle **anatomy** capsules — fixed set, one colour, no activation input. Read its type doc before adding anything magnitude-shaped |
-| `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK → SG → ID → moment arms → muscle on a background queue; owns `staticHoldGating` |
+| `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK and the fail-closed capability/policy gates on a background queue; owns `staticHoldGating`. The bundled-model path stops at `.contactSupportUnavailable` before ID |
 | `BioMotion/Offline/` | The photo/video path: `FrameSource` (decode), `SAM3DPoseEstimator` (Core ML), `MHRRetarget` (127 MHR joints → 20 markers + the body-size gate), `OfflineSessionRunner` (batch + SG edge padding), `OfflineResultStore`, `OfflinePlaybackView` / `PhotoOverlayView` |
 | `BioMotion/Findings/` | `PostureFindings` + `PostureFindingsPanel` — kinematics-only posture measurements with view gating. **No clinical thresholds, no verdicts.** |
 | `BioMotion/Gait/GaitAnalysis.swift` | Pure frames-in/report-out gait pass. Owns the product's ONE surviving left/right claim: `contactClaimFloorPercent` = `max(timing resolution, contact-duration sampling half-width)`. Never gate a claim on `GaitResolution` alone |
@@ -110,10 +110,11 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   601-frame cap covers about 2.5 s at 240 fps; it is not the same 120-call budget as sparse mode.
   Keep selector copy in `FrameSource.nativeWindowDisclosure` and truncation causes in
   `FrameBudgetNotice`, where `OfflineDisclosureTests` pins the exact-window boundary.
-- **Analysis FPS has one source:** `GaitReport.framesPerSecond`, derived from the median interval of
-  surviving frame timestamps. AVAsset's nominal rate is valid for native decoding and frame-budget
-  notices only. Do not add it to `GaitOutcome.analysed` or `GaitLoadSummary.make`; sparse sampling
-  is precisely where nominal rate and analysed cadence differ.
+- **Analysis FPS has one source:** the median interval of surviving frame timestamps, copied from
+  the internal `GaitReport` into `GaitTimingReport.timing.framesPerSecond`. AVAsset's nominal rate
+  is valid for native decoding and frame-budget notices only. Do not add a second rate to
+  `GaitOutcome.analysed`; sparse sampling is precisely where nominal rate and analysed cadence
+  differ.
 - **A video whole-frame fallback is a temporal gap, not a failed pose.** Keep its projected skeleton
   visible, but exclude it before body plausibility, scale, SG priming, Nimble submission, gait, ID,
   and muscle. A photo fallback remains analysable for pose, but without an explicit/external floor
@@ -122,24 +123,35 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   real requested clip endpoints — never across an internal or leading/trailing known gap.
 - **A stored biomechanics result is one solve generation.** Route a complete
   `OfflineResultStore.BiomechanicsPayload` from one `SolveRecord`; never nil-coalesce IK, ID, or
-  muscle fields with the previous frame payload. Carry `DynamicsAvailability` in that same payload;
-  `.available` is equivalent to a non-nil ID, while every other case names why dynamics are absent.
-  A nil ID/muscle means the new solve withheld it and must erase any older value, while
-  image/decoder/model provenance and `FrameStatus` stay fixed. Absence is never a measured zero.
+  muscle fields with the previous frame payload. The store's one projector validates success,
+  temporal eligibility, a tracked `BodyFrame`, and body/IK timestamps within 1 ms of the owner
+  frame. `.available` additionally requires a same-generation ID; muscle has its own same-generation
+  timestamp gate. A stale ID clears ID/muscle but preserves valid IK and the report-neutral motion
+  verdict; a stale muscle clears only muscle. Missing pose provenance clears the solve envelope.
+  Session contact capability can still downgrade an otherwise valid ID. Image/decoder/model
+  provenance and `FrameStatus` stay fixed. Absence is never a measured zero.
   Before a gait replacement pass, invalidate all pass-one dynamics to
   `.analysisPassIncomplete`; only same-generation pass-two solves may repopulate them.
-- **Ground trust is a hard dynamics boundary.** `solveIDGRF` observes the feet before solving, so
-  inspect `groundHeightTrusted` after the call: observations 1–29 are pose-only and observation 30
-  is the first same-call ID/GRF/muscle result that may publish. SG endpoint replay supplies filter
-  context, not independent floor evidence; therefore one photo without an explicit/external floor
-  remains pose-only. A second pass over the same continuous clip resets IK/QP/filter state but
-  preserves that clip's ground estimate. A new clip or AR world-origin reset uses the full session
-  reset and discards it. State touched before the main-thread generation guard (including display
-  filters) is solver-queue-owned; recording history is written only after that guard, so an in-flight
-  pre-reset solve cannot mutate a new session.
-- **An analysed report does not depend on a muscle summary.** Resolution, contact-time findings and
-  report flags come from `GaitReport` through `GaitTimingSummary` and stay visible when
-  `GaitLoadSummary.make` returns nil. Only muscle/load/honesty sections may follow that optional.
+- **Validated foot support is the first hard dynamics boundary; ground trust is only a second,
+  necessary boundary.** Both bundled `.osim` files have an empty `ContactGeometrySet`, and the
+  near-CoP routine supplies no support-polygon, unilateral-contact, or friction constraint. Thus
+  `hasValidatedFootContactSupport == false`, `.contactSupportUnavailable` wins even with an explicit
+  floor, and no bundled frame may publish ID/GRF/CoP/muscle/gait-load output. Refilming cannot change
+  a model capability. If a future model/solver pair passes that gate, `solveIDGRF` observes the feet
+  before solving, so inspect `groundHeightTrusted` after the call: observations 1–29 remain pose-only
+  and observation 30 is the first same-call result eligible for the later gates. SG endpoint replay
+  supplies filter context, not independent floor evidence. A second pass over the same continuous
+  clip resets IK/QP/filter state but preserves that clip's ground estimate; a new clip or AR
+  world-origin reset discards it. State touched before the main-thread generation guard (including
+  display filters) is solver-queue-owned; recording history is written only after that guard.
+- **The published gait result is a detached timing-only value.** `GaitAnalysis` may retain its
+  research `GaitReport`, force hypothesis and private plan builder, but `GaitOutcome` accepts only
+  `GaitTimingReport`: copied resolution, contact-time findings, timing refusals and flags, with no
+  reference back to force, residual, `GaitPlan` or `GaitLoadSummary`. `GaitReportPanel` has no load
+  summary initializer. The runner snapshots contact capability; for either bundled model the
+  conditional pass-one invalidation is skipped, timing is published, and the runner returns before
+  constructing a plan or running a second pass. A future capability-valid branch clears pass-one
+  dynamics before publishing `.analysed`, so observers cannot pair it with stale loads.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
 - **Subject scaling starts from the loaded model, never the current skeleton or another model's
   constants.** `loadModelFromPath:` caches the exact default body-scale vector plus lower/upper and
@@ -160,7 +172,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 514 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 519 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`
@@ -530,21 +542,30 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 - **`NimbleIKResult.error` is nimble's LOSS** (`Σ wᵢ²‖Δpᵢ‖²`, in m²), not an RMS and not in metres. Read `markerRMSMeters` for accuracy. `NimbleEngine.IKOutput` exposes both as `ikLossSquaredMeters` and `markerRMSMeters` for the same reason.
 - **"Torque decreases distally" is not a law.** In single-leg stance the free leg decreases distally while the loaded leg increases toward the contact. Both are correct.
 - **Saturated-muscle count is not a metric.** Across a λ sweep at fixed inputs it reads 19, 11, 22, 18, 20 with no trend — it measures where OSQP stopped.
-- **`leftFootLoadFraction`/`rightFootLoadFraction` are a SUM you may read and a SPLIT you may not,
-  and the live screen printed the split for the life of the project.** `AccuracyBadge(label:
+- **`leftFootLoadFraction`/`rightFootLoadFraction` are historical raw-solver fields; neither the SUM
+  nor the SPLIT is publishable for a bundled model.** `AccuracyBadge(label:
   "L/R load", value: "0.62|0.38")` had no caption, no floor and nothing validating it, on the app's
   most-used surface, in the exact framing the offline path spent four rounds retiring — and its
   green indicator was `abs(total − 1.0) < 0.3`, keyed to the sum alone. The split is not merely
   unchecked: `NimbleBridge.mm:1499` seeds the solve with a hardcoded 50/50 wrench guess whenever
   both feet are down, and double support is statically indeterminate at ±18 pp with a perfectly
-  known CoM against a ~10 pp meaningful threshold. The badge reads `GRF sum … BW` now, with
-  `NimbleEngine.footLoadSplitIsNotMeasuredNote` under it on the SAME `if` (the live path had
-  already shipped one picture whose caption had a different gate; that mismatch was closed on
-  2026-08-10 by the 16-row `LiveAnatomyPresentation` truth table).
-- **The gait residual is blind to WHICH foot carries the load.** `GaitFrameOutcome.residualInBodyWeights` is built from `leftFootForce.y + rightFootForce.y`, and the near-CoP solver's constraint fixes that SUM exactly — so a 50/50 split between the feet and a 100/0 split give the identical residual while halving one leg's torques. Only `contactDetectorsAgree` can see the split. A residual that passed says nothing about the left/right claim.
-- **That same residual is VERTICAL ONLY, and it is not `‖a_artic‖/g`.** `leftFootForce.x/.z` exist in the bridge's output (`NimbleBridge.h`: `[fx, fy, fz] N`) and are discarded. The fore-aft braking/push-off term STATUS sizes at 0.2-0.35 BW is 10-17× the measured vertical residual, is phase-dependent, and does NOT cancel out of a muscle-to-muscle ratio — and no check in this pipeline examines it. Read `GaitLoadSummary.maxVerticalForceResidualInBodyWeights`, whose name says so.
+  known CoM against a ~10 pp meaningful threshold. The later `GRF sum` badge was still generated by
+  a pair with empty contact geometry and no support-domain/unilateral/friction constraints. The
+  `.contactSupportUnavailable` gate now keeps that entire row unreachable; its availability detail,
+  not a number, is the bundled-model surface.
+- **The historical gait residual is blind to WHICH foot carries the load and does not validate
+  contact support.** `GaitFrameOutcome.residualInBodyWeights` is built from
+  `leftFootForce.y + rightFootForce.y`, and the raw near-CoP constraint fixes that SUM exactly — so
+  a 50/50 split and a 100/0 split give the identical residual while halving one leg's torques. The
+  older residuals remain engineering falsifiers only; no bundled product frame produces one.
+- **That same historical residual is VERTICAL ONLY, and it is not `‖a_artic‖/g`.** The fore-aft
+  wrench components exist but are discarded. No check examines the missing support domain or the
+  phase-dependent 0.2-0.35 BW fore-aft term. Treat every earlier `GaitLoadSummary` residual as an
+  unvalidated raw-solver receipt, never as permission to publish load.
 - **A "peak" over a side's frames is not a left/right statistic.** The two legs contribute different numbers of usable frames (a contact one sample longer yields twice as many at `taps = 5`), and `E[max of n]` grows with `n` — measured at **+8.07 %** of fabricated left-high asymmetry on a symmetric runner, 80 % of `video_012`'s own 10.14 % publication floor. Any statistic over per-side frames must have an expectation independent of the count; `GaitLoadSummary.MuscleLoad` uses one sample per contact, averaged over contacts.
 - **A gate that measured nothing is not a gate that passed.** `sortedResiduals.last ?? 0` reported max 0, median 0 and "passed" for a clip where no stance frame was ever usable. Check `residualFrameCount`/`residualWasMeasured` before reading any aggregate here.
 - **`strideRepeatabilityPercent` can read exactly 0.000 and mean nothing.** It is a CV over touchdown gaps quantised to whole frames; `video_012`'s are all exactly 18 samples. The clip cannot distinguish anything below `GaitSteadiness.boundPercent = 100/stridePeriodFrames`, so the published figure is floored there and `measuredStrideRepeatabilityPercent` holds the raw CV.
-- **A visible skeleton says nothing about the solver.** The skeleton is drawn straight from `BodyFrame.joints`; muscle output needs the whole IK → SG → ID → moment-arm → QP chain. They share no stage.
+- **A visible skeleton says nothing about dynamics.** The skeleton and fixed-colour anatomy are
+  drawn from `BodyFrame.joints`. Muscle output would require validated foot support plus the whole
+  IK → SG → ID → moment-arm → QP chain; the bundled path stops before ID.
 - **A well-drawn torso says nothing about the legs.** A monocular pose model that cannot see a limb does not fail loudly — it returns its mean pose for that limb, which looks like a plausible standing leg. `VNDetectHumanRectanglesRequest.upperBodyOnly` defaulting to `true` hid behind this for a day (fixed 2026-08-07, `PersonBoxTests`). Score limbs separately against an independent estimator; an aggregate that mixes torso and legs dilutes a 3× leg error into noise.

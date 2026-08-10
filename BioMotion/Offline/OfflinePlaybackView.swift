@@ -48,68 +48,25 @@ struct OfflinePlaybackView: View {
                                       cameraDepthAxis: PostureFindings.offlineCameraDepthAxis)
     }
 
-    /// The downstream muscle/load view of a running clip. It can be nil even
-    /// when `GaitReport` already contains valid resolution and contact timing;
-    /// `GaitReportPanel` keeps those report-owned sections visible either way.
-    private var loadSummary: GaitLoadSummary? {
-        guard case .analysed(let report, let plan)? = resultStore.gait else { return nil }
-        return GaitLoadSummary.make(frames: resultStore.frames,
-                                    report: report,
-                                    filterTaps: plan.filterTaps)
+    /// Pure presentation policy, separated so tests can pin that the fixed
+    /// anatomy layer does not acquire a dependency on ID, muscle output, gait
+    /// comparability, or any other load claim.
+    static func anatomyIsVisible(
+        showingSourceImage: Bool,
+        anatomyEnabled: Bool,
+        frame: OfflineResultStore.FrameResult?
+    ) -> Bool {
+        !showingSourceImage && anatomyEnabled && (frame?.hasDrawableAnatomy ?? false)
     }
 
-    /// Whether the 3-D muscle overlay may be drawn at all, for the CLIP.
-    ///
-    /// **False on every analysed running clip.** The reason has changed and the
-    /// answer has not. It was: `MuscleOverlay` selected the strongest 24
-    /// activations and coloured every capsule from one shared colormap — a
-    /// cross-muscle ORDERING, on numbers with no common per-muscle scale,
-    /// retired from the panel the same day
-    /// (`GaitLoadSummary.perMuscleLeftRightClaimIsSupported`). That renderer is
-    /// gone: the capsules are a fixed anatomical set in one constant colour and
-    /// state nothing about effort. (The `PathWrap` error that was cited beside
-    /// that scale argument is fixed — 76 solved / 0 unmodelled — and the
-    /// retirement did not depend on it. The QP's own termination slack was the
-    /// measured blocker for one commit, 14.88 pp of a left/right figure, and is
-    /// 4.4994e-05 pp since `scaling = 0` and `polishing = 1`; what blocks the
-    /// per-muscle claim now is the moment-arm tail, worst 123.10 pp.)
-    ///
-    /// What survives is a COHERENCE rule. On an analysed running clip the panel
-    /// beside this view is headed "Muscle by muscle: not shown, and why";
-    /// putting muscle capsules on the picture next to it invites the reading
-    /// that they are what the paragraph refused. So the 3-D view stays out of
-    /// that conversation and shows pose only.
-    ///
-    /// Off the running path nothing changes: a still-pose clip has no gait
-    /// summary and the overlay is governed by the static-hold gate as before.
-    private var muscleMagnitudesArePublishable: Bool {
-        guard case .analysed? = resultStore.gait else { return true }
-        return false
-    }
-
-    /// **And whether THIS frame's may.** The clip-level gate was the only one:
-    /// the per-frame exclusions `GaitLoadSummary.make` applies to the ranked
-    /// list — contact detectors disagreeing, a derivative window crossing a
-    /// contact edge — reached the panel and never reached the overlay. See
-    /// `OfflineResultStore.FrameResult.gaitLoadsAreComparable` for the measured
-    /// share of frames that means.
-    private var selectedFrameLoadsAreDrawable: Bool {
-        muscleMagnitudesArePublishable
-            && (resultStore.selectedFrame?.gaitLoadsAreComparable ?? true)
-    }
-
-    /// **Exactly when muscle capsules are on screen.** The scene draws on this
-    /// and the legend is shown on this, so a user cannot be given the sentence
-    /// without the picture or the picture without the sentence.
-    ///
-    /// The last clause is a provenance rule rather than a claim gate: the
-    /// capsules carry none of the solve's numbers, but the anatomy layer marks
-    /// the frames whose muscle chain ran, and on a frame where it did not (SG
-    /// warm-up, failed solve) the picture stays pose-only so it cannot imply
-    /// one.
+    /// **Exactly when muscle capsules are on screen.** The scene and the legend
+    /// both read this one value. The capsules are a fixed anatomical layer, so
+    /// a successful tracked pose remains drawable even when dynamics are
+    /// unavailable.
     private var anatomyCapsulesAreOnScreen: Bool {
-        !showSourceImage && showMuscles && selectedFrameLoadsAreDrawable
-            && (resultStore.selectedFrame?.hasFullBiomechanics ?? false)
+        Self.anatomyIsVisible(showingSourceImage: showSourceImage,
+                              anatomyEnabled: showMuscles,
+                              frame: resultStore.selectedFrame)
     }
 
     var body: some View {
@@ -153,6 +110,14 @@ struct OfflinePlaybackView: View {
                 }
             }
 
+            // Keep the permanent model limit above the scrollable gait or
+            // posture panel. A refused panel is capped at 150 pt and begins
+            // with clip-specific re-filming advice; placing this notice below
+            // it made that advice look capable of unlocking load mechanics.
+            if resultStore.hasValidatedFootContactSupport == false {
+                contactSupportCapabilityBanner
+            }
+
             // On an ANALYSED running clip the gait panel replaces the posture
             // findings: the findings are single-pose measurements and a runner
             // has no single pose.
@@ -168,7 +133,9 @@ struct OfflinePlaybackView: View {
             // a gait screen" would have put a sentence about strides in front of
             // every photo in the app.
             if let gait = resultStore.gait, gait.replacesPostureFindings {
-                GaitReportPanel(outcome: gait, summary: loadSummary)
+                GaitReportPanel(outcome: gait,
+                                hasValidatedFootContactSupport:
+                                    resultStore.hasValidatedFootContactSupport)
                     .frame(maxHeight: 320)
             } else {
                 // The refusal banner is NOT conditional on there being findings
@@ -176,7 +143,10 @@ struct OfflinePlaybackView: View {
                 // rejected, and a user scrubbed onto one of those would otherwise
                 // be told nothing at all about why the run was not measured.
                 if let gait = resultStore.gait, case .refused = gait {
-                    GaitReportPanel(outcome: gait, summary: nil)
+                    GaitReportPanel(
+                        outcome: gait,
+                        hasValidatedFootContactSupport:
+                            resultStore.hasValidatedFootContactSupport)
                         .frame(maxHeight: 150)
                 }
                 // Findings sit between the image and the transport controls, with
@@ -201,11 +171,24 @@ struct OfflinePlaybackView: View {
         }
     }
 
+    private var contactSupportCapabilityBanner: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Musculoskeletal loads unavailable")
+                .font(.caption.weight(.semibold))
+            Text(GaitReportPanel.contactSupportUnavailableMessage)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
     @ViewBuilder
     private var statusBadge: some View {
         if let frame = resultStore.selectedFrame {
             VStack(alignment: .trailing, spacing: 2) {
-                Text(statusText(frame))
+                Text(Self.frameStatusText(frame))
                     .font(.caption2)
                     .foregroundStyle(statusTint(frame))
                 // The reason a frame has no muscle numbers is the point of this
@@ -228,7 +211,7 @@ struct OfflinePlaybackView: View {
         }
     }
 
-    private func statusText(_ frame: OfflineResultStore.FrameResult) -> String {
+    static func frameStatusText(_ frame: OfflineResultStore.FrameResult) -> String {
         if let exclusion = frame.temporalAnalysisExclusion {
             return exclusion.badgeTitle
         }
@@ -237,10 +220,15 @@ struct OfflinePlaybackView: View {
             switch frame.dynamicsAvailability {
             case .waitingForMotionWindow, .groundPlaneUntrusted,
                  .inverseDynamicsFailed, .missingRootVerticalDOF,
+                 .contactSupportUnavailable,
                  .analysisPassIncomplete:
                 return frame.dynamicsAvailability.title
             case .withheld, .available:
                 break
+            }
+            if frame.dynamicsAvailability.hasInverseDynamics,
+               !frame.hasValidatedDynamicsPayload {
+                return NimbleEngine.DynamicsAvailability.inverseDynamicsFailed.title
             }
             // The gait cases come first: on a running clip they are what
             // decided the frame, and the stillness wording ("hold the
@@ -250,15 +238,16 @@ struct OfflinePlaybackView: View {
                 case .gaitStance:
                     // A frame excluded from the load comparison must not be
                     // captioned "relative loads" — the summary has already
-                    // discarded it, and the overlay is hidden for it too.
+                    // discarded it. The optional fixed-colour anatomy layer
+                    // makes no load claim and is governed separately.
                     guard frame.gaitLoadsAreComparable else {
                         return "Pose only — foot down, outside the load comparison"
                     }
                     // And a frame INSIDE the comparison must not claim
                     // "relative loads" either, now that no relative load is
-                    // published: the muscle solve ran, the overlay is off, and
-                    // the panel says why. The badge said the frame carried a
-                    // comparison the panel was refusing on the same screen.
+                    // published: the muscle solve ran, but the panel says why
+                    // its output is not shown. The badge used to say the frame
+                    // carried a comparison the panel refused on the same screen.
                     return frame.hasFullBiomechanics
                         ? "Pose — foot down, muscle solve not shown"
                         : "Pose only — foot down, no solve"
@@ -310,9 +299,11 @@ struct OfflinePlaybackView: View {
         switch frame.status {
         case .success:
             if frame.hasFullBiomechanics { return .green }
+            if frame.dynamicsAvailability.hasInverseDynamics,
+               !frame.hasValidatedDynamicsPayload { return .red }
             switch frame.dynamicsAvailability {
             case .inverseDynamicsFailed, .missingRootVerticalDOF,
-                 .analysisPassIncomplete: return .red
+                 .contactSupportUnavailable, .analysisPassIncomplete: return .red
             case .groundPlaneUntrusted: return .orange
             case .waitingForMotionWindow: return .white
             case .withheld, .available: break
@@ -333,38 +324,25 @@ struct OfflinePlaybackView: View {
         switch frame.dynamicsAvailability {
         case .waitingForMotionWindow, .groundPlaneUntrusted,
              .inverseDynamicsFailed, .missingRootVerticalDOF,
+             .contactSupportUnavailable,
              .analysisPassIncomplete:
             return frame.dynamicsAvailability.detail
         case .withheld, .available:
             break
         }
+        if frame.dynamicsAvailability.hasInverseDynamics,
+           !frame.hasValidatedDynamicsPayload {
+            return NimbleEngine.DynamicsAvailability.inverseDynamicsFailed.detail
+        }
         switch frame.motionState {
         case .undetermined:
             return nil
 
-        case .gait(let verdict, let outcome):
-            guard let outcome, verdict == .gaitStance else {
-                return verdict.advice.isEmpty ? nil : verdict.advice
-            }
-            // Deliberately shows the RATIO to body weight and the disagreement,
-            // not a newton figure. The modelled force is a timing estimate; the
-            // number worth putting on screen is how far inverse dynamics is from
-            // agreeing with it — on the VERTICAL axis, which is the only one
-            // `residualInBodyWeights` is built from. Naming it "the body's own
-            // inertia" claimed the whole vector on the axis it never examined.
-            let side = outcome.contactSide < 0 ? "left" : "right"
-            // The exclusion reason, whatever it is — not only the detector
-            // disagreement. The derivative-window exclusion used to get no
-            // disclosure at all, and it is the one that fires on 65-81 % of
-            // stance frames.
-            let excluded = frame.gaitExclusionReason.map { " · \($0)" } ?? ""
-            return String(format: "%@ foot down · modelled %.2f BW · inverse dynamics %.2f BW "
-                          + "· vertical disagreement %.2f BW%@",
-                          side,
-                          outcome.modelledVerticalForceInBodyWeights,
-                          outcome.solvedVerticalForceInBodyWeights,
-                          outcome.residualInBodyWeights,
-                          excluded)
+        case .gait(let verdict, _):
+            // The product store deliberately strips the native gait outcome.
+            // Keep the kinematic verdict and its actionable advice; force and
+            // residual values are research diagnostics with no UI route.
+            return verdict.advice.isEmpty ? nil : verdict.advice
 
         case .measured(let verdict, let speed, let window, let floor):
             switch verdict {
@@ -420,12 +398,11 @@ struct OfflinePlaybackView: View {
                     }
                 }
                 Spacer()
-                // Muscle anatomy only exists in the 3-D scene, so the toggle is
-                // meaningless while the photo overlay is showing — and equally
-                // meaningless on an analysed running clip, where the overlay is
-                // off whatever it says. A green control that changes nothing is
-                // its own small lie.
-                if !showSourceImage && muscleMagnitudesArePublishable {
+                // Muscle anatomy only exists in the 3-D scene. It is a fixed
+                // pose layer, not a dynamics claim, so running/load availability
+                // does not enter this control's gate.
+                if !showSourceImage
+                    && (resultStore.selectedFrame?.hasDrawableAnatomy ?? false) {
                     Button { showMuscles.toggle() } label: {
                         Label("Anatomy", systemImage: "figure.stand")
                             .font(.caption)
@@ -445,11 +422,21 @@ struct OfflinePlaybackView: View {
         .background(.thinMaterial)
     }
 
-    private var frameLabel: String {
+    @MainActor
+    static func frameLabelText(for resultStore: OfflineResultStore) -> String {
         guard !resultStore.frames.isEmpty else { return "No frames" }
-        var label = "Frame \(resultStore.selectedIndex + 1)/\(resultStore.frames.count) — \(resultStore.biomechanicsCount) with muscle data"
-        // Without this, a clip of a moving subject reads as "1 with muscle
-        // data" and looks like the solver failed 40 times.
+        let poseCount = resultStore.successCount
+        let poseNoun = poseCount == 1 ? "pose result" : "pose results"
+        var label = "Frame \(resultStore.selectedIndex + 1)/\(resultStore.frames.count)"
+            + " — \(poseCount) \(poseNoun)"
+        // Zero is deliberately omitted. Leading with "0 with load data" makes
+        // a permanent model capability boundary look like a solver that failed
+        // on every frame; the named reason below is the relevant result.
+        if resultStore.biomechanicsCount > 0 {
+            label += ", \(resultStore.biomechanicsCount) with load data"
+        }
+        // Without this, a clip of a moving subject can look like the solver
+        // failed repeatedly rather than correctly withholding a static solve.
         let notStill = resultStore.poseOnlyNotStillCount
         if notStill > 0 { label += ", \(notStill) pose-only (not a still pose)" }
         // Same reasoning one step earlier in the chain: a clip where the person
@@ -463,7 +450,15 @@ struct OfflinePlaybackView: View {
         if groundUntrusted > 0 {
             label += ", \(groundUntrusted) pose-only (ground not established)"
         }
+        let contactUnsupported = resultStore.contactSupportUnavailableCount
+        if contactUnsupported > 0 {
+            label += ", \(contactUnsupported) pose-only (foot contact permanently unsupported)"
+        }
         return label
+    }
+
+    private var frameLabel: String {
+        Self.frameLabelText(for: resultStore)
     }
 }
 

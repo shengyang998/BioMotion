@@ -57,7 +57,7 @@ struct SessionChartsView: View {
                     }
 
                     // Toggle torques
-                    if !nimble.idHistory.isEmpty {
+                    if nimble.hasPublishableIDHistory {
                         Toggle("Show Joint Torques", isOn: $showTorques)
                             .padding(.horizontal)
 
@@ -134,7 +134,7 @@ struct SessionChartsView: View {
     }
 
     private var torqueData: [ChartPoint] {
-        guard !nimble.idHistory.isEmpty else { return [] }
+        guard nimble.hasPublishableIDHistory else { return [] }
         let startTime = nimble.idHistory.first!.timestamp
         return nimble.idHistory.compactMap { entry in
             guard let torque = entry.jointTorques[selectedDOF] else { return nil }

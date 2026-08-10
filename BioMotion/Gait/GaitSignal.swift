@@ -1,7 +1,10 @@
 import Foundation
 
-/// The one horizontal signal every gait measurement in this module is read from,
-/// plus the sampling facts a consumer needs in order to know what it may claim.
+/// The one horizontal signal every PUBLISHED GAIT-TIMING measurement in this
+/// module is read from, plus the sampling facts a consumer needs in order to
+/// know what it may claim. This is a kinematic phase detector. Calling an
+/// interval "contact" does not establish a load-bearing support surface and is
+/// not evidence for GRF, CoP, joint torque, muscle effort, or gait load.
 ///
 /// # Why this signal and not foot height
 ///
@@ -18,7 +21,8 @@ import Foundation
 ///
 /// # What replaces it
 ///
-/// A foot in contact with the ground is at rest **in the ground frame**. The
+/// The kinematic cue is that a foot inferred to be in stance is approximately
+/// at rest **in the ground frame**. The
 /// reconstruction is pelvis-pinned, so the ground is not directly observable —
 /// but a foot at rest on the ground moves backwards *relative to the pelvis* at
 /// exactly the runner's speed, and it is the only part of the cycle that does so
@@ -26,8 +30,8 @@ import Foundation
 ///
 ///     w(t) = forwardSign · d/dt [ (foot − pelvis) · x̂ ]
 ///
-/// sits on its plateau, and the plateau level **is** the running speed, measured
-/// from the signal rather than assumed. Measured on the three pinned clips:
+/// sits on its plateau, and the plateau level estimates running speed from the
+/// signal rather than assuming it. Measured on the three pinned clips:
 /// 5.80, 5.01 and 4.11 m/s — 15-21 km/h, which is the right order for the
 /// footage.
 ///

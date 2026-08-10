@@ -71,7 +71,9 @@ enum OfflineTemporalPolicy {
 }
 
 /// Drives the offline (photo/video import) batch: decode frames -> Core ML pose
-/// estimate -> MHR retarget -> NimbleEngine IK/ID/muscle -> OfflineResultStore.
+/// estimate -> MHR retarget -> NimbleEngine IK -> pose/timing publication.
+/// ID/muscle and a second gait pass remain behind a future validated-contact
+/// branch; both bundled models stop before that branch.
 ///
 /// # Backpressure (design constraint — see this file set's task brief)
 /// `NimbleEngine.processFrame` DROPS a frame outright if a solve is already in
@@ -103,14 +105,15 @@ enum OfflineTemporalPolicy {
 /// `bridge.scaleModelWithHeight` finishes before `bridge.solveIK` for that same
 /// frame begins.
 ///
-/// # Static holds only
+/// # Static-hold policy (future capability-valid dynamics only)
 /// This runner turns on `NimbleEngine.staticHoldGating` for the duration of a
 /// run. On this path the pose source zeroes `global_trans`, so the pelvis sits
 /// at a model constant in every frame and the body has no global translation:
 /// `M·q̈` and the centre-of-mass acceleration would be computed from motion
 /// that did not happen (in a squat the pelvis never descends — the feet appear
-/// to rise). So frames where the subject was measurably moving get pose and no
-/// muscle magnitudes, and frames where they were still are solved as statics.
+/// to rise). So frames where the subject was measurably moving get pose only.
+/// A still frame would be eligible for static dynamics only after the separate
+/// foot-support capability gate; current bundled models publish pose only.
 /// The engine is SHARED with the live ARKit view, whose q̈ IS observable, hence
 /// the flag is scoped to the run rather than made unconditional.
 @MainActor
@@ -246,6 +249,8 @@ final class OfflineSessionRunner: ObservableObject {
             phase = .failed("Musculoskeletal model isn't loaded — FullBody.osim may be missing from the bundle, or is still loading. Try again in a moment.")
             return
         }
+        resultStore.setValidatedFootContactSupport(
+            nimble.hasValidatedFootContactSupport)
 
         // Clip boundary — see this class's header comment.
         nimble.resetSessionState()
@@ -318,10 +323,10 @@ final class OfflineSessionRunner: ObservableObject {
         // --- Is this a RUN? ---------------------------------------------------
         //
         // Only now, because a stride is not visible one frame at a time. The
-        // static-hold pass above has already produced everything it can; if the
-        // clip turns out to be running, the second pass re-solves the STANCE
-        // frames with the root acceleration the gait cycle supplies, which is
-        // the only way a moving subject gets muscle numbers at all.
+        // first pass above has already produced every supported pose. A usable
+        // run publishes detached contact timing. Only a future model/solver
+        // with validated foot support may continue into the private second
+        // pass; bundled models do not construct its plan or replay any frame.
         await runGaitPassIfThisIsARun(
             firstRequestedFrameNumber: batch.firstRequestedFrameNumber,
             lastRequestedFrameNumber: batch.lastRequestedFrameNumber
@@ -332,8 +337,9 @@ final class OfflineSessionRunner: ObservableObject {
 
     // MARK: - Gait pass
 
-    /// Runs `GaitAnalysis` over the whole window and, if the clip is a usable
-    /// run, re-solves its stance frames with gait dynamics.
+    /// Runs `GaitAnalysis` over the whole window and publishes detached timing.
+    /// A future capability-valid model may then re-solve stance frames inside
+    /// the private dynamics branch.
     ///
     /// Everything here is guarded so a non-running clip — a photo, a squat, a
     /// subject standing still — costs one cheap analysis and changes nothing.
@@ -356,15 +362,35 @@ final class OfflineSessionRunner: ObservableObject {
             return
         }
 
-        guard report.isUsable else {
+        let timingReport = GaitTimingReport(report: report)
+        guard timingReport.isUsable else {
             // Refused BY THE CLIP'S OWN MODEL. The reasons are published so the
             // user is told what to film differently, not just that it failed.
-            resultStore.setGait(.refused(report: report))
+            resultStore.setGait(.refused(report: timingReport))
             return
         }
 
+        // Publish the supported result before considering any internal
+        // dynamics work. This value owns only timestamp-derived timing. Both
+        // bundled models stop here: neither has validated foot-support
+        // mechanics, so making a force plan or replaying a second pass would
+        // create unavailable values merely to discard them.
+        let supportsFootContact = nimble.hasValidatedFootContactSupport
+        if supportsFootContact {
+            // Clear pass-one static physics before publishing `.analysed` so
+            // no Combine observer can see an analysed gait result paired with
+            // load values from the old policy. This also precedes every
+            // load-plan refusal/return.
+            resultStore.beginGaitReplacementPass()
+        }
+        resultStore.setGait(.analysed(report: timingReport))
+        guard supportsFootContact else { return }
+
+        // A derivative-fit refusal is specifically a dynamics-plan boundary;
+        // it never takes an already measured timing report away.
+        guard report.isUsable else { return }
+
         guard let plan = Self.makePlan(from: report) else {
-            resultStore.setGait(.notAttempted(reason: "the report has no complete contact to build a plan from"))
             return
         }
 
@@ -372,10 +398,6 @@ final class OfflineSessionRunner: ObservableObject {
         // here (9 taps -> `plan.filterTaps`), and the IK warm start belongs to
         // the last frame of pass 1, not the first of pass 2.
         nimble.resetAnalysisPassStatePreservingGround()
-        // Pass two owns the dynamics generation. Clear pass-one statics up
-        // front so a timeout or missing centred publication cannot leave old
-        // ID/muscle values under an analysed-running result.
-        resultStore.beginGaitReplacementPass()
         nimble.staticHoldGating = false
         nimble.gaitPlan = plan
         defer { nimble.gaitPlan = nil; nimble.staticHoldGating = true }
@@ -419,7 +441,7 @@ final class OfflineSessionRunner: ObservableObject {
             }
         }
 
-        resultStore.setGait(.analysed(report: report, plan: plan))
+        resultStore.setGait(.analysed(report: timingReport))
     }
 
     /// Turns a `GaitReport` into the per-frame root acceleration and ground
@@ -531,7 +553,9 @@ final class OfflineSessionRunner: ObservableObject {
                 status: .poseEstimationFailed(error.localizedDescription), usedFallbackBBox: false,
                 camT: nil,
                 modelChecksums: nil,
-                bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
+                bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: nil,
+                dynamicsAvailability: .waitingForMotionWindow,
+                isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
 
@@ -570,6 +594,7 @@ final class OfflineSessionRunner: ObservableObject {
                 ikResult: nil,
                 idResult: nil,
                 muscleResult: nil,
+                dynamicsAvailability: .waitingForMotionWindow,
                 isStaticHoldEstimate: false,
                 motionState: .undetermined
             ))
@@ -596,6 +621,7 @@ final class OfflineSessionRunner: ObservableObject {
                 modelChecksums: (estimate.inputChecksum, estimate.outputChecksum,
                                  estimate.sourceHash, estimate.bboxHash, estimate.warpHash),
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil,
+                dynamicsAvailability: .waitingForMotionWindow,
                 isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
@@ -608,7 +634,9 @@ final class OfflineSessionRunner: ObservableObject {
                 camT: estimate.camT,
                 modelChecksums: (estimate.inputChecksum, estimate.outputChecksum,
                                  estimate.sourceHash, estimate.bboxHash, estimate.warpHash),
-                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
+                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil,
+                dynamicsAvailability: .waitingForMotionWindow,
+                isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
 
@@ -661,7 +689,9 @@ final class OfflineSessionRunner: ObservableObject {
                 camT: estimate.camT,
                 modelChecksums: (estimate.inputChecksum, estimate.outputChecksum,
                                  estimate.sourceHash, estimate.bboxHash, estimate.warpHash),
-                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
+                bodyFrame: bodyFrame, ikResult: nil, idResult: nil, muscleResult: nil,
+                dynamicsAvailability: .waitingForMotionWindow,
+                isStaticHoldEstimate: false, motionState: .undetermined))
             return false
         }
 
@@ -677,7 +707,8 @@ final class OfflineSessionRunner: ObservableObject {
                 modelChecksums: (estimate.inputChecksum, estimate.outputChecksum,
                                  estimate.sourceHash, estimate.bboxHash, estimate.warpHash),
                 bodyFrame: bodyFrame, ikResult: nil, idResult: nil,
-            muscleResult: nil, isStaticHoldEstimate: false, motionState: .undetermined))
+                muscleResult: nil, dynamicsAvailability: .waitingForMotionWindow,
+                isStaticHoldEstimate: false, motionState: .undetermined))
         routeSolveToOwningFrame()
         return true
     }
@@ -729,10 +760,10 @@ final class OfflineSessionRunner: ObservableObject {
         }), abs(owner.timestamp - t) <= Self.biomechanicsMatchTolerance else { return }
 
         let motion = solve.motion
-        // The gait cases carry different evidence — a modelled force and the
-        // residual that can contradict it — so they get their own case in the
-        // SAME enum rather than being flattened into the stillness numbers,
-        // which mean nothing about a runner.
+        // Gait gets its own case so stance/flight timing is not flattened into
+        // stillness numbers, which mean nothing about a runner. The raw solve
+        // may carry a private force/residual diagnostic; the product store
+        // unconditionally strips it while retaining this verdict.
         let state: OfflineResultStore.MotionState
         if motion.verdict.isGait {
             state = .gait(verdict: motion.verdict, outcome: solve.gait)
@@ -760,9 +791,10 @@ final class OfflineSessionRunner: ObservableObject {
     ///
     /// Held-pose padding is the right choice here rather than reflection or
     /// extrapolation: it makes `dq`/`ddq` tend to zero at the clip edges, which
-    /// matches what this input can actually support. `joint_coords` pins the
-    /// pelvis every frame, so global motion is unavailable and the defensible
-    /// reading of the muscle numbers is a static-equilibrium one anyway.
+    /// matches what this input can actually support. It affects pose/motion
+    /// classification only for the bundled models. A static-dynamics reading
+    /// belongs exclusively to a future capability-valid branch; padding itself
+    /// cannot turn an apparent photo hold into a measured load.
     ///
     /// ⚠️ These pads have ZERO marker displacement by construction, so the hold
     /// detector sees them as still. The verdict for the first real frame is

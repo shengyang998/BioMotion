@@ -68,18 +68,22 @@ final class GaitDynamicsTests: XCTestCase {
         XCTAssertGreaterThan(mass, 20, "a person's mass")
 
         let zeros = [NSNumber](repeating: 0, count: n)
-        let rest = try XCTUnwrap(bridge.solveID(withJointAngles: zeros,
-                                                jointVelocities: zeros,
-                                                jointAccelerations: zeros),
-                                 "plain ID must solve at the neutral pose")
+        let rest = try XCTUnwrap(
+            bridge.solveUnvalidatedIDForDiagnostics(
+                withJointAngles: zeros,
+                jointVelocities: zeros,
+                jointAccelerations: zeros),
+            "the zero-external-force ID diagnostic must solve at the neutral pose")
         let restForce = rest.jointTorques[ty].doubleValue
 
         for a in [1.0, -Self.g, 2.0 * Self.g] {
             var ddq = [NSNumber](repeating: 0, count: n)
             ddq[ty] = NSNumber(value: a)
-            let moved = try XCTUnwrap(bridge.solveID(withJointAngles: zeros,
-                                                     jointVelocities: zeros,
-                                                     jointAccelerations: ddq))
+            let moved = try XCTUnwrap(
+                bridge.solveUnvalidatedIDForDiagnostics(
+                    withJointAngles: zeros,
+                    jointVelocities: zeros,
+                    jointAccelerations: ddq))
             let delta = moved.jointTorques[ty].doubleValue - restForce
             print("GAIT-METRIC root_ty a=\(a) delta_N=\(delta) expected=\(mass * a) mass=\(mass)")
             XCTAssertEqual(delta, mass * a, accuracy: max(1e-6, abs(mass * a) * 1e-9),
@@ -92,9 +96,11 @@ final class GaitDynamicsTests: XCTestCase {
         let tz = try XCTUnwrap(names.firstIndex(of: "pelvis_tz"))
         var ddq = [NSNumber](repeating: 0, count: n)
         ddq[ty] = NSNumber(value: 5.0)
-        let moved = try XCTUnwrap(bridge.solveID(withJointAngles: zeros,
-                                                 jointVelocities: zeros,
-                                                 jointAccelerations: ddq))
+        let moved = try XCTUnwrap(
+            bridge.solveUnvalidatedIDForDiagnostics(
+                withJointAngles: zeros,
+                jointVelocities: zeros,
+                jointAccelerations: ddq))
         XCTAssertEqual(moved.jointTorques[tx].doubleValue,
                        rest.jointTorques[tx].doubleValue, accuracy: 1e-6,
                        "a vertical root acceleration must not appear in the fore-aft channel")
@@ -216,18 +222,16 @@ final class GaitDynamicsTests: XCTestCase {
 
     // MARK: - End to end through the engine
 
-    /// Stance frames get muscle numbers, flight frames get none, frames outside
-    /// the plan say so — and the residual is MEASURED rather than asserted.
+    /// A gait plan remains useful for kinematic stance/flight timing even when
+    /// this model/solver pair cannot justify contact-dependent loads. Stance
+    /// must retain its gait label while publishing no ID, muscle, or residual;
+    /// flight/outside-policy reasons still take precedence over capability.
     @MainActor
-    func testRunningSequenceProducesStanceMuscleAndAMeasuredResidual() async throws {
+    func testRunningSequenceRetainsTimingButPublishesNoContactDynamics() async throws {
         let engine = try await loadedEngine()
         let dt = 1.0 / 30.0
         let taps = 5
         let sequence = Self.syntheticRunSequence(dt: dt, frames: 24, swingAmplitude: 0.03)
-        // Seven samples leave three genuinely interior 5-tap windows per full
-        // contact. The older five-sample fixture left exactly one, and a
-        // legitimate poseDidNotConverge on that single frame made this
-        // end-to-end measurement vacuous even though all routing was correct.
         let plan = Self.plan(for: sequence, dt: dt, taps: taps, peakBW: 2.5,
                              contactFrames: 7)
 
@@ -235,11 +239,6 @@ final class GaitDynamicsTests: XCTestCase {
         engine.gaitPlan = plan
 
         var stance = 0, flight = 0, outside = 0, unconverged = 0
-        var residuals: [Double] = []
-        var agreeingResiduals: [Double] = []
-        var stanceHadMuscle = 0
-        var disagreements = 0
-        var cleanWindows = 0
 
         for (i, markers) in sequence.enumerated() {
             let ok = await submitAndWait(engine, bodyFrame(markers, timestamp: Double(i) * dt,
@@ -248,158 +247,57 @@ final class GaitDynamicsTests: XCTestCase {
             switch solve.motion.verdict {
             case .gaitStance:
                 stance += 1
-                if solve.muscle != nil { stanceHadMuscle += 1 }
-                if let g = solve.gait {
-                    residuals.append(g.residualInBodyWeights)
-                    if g.contactDetectorsAgree {
-                        agreeingResiduals.append(g.residualInBodyWeights)
-                    } else {
-                        disagreements += 1
-                    }
-                    XCTAssertFalse(g.horizontalRootAccelerationModelled,
-                                   "the fore-aft term is unmodelled and must say so")
-                    XCTAssertEqual(g.rootVerticalAccelerationMetersPerSecondSquared,
-                                   Self.g * (g.modelledVerticalForceInBodyWeights - 1),
-                                   accuracy: 1e-9)
-                    // The plan's per-frame window verdict reaches the outcome,
-                    // and it is one of the two conditions a frame has to meet
-                    // before its muscle numbers may be compared.
-                    let planned = plan.entry(at: solve.centerTimestamp)
-                    XCTAssertEqual(g.derivativeWindowInsideContact,
-                                   planned?.derivativeWindowInsideContact ?? false,
-                                   "the window verdict must survive the seam")
-                    if g.derivativeWindowInsideContact { cleanWindows += 1 }
-                    XCTAssertEqual(g.isUsableForLoadComparison,
-                                   g.contactDetectorsAgree && g.derivativeWindowInsideContact)
-                }
+                XCTAssertEqual(solve.dynamicsAvailability, .contactSupportUnavailable)
+                XCTAssertNil(solve.id)
+                XCTAssertNil(solve.muscle)
+                XCTAssertNil(solve.gait,
+                             "a timing stance is not a measured gait-load outcome")
             case .gaitFlight:
                 flight += 1
-                XCTAssertNil(solve.muscle, "no foot on the ground means no stance load")
-                XCTAssertNil(solve.gait, "and nothing to compare against")
+                XCTAssertEqual(solve.dynamicsAvailability, .withheld(.gaitFlight))
+                XCTAssertNil(solve.id)
+                XCTAssertNil(solve.muscle)
+                XCTAssertNil(solve.gait)
             case .gaitOutsideAnalysis:
                 outside += 1
+                XCTAssertEqual(solve.dynamicsAvailability, .withheld(.gaitOutsideAnalysis))
             case .poseDidNotConverge:
-                // A legitimate outcome — the IK solve hit its iteration cap —
-                // and it must be reported as itself rather than as subject
-                // motion. Counted, not tolerated silently.
                 unconverged += 1
-                XCTAssertNil(solve.muscle, "a pose that did not settle claims no load")
+                XCTAssertEqual(solve.dynamicsAvailability, .withheld(.poseDidNotConverge))
+                XCTAssertNil(solve.id)
+                XCTAssertNil(solve.muscle)
             default:
                 XCTFail("a clip with a gait plan must not report \(solve.motion.verdict)")
             }
         }
         engine.gaitPlan = nil
 
-        print("GAIT-METRIC engine stance=\(stance) flight=\(flight) outside=\(outside) "
-              + "unconverged=\(unconverged) stance_with_muscle=\(stanceHadMuscle) "
-              + "contact_disagreements=\(disagreements) clean_windows=\(cleanWindows)")
-        print("GAIT-METRIC residual_bw all_min=\(residuals.min() ?? -1) "
-              + "all_max=\(residuals.max() ?? -1) n=\(residuals.count) "
-              + "agreeing_min=\(agreeingResiduals.min() ?? -1) "
-              + "agreeing_max=\(agreeingResiduals.max() ?? -1) n_agreeing=\(agreeingResiduals.count)")
+        print("GAIT-METRIC pose_only engine stance=\(stance) flight=\(flight) "
+              + "outside=\(outside) unconverged=\(unconverged)")
 
         XCTAssertGreaterThan(stance, 0, "the plan's contacts must reach the engine")
         XCTAssertGreaterThan(flight, 0, "and so must its flight phases")
-        XCTAssertEqual(stanceHadMuscle, stance,
-                       "every stance frame that reached ID must carry muscle magnitudes")
-        XCTAssertFalse(residuals.isEmpty, "the falsifier must actually be computed")
-        for r in residuals { XCTAssertTrue(r.isFinite && r >= 0) }
-
-        // The residual has TWO regimes, and conflating them would hide one.
-        // When the ID solver's geometric contact detector sees no foot down, it
-        // returns no contact force at all and the residual is the WHOLE modelled
-        // force — a real disagreement, but about which foot is down rather than
-        // about the omitted inertial term. Where the two detectors agree, the
-        // residual is `‖a_artic‖/g` and is small on a calmly-articulated body.
-        for r in agreeingResiduals {
-            XCTAssertLessThan(r, NimbleEngine.maxGaitForceResidualInBodyWeights,
-                              "a calm body whose contact both detectors agree on must pass the gate")
-        }
-        // With a 5-tap window inside 7-frame contacts only three samples of
-        // each full contact keep a clean window, so this remains a minority of
-        // stance — the honest state of short 30 fps contacts, and it is counted.
-        XCTAssertGreaterThan(cleanWindows, 0, "some frame must survive, or nothing is measurable")
-        XCTAssertLessThan(cleanWindows, stance, "and most of them do not, which is the point")
+        XCTAssertNil(engine.lastIDResult)
+        XCTAssertNil(engine.lastMuscleResult)
     }
 
-    /// **The falsifier firing.** A body whose segments accelerate hard has a
-    /// large `a_artic`, which the timing model does not account for — so the
-    /// residual must grow with the articulation and cross the registered gate.
-    /// If it did not, the quantity would be decorative.
-    @MainActor
-    func testTheGateFiresWhenTheOmittedTermIsLarge() async throws {
-        let engine = try await loadedEngine()
-        let dt = 1.0 / 30.0
-
-        func maxResidual(swing: Double) async -> Double {
-            engine.resetSessionState()
-            let sequence = Self.syntheticRunSequence(dt: dt, frames: 22, swingAmplitude: swing)
-            engine.staticHoldGating = false
-            engine.gaitPlan = Self.plan(for: sequence, dt: dt, taps: 5, peakBW: 2.5)
-            var worst = 0.0
-            var solverContactFrames = 0
-            var pinnedFixtureGround = false
-            for (i, markers) in sequence.enumerated() {
-                let ok = await submitAndWait(engine, bodyFrame(markers, timestamp: Double(i) * dt,
-                                                               frameNumber: i))
-                guard ok else { continue }
-                if !pinnedFixtureGround,
-                   engine.dynamicsAvailability == .groundPlaneUntrusted {
-                    // The raw native call already observed this solved pose's
-                    // calcn bodies. Promote THAT provisional value explicitly
-                    // for this residual-only fixture; source toe markers are
-                    // not the same points and cannot supply the number.
-                    let y = engine.groundHeightY
-                    print("GAIT-METRIC fixture_ground_y=\(y) swing=\(swing)")
-                    engine.setExplicitGroundHeightY(y)
-                    pinnedFixtureGround = true
-                    continue
-                }
-                guard let g = engine.lastSolve?.gait else { continue }
-                // With no geometric contact `solveIDGRF` returns zero ground
-                // force and this value is exactly the whole planned 2.5 BW — a
-                // contact-detection failure, not the omitted articulation term
-                // this test is about. At least one solved contact is sufficient
-                // here because the falsifier uses the SUM over contacts.
-                guard g.solverSawLeftContact || g.solverSawRightContact else { continue }
-                solverContactFrames += 1
-                worst = max(worst, g.residualInBodyWeights)
-            }
-            engine.gaitPlan = nil
-            XCTAssertTrue(pinnedFixtureGround,
-                          "the first warm solve must expose its provisional model-foot floor")
-            XCTAssertGreaterThan(solverContactFrames, 0,
-                                 "the fixture must exercise the contact-backed residual")
-            return worst
-        }
-
-        let calm = await maxResidual(swing: 0.005)
-        let violent = await maxResidual(swing: 0.20)
-        print("GAIT-METRIC residual_vs_articulation calm=\(calm) violent=\(violent) "
-              + "gate=\(NimbleEngine.maxGaitForceResidualInBodyWeights)")
-
-        XCTAssertGreaterThan(violent, calm,
-                             "the residual must respond to the term it measures, or it is decorative")
-        XCTAssertGreaterThan(violent, NimbleEngine.maxGaitForceResidualInBodyWeights,
-                             "a hard-swinging body must break the registered gate")
-
-        // And the gate has to actually withhold. Built through the same summary
-        // the UI reads, so this is the shipping behaviour and not a parallel path.
-        let refused = Self.summary(maxResidual: violent)
+    /// The residual gate remains the contract for a future input whose contact
+    /// support has independently been validated. Synthetic summaries may test
+    /// that algorithm; the bundled engine must never fabricate the inputs.
+    func testResidualGateRejectsAValidatedSyntheticInputAboveItsBound() throws {
+        let refused = Self.summary(maxResidual: 1.78)
         XCTAssertFalse(refused.residualGatePassed)
-        XCTAssertFalse(refused.clearsStatisticalFloor(Self.load(left: 0.9, right: 0.1)),
-                       "a failed gate must withhold even a huge left/right difference")
+        XCTAssertFalse(refused.clearsStatisticalFloor(Self.load(left: 0.9, right: 0.1)))
         XCTAssertTrue(try XCTUnwrap(refused.withheldReason).contains("Withheld"))
     }
 
-    // MARK: - The static-hold path must be untouched
+    // MARK: - The static-hold classification remains independent
 
-    /// **Required non-regression.** A genuinely motionless subject still
-    /// classifies as a hold and still produces static muscle numbers — before
-    /// and, critically, AFTER the same engine has run a gait pass, so the new
-    /// path leaves no residue in the filters or the plan.
+    /// A genuinely motionless subject remains a hold before and after a gait
+    /// pass. What must not survive either boundary is an unconstrained contact
+    /// solve or any older ID/muscle/gait-load payload.
     @MainActor
-    func testAMotionlessSubjectStillHoldsAndProducesTheSameStaticNumbers() async throws {
+    func testAMotionlessSubjectStillHoldsBeforeAndAfterAGaitPassWithoutDynamics() async throws {
         let engine = try await loadedEngine()
 
         func holdSolve() async throws -> NimbleEngine.SolveRecord {
@@ -416,53 +314,25 @@ final class GaitDynamicsTests: XCTestCase {
             return try XCTUnwrap(engine.lastSolve, "a full window must publish a solve")
         }
 
-        func worstActivationDelta(_ a: NimbleEngine.SolveRecord,
-                                 _ b: NimbleEngine.SolveRecord) throws -> Double {
-            let x = try XCTUnwrap(a.muscle).activations
-            let y = try XCTUnwrap(b.muscle).activations
-            XCTAssertEqual(Set(x.keys), Set(y.keys))
-            return x.reduce(0.0) { max($0, abs($1.value - (y[$1.key] ?? .nan))) }
-        }
-        func worstForceDelta(_ a: NimbleEngine.SolveRecord,
-                             _ b: NimbleEngine.SolveRecord) throws -> Double {
-            let x = try XCTUnwrap(a.muscle).forces
-            let y = try XCTUnwrap(b.muscle).forces
-            XCTAssertEqual(Set(x.keys), Set(y.keys))
-            return x.reduce(0.0) { max($0, abs($1.value - (y[$1.key] ?? .nan))) }
-        }
-        func worstTorqueDelta(_ a: NimbleEngine.SolveRecord,
-                              _ b: NimbleEngine.SolveRecord) throws -> Double {
-            let x = try XCTUnwrap(a.id).jointTorques
-            let y = try XCTUnwrap(b.id).jointTorques
-            XCTAssertEqual(Set(x.keys), Set(y.keys))
-            return x.reduce(0.0) { max($0, abs($1.value - (y[$1.key] ?? .nan))) }
-        }
-        func assertIsAProperStaticHold(_ s: NimbleEngine.SolveRecord, _ label: String) throws {
+        func assertIsPoseOnlyHold(_ s: NimbleEngine.SolveRecord, _ label: String) {
             XCTAssertTrue(s.motion.isHold, "\(label): nine replays of one pose is a hold")
             XCTAssertEqual(s.motion.verdict, .hold, label)
             XCTAssertFalse(s.motion.verdict.isGait, label)
-            XCTAssertTrue(s.isStaticHoldEstimate, "\(label): must be solved as statics")
-            XCTAssertNotNil(s.muscle, "\(label): a hold must produce muscle output")
-            XCTAssertNotNil(s.id, label)
+            XCTAssertEqual(s.dynamicsAvailability, .contactSupportUnavailable, label)
+            XCTAssertFalse(s.isStaticHoldEstimate, label)
+            XCTAssertNil(s.muscle, label)
+            XCTAssertNil(s.id, label)
             XCTAssertNil(s.gait, "\(label): a hold carries no gait outcome")
             XCTAssertEqual(s.centerTimestamp, 0.0, accuracy: 1e-6, label)
         }
 
-        // A, then A again: the CONTROL, and since 2026-08-08 also the
-        // REPRODUCIBILITY assertion. `holdSolve` resets the session first, so
-        // these two runs differ in nothing at all — same markers, same
-        // timestamps, same order — and must therefore agree exactly. They did
-        // not until `resetSessionState()` learned to drop `MuscleSolver`'s warm
-        // start: see the inverted assertion below.
         let a = try await holdSolve()
-        try assertIsAProperStaticHold(a, "first hold")
+        assertIsPoseOnlyHold(a, "first hold")
         let b = try await holdSolve()
-        try assertIsAProperStaticHold(b, "repeat hold")
-        let controlActivation = try worstActivationDelta(a, b)
-        let controlForce = try worstForceDelta(a, b)
-        let controlTorque = try worstTorqueDelta(a, b)
+        assertIsPoseOnlyHold(b, "repeat hold")
 
-        // Now the TREATMENT: a full gait pass on the SAME engine, then hold.
+        // A full gait pass on the same engine must not change the later hold
+        // classification or leave an unavailable dynamics payload behind.
         let dt = 1.0 / 30.0
         let sequence = Self.syntheticRunSequence(dt: dt, frames: 20, swingAmplitude: 0.03)
         engine.resetSessionState()
@@ -476,113 +346,42 @@ final class GaitDynamicsTests: XCTestCase {
         engine.gaitPlan = nil
 
         let c = try await holdSolve()
-        try assertIsAProperStaticHold(c, "hold after a gait pass")
-        let treatmentActivation = try worstActivationDelta(b, c)
-        let treatmentForce = try worstForceDelta(b, c)
-        let treatmentTorque = try worstTorqueDelta(b, c)
-
-        func totalForce(_ s: NimbleEngine.SolveRecord) throws -> Double {
-            try XCTUnwrap(s.muscle).forces.values.reduce(0, +)
-        }
-        let controlForceSum = abs(try totalForce(a) - (try totalForce(b)))
-        let treatmentForceSum = abs(try totalForce(b) - (try totalForce(c)))
-
-        print("GAIT-METRIC static_hold_control_vs_treatment "
-              + "muscles=\(try XCTUnwrap(a.muscle).activations.count) "
-              + "control_activation_delta=\(controlActivation) "
-              + "treatment_activation_delta=\(treatmentActivation) "
-              + "control_muscle_force_delta_N=\(controlForce) "
-              + "treatment_muscle_force_delta_N=\(treatmentForce) "
-              + "control_torque_delta_Nm=\(controlTorque) "
-              + "treatment_torque_delta_Nm=\(treatmentTorque) "
-              + "control_total_force_delta_N=\(controlForceSum) "
-              + "treatment_total_force_delta_N=\(treatmentForceSum)")
-
-        // The INVERSE DYNAMICS is a deterministic function of the pose (q̇ = q̈ = 0
-        // on a hold), so it must be identical — this is the part with no null
-        // space to hide in, and it is what the muscle QP is solving against.
-        // Measured: 0.0 Nm on both, exactly.
-        XCTAssertLessThan(controlTorque, 1e-6, "static ID must be deterministic run to run")
-        XCTAssertLessThan(treatmentTorque, 1e-6,
-                          "a gait pass must not change the static hold's joint torques")
-
-        // ⚠️ **This assertion was inverted on 2026-08-08, and the inversion is
-        // the proof of the fix.** It used to read
-        // `XCTAssertGreaterThan(controlActivation, 0.01)` — i.e. it REQUIRED
-        // two byte-identical runs to disagree, and documented the disagreement
-        // as acceptable QP null-space behaviour. Measured, it was 0.836 of
-        // activation on the worst muscle and 1432 N of total muscle force.
-        //
-        // That is not a null space finding a different corner; it is the OSQP
-        // warm start surviving `resetSessionState()`, so the answer depended on
-        // what had been analysed before it. Everything this product publishes is
-        // a comparison — this muscle against that one, left against right — so
-        // an irreproducible activation is not a weaker number, it is not a
-        // number. `MuscleSolver.resetSessionState` now drops the primal warm
-        // start, the OSQP workspace (which carries the DUAL iterate, and which
-        // nothing else could clear) and the fiber-length history.
-        //
-        // Exact equality, not a tolerance: identical input on identical
-        // hardware through a deterministic chain has no reason to differ in the
-        // last bit, and a tolerance here would be a place for the old behaviour
-        // to come back and hide.
-        XCTAssertEqual(controlActivation, 0.0,
-                       "two byte-identical runs must produce byte-identical activations")
-        XCTAssertEqual(controlForce, 0.0,
-                       "and byte-identical per-muscle forces")
-        XCTAssertEqual(treatmentActivation, 0.0,
-                       "a gait pass must leave no residue a later static hold can see")
-        XCTAssertEqual(treatmentForce, 0.0,
-                       "nor may it move any muscle's force")
-
-        // The SUM over 520 forces is the one quantity that is not held to
-        // bit-equality, and the reason is arithmetic rather than physics:
-        // `forces.values.reduce(0, +)` adds in Dictionary iteration order, so
-        // two dictionaries holding bit-identical values can still reassociate
-        // the sum differently. Measured at 7.3e-12 N against a ~1.4e3 N total,
-        // i.e. 5e-15 relative — the last bit of a double. The per-muscle
-        // assertions above are the meaningful ones; this is here so that a real
-        // regression (which would be many orders larger) still fails.
-        XCTAssertLessThan(controlForceSum, 1e-6)
-        XCTAssertLessThan(treatmentForceSum, 1e-6)
+        assertIsPoseOnlyHold(c, "hold after a gait pass")
+        XCTAssertNil(engine.lastIDResult)
+        XCTAssertNil(engine.lastMuscleResult)
+        XCTAssertNil(engine.displayMuscleResult)
     }
 
     // MARK: - Reproducibility across a clip boundary
 
-    /// **The product's actual sequence, and the assertion the blocker asked
-    /// for.** Import clip B; then in a fresh session import clip A and clip B.
-    /// B's published activations must be the same both times.
-    ///
-    /// This is the scenario that made the warm-start leak matter. Inside one
-    /// gait pass the leak is worse than random rather than merely random:
-    /// stance frames alternate left, right, left, right, so every solve
-    /// warm-starts from the OPPOSITE leg's answer — which is precisely the
-    /// comparison the panel prints. Nothing else in the pipeline could catch it:
-    /// `residualGatePassed`, `contactGatePassed`, `isSaturated` and
-    /// `resolvableAsymmetryPercent` are all computed from contact timing and the
-    /// force SUM, and none of them knows where OSQP stopped.
-    ///
-    /// Two different synthetic clips, not two copies of one, so the preceding
-    /// run genuinely leaves a different state behind.
+    /// Import clip B, then A, then B again. The same clip must retain identical
+    /// kinematic routing while every stance remains contact-unavailable; a
+    /// preceding clip must not resurrect an older load payload.
     @MainActor
-    func testTwoIdenticalRunsProduceIdenticalActivations() async throws {
+    func testRepeatedRunsRemainDeterministicallyPoseOnly() async throws {
         let engine = try await loadedEngine()
         let dt = 1.0 / 30.0
         let clipA = Self.syntheticRunSequence(dt: dt, frames: 20, swingAmplitude: 0.14)
         let clipB = Self.syntheticRunSequence(dt: dt, frames: 20, swingAmplitude: 0.03)
 
-        /// One whole clip through the shipping path, from a clip boundary.
-        func run(_ sequence: [[(String, SIMD3<Double>)]]) async -> [(Double, [String: Double])] {
+        func run(_ sequence: [[(String, SIMD3<Double>)]]) async
+            -> [(TimeInterval, NimbleEngine.MotionVerdict,
+                 NimbleEngine.DynamicsAvailability)] {
             engine.resetSessionState()
             engine.setExplicitGroundHeightY(Self.trustedFixtureGroundY)
             engine.staticHoldGating = false
             engine.gaitPlan = Self.plan(for: sequence, dt: dt, taps: 5, peakBW: 2.5)
-            var out: [(Double, [String: Double])] = []
+            var out: [(TimeInterval, NimbleEngine.MotionVerdict,
+                       NimbleEngine.DynamicsAvailability)] = []
             for (i, markers) in sequence.enumerated() {
                 let ok = await submitAndWait(engine, bodyFrame(markers, timestamp: Double(i) * dt,
                                                                frameNumber: i))
-                guard ok, let solve = engine.lastSolve, let muscle = solve.muscle else { continue }
-                out.append((solve.centerTimestamp, muscle.activations))
+                guard ok, let solve = engine.lastSolve else { continue }
+                XCTAssertNil(solve.id)
+                XCTAssertNil(solve.muscle)
+                XCTAssertNil(solve.gait)
+                out.append((solve.centerTimestamp, solve.motion.verdict,
+                            solve.dynamicsAvailability))
             }
             engine.gaitPlan = nil
             return out
@@ -592,27 +391,20 @@ final class GaitDynamicsTests: XCTestCase {
         _ = await run(clipA)
         let afterA = await run(clipB)
 
-        XCTAssertFalse(alone.isEmpty, "clip B must produce muscle output at all")
+        XCTAssertFalse(alone.isEmpty, "clip B must publish centred poses")
         XCTAssertEqual(alone.count, afterA.count,
                        "same clip, same number of solved frames (a mismatch here is the test "
                        + "harness dropping a submission, not the solver)")
-
-        var worst = 0.0
-        var worstMuscle = ""
         for (x, y) in zip(alone, afterA) {
             XCTAssertEqual(x.0, y.0, accuracy: 1e-12, "frames must line up in time")
-            XCTAssertEqual(Set(x.1.keys), Set(y.1.keys))
-            for (name, v) in x.1 {
-                let d = abs(v - (y.1[name] ?? .nan))
-                if d > worst { worst = d; worstMuscle = name }
+            XCTAssertEqual(x.1, y.1)
+            XCTAssertEqual(x.2, y.2)
+            if x.1 == .gaitStance {
+                XCTAssertEqual(x.2, .contactSupportUnavailable)
             }
         }
-        print("GAIT-METRIC clip_order_independence frames=\(alone.count) "
-              + "worst_activation_delta=\(worst) worst_muscle=\(worstMuscle)")
-
-        XCTAssertEqual(worst, 0.0,
-                       "the same clip must publish the same activations whether or not another "
-                       + "clip was analysed first")
+        XCTAssertNil(engine.lastIDResult)
+        XCTAssertNil(engine.lastMuscleResult)
     }
 
     /// With no plan the engine uses the window that shipped, so the live camera
