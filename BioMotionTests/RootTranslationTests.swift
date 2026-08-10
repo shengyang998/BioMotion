@@ -69,11 +69,17 @@ final class RootTranslationTests: XCTestCase {
         let a = MHRRetarget.makeBodyFrame(jointCoords: j, timestamp: 1.0, frameNumber: 3)
         let b = MHRRetarget.makeBodyFrame(jointCoords: j, camT: nil, timestamp: 1.0, frameNumber: 3)
         XCTAssertEqual(a.joints.count, b.joints.count)
-        for (x, y) in zip(a.joints, b.joints) {
+        for (index, pair) in zip(a.joints, b.joints).enumerated() {
+            let (x, y) = pair
             XCTAssertEqual(x.id, y.id)
             XCTAssertEqual(x.worldPosition, y.worldPosition,
                            "the default must be bit-identical to the pre-existing behaviour")
+            XCTAssertEqual(x.opensimMarkerNameOverride, MHRRetarget.table[index].opensimMarker)
+            XCTAssertEqual(y.opensimMarkerNameOverride, MHRRetarget.table[index].opensimMarker)
         }
+        XCTAssertEqual(a.joints.first?.opensimMarkerNameOverride, "MHR_ROOT")
+        XCTAssertTrue(MHRRetarget.inconsistenciesWithJointMapping().isEmpty,
+                      MHRRetarget.inconsistenciesWithJointMapping().joined(separator: "; "))
     }
 
     // MARK: - What composing cam_t does, and does not, change
@@ -186,6 +192,18 @@ final class RootTranslationTests: XCTestCase {
         print("ROOT-METRIC pinned rootObservable=\(v.rootTranslationObservable) verdict=\(v.verdict)")
         XCTAssertFalse(v.rootTranslationObservable,
                        "a pinned pelvis means the root's contribution to M·q̈ is missing")
+
+        var switchingAliases = StaticHoldDetector()
+        for k in 0..<SavitzkyGolayFilter.windowSize {
+            let alias = k.isMultiple(of: 2) ? "PELVIS" : "MHR_ROOT"
+            switchingAliases.ingest(
+                flatMarkerPositions: [NSNumber(value: 0), NSNumber(value: 0.924), NSNumber(value: 0)],
+                markerNames: [alias],
+                timestamp: Double(k) * 0.1
+            )
+        }
+        XCTAssertFalse(switchingAliases.classify(centeredAt: 0.8).rootTranslationObservable,
+                       "switching source aliases is not evidence of physical root motion")
     }
 
     /// The same sequence with `cam_t` composed in flips it. Built through
@@ -201,8 +219,8 @@ final class RootTranslationTests: XCTestCase {
             var flat: [NSNumber] = []
             var names: [String] = []
             for joint in frame.joints {
-                guard let m = JointMapping.primary.first(where: { $0.arkitName == joint.id }) else { continue }
-                names.append(m.opensimName)
+                guard let markerName = JointMapping.opensimMarkerName(for: joint) else { continue }
+                names.append(markerName)
                 flat.append(NSNumber(value: Double(joint.worldPosition.x)))
                 flat.append(NSNumber(value: Double(joint.worldPosition.y)))
                 flat.append(NSNumber(value: Double(joint.worldPosition.z)))

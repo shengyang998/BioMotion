@@ -224,9 +224,10 @@ final class StaticEquilibriumBenchmarkTests: XCTestCase {
     private func solve(markers: [(String, SIMD3<Double>)], tag: String) throws -> Solved {
         var positions: [NSNumber] = []
         var names: [String] = []
+        let supportedSourceMarkers = Set(JointMapping.primary.map(\.opensimName)).union(["MHR_ROOT"])
         for (opensimName, p) in markers {
-            XCTAssertTrue(JointMapping.primary.contains { $0.opensimName == opensimName },
-                          "\(opensimName) is not in JointMapping.primary")
+            XCTAssertTrue(supportedSourceMarkers.contains(opensimName),
+                          "\(opensimName) is not a supported source marker")
             names.append(opensimName)
             positions.append(NSNumber(value: p.x))
             positions.append(NSNumber(value: p.y))

@@ -138,6 +138,47 @@ final class DOFMaskTests: XCTestCase {
         XCTAssertEqual(before.jointAngles.count, after.jointAngles.count)
     }
 
+    /// A failed replacement must be a transaction: the old skeleton remains
+    /// usable with the exact runtime constraint the caller installed on it.
+    func testFailedReloadPreservesActiveDOFMask() throws {
+        XCTAssertTrue(bridge.loadModel(fromPath: try modelPath("Rajagopal2016")))
+        XCTAssertEqual(bridge.applyDOFMask(withNames: ["hip_flexion_r"]), 1)
+
+        let oldDOFCount = bridge.numDOFs
+        let oldFreeDOFCount = bridge.numFreeDOFs
+        let oldMaskedNames = bridge.maskedDOFNames
+        XCTAssertTrue(bridge.isDOFMaskActive)
+        XCTAssertEqual(oldFreeDOFCount, oldDOFCount - 1)
+        XCTAssertEqual(oldMaskedNames, ["hip_flexion_r"])
+
+        XCTAssertFalse(bridge.loadModel(fromPath: "/this/path/cannot/exist/BioMotion.osim"))
+
+        XCTAssertTrue(bridge.isModelLoaded,
+                      "a failed replacement must leave the prior model loaded")
+        XCTAssertEqual(bridge.numDOFs, oldDOFCount)
+        XCTAssertTrue(bridge.isDOFMaskActive)
+        XCTAssertEqual(bridge.numFreeDOFs, oldFreeDOFCount)
+        XCTAssertEqual(bridge.maskedDOFNames, oldMaskedNames)
+    }
+
+    /// A successful replacement has a different DOF layout, so retaining the
+    /// old model's index mask would either pin the wrong coordinates or index
+    /// outside the new skeleton.
+    func testSuccessfulReloadClearsActiveDOFMask() throws {
+        XCTAssertTrue(bridge.loadModel(fromPath: try modelPath("Rajagopal2016")))
+        XCTAssertEqual(bridge.applyDOFMask(withNames: ["hip_flexion_r"]), 1)
+        let rajagopalDOFCount = bridge.numDOFs
+        XCTAssertTrue(bridge.isDOFMaskActive)
+
+        XCTAssertTrue(bridge.loadModel(fromPath: try modelPath("FullBody")))
+
+        XCTAssertNotEqual(bridge.numDOFs, rajagopalDOFCount,
+                          "the test must observe an actual skeleton replacement")
+        XCTAssertFalse(bridge.isDOFMaskActive)
+        XCTAssertTrue(bridge.maskedDOFNames.isEmpty)
+        XCTAssertEqual(bridge.numFreeDOFs, bridge.numDOFs)
+    }
+
     func testMaskedDOFsStayExactlyPinned() throws {
         try loadFullBody()
         _ = bridge.applyDOFMask(withNames: FullBodyDOFFixture.runtimeMask)
@@ -363,11 +404,14 @@ final class DOFMaskTests: XCTestCase {
         return bridge.solveIK(withMarkerPositions: m.positions, markerNames: m.names)
     }
 
+    private func modelPath(_ name: String) throws -> String {
+        let path = Bundle(for: type(of: self)).path(forResource: name, ofType: "osim")
+            ?? Bundle.main.path(forResource: name, ofType: "osim")
+        return try XCTUnwrap(path, "\(name).osim is not reachable from the test bundle")
+    }
+
     private func loadFullBody() throws {
-        let path = Bundle(for: type(of: self)).path(forResource: "FullBody", ofType: "osim")
-            ?? Bundle.main.path(forResource: "FullBody", ofType: "osim")
-        let requiredPath = try XCTUnwrap(path,
-                                         "FullBody.osim is not reachable from the test bundle")
-        XCTAssertTrue(bridge.loadModel(fromPath: requiredPath), "FullBody.osim must load")
+        XCTAssertTrue(bridge.loadModel(fromPath: try modelPath("FullBody")),
+                      "FullBody.osim must load")
     }
 }

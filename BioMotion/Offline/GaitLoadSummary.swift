@@ -902,7 +902,7 @@ struct GaitLoadSummary {
     /// solves full 6-D wrenches per foot subject to Newton-Euler, so it ASSIGNS
     /// a fore-aft ground force on every stance frame. What it assigns is
     /// whatever makes the horizontal CoM acceleration match the pose stream —
-    /// and `MHRRetarget` pins the pelvis, so that acceleration is ~0 whether
+    /// and `MHRRetarget` pins the raw source root, so that acceleration is ~0 whether
     /// `pelvis_tx`/`pelvis_tz` are forced to zero or merely left alone. The
     /// distinction the engine's comment draws between those two is numerically
     /// empty on this pose source. STATUS sizes the resulting error at 0.2-0.35

@@ -25,8 +25,9 @@ final class OfflineOrchestrationTests: XCTestCase {
     }
 
     private func bodyFrame(timestamp: TimeInterval, frameNumber: Int) -> BodyFrame {
-        let joints = OfflineMuscleChainFixture.markers.map { arkitId, _, p in
-            TrackedJoint(id: arkitId, name: arkitId, worldPosition: p, isTracked: true)
+        let joints = OfflineMuscleChainFixture.markers.map { arkitId, opensimMarker, p in
+            TrackedJoint(id: arkitId, name: arkitId, worldPosition: p, isTracked: true,
+                         opensimMarkerNameOverride: opensimMarker)
         }
         return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
     }
@@ -184,7 +185,7 @@ final class OfflineOrchestrationTests: XCTestCase {
 /// drift apart on the pose they exercise.
 enum OfflineMuscleChainFixture {
     static let markers: [(String, String, SIMD3<Float>)] = [
-        ("hips_joint", "PELVIS", SIMD3<Float>(0.000000, 0.923987, 0.000000)),
+        ("hips_joint", "MHR_ROOT", SIMD3<Float>(0.000000, 0.923987, 0.000000)),
         ("left_upLeg_joint", "LHJC", SIMD3<Float>(0.049532, 0.940746, -0.059429)),
         ("right_upLeg_joint", "RHJC", SIMD3<Float>(-0.026827, 0.888276, 0.065355)),
         ("left_leg_joint", "LKJC", SIMD3<Float>(0.381692, 1.159680, 0.103828)),

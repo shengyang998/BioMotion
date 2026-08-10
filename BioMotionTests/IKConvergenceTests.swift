@@ -223,8 +223,8 @@ final class IKConvergenceTests: XCTestCase {
         // Model-side rigid distances, read off the neutral FK geometry recorded
         // in StaticEquilibriumBenchmarkTests' header.
         let modelPairs: [(String, String, Double)] = [
-            ("PELVIS", "RHJC", 0.12372),   // pelvis origin -> femur origin
-            ("PELVIS", "LHJC", 0.12372),
+            ("MHR_ROOT", "RHJC", 0.0773), // HJC midpoint proxy -> femur origin
+            ("MHR_ROOT", "LHJC", 0.0773),
             ("RHJC",   "RKJC", 0.40612),   // femur
             ("LHJC",   "LKJC", 0.40612),
             ("RKJC",   "RAJC", 0.40013),   // tibia
@@ -250,20 +250,19 @@ final class IKConvergenceTests: XCTestCase {
 
         // Hip WIDTH is the control. If the subject were simply a different size
         // from the model, |LHJC−RHJC| would be off by a similar fraction to
-        // |PELVIS−HJC|. If instead the width agrees and only the pelvis-to-hip
-        // distance is wrong, the PELVIS virtual marker is registered at the
-        // wrong point on the pelvis body — a marker-table error, which no
-        // amount of solving or scaling can absorb.
+        // |MHR_ROOT−HJC|. The source root is 15.1 mm from its measured HJC
+        // midpoint, so a small residual remains explicit rather than mapping
+        // it to OpenSim's pelvis origin 96.6 mm away.
         let dHip = target("LHJC") - target("RHJC")
         let hipWidthTarget = (dHip.x * dHip.x + dHip.y * dHip.y + dHip.z * dHip.z).squareRoot()
         print(String(format: "IKCONV-METRIC hip_width model=%.4f target=%.4f gap_cm=%.2f",
                      0.1546, hipWidthTarget, abs(0.1546 - hipWidthTarget) * 100))
 
-        // Assumption-free version of the same question: drop PELVIS from the
+        // Assumption-free version of the same question: drop MHR_ROOT from the
         // solve and see what the other 19 markers can then reach.
         var pos: [NSNumber] = []
         var names: [String] = []
-        for (_, opensim, p) in OfflineMuscleChainFixture.markers where opensim != "PELVIS" {
+        for (_, opensim, p) in OfflineMuscleChainFixture.markers where opensim != "MHR_ROOT" {
             names.append(opensim)
             pos.append(NSNumber(value: Double(p.x)))
             pos.append(NSNumber(value: Double(p.y)))
@@ -307,12 +306,13 @@ final class IKConvergenceTests: XCTestCase {
         let rUpper = dist("RSJC", "REJC") + dist("REJC", "RWJC")
         let halfHip = 0.5 * dist("LHJC", "RHJC")
         let halfShoulder = 0.5 * dist("LSJC", "RSJC")
+        let hipMid = 0.5 * (p("LHJC") + p("RHJC"))
         let shoulderMid = 0.5 * (p("LSJC") + p("RSJC"))
-        let trunkV = shoulderMid - p("PELVIS")
+        let trunkV = shoulderMid - hipMid
         let trunk = (trunkV.x * trunkV.x + trunkV.y * trunkV.y + trunkV.z * trunkV.z).squareRoot()
 
         let layout: [(String, SIMD3<Double>)] = [
-            ("PELVIS", SIMD3(0, 0, 0)),
+            ("MHR_ROOT", SIMD3(0, 0, 0)),
             ("LHJC", SIMD3(halfHip, 0, 0)), ("RHJC", SIMD3(-halfHip, 0, 0)),
             ("LAJC", SIMD3(halfHip, -lLower, 0)), ("RAJC", SIMD3(-halfHip, -rLower, 0)),
             ("LSJC", SIMD3(halfShoulder, trunk, 0)), ("RSJC", SIMD3(-halfShoulder, trunk, 0)),

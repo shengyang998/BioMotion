@@ -457,7 +457,8 @@ final class PostureFindingsTests: XCTestCase {
                                     Float(Double(p.x) * cos(roll) - Double(p.y) * sin(roll)),
                                     Float(Double(p.x) * sin(roll) + Double(p.y) * cos(roll)),
                                     p.z),
-                                isTracked: true)
+                                isTracked: true,
+                                opensimMarkerNameOverride: j.opensimMarkerNameOverride)
         }
         let rolledReport = PostureFindings.report(joints: rolled, cameraDepthAxis: depth)
 

@@ -7,7 +7,7 @@ Two separate questions, deliberately not merged:
    what step? This is the claim `poses.py` is allowed to make.
 
 2. WHAT THE PINNED CLIPS SHOW -- reported, NOT used as a gate. The fixtures
-   hold pelvis and both ankles, so pelvis-to-ankle distance over that clip's own
+   hold raw MHR root and both ankles, so source-root-to-ankle distance over that clip's own
    maximum is a scale-free measure of how far the leg folds. It cannot be turned
    into a knee angle without a knee marker, and the denominator is only assumed
    to be a straight leg. So it is evidence about the clips, not a pass/fail on
@@ -73,11 +73,11 @@ def coordinate_coverage(model):
 
 
 def fold_extremes(model, state):
-    """Smallest pelvis-to-ankle distance, over that pose's straight-leg value,
+    """Smallest model-root-to-ankle distance, over that pose's straight-leg value,
     that FullBody.osim can reach ANYWHERE in its clamped sagittal range. Two
-    endpoint definitions, because the clips' `hips_joint` is the MHR mid-hip and
-    the model's `pelvis` body origin sits 9.7 cm away from the hip-centre
-    midpoint (STATUS records that offset; it is re-measured here)."""
+    endpoint definitions, because the clips' `hips_joint` is raw MHR joint 1
+    (15.1 mm from that source's HJC midpoint), while the model's `pelvis` body
+    origin sits 9.7 cm from its HJC midpoint (STATUS records both distinctions)."""
     bodies = model.getBodySet()
 
     def point(name):
@@ -123,7 +123,7 @@ def main():
                          % (name, low, high, lo, hi, 100 * covered, step, levels))
 
     best, offset = fold_extremes(model, state)
-    sys.stdout.write("\n2. LEG FOLD: pelvis-to-ankle over the straight-leg value\n")
+    sys.stdout.write("\n2. LEG FOLD: root-to-ankle over the straight-leg value\n")
     sys.stdout.write("   model pelvis origin is %.4f m from the hip-centre midpoint\n" % offset)
     for key, (ratio, at) in best.items():
         sys.stdout.write("   model minimum (%-13s) %.3f at hip/knee/ankle %s\n"
@@ -141,9 +141,10 @@ def main():
                      % worst_clip)
     sys.stdout.write("   cannot fold below %.3f ANYWHERE in its clamped sagittal range,\n"
                      % model_floor)
-    sys.stdout.write("   under either endpoint definition (%.3f / %.3f), so the 9.7 cm\n"
+    sys.stdout.write("   under either model endpoint definition (%.3f / %.3f). The raw MHR\n"
                      % (best["pelvis_origin"][0], best["hip_mid"][0]))
-    sys.stdout.write("   pelvis-origin offset does not explain the gap. Three candidates\n")
+    sys.stdout.write("   root is only 1.51 cm from its source HJC midpoint, so neither that\n")
+    sys.stdout.write("   nor the 9.7 cm model pelvis-origin offset explains the gap. Three candidates\n")
     sys.stdout.write("   remain and this script cannot separate them: the clip's own\n")
     sys.stdout.write("   maximum may overstate a straight leg (which would make the gap\n")
     sys.stdout.write("   WIDER, not narrower); a single noisy frame may inflate that\n")

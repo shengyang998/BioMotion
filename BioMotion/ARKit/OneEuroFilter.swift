@@ -129,7 +129,8 @@ final class SkeletonFilter {
                 id: joint.id,
                 name: joint.name,
                 worldPosition: smoothed,
-                isTracked: joint.isTracked
+                isTracked: joint.isTracked,
+                opensimMarkerNameOverride: joint.opensimMarkerNameOverride
             )
         }
 

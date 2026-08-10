@@ -398,7 +398,9 @@ final class GaitReportTests: XCTestCase {
                 guard j.id == GaitSignal.JointID.ankle(.left)
                         || j.id == GaitSignal.JointID.toe(.left) else { return j }
                 let frozen = donor.joints.first { $0.id == j.id }!.worldPosition
-                return TrackedJoint(id: j.id, name: j.name, worldPosition: frozen, isTracked: true)
+                return TrackedJoint(id: j.id, name: j.name, worldPosition: frozen,
+                                    isTracked: true,
+                                    opensimMarkerNameOverride: j.opensimMarkerNameOverride)
             }
             edited.append(BodyFrame(timestamp: f.timestamp, frameNumber: f.frameNumber, joints: joints))
         }

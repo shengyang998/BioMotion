@@ -31,6 +31,8 @@ final class BodyPlausibilityTests: XCTestCase {
     private enum Idx {
         static let root = 1, lUpleg = 2, lLowleg = 3, lFoot = 4
         static let rUpleg = 18, rLowleg = 19, rFoot = 20
+        static let rUparm = 39, rLowarm = 40, rWrist = 42
+        static let lUparm = 75, lLowarm = 76, lWrist = 78
         static let cNeck = 110, cHead = 113, cHeadNull = 126
         static let count = 127
     }
@@ -52,6 +54,12 @@ final class BodyPlausibilityTests: XCTestCase {
         j[Idx.rLowleg]  = SIMD3<Float>( half, -thigh, 0)
         j[Idx.lFoot]    = SIMD3<Float>(-half, -thigh - shank, 0)
         j[Idx.rFoot]    = SIMD3<Float>( half, -thigh - shank, 0)
+        j[Idx.lUparm]   = SIMD3<Float>(-0.18, trunk, 0)
+        j[Idx.lLowarm]  = SIMD3<Float>(-0.43, trunk, 0)
+        j[Idx.lWrist]   = SIMD3<Float>(-0.68, trunk, 0)
+        j[Idx.rUparm]   = SIMD3<Float>( 0.18, trunk, 0)
+        j[Idx.rLowarm]  = SIMD3<Float>( 0.43, trunk, 0)
+        j[Idx.rWrist]   = SIMD3<Float>( 0.68, trunk, 0)
         j[Idx.cNeck]    = SIMD3<Float>(0, trunk, 0)
         j[Idx.cHead]    = SIMD3<Float>(0, trunk + neck, 0)
         j[Idx.cHeadNull] = SIMD3<Float>(0, trunk + neck + skull, 0)
@@ -74,6 +82,46 @@ final class BodyPlausibilityTests: XCTestCase {
                        accuracy: 1e-4)
         print("PLAUS-METRIC nominal hip=\(MHRRetarget.hipWidthMeters(jointCoords: j)) " +
               "stature=\(statureOf(j))")
+    }
+
+    func testSegmentScalingUsesTheMHRRootAliasAndHipCentreTrunk() {
+        let baseline = joints(hipWidth: 0.17)
+        var shiftedSourceRoot = baseline
+        shiftedSourceRoot[Idx.root] += SIMD3<Float>(0.05, -0.02, 0.03)
+
+        let a = MHRRetarget.segmentScaleMarkers(jointCoords: baseline)
+        let b = MHRRetarget.segmentScaleMarkers(jointCoords: shiftedSourceRoot)
+
+        XCTAssertEqual(a.names.count, 9)
+        XCTAssertEqual(a.names.first, "MHR_ROOT")
+        XCTAssertFalse(a.names.contains("PELVIS"))
+        XCTAssertEqual(a.names, b.names)
+        XCTAssertEqual(a.positions, b.positions,
+                       "scaling must use the bilateral HJC midpoint, not the offset raw MHR root")
+
+        func marker(_ name: String) -> SIMD3<Float> {
+            guard let i = a.names.firstIndex(of: name) else {
+                XCTFail("missing synthetic scale marker \(name)")
+                return .zero
+            }
+            return SIMD3<Float>(a.positions[i * 3],
+                                a.positions[i * 3 + 1],
+                                a.positions[i * 3 + 2])
+        }
+        XCTAssertEqual(simd_distance(marker("MHR_ROOT"),
+                                     0.5 * (marker("LHJC") + marker("RHJC"))),
+                       0, accuracy: 1e-7)
+        XCTAssertEqual(simd_distance(marker("MHR_ROOT"),
+                                     0.5 * (marker("LSJC") + marker("RSJC"))),
+                       0.50, accuracy: 1e-6)
+        XCTAssertEqual(simd_distance(marker("LHJC"), marker("LAJC")),
+                       0.84, accuracy: 1e-6)
+        XCTAssertEqual(simd_distance(marker("RHJC"), marker("RAJC")),
+                       0.84, accuracy: 1e-6)
+        XCTAssertEqual(simd_distance(marker("LSJC"), marker("LWJC")),
+                       0.50, accuracy: 1e-6)
+        XCTAssertEqual(simd_distance(marker("RSJC"), marker("RWJC")),
+                       0.50, accuracy: 1e-6)
     }
 
     /// An ordinary adult passes with margin on both axes.

@@ -48,9 +48,9 @@ final class OfflineMuscleChainTests: XCTestCase {
 
         var positions: [NSNumber] = []
         var names: [String] = []
-        for (arkitId, _, p) in OfflineMuscleChainFixture.markers {
-            let mapping = JointMapping.primary.first { $0.arkitName == arkitId }
-            let opensim = try XCTUnwrap(mapping?.opensimName, "\(arkitId) missing from JointMapping.primary")
+        for (arkitId, opensim, p) in OfflineMuscleChainFixture.markers {
+            XCTAssertNotNil(JointMapping.primary.first { $0.arkitName == arkitId },
+                            "\(arkitId) missing from JointMapping.primary")
             names.append(opensim)
             positions.append(NSNumber(value: Double(p.x)))
             positions.append(NSNumber(value: Double(p.y)))

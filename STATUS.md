@@ -20,9 +20,10 @@ biggest links were **not** where the effort had been going.
   [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
 - A **commercial licence blocker** was found on the upper limb (MoBL-ARMS is non-commercial).
   A BSD-3 alternative exists.
-- **IK is now a fixed point** (2026-08-07). Repeated solves on identical markers move exactly 0 rad,
-  the answer no longer depends on how many solves preceded it, and the dancer fixture's true marker
-  RMS went 5.4913 → 2.1224 cm. See
+- **IK is now a fixed point** (2026-08-07). Repeated converged solves on identical markers move
+  exactly 0 rad and the answer no longer depends on how many solves preceded it. Under the former
+  PELVIS-root mapping the dancer RMS went 5.4913 → 2.1224 cm; the source-specific MHR_ROOT repair on
+  2026-08-10 lowers the current fixture to **1.5365 cm**, or **1.2758 cm** after source-aware scaling. See
   [IK convergence](#ik-convergence-the-solver-is-now-a-fixed-point-2026-08-07).
 - A **kinematics-only findings layer** ships (forward head, rounded shoulders, trunk lean, …). It
   carries **no clinical threshold and no verdict** and suppresses any finding whose measurement axis
@@ -318,7 +319,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 498 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 506 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -1060,7 +1061,7 @@ behavioural change: the per-coordinate maximum is bimodal with a **nine-decade g
 |---|---|---|
 | neutral standing | **0.2008** | 0.2008 |
 | 4° forward lean | **0.1526** | 0.1526 |
-| dancer fixture | **0.3545** | 0.6406 |
+| dancer fixture (legacy PELVIS mapping) | **0.3545** | 0.6406 |
 
 Standing is under the 0.3 line `MuscleSolver.h` documents; the two standing figures did not move
 because their IK was already fitting to 0.1 mm.
@@ -1071,13 +1072,11 @@ that diagnosis was right: the same fixture now solves to 2.1224 cm true marker R
 5.4913, reproducibly, and the muscle residual almost halved with the muscle solver untouched. Nothing
 in `MuscleSolver` or `MomentArmComputer` changed between those two columns.
 
-⚠️ The dancer still does not clear 0.3, and the sentence **"the dancer fixture is not a usable
-benchmark for the muscle stage until IK is fixed"** is only half retired. IK is fixed as a solver —
-it is a fixed point, order-independent, and lands on the same answer every run — but the fixture's
-remaining 2.12 cm is a marker DEFINITION error (PELVIS is registered at the `pelvis` body origin,
-≈ 9.7 cm from the pose source's mid-hip point; per-marker PELVIS 5.76 cm, LSJC 3.73, RHJC 3.47).
-Until that is resolved the pose handed to ID is still not the subject's pose, and 0.3545 is a
-faithful report of that. The two standing poses remain the muscle stage's only clean benchmarks.
+⚠️ The paragraph above is the dated 2026-08-07 PELVIS-mapping result. The root-definition defect is
+resolved on 2026-08-10 by the source-specific `MHR_ROOT` contract. Current unscaled dancer marker
+RMS is **1.5365 cm**, but its shipped relative torque residual is **0.5939547**, not 0.3545. Better
+marker fit did not make this oblique real pose a controlled muscle benchmark; the two standing poses
+remain the muscle stage's clean benchmarks. See the MHR_ROOT section for the source/proxy distinction.
 
 ⚠️ **Saturated-muscle count is not a valid metric — stop using it.** Across a λ sweep at *fixed*
 inputs it reads 19, 11, 22, 18, 20 with no trend, and at-floor reads 219, 189, 344, 170, 282. OSQP
@@ -1238,8 +1237,9 @@ the same clip.
 
 ### The limitation that shapes the product claim
 
-**`joint_coords` pins the pelvis at a model constant `(0, 0.924, 0)` in every frame.** `global_trans`
-is zeroed (`sam3d_body.py:1600`), so that number is not the subject's pelvis height and `y = 0` is
+**`joint_coords` pins raw MHR joint 1 at a model constant `(0, 0.924, 0)` in every frame.**
+`global_trans` is zeroed (`sam3d_body.py:1600`), so that number is not the subject's global root
+position and `y = 0` is
 not the floor.
 
 Joint *angles* are frame-invariant and therefore correct. But the body has no global vertical
@@ -1609,7 +1609,7 @@ Renamed to `contactSequencePeriodicityErrorFrames`, documented as what it is, an
 now asserted (`testThePeriodicityCheckIsAnIdentityAndCannotSeeTheForce`).
 
 The real answer to the falsifiability requirement, and the (a)/(b) choice: **(a) for the mechanism,
-because (b) is not available on this pose source.** `MHRRetarget` pins the pelvis, so measured
+because (b) is not available on this pose source.** `MHRRetarget` pins the raw source root, so measured
 `a_root ≡ 0` and a plain-ID root residual would read `‖m·a_artic − m·g − F_gait‖ ≈ 3.9·m·g` on every
 stance frame of every clip — the same failure on good and bad footage alike, i.e. a constant, not a
 falsifier. (b) unlocks when `cam_t` is composed in AND its depth is usable (3.11 g of noise at
@@ -2039,7 +2039,7 @@ position and points at the posture measurements, instead of telling the user to 
 **M10 — the fore-aft term was described as ABSENT when it is PRESENT and wrong.**
 `getMultipleContactInverseDynamicsNearCoP` solves full 6-D wrenches per foot subject to Newton-Euler,
 so it ASSIGNS a fore-aft ground force on every stance frame — whatever makes the horizontal CoM
-acceleration match a pelvis `MHRRetarget` pins still. The engine's comment distinguishes "forced to
+acceleration match the raw source root `MHRRetarget` pins still. The engine's comment distinguishes "forced to
 zero" from "left alone"; on this pose source the value ID consumes is ~0 either way, so the
 distinction is numerically empty. STATUS sizes the error at 0.2-0.35 BW, LARGER than the worst
 vertical residual the same screen reports as passing, and it is phase-dependent. The disclosure now
@@ -2678,18 +2678,19 @@ else would have.
 ### What the pinned clips could NOT supply, and one thing they say anyway
 
 The brief asked for joint angles from `BioMotionTests/Fixtures/gait_*.txt` if possible. **They cannot
-supply them.** Those files hold five marker positions per frame — pelvis, both ankles, both toes.
+supply them.** Those files hold five marker positions per frame — raw MHR root, both ankles, both toes.
 Fifteen scalars with no knee, no thigh and no pelvis orientation do not determine hip/knee/ankle
-flexion: pelvis-to-ankle distance constrains the SUM of hip and knee flexion and says nothing about
+flexion: source-root-to-ankle distance constrains the SUM of hip and knee flexion and says nothing about
 the split. So the pose set is a coverage grid over the model's own coordinate ranges — 100% of the
 clamped range of `knee_angle`, `ankle_angle`, `elbow_flex`, `shoulder_elv` and 93.3% of
 `hip_flexion`, at 5 deg or finer — and it is labelled as that, not as a claim about a runner.
 
-The clips do say one thing, recorded as an observation and **not** acted on: their pelvis-to-ankle
+The clips do say one thing, recorded as an observation and **not** acted on: their source-root-to-ankle
 distance folds to **0.280** of that clip's own maximum (0.315 / 0.280 / 0.316 for video_012/013/015),
 and FullBody.osim cannot fold below **0.337** anywhere in its clamped sagittal range — 0.349
-measuring from the hip-centre midpoint instead, so the 9.7 cm pelvis-origin offset does not explain
-it. Three candidates, and `pose_coverage.py` cannot separate them: the clip's own maximum may
+measuring from the model hip-centre midpoint instead. Raw MHR joint 1 is itself 15.1 mm from the
+source HJC midpoint, so neither root convention explains it. Three candidates, and
+`pose_coverage.py` cannot separate them: the clip's own maximum may
 overstate a straight leg (which makes the gap WIDER), a single noisy frame may inflate that maximum,
 or `MHRRetarget` emits leg configurations outside the model's joint limits and IK is clamping on
 those frames. If it is the third, it is happening on exactly the deeply-flexed frames where wrapping
@@ -3998,8 +3999,9 @@ accepted caller exclusions, and always appended the E1 skip — so asking it to 
 skipped the same class. The log could say success while no required test supplied evidence.
 
 The runner now has four explicit modes. `fast` owns the E1 exclusion and currently requires exactly
-**498** ordinary tests (488 when this gate itself landed, plus three temporal-isolation, two
-atomic-payload regressions, two live-anatomy contracts, and three model-scaling contracts below).
+**506** ordinary tests (488 when this gate itself landed, plus three temporal-isolation, two
+atomic-payload regressions, two live-anatomy contracts, three model-scaling contracts below, and
+eight MHR-root/source-provenance and reload-lifecycle contracts).
 `slow` owns the one exact E1
 selector and requires exactly **1** test. `all` runs both lanes and is the commit gate. `subset`
 requires at least one caller-selected
@@ -4138,24 +4140,88 @@ same bridge then passing FullBody's own geometry produced 0.916012 / 0.926834 / 
 failure is therefore the old reference/assignment semantics, not a missing fixture or test target.
 
 Every successful model load now replaces one coherent baseline: the exact body-scale vector and
-lower/trunk/upper references computed from that skeleton's hip→ankle, pelvis→shoulder-midpoint and
-shoulder→wrist body origins. Subject ratios are measured against those cached lengths, clamped in
+lower/upper references plus separate PELVIS→shoulder-midpoint and HJC-midpoint→shoulder-midpoint
+trunk references. Subject ratios are measured against the cache matching their source alias, clamped in
 `[0.7, 1.4]`, and multiplied component-wise into the cached defaults. Neither references nor scales
 are read from a previously scaled state. Missing references fall back to the existing height ratio,
-and a default-vector size mismatch refuses the scale. Rajagopal caches
-0.8045 / 0.4634 / 0.5360 m; FullBody caches 0.8061 / 0.4820 / 0.5360 m. A successful reload replaces
-all four cached values, including replacing an unavailable reference with invalid state rather than
+and a default-vector size mismatch refuses the scale. Rajagopal caches lower 0.8045, trunk
+PELVIS/MHR_ROOT 0.4634/0.5331, upper 0.5360 m; FullBody caches
+0.8061, 0.4820/0.5517, 0.5360 m. A successful reload replaces
+all five cached values, including replacing an unavailable reference with invalid state rather than
 leaking the earlier model's value.
 
-The three permanent contracts pass **3/3**: loaded-model identity, repeated 1.12× idempotence, and
-Rajagopal→FullBody reload. The scaled dancer plus those contracts pass **4/4**; the broader bridge,
+The original three permanent contracts passed **3/3**: loaded-model identity, repeated 1.12×
+idempotence, and Rajagopal→FullBody reload. The source-specific fourth contract and strengthened
+reload arm are recorded in the MHR_ROOT section below. At this commit's historical receipt, the
+scaled dancer plus those contracts passed **4/4**; the broader bridge,
 IK, calibration, body-plausibility and offline-orchestration set passes **61/61**, all with zero
 failures, skips, expected failures, or restarts. The dancer now uses FullBody-relative ratios
 1.044 / 1.094 / 0.997 and converges at 2.4586 cm marker RMS. These tests move the reviewed fast
-count from 495 to **498**; the fail-closed shell harness passes **49/49**. The full commit gate for
+count from 495 to **498**; the fail-closed shell harness passed **49/49**. The full commit gate for
 this exact change passed fast **498/498 in 2365s** plus slow E1 **1/1 in 6025s**. Both lanes report
 `xcodebuild` 0, `xcresulttool` 0, and zero failures, skips, expected failures, or restarts; the
 runner's final verdict is **ALL GATE PASS**.
+
+
+## MHR root anatomy and marker provenance are source-specific (2026-08-10)
+
+The offline root used one stable joint id for three different anatomical points. Raw MHR joint 1 is
+**not** the bilateral hip-joint-centre midpoint: the pinned shipping fixture measures
+**15.081552 mm** between them (the source rest skeleton measures 19.2 mm). OpenSim `PELVIS` is a
+third point, the pelvis body origin, about 96.6 mm from the model's bilateral HJC midpoint. Mapping
+raw joint 1 straight to `PELVIS` therefore imposed a triangle the model could not satisfy.
+
+The fix keeps identity and anatomy separate:
+
+- `hips_joint` remains the stable body-joint id. Live/default frames resolve it to `PELVIS`; MHR
+  frames carry an explicit `MHR_ROOT` override. The input coordinate remains raw MHR joint 1 — it is
+  not rewritten to pretend that the source root equals its HJC midpoint.
+- `NimbleBridge` reserves `MHR_ROOT` as a model-side bilateral-HJC-midpoint proxy attached to the
+  pelvis. Its local offset is computed through the full inverse pelvis transform and divided by the
+  loaded pelvis scale, so native rotation and anisotropic/non-unit scale are respected. `PELVIS`
+  remains registered at the pelvis body origin for live and legacy callers.
+- `OneEuroFilter`, offline/gait fixtures, test transformations and `NimbleEngine` preserve the
+  source marker override. Resolution first whitelists the stable joint id; an empty override or an
+  override on an unknown id fails closed.
+- TRC uses the effective source marker name. A joint that changes alias across frames, an empty
+  alias, or two ids collapsing to one marker refuses export. If TRC fails while MOT/STO succeeds,
+  the share bundle carries `BioMotion_export_warnings.txt`; failure to create that disclosure stops
+  the partial share and surfaces an alert.
+
+Scaling now observes the same distinction. MHR's synthetic straight-limb input emits `MHR_ROOT`
+and measures trunk length from source HJC midpoint to shoulder midpoint; it no longer measures from
+raw joint 1 and labels that point `PELVIS`. Each successful load caches both trunk denominators:
+FullBody is **0.4820 m PELVIS / 0.5517 m MHR_ROOT**, Rajagopal is
+**0.4634 / 0.5331 m**. The input alias chooses the matching denominator; lower/upper references and
+the loaded default body-scale vector remain the same baseline. The current dancer reaches
+**1.2758 cm** RMS after this source-aware scale, versus 1.5365 cm unscaled.
+
+Model loading is transactional across layers. Native code constructs the candidate skeleton,
+marker map and all five scaling caches before swapping them. A failed reload retains the old model
+and its DOF mask; a successful reload clears the now-invalid index mask and session state. The Swift
+engine likewise keeps reporting the retained model after failure, while success clears SG, hold,
+muscle-timestamp, activation-filter and published-result history before a new frame can run.
+
+The geometry receipt is deliberately two rulers. On the fixture's root/HJC/shoulder subset, the
+legacy `PELVIS` triangle has **38.912142 mm RMS** and the `MHR_ROOT` proxy has
+**7.209843 mm RMS**. On all 20 dancer markers, the current solve is **1.5365 cm RMS**, max
+**3.7268 cm**; shoulders now dominate and MHR_ROOT itself is 1.33 cm. The root fix does **not**
+certify downstream muscles: the unscaled dancer's shipped relative torque residual is
+**0.5939547**, so standing remains the controlled muscle benchmark.
+
+TDD receipts before the commit gate: the first four-contract run passed 1/4 and failed exactly on
+successful-reload mask cleanup, MHR trunk scaling and gait provenance; failed reload preservation
+already passed. The export-disclosure RED was a compile failure because its seam did not exist.
+After implementation the six focused contracts pass **6/6**, the non-heavy related set passes
+**71/71**, the three IK measurements pass **3/3**, and the two updated shoulder/QP measurements pass
+individually, with zero failures, skips or restarts. Two neighbouring test-fixture changes are
+explicit rather than hidden gate relaxation: the gait end-to-end contact has 7 frames instead of 5
+so a 5-tap window has more than one interior candidate; production contact rules are unchanged.
+StaticHold keeps exact 0 warm→warm drift and allows only **<1e-8 rad** cold→warm, against a measured
+1.5725e-9 numerical settle. Eight new methods move the reviewed fast count from 498 to **506**.
+The commit gate then passes in full: fast is **506/506** in **2225 s** and slow E1 is **1/1** in
+**6052 s**. Both lanes have `xcodebuild rc=0`, `xcresulttool rc=0`, `xcresult=Passed`, and zero
+failures, skips, expected failures or restarts; the combined runner reports **ALL GATE PASS**.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4175,7 +4241,8 @@ Six distinct defects, each with its own mechanism:
 | 5 | random restarts drew from process-global `std::rand()`, and `fitMarkersToWorldPositions` seeded from the skeleton's CURRENT positions (`Skeleton.cpp:8001`) — which the shared skeleton meant was whatever ID or `MomentArmComputer` last wrote | restarts removed; the cold seed is an explicit `neutralSeedPose` |
 | 6 | nimble scaled the residual by the marker reliability weights but NOT the Jacobian (`Skeleton.cpp:7979-7986`), so its step minimised `‖J·d − W·r‖` — a descent direction for no objective it was measuring | both are scaled |
 
-Measured before/after, same fixture, same machine:
+Measured before/after on the **2026-08-07 legacy PELVIS fixture**, same machine. These rows are the
+solver-change receipt, not the current MHR marker receipt:
 
 | | before | after |
 |---|---|---|
@@ -4186,7 +4253,7 @@ Measured before/after, same fixture, same machine:
 | continuity under a 2 mm rigid marker shift | 7.43e-2 rad | exactly 2.000e-3 — a pure root translation, the correct answer |
 | standing benchmark poses | 0.10–0.14 mm | **0.032 mm** |
 | Rajagopal2016 planar, 400 solves | ~6e-3 rad/solve, never stopping | 2.69e-9 rad cumulative, 0.0 per solve |
-| dancer muscle relative torque residual | 0.6406 | **0.3545** |
+| dancer muscle relative torque residual (legacy root mapping) | 0.6406 | **0.3545** |
 
 The unweighted RMS improved 2.6× because the old solver parked its error on the down-weighted
 markers.
@@ -4202,19 +4269,18 @@ and the RMS not at all, so the iterations are real convergence work. The untried
 equations are 169×169 while the residual is only 60 rows, so a Woodbury/dual form would cut the
 per-iteration cubic term by ~8×. **On-device Release timing has not been measured.**
 
-⚠️ **Seed sensitivity is real and is not a bug.** The dancer solved from the neutral seed and from a
+⚠️ **Seed sensitivity is real and is not a bug.** On that legacy fixture, the dancer solved from the neutral seed and from a
 solved standing pose lands 2.32 rad away at essentially the same fit quality (loss 0.011473 vs
 0.011638, RMS 2.1224 vs 2.1526 cm). The problem is non-convex and rank-deficient, so the warm start
 is a genuine input. Determinism holds per session state; it is not basin-uniqueness.
 
-⚠️ **The 2.12 cm that remains is a marker DEFINITION error, not solver error.** Per-marker: PELVIS
-5.76, LSJC 3.73, RHJC 3.47, RSJC 3.27, LHJC 2.70 cm; everything else ≤ 2.02. The model's rigid
-PELVIS-to-hip distance is 0.1237 m and the fixture's is 0.0792 m (4.46 cm on each side) while the
-hip WIDTH agrees to 0.8 mm — that pattern is placement, not body scale. The pose source's
-`hips_joint` is the MID-HIP point; `NimbleBridge.mm` registers PELVIS at the OpenSim `pelvis` body
-ORIGIN, ≈ 9.7 cm away. Dropping PELVIS takes the fit to 1.5541 cm over the remaining 19. The marker
-table was deliberately NOT changed: it would silently redefine the marker for the live ARKit path
-too and invalidate the hand-built fixtures in `StaticEquilibriumBenchmarkTests`.
+✅ **The root-definition part of that 2.12 cm was resolved 2026-08-10.** The old per-marker PELVIS
+error was 5.76 cm and dropping it took the remaining 19 markers to 1.5541 cm. The original diagnosis
+was directionally right but called raw MHR joint 1 an exact mid-hip point; measurement shows it is
+15.081552 mm from the source HJC midpoint. The repair therefore does not globally redefine PELVIS.
+It adds source-specific `MHR_ROOT`, keeps live PELVIS unchanged, and preserves raw joint 1 as the
+target with the approximation disclosed. Current 20-marker RMS is 1.5365 cm unscaled and 1.2758 cm
+after source-aware scaling; shoulder geometry, not the root alias, is now the largest mismatch.
 
 ---
 
@@ -4318,9 +4384,9 @@ Behaviour, A/B on the same bridge (`ShoulderRotMaskTests`):
 
 | | unmasked | masked |
 |---|---|---|
-| dancer marker RMS | 2.1224 cm | **2.6874 cm** (+0.565) |
-| dancer relative torque residual | 0.3545 | **0.3991** |
-| dancer `shoulder_rot_r` | 0.6235 rad (35.7°) | pinned 0 |
+| dancer marker RMS (current MHR_ROOT) | 1.5365 cm | **2.2535 cm** (+0.7170) |
+| dancer relative torque residual | 0.5940 | **0.5064** (lower, but on a marker-worse pose) |
+| dancer `shoulder_rot_r` | 0.5876 rad (33.7°) | pinned 0 |
 | standing marker RMS | 0.0031813 cm | 0.0032228 cm (Δ 4.1e-5 — nothing to remove; the unmasked solver puts **0.04°** into the coordinate) |
 | standing iterations / converged | **0 / YES** | **123 / NO** |
 | standing per-solve drift | **0.0 rad** | **9.27e-5 rad** |
@@ -4334,8 +4400,10 @@ the fixture's fourth-decimal rounding leaves a descent direction whose curvature
 and the solver creeps. It is genuinely still moving, so neither tolerance should fire — **the
 tolerances are not the problem, the extra pin is.**
 
-The pre-registered gate ("adopt only if Δ RMS < 0.05 cm on both poses") failed at 0.565 cm. The test
-now asserts the failure in both directions, so it fires if masking ever becomes free.
+The pre-registered gate ("adopt only if Δ RMS < 0.05 cm on both poses") now fails at 0.7170 cm
+(the legacy PELVIS fixture failed at 0.565). The test asserts the failure in both directions, so it
+fires if masking ever becomes free. The lower QP residual does not rescue a mask that discards
+observed marker information and breaks the standing fixed point.
 
 ### A real order-dependence bug found on the way, and fixed
 
@@ -4414,7 +4482,7 @@ arms must differ in the work that PRECEDES the mask.
    [Static-hold gating](#static-hold-gating-2026-08-07). ⚠️ Re-scoped TWICE by measurement. First:
    now that IK is a fixed point there is no drift left for the filter to differentiate, so on a HOLD
    the gate is a measurable no-op (peak torque identical to 16 significant figures). Second: the
-   claim that "the pelvis-pinned pose source cannot supply accelerations" is **half wrong** — it can,
+   claim that "the root-pinned pose source cannot supply accelerations" is **half wrong** — it can,
    via `cam_t`, which the app already has. What it cannot supply is a usable *depth* acceleration,
    and no clip filmed from a moving camera has an inertial frame regardless. Both constants were
    re-derived from a stated error budget in the same pass.
@@ -4429,7 +4497,8 @@ arms must differ in the work that PRECEDES the mask.
 8. ~~**Mask `shoulder_rot_{r,l}`.**~~ **TESTED AND REJECTED 2026-08-07** — see
    [Masking shoulder_rot](#masking-shoulder_rotrl-was-tested-and-rejected-2026-08-07). The premise
    was wrong: the marker-Jacobian column is 0.0343 m/rad, not zero, because the ulna and hand body
-   origins sit off the humeral long axis. Masking costs the dancer 0.565 cm of marker RMS and breaks
+   origins sit off the humeral long axis. On the current MHR_ROOT fixture masking costs the dancer
+   0.7170 cm of marker RMS (legacy PELVIS: 0.565 cm) and breaks
    convergence at standing. **Do not re-open without re-measuring that column norm first.**
 9. ~~**Plausibility gate on the offline path.**~~ **DONE 2026-08-07** — see
    [Body-size gate](#body-size-gate-2026-08-07).

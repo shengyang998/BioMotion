@@ -1,0 +1,12 @@
+format biomotion-mhr-root
+version 1
+source upstream demo image; shipping SAM3DBodyPose raw joint_coords underlying OfflineMuscleChainFixture; legacy marker baseline
+generator labs/sam-3d-body/export/e2e_check.py --swift
+payload_sha256 a122b84e1052d3f44dc39a5dfdd7fc861e86721ff13137f10140d0ed97bc58ef
+marker_count 3
+columns source_joint legacy_marker x y z
+data
+hips_joint PELVIS 0.000000 0.923987 0.000000
+left_upLeg_joint LHJC 0.049532 0.940746 -0.059429
+right_upLeg_joint RHJC -0.026827 0.888276 0.065355
+end

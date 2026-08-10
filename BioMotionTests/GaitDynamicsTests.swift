@@ -16,7 +16,7 @@ import simd
 ///
 /// **(a) for the mechanism, with three independent gates bolted on, because (b)
 /// is not available on this pose source.** The measured reason: `MHRRetarget`
-/// PINS the pelvis at the model constant, so `a_root` in the data is identically
+/// pins raw MHR joint 1 at the model constant, so `a_root` in the data is identically
 /// zero and a plain-ID root residual would be `‖m·a_artic − m·g − F_gait‖ ≈
 /// 3.9·m·g` on every stance frame of every clip, good and bad alike. A quantity
 /// that reports the same failure on all inputs is a constant, not a falsifier.
@@ -224,7 +224,12 @@ final class GaitDynamicsTests: XCTestCase {
         let dt = 1.0 / 30.0
         let taps = 5
         let sequence = Self.syntheticRunSequence(dt: dt, frames: 24, swingAmplitude: 0.03)
-        let plan = Self.plan(for: sequence, dt: dt, taps: taps, peakBW: 2.5)
+        // Seven samples leave three genuinely interior 5-tap windows per full
+        // contact. The older five-sample fixture left exactly one, and a
+        // legitimate poseDidNotConverge on that single frame made this
+        // end-to-end measurement vacuous even though all routing was correct.
+        let plan = Self.plan(for: sequence, dt: dt, taps: taps, peakBW: 2.5,
+                             contactFrames: 7)
 
         engine.staticHoldGating = false
         engine.gaitPlan = plan
@@ -310,9 +315,9 @@ final class GaitDynamicsTests: XCTestCase {
             XCTAssertLessThan(r, NimbleEngine.maxGaitForceResidualInBodyWeights,
                               "a calm body whose contact both detectors agree on must pass the gate")
         }
-        // With a 5-tap window inside 5-frame contacts only the middle sample of
-        // each contact keeps a clean window, so this is a minority of stance —
-        // which is the honest state of 30 fps footage, and it is counted.
+        // With a 5-tap window inside 7-frame contacts only three samples of
+        // each full contact keep a clean window, so this remains a minority of
+        // stance — the honest state of short 30 fps contacts, and it is counted.
         XCTAssertGreaterThan(cleanWindows, 0, "some frame must survive, or nothing is measurable")
         XCTAssertLessThan(cleanWindows, stance, "and most of them do not, which is the point")
     }
@@ -628,9 +633,10 @@ final class GaitDynamicsTests: XCTestCase {
 
     /// Alternating contacts: 5 frames left, 4 flight, 5 right, 4 flight, …
     private static func plan(for sequence: [[(String, SIMD3<Double>)]],
-                             dt: Double, taps: Int, peakBW: Double) -> NimbleEngine.GaitPlan {
+                             dt: Double, taps: Int, peakBW: Double,
+                             contactFrames: Int = 5) -> NimbleEngine.GaitPlan {
         var entries: [NimbleEngine.GaitPlan.Frame] = []
-        let contact = 5, flight = 4
+        let contact = contactFrames, flight = 4
         let cycle = contact + flight
         // One index per foot-strike, so the summary groups by the plan's own
         // boundaries rather than by which frames happened to arrive.
@@ -708,10 +714,13 @@ final class GaitDynamicsTests: XCTestCase {
     private func bodyFrame(_ markers: [(String, SIMD3<Double>)],
                            timestamp: TimeInterval, frameNumber: Int) -> BodyFrame {
         let joints: [TrackedJoint] = markers.compactMap { opensim, p in
-            guard let m = JointMapping.primary.first(where: { $0.opensimName == opensim }) else { return nil }
+            guard let m = JointMapping.primary.first(where: {
+                $0.opensimName == opensim || (opensim == "MHR_ROOT" && $0.arkitName == "hips_joint")
+            }) else { return nil }
             return TrackedJoint(id: m.arkitName, name: m.displayName,
                                 worldPosition: SIMD3<Float>(Float(p.x), Float(p.y), Float(p.z)),
-                                isTracked: true)
+                                isTracked: true,
+                                opensimMarkerNameOverride: opensim)
         }
         return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
     }

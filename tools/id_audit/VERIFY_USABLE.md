@@ -1,5 +1,9 @@
 # Adversarial verification — IK stability / findings layer / polish (2026-08-07)
 
+> Historical receipt: this audit predates the 2026-08-10 source-specific
+> `MHR_ROOT` contract and intentionally records the former `PELVIS` fixture.
+> Do not read its 2.1224 cm dancer value as the current marker mapping.
+
 Everything below was measured by me on this machine. Where I could not measure something I say so.
 I edited no source. I did create one temporary ObjC++ test (`BioMotionTests/ZZAuditTempTests.mm`),
 ran it, deleted it, and re-ran `xcodegen generate`; `BioMotion.xcodeproj/project.pbxproj` is now

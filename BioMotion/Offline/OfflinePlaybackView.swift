@@ -545,7 +545,7 @@ private struct OfflineSceneView: UIViewRepresentable {
         /// (like a real camera that stayed put while filming). Recomputing every
         /// frame would jar the view as the subject moves; a hardcoded world
         /// position would risk a blank screen since MHRRetarget documents that
-        /// `joint_coords` pins the pelvis at a MODEL-CONSTANT (0, 0.924, 0) in
+        /// `joint_coords` pins the raw MHR source root at a MODEL-CONSTANT (0, 0.924, 0) in
         /// every prediction rather than a real-world camera distance — this
         /// auto-framing is robust to that regardless of the exact constant.
         func frameCameraIfNeeded(joints: [TrackedJoint]) {

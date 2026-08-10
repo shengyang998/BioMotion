@@ -26,7 +26,7 @@ Whole-body equilibrium therefore gives the exact answer:
 import numpy as np
 
 W_MARKERS = {
-    "PELVIS": (0.000000, 0.923987, 0.000000),
+    "MHR_ROOT": (0.000000, 0.923987, 0.000000),
     "LHJC": (0.049532, 0.940746, -0.059429),
     "RHJC": (-0.026827, 0.888276, 0.065355),
     "LKJC": (0.381692, 1.159680, 0.103828),
@@ -62,15 +62,15 @@ SEGMENTS = [
     ("calcn_r",   1.2500, mid("RAJC", "RTOE", 0.45),  "foot"),
     ("toes_r",    0.2166, P["RTOE"],                  "foot"),
     # --- everything else ----------------------------------------------
-    ("pelvis",    11.7770, mid("PELVIS", "SPINE_L", 0.2), None),
-    ("sacrum",     0.0010, P["PELVIS"],  None),
+    ("pelvis",    11.7770, mid("MHR_ROOT", "SPINE_L", 0.2), None),
+    ("sacrum",     0.0010, P["MHR_ROOT"],  None),
     ("femur_l",    9.3014, mid("LHJC", "LKJC", 0.43), None),
     ("kneecap_l",  0.0862, mid("LHJC", "LKJC", 0.95), None),
     ("tibia_l",    3.7075, mid("LKJC", "LAJC", 0.43), None),
     ("talus_l",    0.1000, P["LAJC"], None),
     ("calcn_l",    1.2500, mid("LAJC", "LTOE", 0.45), None),
     ("toes_l",     0.2166, P["LTOE"], None),
-    # lumbar 1-5 (10.30 kg) spread PELVIS -> SPINE_M, thoracic 1-12 (15.10 kg)
+    # lumbar 1-5 (10.30 kg) spread raw source root -> SPINE_M, thoracic 1-12 (15.10 kg)
     # spread SPINE_L -> C7 (matches the marker mapping in NimbleBridge.mm:362-365)
     ("lumbar",    10.2975, mid("SPINE_L", "SPINE_M", 0.35), None),
     ("thoracic",  15.0984, mid("SPINE_M", "C7", 0.45), None),

@@ -3,13 +3,17 @@ import XCTest
 
 final class TRCExporterTests: XCTestCase {
 
-    private func makeJoints(tracked: Bool = true) -> [TrackedJoint] {
+    private func makeJoints(tracked: Bool = true,
+                            rootMarkerOverride: String? = nil) -> [TrackedJoint] {
         JointMapping.primary.map { mapping in
             TrackedJoint(
                 id: mapping.arkitName,
                 name: mapping.displayName,
                 worldPosition: SIMD3<Float>(0.1, 0.9, 0.0),
-                isTracked: tracked
+                isTracked: tracked,
+                opensimMarkerNameOverride: mapping.arkitName == "hips_joint"
+                    ? rootMarkerOverride
+                    : nil
             )
         }
     }
@@ -26,26 +30,26 @@ final class TRCExporterTests: XCTestCase {
 
     // MARK: - Header
 
-    func testTRCHeaderLine1() {
+    func testTRCHeaderLine1() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 3))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         XCTAssertTrue(lines[0].hasPrefix("PathFileType\t4\t(X/Y/Z)"))
     }
 
-    func testTRCHeaderLine2MetadataKeys() {
+    func testTRCHeaderLine2MetadataKeys() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 3))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         let expectedKeys = "DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames"
         XCTAssertEqual(lines[1], expectedKeys)
     }
 
-    func testTRCHeaderLine3Values() {
+    func testTRCHeaderLine3Values() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 5))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
         let values = lines[2].components(separatedBy: "\t")
 
@@ -57,9 +61,9 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertEqual(values[4], "m")
     }
 
-    func testTRCHeaderLine4MarkerNames() {
+    func testTRCHeaderLine4MarkerNames() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 1))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         XCTAssertTrue(lines[3].hasPrefix("Frame#\tTime"))
@@ -70,9 +74,45 @@ final class TRCExporterTests: XCTestCase {
         }
     }
 
-    func testTRCHeaderLine5ComponentLabels() {
+    func testSourceMarkerNamesAreConsistentOrExportFailsClosed() throws {
+        let mhrFrame = BodyFrame(timestamp: 0, frameNumber: 1,
+                                 joints: makeJoints(rootMarkerOverride: "MHR_ROOT"))
+        let mhrOutput = try TRCExporter(frames: [mhrFrame]).generate()
+        let header = mhrOutput.components(separatedBy: "\n")[3]
+        XCTAssertTrue(header.contains("\tMHR_ROOT\t\t"))
+        XCTAssertFalse(header.contains("\tPELVIS\t\t"),
+                       "MHR coordinates must not be relabelled as the live pelvis origin")
+
+        let liveFrame = BodyFrame(timestamp: 1, frameNumber: 2, joints: makeJoints())
+        XCTAssertThrowsError(try TRCExporter(frames: [mhrFrame, liveFrame]).generate()) { error in
+            XCTAssertEqual(error as? TRCExporterError,
+                           .inconsistentMarkerNames(jointID: "hips_joint",
+                                                    names: ["MHR_ROOT", "PELVIS"]))
+        }
+
+        var duplicated = makeJoints(rootMarkerOverride: "MHR_ROOT")
+        let leftHipIndex = try XCTUnwrap(
+            duplicated.firstIndex(where: { $0.id == "left_upLeg_joint" })
+        )
+        let leftHip = duplicated[leftHipIndex]
+        duplicated[leftHipIndex] = TrackedJoint(
+            id: leftHip.id,
+            name: leftHip.name,
+            worldPosition: leftHip.worldPosition,
+            isTracked: leftHip.isTracked,
+            opensimMarkerNameOverride: "MHR_ROOT"
+        )
+        let duplicateFrame = BodyFrame(timestamp: 0, frameNumber: 1, joints: duplicated)
+        XCTAssertThrowsError(try TRCExporter(frames: [duplicateFrame]).generate()) { error in
+            XCTAssertEqual(error as? TRCExporterError,
+                           .duplicateMarkerName(name: "MHR_ROOT",
+                                                jointIDs: ["hips_joint", "left_upLeg_joint"]))
+        }
+    }
+
+    func testTRCHeaderLine5ComponentLabels() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 1))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         // Line 5 should have X/Y/Z component labels
@@ -81,9 +121,9 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertTrue(lines[4].contains("Z1"))
     }
 
-    func testTRCHeaderLine6Blank() {
+    func testTRCHeaderLine6Blank() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 1))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         XCTAssertEqual(lines[5], "", "Line 6 should be blank")
@@ -91,16 +131,16 @@ final class TRCExporterTests: XCTestCase {
 
     // MARK: - Data rows
 
-    func testTRCDataRowCount() {
+    func testTRCDataRowCount() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 10))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         // 6 header lines + 10 data rows
         XCTAssertEqual(lines.count, 16)
     }
 
-    func testTRCDataRowFormat() {
+    func testTRCDataRowFormat() throws {
         let joints = JointMapping.primary.enumerated().map { (i, mapping) in
             TrackedJoint(
                 id: mapping.arkitName,
@@ -111,7 +151,7 @@ final class TRCExporterTests: XCTestCase {
         }
         let frames = [BodyFrame(timestamp: 0.0, frameNumber: 1, joints: joints)]
         let exporter = TRCExporter(frames: frames)
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
         let dataRow = lines[6] // First data row
         let columns = dataRow.components(separatedBy: "\t")
@@ -126,13 +166,13 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertEqual(columns[3], "1.000000")
     }
 
-    func testTRCTimeStartsAtZero() {
+    func testTRCTimeStartsAtZero() throws {
         let frames = [
             BodyFrame(timestamp: 100.5, frameNumber: 1, joints: makeJoints()),
             BodyFrame(timestamp: 100.55, frameNumber: 2, joints: makeJoints()),
         ]
         let exporter = TRCExporter(frames: frames)
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         let row1Cols = lines[6].components(separatedBy: "\t")
@@ -143,7 +183,7 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertTrue(row2Cols[1].hasPrefix("0.05"))
     }
 
-    func testTRCUntrackedMarkersEmpty() {
+    func testTRCUntrackedMarkersEmpty() throws {
         let joints = JointMapping.primary.map { mapping in
             TrackedJoint(
                 id: mapping.arkitName,
@@ -154,7 +194,7 @@ final class TRCExporterTests: XCTestCase {
         }
         let frames = [BodyFrame(timestamp: 0.0, frameNumber: 1, joints: joints)]
         let exporter = TRCExporter(frames: frames)
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
         let dataRow = lines[6]
 
@@ -190,17 +230,42 @@ final class TRCExporterTests: XCTestCase {
         try? FileManager.default.removeItem(at: url)
     }
 
+    func testPartialExportIncludesAReadableWarningFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("biomotion-export-disclosure-\(UUID().uuidString)",
+                                   isDirectory: true)
+        try FileManager.default.createDirectory(at: directory,
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let motURL = directory.appendingPathComponent("motion.mot")
+        let prepared = try ExportDisclosure.prepareShareURLs(
+            successfulURLs: [motURL],
+            errors: ["TRC: marker source changed from MHR_ROOT to PELVIS"],
+            directory: directory
+        )
+
+        XCTAssertEqual(prepared.first, motURL)
+        XCTAssertEqual(prepared.count, 2,
+                       "a partial export must carry its warning alongside successful files")
+        let warningURL = try XCTUnwrap(prepared.last)
+        XCTAssertEqual(warningURL.lastPathComponent, "BioMotion_export_warnings.txt")
+        let warning = try String(contentsOf: warningURL, encoding: .utf8)
+        XCTAssertTrue(warning.contains("Partial export"))
+        XCTAssertTrue(warning.contains("TRC: marker source changed from MHR_ROOT to PELVIS"))
+    }
+
     // MARK: - Edge cases
 
-    func testTRCEmptyFrames() {
+    func testTRCEmptyFrames() throws {
         let exporter = TRCExporter(frames: [])
-        let output = exporter.generate()
+        let output = try exporter.generate()
         XCTAssertEqual(output, "")
     }
 
-    func testTRCSingleFrame() {
+    func testTRCSingleFrame() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 1))
-        let output = exporter.generate()
+        let output = try exporter.generate()
         let lines = output.components(separatedBy: "\n")
 
         // 6 header lines + 1 data row

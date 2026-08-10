@@ -46,7 +46,7 @@ import simd
 ///         0.017 m swapped vs 0.628 m unswapped).
 ///
 /// # The root translation: `cam_t` is the quantity `joint_coords` is missing
-/// `joint_coords` has `global_trans` zeroed (sam3d_body.py:1600), so the pelvis is pinned at
+/// `joint_coords` has `global_trans` zeroed (sam3d_body.py:1600), so the skeleton root is pinned at
 /// exactly (0, 0.924, 0) in EVERY prediction — that 0.924 is a model constant, not the
 /// subject's pelvis height, and y = 0 is NOT the floor. The model does not throw the
 /// translation away though: it emits it separately as `cam_t`, which this app already
@@ -87,7 +87,7 @@ enum MHRRetarget {
     //
     // Index -> name from findings/mhr_skeleton_summary.json ("joints_ordered", 127 entries).
     private enum MHR {
-        static let root            = 1    // pelvis origin
+        static let root            = 1    // source root; 15–19 mm from bilateral HJC midpoint
         static let lUpleg          = 2    // L hip joint centre
         static let lLowleg         = 3    // L knee joint centre
         static let lFoot           = 4    // L ankle joint centre
@@ -179,16 +179,25 @@ enum MHRRetarget {
     private static let tNeck:   Float = 0.218   // c_neck   -> c_head,   hits head_neck origin
     private static let tHead:   Float = 0.391   // c_head   -> c_head_null, hits head_neck + 0.15 Y
 
-    /// The twenty markers `NimbleBridge` registers (NimbleBridge.mm:346-390), in the exact
-    /// order of `JointMapping.primary` (Models/BodyJoint.swift:33-58).
+    /// The twenty source rows emitted in the exact order of
+    /// `JointMapping.primary`. `NimbleBridge` resolves these markers and also
+    /// retains the distinct live PELVIS root alias.
     ///
     /// Sources: MHR joint -> OpenSim body from findings/mhr_osim_correspondence.json;
     /// OpenSim body -> marker name from the `virtualMarkers` table in NimbleBridge.mm;
     /// marker -> ARKit id from `JointMapping.primary`.
     static let table: [JointSource] = [
         // --- Pelvis ---
-        // correspondence: "MHR root == pelvis origin". Direct, no judgement.
-        .init("hips_joint", "Pelvis", "PELVIS", MHR.root),
+        // MHR joint 1 is close to, but not identical with, the bilateral hip
+        // midpoint: the source skeleton is 19.2 mm away and the shipping
+        // dancer fixture is 15.1 mm away. OpenSim's PELVIS body origin is
+        // 96.6 mm from its bilateral HJC midpoint, so mapping raw joint 1 there
+        // is a gross triangle mismatch. MHR_ROOT is an explicit model-side HJC
+        // midpoint proxy. Keep the raw, bit-stable MHR root as the target so
+        // `StaticHoldDetector` can still prove when global translation is
+        // absent; the shipping fixture permanently measures and discloses the
+        // remaining 15.1 mm source-to-proxy approximation.
+        .init("hips_joint", "Pelvis", "MHR_ROOT", MHR.root),
 
         // --- Lower body: all exact joint-centre correspondences, no judgement calls ---
         // correspondence: l_upleg/r_upleg -> femur_l/femur_r, "hip joint centre"; NimbleBridge
@@ -302,7 +311,8 @@ enum MHRRetarget {
             TrackedJoint(id: src.arkitJointId,
                          name: src.displayName,
                          worldPosition: markerPosition(src, in: jointCoords) + offset,
-                         isTracked: true)
+                         isTracked: true,
+                         opensimMarkerNameOverride: src.opensimMarker)
         }
         return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
     }
@@ -322,7 +332,8 @@ enum MHRRetarget {
     ///
     /// # Why this is a synthetic straight-limb pose and not the measured markers
     /// `scaleModelWithHeight` derives its scales from STRAIGHT-LINE marker distances
-    /// (`|LHJC-LAJC|`, `|LSJC-LWJC|`, `|PELVIS - mid(LSJC,RSJC)|`, NimbleBridge.mm:540-590).
+    /// (`|LHJC-LAJC|`, `|LSJC-LWJC|`, and a source-specific root to
+    /// `mid(LSJC,RSJC)`, inside `NimbleBridge`).
     /// Those only equal the anatomical limb length when the limb is straight — which is exactly
     /// why the live path demands a T-pose. Feeding a single arbitrary MHR frame straight in
     /// FAILS, measured:
@@ -382,10 +393,11 @@ enum MHRRetarget {
 
         let halfHip = 0.5 * norm(jointCoords[MHR.lUpleg] - jointCoords[MHR.rUpleg])
         let halfShoulder = 0.5 * norm(jointCoords[MHR.lUparm] - jointCoords[MHR.rUparm])
+        let hipMid = 0.5 * (jointCoords[MHR.lUpleg] + jointCoords[MHR.rUpleg])
         let shoulderMid = 0.5 * (jointCoords[MHR.lUparm] + jointCoords[MHR.rUparm])
-        let trunk = norm(shoulderMid - jointCoords[MHR.root])
+        let trunk = norm(shoulderMid - hipMid)
 
-        let pelvis = SIMD3<Float>(0, 0, 0)
+        let mhrRoot = SIMD3<Float>(0, 0, 0)
         let lhjc = SIMD3<Float>(halfHip, 0, 0)
         let rhjc = SIMD3<Float>(-halfHip, 0, 0)
         let lajc = lhjc - SIMD3<Float>(0, lLower, 0)
@@ -397,7 +409,7 @@ enum MHRRetarget {
 
         // Exactly the nine markers scaleModelWithHeight reads.
         let entries: [(String, SIMD3<Float>)] = [
-            ("PELVIS", pelvis),
+            ("MHR_ROOT", mhrRoot),
             ("LHJC", lhjc), ("RHJC", rhjc),
             ("LAJC", lajc), ("RAJC", rajc),
             ("LSJC", lsjc), ("RSJC", rsjc),
@@ -575,22 +587,33 @@ enum MHRRetarget {
 
     // MARK: - Self-check
 
-    /// Returns the rows whose ARKit id / OpenSim marker name disagree with
-    /// `JointMapping.primary`, and reports any count mismatch. Empty means the table is in
-    /// sync with the mapping `NimbleEngine.processFrame` actually looks up. Cheap; call it
-    /// once from a debug path or a unit test rather than per frame.
+    /// Returns structural disagreements with `JointMapping.primary`. Source
+    /// marker names may differ intentionally (MHR_ROOT vs live PELVIS), but the
+    /// stable joint ids and their order must remain identical because the
+    /// renderer indexes `JointMapping.bones` directly into the emitted frame.
+    /// Marker ids and source marker names must each be unique and non-empty.
     static func inconsistenciesWithJointMapping() -> [String] {
         var problems: [String] = []
         if table.count != JointMapping.primary.count {
             problems.append("table has \(table.count) rows, JointMapping.primary has \(JointMapping.primary.count)")
         }
-        for src in table {
-            guard let m = JointMapping.primary.first(where: { $0.arkitName == src.arkitJointId }) else {
-                problems.append("\(src.arkitJointId): not present in JointMapping.primary")
-                continue
+        var seenJointIDs = Set<String>()
+        var seenMarkerNames = Set<String>()
+        for (index, src) in table.enumerated() {
+            if src.arkitJointId.isEmpty || !seenJointIDs.insert(src.arkitJointId).inserted {
+                problems.append("row \(index): empty or duplicate joint id \(src.arkitJointId)")
             }
-            if m.opensimName != src.opensimMarker {
-                problems.append("\(src.arkitJointId): maps to \(m.opensimName), table says \(src.opensimMarker)")
+            if src.opensimMarker.isEmpty || !seenMarkerNames.insert(src.opensimMarker).inserted {
+                problems.append("row \(index): empty or duplicate source marker \(src.opensimMarker)")
+            }
+            guard index < JointMapping.primary.count else { continue }
+            let mapping = JointMapping.primary[index]
+            if src.arkitJointId != mapping.arkitName {
+                problems.append("row \(index): expected id \(mapping.arkitName), table says \(src.arkitJointId)")
+            }
+            let expectedMarker = src.arkitJointId == "hips_joint" ? "MHR_ROOT" : mapping.opensimName
+            if src.opensimMarker != expectedMarker {
+                problems.append("\(src.arkitJointId): expected source marker \(expectedMarker), table says \(src.opensimMarker)")
             }
         }
         return problems

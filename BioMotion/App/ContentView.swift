@@ -1,11 +1,50 @@
 import SwiftUI
 
+/// Turns partial export failures into an artifact that travels with every file
+/// the share sheet presents. A caller must not hand out a successful MOT/STO
+/// while silently dropping a failed TRC, because marker provenance errors are
+/// exactly the kind of failure that can make the remaining files misleading.
+enum ExportDisclosure {
+    static let warningFilename = "BioMotion_export_warnings.txt"
+
+    static func prepareShareURLs(successfulURLs: [URL],
+                                 errors: [String],
+                                 directory: URL = FileManager.default.temporaryDirectory) throws
+        -> [URL] {
+        guard !errors.isEmpty else { return successfulURLs }
+
+        let outcome = successfulURLs.isEmpty ? "No data available" : "Partial export"
+        let exported = successfulURLs.isEmpty
+            ? "None"
+            : successfulURLs.map(\.lastPathComponent).joined(separator: "\n")
+        let summary = """
+        BioMotion Export — \(outcome)
+
+        Exported files:
+        \(exported)
+
+        Warnings:
+        \(errors.joined(separator: "\n"))
+
+        Tips:
+        - Make sure body tracking is active (green status)
+        - Record for at least a few seconds
+        - The Nimble model must load successfully
+        """
+        let warningURL = directory.appendingPathComponent(warningFilename)
+        try summary.write(to: warningURL, atomically: true, encoding: .utf8)
+        return successfulURLs + [warningURL]
+    }
+}
+
 struct ContentView: View {
     @StateObject private var bodyTracking = BodyTrackingSession()
     @StateObject private var recorder = MotionRecorder()
     @StateObject private var nimble = NimbleEngine()
     @State private var showExportSheet = false
     @State private var exportURLs: [URL] = []
+    @State private var showExportError = false
+    @State private var exportErrorMessage = ""
     @State private var showIKPanel = false
     @State private var showCalibration = true
     @State private var showCharts = false
@@ -66,6 +105,11 @@ struct ContentView: View {
         // Charts shown via export button, not auto-transition
         .sheet(isPresented: $showExportSheet) {
             ShareSheet(items: exportURLs)
+        }
+        .alert("Export unavailable", isPresented: $showExportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportErrorMessage)
         }
         .onChange(of: showOfflineImport) { _, presenting in
             if presenting {
@@ -370,28 +414,25 @@ struct ContentView: View {
             errors.append("STO: no ID data")
         }
 
-        if !urls.isEmpty {
-            exportURLs = urls
-            showExportSheet = true
-        } else {
-            // Nothing to export — show alert with reason
-            // For now, export a summary text file so the share sheet isn't empty
-            let summary = """
-            BioMotion Export — No data available
-
-            Reasons:
-            \(errors.joined(separator: "\n"))
-
-            Tips:
-            - Make sure body tracking is active (green status)
-            - Record for at least a few seconds
-            - The Nimble model must load successfully
-            """
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("BioMotion_export_info.txt")
-            try? summary.write(to: url, atomically: true, encoding: .utf8)
-            exportURLs = [url]
-            showExportSheet = true
+        do {
+            urls = try ExportDisclosure.prepareShareURLs(successfulURLs: urls,
+                                                          errors: errors)
+        } catch {
+            // If even the warning artifact cannot be written, do not share a
+            // misleading partial bundle. Surface the same errors in an alert.
+            exportErrorMessage = (errors + ["Warning file: \(error.localizedDescription)"])
+                .joined(separator: "\n")
+            showExportError = true
+            return
         }
+
+        guard !urls.isEmpty else {
+            exportErrorMessage = "No export files were produced."
+            showExportError = true
+            return
+        }
+        exportURLs = urls
+        showExportSheet = true
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {

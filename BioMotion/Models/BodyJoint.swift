@@ -7,6 +7,23 @@ struct TrackedJoint: Identifiable {
     let name: String        // Human-readable name
     let worldPosition: SIMD3<Float>  // Meters, world space (Y-up)
     let isTracked: Bool
+
+    /// Source-specific OpenSim marker semantics. Live ARKit joints leave this
+    /// nil and use `JointMapping.primary`; offline pose sources may name a
+    /// different point for the same stable body-joint id.
+    let opensimMarkerNameOverride: String?
+
+    init(id: String,
+         name: String,
+         worldPosition: SIMD3<Float>,
+         isTracked: Bool,
+         opensimMarkerNameOverride: String? = nil) {
+        self.id = id
+        self.name = name
+        self.worldPosition = worldPosition
+        self.isTracked = isTracked
+        self.opensimMarkerNameOverride = opensimMarkerNameOverride
+    }
 }
 
 /// A complete body frame — all joints at one instant.
@@ -15,13 +32,15 @@ struct BodyFrame {
     let frameNumber: Int
     let joints: [TrackedJoint]
 
-    /// Root (hip) position in world space.
+    /// The pose source's root position in world space. Its anatomical meaning
+    /// is carried separately by the joint's marker override: live uses
+    /// PELVIS, while MHR keeps raw joint 1 and labels it MHR_ROOT.
     var rootPosition: SIMD3<Float>? {
         joints.first(where: { $0.id == "hips_joint" })?.worldPosition
     }
 }
 
-/// Maps ARKit skeleton joint names to OpenSim marker names (Rajagopal2016).
+/// Stable body-joint ids and their live/default OpenSim marker names.
 enum JointMapping {
     struct Mapping {
         let arkitName: String
@@ -29,7 +48,8 @@ enum JointMapping {
         let displayName: String
     }
 
-    /// Primary mappings: ARKit joints that correspond directly to OpenSim joint centers.
+    /// Live/default mappings. Offline sources retain these stable ids but may
+    /// override a marker name when the source point has different anatomy.
     static let primary: [Mapping] = [
         // Pelvis / Root
         Mapping(arkitName: "hips_joint", opensimName: "PELVIS", displayName: "Pelvis"),
@@ -56,6 +76,21 @@ enum JointMapping {
         Mapping(arkitName: "left_hand_joint", opensimName: "LWJC", displayName: "L Wrist"),
         Mapping(arkitName: "right_hand_joint", opensimName: "RWJC", displayName: "R Wrist"),
     ]
+
+    /// Resolve a tracked joint through the stable ARKit-id whitelist, then
+    /// apply any source-specific marker semantics. An override never grants an
+    /// unknown joint access to the native solver, and an empty override fails
+    /// closed rather than silently falling back to a different anatomical
+    /// point.
+    static func opensimMarkerName(for joint: TrackedJoint) -> String? {
+        guard let mapping = primary.first(where: { $0.arkitName == joint.id }) else {
+            return nil
+        }
+        if let override = joint.opensimMarkerNameOverride {
+            return override.isEmpty ? nil : override
+        }
+        return mapping.opensimName
+    }
 
     /// Bones: pairs of joint indices (into `primary`) to draw as skeleton lines.
     static let bones: [(Int, Int)] = [

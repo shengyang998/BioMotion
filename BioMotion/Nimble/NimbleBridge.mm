@@ -326,7 +326,8 @@ static const BOOL kIKTraceSolve = NO;
 // dragging the whole pose. Values are relative only — they are renormalised
 // below so the reported IK loss keeps its previous scale.
 static double markerReliabilityWeight(const std::string& name) {
-    if (name == "PELVIS" || name == "SPINE_L" || name == "SPINE_M" ||
+    if (name == "PELVIS" || name == "MHR_ROOT" ||
+        name == "SPINE_L" || name == "SPINE_M" ||
         name == "C7" || name == "NECK" || name == "HEAD") {
         return 1.00;  // trunk: most stable ARKit estimates
     }
@@ -375,7 +376,7 @@ static double averageAvailableLengths(double left, double right) {
     return NAN;
 }
 
-static double modelTrunkReferenceLength(
+static double modelPelvisTrunkReferenceLength(
     const std::shared_ptr<dynamics::Skeleton>& skeleton) {
     if (!skeleton) return NAN;
     dynamics::BodyNode *pelvis = skeleton->getBodyNode("pelvis");
@@ -394,6 +395,29 @@ static double modelTrunkReferenceLength(
     return std::isfinite(length) && length > 0.0 ? length : NAN;
 }
 
+static double modelMHRTrunkReferenceLength(
+    const std::shared_ptr<dynamics::Skeleton>& skeleton) {
+    if (!skeleton) return NAN;
+    dynamics::BodyNode *leftHip = skeleton->getBodyNode("femur_l");
+    dynamics::BodyNode *rightHip = skeleton->getBodyNode("femur_r");
+    dynamics::BodyNode *leftShoulder = skeleton->getBodyNode("humerus_l");
+    dynamics::BodyNode *rightShoulder = skeleton->getBodyNode("humerus_r");
+    if (leftHip == nullptr || rightHip == nullptr
+        || leftShoulder == nullptr || rightShoulder == nullptr) {
+        return NAN;
+    }
+    const Eigen::Vector3s hipMidpoint = 0.5 * (
+        leftHip->getWorldTransform().translation()
+        + rightHip->getWorldTransform().translation()
+    );
+    const Eigen::Vector3s shoulderMidpoint = 0.5 * (
+        leftShoulder->getWorldTransform().translation()
+        + rightShoulder->getWorldTransform().translation()
+    );
+    const double length = (shoulderMidpoint - hipMidpoint).norm();
+    return std::isfinite(length) && length > 0.0 ? length : NAN;
+}
+
 @implementation NimbleBridge {
     std::shared_ptr<dynamics::Skeleton> _skeleton;
     std::map<std::string, std::pair<dynamics::BodyNode*, Eigen::Vector3s>> _markers;
@@ -401,10 +425,11 @@ static double modelTrunkReferenceLength(
 
     // Immutable-for-one-load scaling baseline. Every subject scale is derived
     // from these values, never from the skeleton's current (possibly already
-    // scaled) state. A successful model reload replaces all four together.
+    // scaled) state. A successful model reload replaces all five together.
     Eigen::VectorXs _loadedDefaultBodyScales;
     double _loadedLowerReferenceLength;
-    double _loadedTrunkReferenceLength;
+    double _loadedPelvisTrunkReferenceLength;
+    double _loadedMHRTrunkReferenceLength;
     double _loadedUpperReferenceLength;
 
     // Ground-plane estimate for GRF detection, in the ARKit world frame (y-up).
@@ -442,7 +467,8 @@ static double modelTrunkReferenceLength(
     if (self) {
         _modelLoaded = NO;
         _loadedLowerReferenceLength = NAN;
-        _loadedTrunkReferenceLength = NAN;
+        _loadedPelvisTrunkReferenceLength = NAN;
+        _loadedMHRTrunkReferenceLength = NAN;
         _loadedUpperReferenceLength = NAN;
         _footHeightSamples.reserve(kGroundWindowSamples);
         _footHeightScratch.reserve(kGroundWindowSamples);
@@ -532,7 +558,13 @@ static double modelTrunkReferenceLength(
             return NO;
         }
 
-        _skeleton = osimFile.skeleton;
+        // Build the replacement entirely off to the side. In particular, do
+        // not put a newly-parsed skeleton into `_skeleton` before all marker
+        // registration and scale-reference work below has completed: a failed
+        // reload must leave the last successfully-loaded model coherent rather
+        // than pairing a new skeleton with old markers or scale baselines.
+        std::shared_ptr<dynamics::Skeleton> candidateSkeleton = osimFile.skeleton;
+        decltype(_markers) candidateMarkers;
 
         // The .osim declares `<gravity>0 -9.8066 0</gravity>` (OpenSim models
         // are Y-up), but `OpenSimParser` never reads that element — it builds
@@ -547,12 +579,11 @@ static double modelTrunkReferenceLength(
         // Every nimble biomechanics entry point sets this explicitly right
         // after parsing for the same reason — SubjectOnDisk.cpp:807,
         // DynamicsFitter.cpp:13706.
-        _skeleton->setGravity(Eigen::Vector3s(0.0, -9.81, 0.0));
+        candidateSkeleton->setGravity(Eigen::Vector3s(0.0, -9.81, 0.0));
 
         // Store the model's own markers
-        _markers.clear();
         for (const auto& [name, pair] : osimFile.markersMap) {
-            _markers[name] = pair;
+            candidateMarkers[name] = pair;
         }
 
         // Register virtual markers at joint centers for ARKit compatibility.
@@ -636,22 +667,106 @@ static double modelTrunkReferenceLength(
         for (const auto& vm : virtualMarkers) {
             std::string markerName(vm.name);
             attemptedMarkers.insert(markerName);
-            if (_markers.find(markerName) != _markers.end()) {
+            if (candidateMarkers.find(markerName) != candidateMarkers.end()) {
                 continue;  // Already placed — earlier row won.
             }
-            dynamics::BodyNode* body = _skeleton->getBodyNode(std::string(vm.bodyName));
+            dynamics::BodyNode* body = candidateSkeleton->getBodyNode(std::string(vm.bodyName));
             if (body) {
-                _markers[markerName] = {
+                candidateMarkers[markerName] = {
                     body,
                     Eigen::Vector3s(vm.offsetX, vm.offsetY, vm.offsetZ)
                 };
             }
         }
 
+        // MHR's exported `root` is much closer to the bilateral hip-joint
+        // centre midpoint than it is to OpenSim's pelvis body origin. It is
+        // not anatomically identical: the shipping Core ML fixture leaves a
+        // roughly 15 mm root-to-midpoint residual (about 19 mm in MHR's rest
+        // skeleton). `MHR_ROOT` is therefore an explicit HJC-midpoint proxy,
+        // kept separate from the legacy `PELVIS` marker rather than pretending
+        // those two model points are interchangeable.
+        //
+        // Nimble interprets a marker offset as an UNSCALED body-local point:
+        //
+        //   world = bodyWorld * (bodyScale cwiseProduct localOffset)
+        //
+        // Consequently the world midpoint must first be pulled through the
+        // complete pelvis transform (translation and rotation), then divided
+        // component-by-component by the pelvis scale. Omitting that quotient
+        // double-applies every non-unit or anisotropic scale component.
+        const std::string mhrRootName("MHR_ROOT");
+        attemptedMarkers.insert(mhrRootName);
+
+        // `MHR_ROOT` is app-reserved. A same-named model marker may have an
+        // unrelated surface-marker meaning, so never let first-write-wins turn
+        // it into a silently different contract. Erasing it also guarantees
+        // the standard unplaced-marker report below remains fail-closed if the
+        // required bodies or geometry are invalid.
+        if (candidateMarkers.erase(mhrRootName) > 0) {
+            NSLog(@"NimbleBridge: Ignoring model-native MHR_ROOT; the name is reserved for the HJC midpoint proxy");
+        }
+
+        dynamics::BodyNode* pelvis = candidateSkeleton->getBodyNode("pelvis");
+        dynamics::BodyNode* leftFemur = candidateSkeleton->getBodyNode("femur_l");
+        dynamics::BodyNode* rightFemur = candidateSkeleton->getBodyNode("femur_r");
+        if (pelvis == nullptr || leftFemur == nullptr || rightFemur == nullptr) {
+            NSLog(@"NimbleBridge: Cannot place MHR_ROOT without pelvis, femur_l, and femur_r");
+        } else {
+            const Eigen::Vector3s pelvisScale = pelvis->getScale();
+            const Eigen::Vector3s leftFemurScale = leftFemur->getScale();
+            const Eigen::Vector3s rightFemurScale = rightFemur->getScale();
+            constexpr double kMinimumMarkerBodyScale = 1e-8;
+            auto hasUsableScale = [&](const Eigen::Vector3s& scale) -> bool {
+                return scale.allFinite()
+                    && (scale.array() > kMinimumMarkerBodyScale).all();
+            };
+
+            const Eigen::Isometry3s pelvisWorld = pelvis->getWorldTransform();
+            const Eigen::Isometry3s leftFemurWorld = leftFemur->getWorldTransform();
+            const Eigen::Isometry3s rightFemurWorld = rightFemur->getWorldTransform();
+            const bool transformsFinite = pelvisWorld.matrix().allFinite()
+                && leftFemurWorld.matrix().allFinite()
+                && rightFemurWorld.matrix().allFinite();
+
+            if (!hasUsableScale(pelvisScale)
+                || !hasUsableScale(leftFemurScale)
+                || !hasUsableScale(rightFemurScale)) {
+                NSLog(@"NimbleBridge: Cannot place MHR_ROOT with non-finite, non-positive, or near-zero body scale");
+            } else if (!transformsFinite) {
+                NSLog(@"NimbleBridge: Cannot place MHR_ROOT with a non-finite body transform");
+            } else {
+                const Eigen::Vector3s midpointWorld = 0.5 * (
+                    leftFemurWorld.translation() + rightFemurWorld.translation()
+                );
+                const Eigen::Vector3s scaledPelvisLocal
+                    = pelvisWorld.inverse() * midpointWorld;
+                const Eigen::Vector3s localOffset
+                    = scaledPelvisLocal.cwiseQuotient(pelvisScale);
+                const Eigen::Vector3s reconstructedWorld
+                    = pelvisWorld * pelvisScale.cwiseProduct(localOffset);
+                const double reconstructionError
+                    = (reconstructedWorld - midpointWorld).norm();
+                const double reconstructionTolerance
+                    = 1e-9 * std::max(1.0, midpointWorld.norm());
+
+                if (!midpointWorld.allFinite()
+                    || !scaledPelvisLocal.allFinite()
+                    || !localOffset.allFinite()
+                    || !reconstructedWorld.allFinite()
+                    || !std::isfinite(reconstructionError)
+                    || reconstructionError > reconstructionTolerance) {
+                    NSLog(@"NimbleBridge: Cannot place MHR_ROOT because its scale/transform reconstruction is invalid");
+                } else {
+                    candidateMarkers[mhrRootName] = {pelvis, localOffset};
+                }
+            }
+        }
+
         // Report: how many unique ARKit markers got placed vs. attempted.
         NSMutableArray<NSString *> *unplacedNames = [NSMutableArray array];
         for (const auto& name : attemptedMarkers) {
-            if (_markers.find(name) == _markers.end()) {
+            if (candidateMarkers.find(name) == candidateMarkers.end()) {
                 [unplacedNames addObject:[NSString stringWithUTF8String:name.c_str()]];
             }
         }
@@ -663,29 +778,49 @@ static double modelTrunkReferenceLength(
                   [unplacedNames componentsJoinedByString:@", "]);
         }
 
-        // Cache the baseline only after the replacement model is fully
-        // installed. The body origins are the same joint centres consumed by
-        // scaleModelWithHeight:, and the default vector preserves any native
-        // anisotropic or non-unit scale declared by this exact model.
-        _loadedDefaultBodyScales = _skeleton->getBodyScales();
-        _loadedLowerReferenceLength = averageAvailableLengths(
-            modelBodyOriginDistance(_skeleton, "femur_l", "talus_l"),
-            modelBodyOriginDistance(_skeleton, "femur_r", "talus_r")
+        // Build the baseline only after the replacement model and its marker
+        // map are fully constructed. The body origins are the same joint
+        // centres consumed by scaleModelWithHeight:, and the default vector
+        // preserves any native anisotropic or non-unit scale declared by this
+        // exact model.
+        Eigen::VectorXs candidateDefaultBodyScales
+            = candidateSkeleton->getBodyScales();
+        const double candidateLowerReferenceLength = averageAvailableLengths(
+            modelBodyOriginDistance(candidateSkeleton, "femur_l", "talus_l"),
+            modelBodyOriginDistance(candidateSkeleton, "femur_r", "talus_r")
         );
-        _loadedTrunkReferenceLength = modelTrunkReferenceLength(_skeleton);
-        _loadedUpperReferenceLength = averageAvailableLengths(
-            modelBodyOriginDistance(_skeleton, "humerus_l", "hand_l"),
-            modelBodyOriginDistance(_skeleton, "humerus_r", "hand_r")
+        const double candidatePelvisTrunkReferenceLength
+            = modelPelvisTrunkReferenceLength(candidateSkeleton);
+        const double candidateMHRTrunkReferenceLength
+            = modelMHRTrunkReferenceLength(candidateSkeleton);
+        const double candidateUpperReferenceLength = averageAvailableLengths(
+            modelBodyOriginDistance(candidateSkeleton, "humerus_l", "hand_l"),
+            modelBodyOriginDistance(candidateSkeleton, "humerus_r", "hand_r")
         );
-        NSLog(@"NimbleBridge: Loaded scale references — lower %.4f m, trunk %.4f m, upper %.4f m",
-              _loadedLowerReferenceLength,
-              _loadedTrunkReferenceLength,
-              _loadedUpperReferenceLength);
+        NSLog(@"NimbleBridge: Loaded scale references — lower %.4f m, "
+              @"trunk PELVIS %.4f m / MHR_ROOT %.4f m, upper %.4f m",
+              candidateLowerReferenceLength,
+              candidatePelvisTrunkReferenceLength,
+              candidateMHRTrunkReferenceLength,
+              candidateUpperReferenceLength);
+
+        // Commit every pointer-bearing and scale-baseline value together. No
+        // throwing work is intentionally left between this block and success.
+        _skeleton.swap(candidateSkeleton);
+        _markers.swap(candidateMarkers);
+        _loadedDefaultBodyScales.swap(candidateDefaultBodyScales);
+        _loadedLowerReferenceLength = candidateLowerReferenceLength;
+        _loadedPelvisTrunkReferenceLength = candidatePelvisTrunkReferenceLength;
+        _loadedMHRTrunkReferenceLength = candidateMHRTrunkReferenceLength;
+        _loadedUpperReferenceLength = candidateUpperReferenceLength;
 
         _modelLoaded = YES;
-        // A different skeleton invalidates both the IK warm-start pose (wrong
-        // DOF layout) and the ground samples (measured through the old model's
-        // foot geometry).
+        // A different skeleton invalidates the runtime mask (its vectors hold
+        // indices into the old DOF layout), the IK warm-start pose, and the
+        // ground samples measured through the old model's foot geometry. This
+        // happens only after the candidate commits, so failed reloads retain
+        // the old model and its explicitly installed mask as one transaction.
+        [self clearDOFMask];
         [self resetSessionState];
         NSLog(@"NimbleBridge: Loaded model with %ld DOFs, %lu markers",
               (long)_skeleton->getNumDofs(), (unsigned long)_markers.size());
@@ -765,7 +900,7 @@ static double modelTrunkReferenceLength(
     // from inter-joint distances measured in the ARKit world:
     //
     //   lower-limb ratio = (hip→ankle distance, averaged L/R) / loaded-model reference
-    //   trunk ratio      = (pelvis→shoulder-midpoint distance) / loaded-model reference
+    //   trunk ratio      = (source root→shoulder-midpoint distance) / matching loaded reference
     //   upper-limb ratio = (shoulder→wrist distance, averaged L/R) / loaded-model reference
     //
     // If markers are missing, we fall back to height/1.8 for that group.
@@ -832,10 +967,19 @@ static double modelTrunkReferenceLength(
         fallbackScale
     );
 
-    // Trunk: pelvis to midpoint of shoulders
+    // Trunk: source root to midpoint of shoulders. Live/legacy callers emit
+    // PELVIS, whose denominator is the model pelvis body origin. MHR emits
+    // MHR_ROOT, whose denominator is the same bilateral HJC midpoint used to
+    // place that reserved marker. Prefer the explicit MHR alias if a malformed
+    // caller supplies both; well-formed frames contain exactly one.
     double measuredTrunkLength = NAN;
-    if (hasMarker("PELVIS") && hasMarker("LSJC") && hasMarker("RSJC")) {
-        Eigen::Vector3s p = markerWorld("PELVIS");
+    double trunkReferenceLength = _loadedPelvisTrunkReferenceLength;
+    const char *trunkRootName = hasMarker("MHR_ROOT") ? "MHR_ROOT" : "PELVIS";
+    if (std::string(trunkRootName) == "MHR_ROOT") {
+        trunkReferenceLength = _loadedMHRTrunkReferenceLength;
+    }
+    if (hasMarker(trunkRootName) && hasMarker("LSJC") && hasMarker("RSJC")) {
+        Eigen::Vector3s p = markerWorld(trunkRootName);
         Eigen::Vector3s shoulderMid = 0.5 * (markerWorld("LSJC") + markerWorld("RSJC"));
         double len = (shoulderMid - p).norm();
         if (len > 0.1) {
@@ -844,7 +988,7 @@ static double modelTrunkReferenceLength(
     }
     double trunkScale = ratioFromMeasurement(
         measuredTrunkLength,
-        _loadedTrunkReferenceLength,
+        trunkReferenceLength,
         fallbackScale
     );
 

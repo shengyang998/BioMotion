@@ -10,7 +10,8 @@ final class BodyJointTests: XCTestCase {
             id: "hips_joint",
             name: "Pelvis",
             worldPosition: SIMD3<Float>(1.0, 2.0, 3.0),
-            isTracked: true
+            isTracked: true,
+            opensimMarkerNameOverride: "MHR_ROOT"
         )
         XCTAssertEqual(joint.id, "hips_joint")
         XCTAssertEqual(joint.name, "Pelvis")
@@ -18,6 +19,13 @@ final class BodyJointTests: XCTestCase {
         XCTAssertEqual(joint.worldPosition.y, 2.0, accuracy: 0.001)
         XCTAssertEqual(joint.worldPosition.z, 3.0, accuracy: 0.001)
         XCTAssertTrue(joint.isTracked)
+        XCTAssertEqual(joint.opensimMarkerNameOverride, "MHR_ROOT")
+
+        let filtered = SkeletonFilter().filter(
+            BodyFrame(timestamp: 0, frameNumber: 1, joints: [joint])
+        )
+        XCTAssertEqual(filtered.joints.first?.opensimMarkerNameOverride, "MHR_ROOT",
+                       "smoothing positions must not erase marker provenance")
     }
 
     func testUntrackedJoint() {
@@ -29,6 +37,8 @@ final class BodyJointTests: XCTestCase {
         )
         XCTAssertFalse(joint.isTracked)
         XCTAssertEqual(joint.worldPosition, .zero)
+        XCTAssertNil(joint.opensimMarkerNameOverride,
+                     "the source-compatible initializer must retain live/default semantics")
     }
 
     // MARK: - BodyFrame
@@ -89,5 +99,18 @@ final class BodyJointTests: XCTestCase {
         let rightKnee = JointMapping.primary.first(where: { $0.arkitName == "right_leg_joint" })
         XCTAssertNotNil(rightKnee)
         XCTAssertEqual(rightKnee?.opensimName, "RKJC")
+
+        let liveRoot = TrackedJoint(id: "hips_joint", name: "Pelvis",
+                                    worldPosition: .zero, isTracked: true)
+        let mhrRoot = TrackedJoint(id: "hips_joint", name: "Pelvis",
+                                   worldPosition: .zero, isTracked: true,
+                                   opensimMarkerNameOverride: "MHR_ROOT")
+        let unknown = TrackedJoint(id: "not_a_joint", name: "Unknown",
+                                   worldPosition: .zero, isTracked: true,
+                                   opensimMarkerNameOverride: "MHR_ROOT")
+        XCTAssertEqual(JointMapping.opensimMarkerName(for: liveRoot), "PELVIS")
+        XCTAssertEqual(JointMapping.opensimMarkerName(for: mhrRoot), "MHR_ROOT")
+        XCTAssertNil(JointMapping.opensimMarkerName(for: unknown),
+                     "an override must not bypass the stable joint-id whitelist")
     }
 }

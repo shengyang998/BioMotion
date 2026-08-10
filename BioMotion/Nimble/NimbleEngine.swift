@@ -78,7 +78,7 @@ final class NimbleEngine: ObservableObject {
     /// what they can observe:
     ///
     /// * The offline (photo/video) path goes through `MHRRetarget`, whose
-    ///   `joint_coords` source pins the pelvis at the model constant
+    ///   `joint_coords` source pins its raw skeleton root at the model constant
     ///   (0, 0.924, 0) in EVERY frame because `global_trans` is zeroed
     ///   (`sam3d_body.py:1600`). Joint ANGLES survive that, but the body has no
     ///   global translation, so `M·q̈` and the centre-of-mass acceleration are
@@ -450,7 +450,7 @@ final class NimbleEngine: ObservableObject {
         /// measured on THIS clip from distances that physically cannot change.
         /// See `StaticHoldDetector.rigidPairs`.
         let poseNoiseFloorMetersPerSecond: Double
-        /// False when the pose source pins the pelvis, i.e. the body carries no
+        /// False when the pose source pins its root, i.e. the body carries no
         /// global translation and the root's contribution to `M·q̈` is missing.
         /// See `MHRRetarget.rootTranslation(camT:)`.
         let rootTranslationObservable: Bool
@@ -684,9 +684,11 @@ final class NimbleEngine: ObservableObject {
     //     hand body origins are offset from the humeral long axis, and 0.266
     //     m/rad at 90° of elbow flexion. It is not one of the 72 identically-
     //     zero columns in `FullBodyDOFFixture.structurallyUnreachableCoordinates`.
-    //   * Masking it costs the dancer fixture 0.565 cm of marker RMS
-    //     (2.122 -> 2.687) and 0.045 of relative torque residual
-    //     (0.3545 -> 0.3991).
+    //   * On the current MHR_ROOT fixture, masking it costs 0.717 cm of
+    //     marker RMS (1.536 -> 2.253). It lowers the already-unusable dancer
+    //     torque residual (0.594 -> 0.506), which does not compensate for
+    //     discarding observed marker information. The legacy PELVIS fixture
+    //     measured 2.122 -> 2.687 cm and 0.3545 -> 0.3991.
     //   * At upright standing it buys nothing (the unmasked solver puts 0.04°
     //     into the coordinate) and it breaks convergence: 0 -> 123 iterations,
     //     converged YES -> NO, per-solve drift 0 -> 9.3e-5 rad.
@@ -733,13 +735,21 @@ final class NimbleEngine: ObservableObject {
                 // from bridge.scaleModelWithHeight through to R(q) and L_MT.
                 self.momentArmComputer.parseMusclePaths(fromOsimPath: path,
                                                          from: self.bridge)
-                // Drop any stale SG state from a previous model — the new
-                // model may have a different DOF count / ordering, and even
-                // if not, the sample history is no longer valid.
-                self.dofFilters.removeAll(keepingCapacity: false)
             }
             DispatchQueue.main.async {
-                self.isModelLoaded = success
+                if success {
+                    // A new skeleton invalidates every history, not only the
+                    // SG array: hold classification, muscle dt, display
+                    // smoothing, and published results all belonged to the
+                    // previous model. The queued solver reset runs before any
+                    // subsequently submitted frame on the serial queue.
+                    self.resetRealtimeState()
+                }
+                // The bridge load is transactional. If a replacement fails it
+                // keeps the previous skeleton; the solver and moment-arm
+                // objects above also remain untouched. Publish that still-
+                // usable model instead of turning the Swift gate off.
+                self.isModelLoaded = self.bridge.isModelLoaded
                 if success {
                     let modelMarkers = self.bridge.markerNames as [String]
                     self.totalMassKg = self.bridge.totalMass
@@ -782,9 +792,10 @@ final class NimbleEngine: ObservableObject {
         var names: [String] = []
 
         for joint in frame.joints where joint.isTracked {
-            // Map ARKit joint to OpenSim marker name
-            if let mapping = JointMapping.primary.first(where: { $0.arkitName == joint.id }) {
-                names.append(mapping.opensimName)
+            // The stable joint id remains the whitelist. Offline sources may
+            // override only the anatomical marker attached to that known id.
+            if let markerName = JointMapping.opensimMarkerName(for: joint) {
+                names.append(markerName)
                 positions.append(NSNumber(value: Double(joint.worldPosition.x)))
                 positions.append(NSNumber(value: Double(joint.worldPosition.y)))
                 positions.append(NSNumber(value: Double(joint.worldPosition.z)))
@@ -1944,13 +1955,14 @@ struct StaticHoldDetector {
         ("LEJC", "LWJC"), ("REJC", "RWJC"),
     ]
 
-    /// Marker whose constancy reveals that the pose source pinned the root.
-    /// `MHRRetarget` emits `PELVIS` straight from MHR joint 1, which
+    /// Source-specific marker names whose constancy reveals that the pose
+    /// source pinned the root. Live ARKit emits PELVIS; MHRRetarget emits
+    /// MHR_ROOT straight from MHR joint 1, which
     /// `joint_coords` fixes at the model constant (0, 0.924, 0) to the last
     /// bit whenever `cam_t` has not been composed in.
-    static let rootMarkerName = "PELVIS"
+    static let rootMarkerNames = ["MHR_ROOT", "PELVIS"]
 
-    /// Below this, two `PELVIS` samples are treated as the same value. The
+    /// Below this, two samples carrying the same source-root alias are treated as the same value. The
     /// pinned constant repeats bit-exactly and any real translation is metres,
     /// so this only has to be smaller than float noise.
     static let rootPinnedToleranceMeters: Double = 1e-9
@@ -2020,8 +2032,14 @@ struct StaticHoldDetector {
                 }
                 if !drifts.isEmpty { rigidDrift = drifts.max() }
 
-                if let p = markers[Self.rootMarkerName], let q = prev.markers[Self.rootMarkerName] {
-                    rootStep = simd_length(p - q)
+                // Compare only the same source alias on both frames. A source
+                // switch from PELVIS to MHR_ROOT is provenance loss, not a
+                // measured displacement.
+                for name in Self.rootMarkerNames {
+                    if let p = markers[name], let q = prev.markers[name] {
+                        rootStep = simd_length(p - q)
+                        break
+                    }
                 }
             }
         }
@@ -2080,7 +2098,7 @@ struct StaticHoldDetector {
         let medians = window.compactMap(\.medianSpeed).sorted()
 
         // The root translation is observable iff the root marker moved AT ALL
-        // anywhere in the window. A pose source that pins the pelvis repeats
+        // anywhere in the window. A pose source that pins its root repeats
         // one model constant bit-for-bit, so this separates a pinned stream
         // from a `cam_t`-composed one with no flag to plumb and no way for the
         // two to disagree. A held pose reads as pinned, which is harmless: the

@@ -5,7 +5,7 @@
 #
 # Usage:
 #   tools/run_tests.sh fast
-#       All reviewed tests except the >1-hour E1 experiment. Exact count: 498.
+#       All reviewed tests except the >1-hour E1 experiment. Exact count: 506.
 #
 #   tools/run_tests.sh slow
 #       E1MarkerSetComparisonTests/testE1RunAll only. Exact count: 1.

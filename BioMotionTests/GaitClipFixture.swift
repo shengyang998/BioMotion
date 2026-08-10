@@ -6,9 +6,9 @@ import Foundation
 /// `tools/gait_fixture/export_gait_fixture.py`.
 ///
 /// Three 4-second windows of real running footage, as the five joints a gait
-/// analysis needs (pelvis, both ankles, both toes), in the frame
-/// `MHRRetarget.makeBodyFrame(camT: nil)` produces: metres, Y-up, pelvis pinned
-/// at the model constant 0.92398697, unsmoothed.
+/// analysis needs (raw MHR root, both ankles, both toes), in the frame
+/// `MHRRetarget.makeBodyFrame(camT: nil)` produces: metres, Y-up, source root
+/// pinned at the model constant 0.92398697, unsmoothed.
 ///
 /// # Nothing here force-unwraps a parsed value
 ///
@@ -26,6 +26,9 @@ import Foundation
 enum GaitClipFixture {
 
     static let allIds = ["video_012", "video_013", "video_015"]
+
+    private static let sourceMarkerByJointID = Dictionary(uniqueKeysWithValues:
+        MHRRetarget.table.map { ($0.arkitJointId, $0.opensimMarker) })
 
     /// The format tag on line 1 of every fixture. Bumped by the generator when
     /// the column layout changes, so a stale fixture is refused instead of
@@ -241,7 +244,9 @@ enum GaitClipFixture {
                     xyz[axis] = narrowed
                 }
                 joints.append(TrackedJoint(id: jointId, name: jointId,
-                                           worldPosition: xyz, isTracked: true))
+                                           worldPosition: xyz, isTracked: true,
+                                           opensimMarkerNameOverride:
+                                               sourceMarkerByJointID[jointId]))
             }
             frames.append(BodyFrame(timestamp: timestamp, frameNumber: slot, joints: joints))
         }

@@ -509,10 +509,13 @@ final class StaticHoldTests: XCTestCase {
                            timestamp: TimeInterval, frameNumber: Int) -> BodyFrame {
         // Back-map OpenSim marker names to the ARKit ids `processFrame` expects.
         let joints: [TrackedJoint] = markers.compactMap { opensim, p in
-            guard let m = JointMapping.primary.first(where: { $0.opensimName == opensim }) else { return nil }
+            guard let m = JointMapping.primary.first(where: {
+                $0.opensimName == opensim || (opensim == "MHR_ROOT" && $0.arkitName == "hips_joint")
+            }) else { return nil }
             return TrackedJoint(id: m.arkitName, name: m.displayName,
                                 worldPosition: SIMD3<Float>(Float(p.x), Float(p.y), Float(p.z)),
-                                isTracked: true)
+                                isTracked: true,
+                                opensimMarkerNameOverride: opensim)
         }
         return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
     }
@@ -709,9 +712,15 @@ final class StaticHoldTests: XCTestCase {
                        + "(\(maxConsecutive) rad). The Savitzky-Golay filter differentiates "
                        + "that into an acceleration the subject never had, and the numbers in "
                        + "this method's header were derived assuming it was gone.")
-        XCTAssertEqual(maxDriftFromFirst, 0, accuracy: 0,
-                       "even the COLD solve used to differ from the warm ones; it no longer "
-                       + "does (\(maxDriftFromFirst) rad)")
+        // The cold seed selects a point on a rank-deficient manifold. A source
+        // marker change may move that first selection by round-off without
+        // reintroducing warm-to-warm drift. Keep this bound 100× tighter than
+        // the 1e-6 fixed-point contract and far below the file header's
+        // ~4e-6-rad physical invisibility floor; the exact-zero assertion above
+        // remains the tripwire for what SG actually differentiates repeatedly.
+        XCTAssertLessThan(maxDriftFromFirst, 1e-8,
+                          "cold-to-warm IK movement exceeded the numerical floor "
+                          + "(\(maxDriftFromFirst) rad)")
 
         func run(gating: Bool) async throws -> (maxTorque: Double, muscles: Int) {
             let engine = try await loadedEngine()

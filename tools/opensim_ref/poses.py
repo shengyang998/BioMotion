@@ -3,9 +3,9 @@
 # Why these poses and not joint angles read off the gait fixtures
 
 `BioMotionTests/Fixtures/gait_*.txt` hold FIVE marker positions per frame --
-pelvis, both ankles, both toes -- in the frame `MHRRetarget.makeBodyFrame`
+raw MHR root, both ankles, both toes -- in the frame `MHRRetarget.makeBodyFrame`
 produces. Fifteen scalars with no knee, no thigh and no pelvis orientation do
-not determine hip/knee/ankle flexion: the pelvis-to-ankle distance constrains
+not determine hip/knee/ankle flexion: the source-root-to-ankle distance constrains
 the SUM of hip and knee flexion and says nothing about the split. Reading joint
 angles off those files would mean inventing the split and then calling it
 measured, which is the exact failure this repo keeps paying for.
@@ -18,10 +18,11 @@ hip_flexion / knee_angle / ankle_angle / elbow_flex / shoulder_elv, sampled at
 those coordinates.
 
 The clips were tried as a falsifiable check on that and the check does not
-work, which is worth knowing: their pelvis-to-ankle distance folds to 0.280 of
+work, which is worth knowing: their source-root-to-ankle distance folds to 0.280 of
 each clip's own maximum, and FullBody.osim cannot fold below 0.337 anywhere in
 its clamped sagittal range (0.349 measuring from the hip-centre midpoint
-instead, so the 9.7 cm pelvis-origin offset is not the explanation). Without a
+instead; raw MHR joint 1 is itself 15.1 mm from the source HJC midpoint, so
+neither root convention explains the gap). Without a
 knee marker that gap cannot be turned into a joint angle, so it is reported by
 `pose_coverage.py` and NOT used as a gate here.
 

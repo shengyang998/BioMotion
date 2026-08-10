@@ -52,7 +52,15 @@ final class GaitClipFixtureTests: XCTestCase {
     }
 
     func testEveryFrameCarriesEveryJoint() throws {
+        let expectedSourceMarkers = Dictionary(uniqueKeysWithValues:
+            MHRRetarget.table.map { ($0.arkitJointId, $0.opensimMarker) })
         for clip in try GaitClipFixture.loadAll(bundle: bundle) {
+            let firstFrame = try XCTUnwrap(clip.frames.first)
+            for joint in firstFrame.joints {
+                XCTAssertEqual(joint.opensimMarkerNameOverride,
+                               expectedSourceMarkers[joint.id],
+                               "\(clip.id) joint \(joint.id) lost the MHR source marker provenance")
+            }
             for frame in clip.frames {
                 XCTAssertEqual(frame.joints.map(\.id), clip.jointIds,
                                "\(clip.id) frame \(frame.frameNumber) has the wrong joints")
@@ -168,11 +176,11 @@ final class GaitClipFixtureTests: XCTestCase {
         }
     }
 
-    /// `MHRRetarget.makeBodyFrame(camT: nil)` pins the pelvis at the model
+    /// `MHRRetarget.makeBodyFrame(camT: nil)` pins the raw source root at the model
     /// constant, so these clips carry NO root translation — a consumer that
     /// needs the runner's absolute motion has to get it from `camT`, not from
     /// here. Pinned so that stays visible.
-    func testPelvisIsPinnedAtTheModelConstant() throws {
+    func testSourceRootIsPinnedAtTheModelConstant() throws {
         for clip in try GaitClipFixture.loadAll(bundle: bundle) {
             for frame in clip.frames {
                 let root = try XCTUnwrap(frame.rootPosition)

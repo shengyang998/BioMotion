@@ -85,7 +85,9 @@ final class GaitStanceDetectionTests: XCTestCase {
                 guard j.id != GaitSignal.JointID.pelvis else { return j }
                 var p = j.worldPosition
                 p.y += bump
-                return TrackedJoint(id: j.id, name: j.name, worldPosition: p, isTracked: j.isTracked)
+                return TrackedJoint(id: j.id, name: j.name, worldPosition: p,
+                                    isTracked: j.isTracked,
+                                    opensimMarkerNameOverride: j.opensimMarkerNameOverride)
             }
             lifted.append(BodyFrame(timestamp: f.timestamp, frameNumber: f.frameNumber, joints: joints))
         }

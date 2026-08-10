@@ -3,9 +3,8 @@
 Adds a second input path alongside live ARKit tracking: pick a photo or video
 from the library, run the frozen `SAM3DBodyPose` Core ML model over sampled
 frames, feed the existing IK → ID → muscle pipeline, and scrub through the
-result in a non-AR 3D view. Written entirely against
-`labs/BioMotion/BioMotion/Offline/*.swift` — none of it has been built or run
-(see "What could not be verified" below).
+result in a non-AR 3D view. The path is covered by the ordinary test gate; the
+remaining external boundary is real-device/UI validation called out below.
 
 ## Flow
 
@@ -18,7 +17,7 @@ OfflineImportView (PhotosPicker: photo or video)
        -> FrameSource.decodePhoto / VideoDecoder       [decode]
        -> for each frame:
             SAM3DPoseEstimator.estimate(uiImage:)      [Vision bbox -> warp -> CoreML predict]
-            MHRRetarget.makeBodyFrame(jointCoords:)    [-> BodyFrame, another agent's file]
+            MHRRetarget.makeBodyFrame(jointCoords:)    [-> BodyFrame + source marker names]
             (first successful frame only) nimble.scaleModel(...)  [MHRRetarget.segmentScaleMarkers/estimatedStatureMeters]
             nimble.processFrame(bodyFrame) + wait for NimbleEngine's next publish, or timeout
             -> OfflineResultStore.append(...)
@@ -27,14 +26,10 @@ OfflineImportView (PhotosPicker: photo or video)
   -> OfflinePlaybackView (RealityKit .nonAR ARView + MuscleOverlay + scrubber)
 ```
 
-`SAM3DPoseEstimator`, `FrameSource`, `OfflineResultStore`, `OfflineSessionRunner`,
-`OfflineImportView`, `OfflinePlaybackView` are all new files under this
-directory. `MHRRetarget.swift` (same directory) is owned by another agent —
-read, not edited; its actual on-disk signatures matched what this file set
-assumed exactly (`makeBodyFrame(jointCoords: [SIMD3<Float>], timestamp:,
-frameNumber:) -> BodyFrame`, `segmentScaleMarkers(jointCoords:) ->
-(positions: [Float], names: [String])`, `estimatedStatureMeters(jointCoords:) ->
-Float`).
+`BodyFrame` keeps a stable joint id separately from its source-specific OpenSim
+marker. Live `hips_joint` defaults to `PELVIS`; MHR `hips_joint` carries
+`MHR_ROOT`. Filters and test-fixture transformations preserve that override,
+and the engine resolves it only after the stable-id whitelist succeeds.
 
 ## Design decisions and why
 
@@ -120,6 +115,12 @@ makes offline import self-sufficient — it doesn't depend on the app having
 gone through live calibration first, and works even if the imported subject is
 a different person.
 
+MHR scaling emits `MHR_ROOT` and measures trunk length from the bilateral HJC
+midpoint to the shoulder midpoint. The bridge caches a matching model
+HJC-midpoint reference. Live/legacy `PELVIS` scaling remains separate and uses
+the OpenSim pelvis-body-origin reference; the two anatomical points are never
+made aliases merely because they share the stable `hips_joint` id.
+
 `nimble.scaleModel` has no completion signal either. It's called immediately
 before `processFrame` with no `await` between them; both dispatch onto
 `NimbleEngine`'s private SERIAL `solverQueue`, which preserves FIFO submission
@@ -127,6 +128,18 @@ order, so the scale operation completes before that frame's IK solve begins.
 This is a documented, reasoned argument about GCD queue ordering — **not
 something a build could fully re-verify either, but it rests on public,
 stable GCD serial-queue semantics rather than private timing behavior.**
+
+### Marker provenance and export disclosure
+
+The raw MHR root is not silently renamed to the OpenSim pelvis origin. The
+shipping dancer fixture places raw joint 1 15.081552 mm from its source HJC
+midpoint; model-side `MHR_ROOT` is an explicit bilateral-HJC proxy, while
+`PELVIS` remains the live/legacy pelvis-body-origin marker. A TRC export fails
+closed if one stable joint changes source marker between frames, if an override
+is empty, or if two joint ids collapse onto one marker name. If TRC fails while
+MOT or STO succeeds, the share bundle includes
+`BioMotion_export_warnings.txt`; if that warning cannot be written, the app
+shows an error instead of sharing an unexplained partial bundle.
 
 ### Rendering — non-AR surface
 
@@ -143,7 +156,7 @@ nested type inside the ARSession-bound view and isn't reusable.
 The camera auto-frames once (first frame with tracked joints; fixed for the
 rest of the scrub session) from the joint bounding box, rather than a
 hardcoded world position — `MHRRetarget.swift`'s own doc comments confirm
-`joint_coords` pins the pelvis at a MODEL-CONSTANT `(0, 0.924, 0)` in every
+`joint_coords` pins the raw MHR source root at a MODEL-CONSTANT `(0, 0.924, 0)` in every
 prediction, not a real-world camera distance, so a fixed camera position could
 easily show a blank screen. No orbit/manual camera control is implemented
 (out of scope for this pass — noted as a natural follow-up, not added to avoid

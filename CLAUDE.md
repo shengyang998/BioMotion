@@ -92,6 +92,11 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 
 - **Eigen version**: Nimble requires Eigen 3.x. Eigen 5.x (Homebrew default) has breaking API changes. Use vendored `third_party/eigen` (3.4.0).
 - **Marker names**: ARKit joints map to virtual markers at body node origins, NOT to the model's surface markers (RASI, LASI etc). See `NimbleBridge.mm` virtual marker registration.
+- **Stable joint id is not marker anatomy.** Live `hips_joint` resolves to `PELVIS`; MHR keeps the
+  same stable id but resolves to `MHR_ROOT`. Its coordinate remains raw MHR joint 1 (15.1 mm from
+  the source HJC midpoint); the model marker is an explicit HJC-midpoint proxy, not a claim that
+  those points are identical. Preserve `opensimMarkerNameOverride` through every filter/copy. TRC
+  must fail if one id changes marker alias across frames or two ids collapse to one marker.
 - **C++ exceptions**: Always use C++ `try/catch`, never ObjC `@try/@catch` — ObjC exceptions don't catch `std::exception` or SIGSEGV.
 - **Build number**: Must increment `CURRENT_PROJECT_VERSION` in `project.yml` before each TestFlight upload.
 - **Library search paths**: Conditional on SDK — `[sdk=iphoneos*]` for device, `[sdk=iphonesimulator*]` for simulator.
@@ -123,11 +128,13 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   `GaitLoadSummary.make` returns nil. Only muscle/load/honesty sections may follow that optional.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
 - **Subject scaling starts from the loaded model, never the current skeleton or another model's
-  constants.** `loadModelFromPath:` caches the exact default body-scale vector plus lower/trunk/upper
-  joint-centre reference lengths. `scaleModelWithHeight:` applies
+  constants.** `loadModelFromPath:` caches the exact default body-scale vector plus lower/upper and
+  two source-specific trunk references: live `PELVIS` uses pelvis-origin→shoulder-mid; MHR_ROOT uses
+  bilateral-HJC-mid→shoulder-mid. `scaleModelWithHeight:` applies
   `cachedDefault × clamp(measured/cachedReference)`. Recomputing references after a prior scale
   compounds; writing a uniform ratio discards native anisotropy; failing to replace all caches on
-  reload leaks Rajagopal proportions into FullBody. `ModelScalingTests` pins all three seams.
+  reload leaks Rajagopal proportions into FullBody. `ModelScalingTests` pins identity, idempotence,
+  source-specific MHR scaling, and cross-model reload.
 
 ## Readings that lie — each has already cost a wrong conclusion
 
@@ -139,7 +146,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 498 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 506 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

@@ -27,8 +27,9 @@ import XCTest
 ///   d RWJC / d shoulder_rot_r   30.2 mm/rad  at 0° elbow flexion
 ///   ‖J[:, shoulder_rot_r]‖   0.266 m/rad at 90° elbow flexion (7.8x)
 ///
-///   dancer   marker RMS   2.122 -> 2.687 cm      (masking COSTS 0.565 cm)
-///   dancer   rel. torque residual 0.3545 -> 0.3991
+///   dancer   marker RMS   1.53645 -> 2.25348 cm  (masking COSTS 0.71703 cm)
+///   dancer   rel. torque residual 0.59395 -> 0.50643 (still unusable; lower
+///                                                        does not restore lost markers)
 ///   standing marker RMS   unchanged to 4.1e-5 cm (nothing to remove: the
 ///                         unmasked solver puts 0.04° into the coordinate)
 ///   standing iterations   0 -> 123, converged YES -> NO,
@@ -258,8 +259,8 @@ final class ShoulderRotMaskTests: XCTestCase {
     /// bound was not chosen to pass — 0.5 mm is an order of magnitude below the
     /// ~2 cm the dancer's own model mismatch already costs and two orders above
     /// the 0.03 mm the standing pose fits to, so it separates "no information
-    /// lost" from "some information lost" on both. The dancer failed it at
-    /// 0.565 cm.
+    /// lost" from "some information lost" on both. The current MHR_ROOT
+    /// dancer fails it at 0.717 cm (the legacy PELVIS mapping failed at 0.565).
     ///
     /// This test now asserts the FAILURE, so it is a live tripwire in both
     /// directions: it fires if masking suddenly becomes free (re-open the
@@ -294,8 +295,8 @@ final class ShoulderRotMaskTests: XCTestCase {
         // worth re-testing.
         XCTAssertGreaterThan(delta["dancer"]!, 0.05,
                              "masking shoulder_rot no longer costs the dancer marker fit " +
-                             "(Δ = \(delta["dancer"]!) cm). The 2026-08-07 verdict was based " +
-                             "on 0.565 cm — re-run the whole A/B and revisit the mask.")
+                             "(Δ = \(delta["dancer"]!) cm). The current MHR_ROOT verdict was " +
+                             "0.717 cm — re-run the whole A/B and revisit the mask.")
 
         // Standing gains nothing: the coordinate is already at 0.04° there.
         XCTAssertLessThan(abs(delta["standing"]!), 0.001,

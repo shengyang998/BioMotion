@@ -63,7 +63,7 @@ import XCTest
 ///     add to it. Achieved rib residual: 9.89 Nm, i.e. 87% of the total.
 ///     Dropping just those rows takes standing to 0.0163.
 ///
-/// Where that leaves the three poses, unit-consistent, locked rows excluded
+/// Historical PELVIS-root result, unit-consistent and locked rows excluded
 /// (measured 2026-08-07; the 2026-08-06 values are in brackets):
 ///   neutral standing 0.2008 [0.2008] · 4° lean 0.1526 [0.1526] · dancer
 ///   0.3545 [0.6406].
@@ -74,14 +74,14 @@ import XCTest
 /// was a report on a pose that was wrong before the muscle solver saw it — it
 /// used to miss its own markers by 3.4–3.7 cm RMS and land on two different
 /// poses (‖q‖ 4.52 vs 5.06) depending only on how many poses preceded it. It
-/// now solves reproducibly at ‖q‖ 5.746453 and 2.1224 cm true marker RMS, and
+/// then solved reproducibly at ‖q‖ 5.746453 and 2.1224 cm true marker RMS, and
 /// the residual almost halved.
 ///
-/// ⚠️ It still does not clear 0.3, and the diagnosis still holds in weaker
-/// form: the remaining 2.12 cm is a marker DEFINITION error, not solver error
-/// (PELVIS is registered at the `pelvis` body ORIGIN, ~9.7 cm from the pose
-/// source's mid-hip point; per-marker PELVIS 5.76 cm). Standing remains the
-/// muscle stage's only clean benchmark.
+/// CURRENT SOURCE CONTRACT (2026-08-10): the dancer uses MHR_ROOT rather than
+/// mislabelling raw MHR joint 1 as PELVIS. Marker RMS improves to 1.53645 cm,
+/// while this unscaled diagnostic's shipped relative torque residual moves to
+/// 0.5939547. Better marker fit therefore did not make the dancer a clean
+/// muscle benchmark; standing remains the stage's controlled benchmark.
 final class MuscleQPUnitsTests: XCTestCase {
 
     private var bridge: NimbleBridge!

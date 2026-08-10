@@ -20,9 +20,15 @@ struct ScaleMarkers {
     NSMutableArray<NSString *> *names;
 };
 
+enum class ScaleRootMarker {
+    Pelvis,
+    MHRRoot,
+};
+
 static ScaleMarkers markersFromLoadedModel(
     const std::shared_ptr<dynamics::Skeleton>& skeleton,
-    double ratio) {
+    double ratio,
+    ScaleRootMarker rootMarker = ScaleRootMarker::Pelvis) {
     ScaleMarkers result = {
         [NSMutableArray array],
         [NSMutableArray array],
@@ -36,12 +42,25 @@ static ScaleMarkers markersFromLoadedModel(
     };
 
     const Eigen::Vector3s pelvis = bodyOrigin("pelvis");
+    const Eigen::Vector3s hipMidpoint = 0.5 * (
+        bodyOrigin("femur_l") + bodyOrigin("femur_r")
+    );
+    const char *rootName = rootMarker == ScaleRootMarker::MHRRoot
+        ? "MHR_ROOT" : "PELVIS";
+    const Eigen::Vector3s rootPosition = rootMarker == ScaleRootMarker::MHRRoot
+        ? hipMidpoint : pelvis;
+
+    [result.names addObject:[NSString stringWithUTF8String:rootName]];
+    const Eigen::Vector3s scaledRoot = pelvis + ratio * (rootPosition - pelvis);
+    [result.positions addObject:@(scaledRoot.x())];
+    [result.positions addObject:@(scaledRoot.y())];
+    [result.positions addObject:@(scaledRoot.z())];
+
     struct MarkerBody {
         const char *marker;
         const char *body;
     };
     static const MarkerBody markerBodies[] = {
-        {"PELVIS", "pelvis"},
         {"LHJC", "femur_l"},
         {"RHJC", "femur_r"},
         {"LAJC", "talus_l"},
@@ -135,6 +154,39 @@ static void assertScalesEqual(
                       @"repeat must not multiply the subject ratio twice");
 }
 
+- (void)testMHRRootScalingUsesTheHipCentreReferenceAndDoesNotFallBackToHeight {
+    NimbleBridge *bridge = [[NimbleBridge alloc] init];
+    XCTAssertTrue([bridge loadModelFromPath:[self modelPath:@"FullBody"]]);
+    std::shared_ptr<dynamics::Skeleton> skeleton = [bridge sharedSkeleton];
+    XCTAssertTrue(skeleton != nullptr);
+    if (skeleton == nullptr) return;
+
+    const double markerRatio = 1.12;
+    const Eigen::VectorXs loadedDefaults = skeleton->getBodyScales();
+    const Eigen::VectorXs expected = loadedDefaults * markerRatio;
+    ScaleMarkers markers = markersFromLoadedModel(
+        skeleton,
+        markerRatio,
+        ScaleRootMarker::MHRRoot
+    );
+    XCTAssertEqualObjects(markers.names.firstObject, @"MHR_ROOT");
+
+    // Height deliberately says 1.0x. If the bridge loses the MHR_ROOT alias,
+    // only the trunk falls back to height and this cannot equal 1.12x.
+    XCTAssertTrue([bridge scaleModelWithHeight:1.8
+                               markerPositions:markers.positions
+                                   markerNames:markers.names]);
+    const Eigen::VectorXs first = skeleton->getBodyScales();
+    assertScalesEqual(first, expected,
+                      @"MHR_ROOT measurements must use the HJC-midpoint reference");
+
+    XCTAssertTrue([bridge scaleModelWithHeight:1.8
+                               markerPositions:markers.positions
+                                   markerNames:markers.names]);
+    assertScalesEqual(skeleton->getBodyScales(), first,
+                      @"MHR_ROOT repeat must remain idempotent");
+}
+
 - (void)testReloadingAnotherModelRefreshesEveryScalingBaseline {
     NimbleBridge *bridge = [[NimbleBridge alloc] init];
     XCTAssertTrue([bridge loadModelFromPath:[self modelPath:@"Rajagopal2016"]]);
@@ -154,13 +206,17 @@ static void assertScalesEqual(
                   @"reload must replace the live skeleton instance");
 
     const Eigen::VectorXs reloadedDefaults = reloadedSkeleton->getBodyScales();
-    ScaleMarkers reloadedMarkers = markersFromLoadedModel(reloadedSkeleton, 1.0);
+    ScaleMarkers reloadedMarkers = markersFromLoadedModel(
+        reloadedSkeleton,
+        1.0,
+        ScaleRootMarker::MHRRoot
+    );
     XCTAssertTrue([bridge scaleModelWithHeight:1.8
                                markerPositions:reloadedMarkers.positions
                                    markerNames:reloadedMarkers.names]);
 
     assertScalesEqual(reloadedSkeleton->getBodyScales(), reloadedDefaults,
-                      @"FullBody reload must use FullBody defaults and references");
+                      @"FullBody reload must use FullBody defaults and MHR_ROOT reference");
 }
 
 @end
