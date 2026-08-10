@@ -65,7 +65,7 @@ test_gate_lane_selector() {
 
 test_gate_expected_count() {
   case "${1-}" in
-    fast) printf '%s\n' 493 ;;
+    fast) printf '%s\n' 495 ;;
     slow) printf '%s\n' 1 ;;
     subset) printf '%s\n' 1 ;;
     *)

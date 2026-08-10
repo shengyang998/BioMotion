@@ -34,6 +34,160 @@ import simd
 /// colour function.
 final class MuscleOverlayClaimTests: XCTestCase {
 
+    /// Renderer, control, and disclosure share one fail-closed presentation
+    /// decision. The final expectation is deliberately singular: it is both
+    /// the capsule visibility and the disclosure visibility.
+    func testLiveAnatomyPresentationUsesOneFailClosedTruthTable() {
+        struct Row {
+            let surface: LiveAnatomyPresentation.Surface
+            let isTracking: Bool
+            let hasCurrentFrame: Bool
+            let isEnabled: Bool
+            let showsControl: Bool
+            let anatomyIsPresented: Bool
+        }
+
+        let rows: [Row] = [
+            Row(surface: .calibration, isTracking: false, hasCurrentFrame: false,
+                isEnabled: false, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .calibration, isTracking: false, hasCurrentFrame: false,
+                isEnabled: true, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .calibration, isTracking: false, hasCurrentFrame: true,
+                isEnabled: false, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .calibration, isTracking: false, hasCurrentFrame: true,
+                isEnabled: true, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .calibration, isTracking: true, hasCurrentFrame: false,
+                isEnabled: false, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .calibration, isTracking: true, hasCurrentFrame: false,
+                isEnabled: true, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .calibration, isTracking: true, hasCurrentFrame: true,
+                isEnabled: false, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .calibration, isTracking: true, hasCurrentFrame: true,
+                isEnabled: true, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: false, hasCurrentFrame: false,
+                isEnabled: false, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: false, hasCurrentFrame: false,
+                isEnabled: true, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: false, hasCurrentFrame: true,
+                isEnabled: false, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: false, hasCurrentFrame: true,
+                isEnabled: true, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: true, hasCurrentFrame: false,
+                isEnabled: false, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: true, hasCurrentFrame: false,
+                isEnabled: true, showsControl: false, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: true, hasCurrentFrame: true,
+                isEnabled: false, showsControl: true, anatomyIsPresented: false),
+            Row(surface: .tracking, isTracking: true, hasCurrentFrame: true,
+                isEnabled: true, showsControl: true, anatomyIsPresented: true),
+        ]
+
+        XCTAssertEqual(
+            rows.count,
+            LiveAnatomyPresentation.Surface.allCases.count * 8,
+            "each surface must cover every tracking/frame/enabled combination"
+        )
+        let keys = Set(rows.map {
+            "\($0.surface)|\($0.isTracking)|\($0.hasCurrentFrame)|\($0.isEnabled)"
+        })
+        XCTAssertEqual(keys.count, 16, "the truth table must cover each input combination once")
+
+        for row in rows {
+            let presentation = LiveAnatomyPresentation(
+                surface: row.surface,
+                isTracking: row.isTracking,
+                hasCurrentFrame: row.hasCurrentFrame,
+                isEnabled: row.isEnabled
+            )
+            let context = "\(row.surface), tracking=\(row.isTracking), "
+                + "frame=\(row.hasCurrentFrame), enabled=\(row.isEnabled)"
+            XCTAssertEqual(presentation.showsControl, row.showsControl, context)
+            XCTAssertEqual(
+                presentation.anatomyIsPresented,
+                row.anatomyIsPresented,
+                "renderer and disclosure diverged: \(context)"
+            )
+            XCTAssertFalse(
+                presentation.anatomyIsPresented && !presentation.showsControl,
+                "anatomy cannot be visible without its control: \(context)"
+            )
+        }
+    }
+
+    /// The pure truth table is necessary but not sufficient: leaving it unused
+    /// would let the old raw-toggle/model-gated wiring return while this suite
+    /// stayed green. Pin the three production call sites to the unified value.
+    func testLiveAnatomyCallSitesConsumeTheUnifiedPresentation() throws {
+        let overlaySource = try normalizedSource(
+            at: "BioMotion/ARKit/SkeletonOverlayView.swift"
+        )
+        let contentSource = try normalizedSource(at: "BioMotion/App/ContentView.swift")
+        let calibrationSource = try normalizedSource(
+            at: "BioMotion/App/CalibrationView.swift"
+        )
+
+        XCTAssertFalse(overlaySource.contains("var isTracking: Bool = true"),
+                       "tracking must remain a required renderer input")
+        XCTAssertFalse(overlaySource.contains("var showMuscles: Bool = true"),
+                       "the old fail-open capsule toggle returned")
+        XCTAssertEqual(
+            occurrences(of: "anatomyPresentation.anatomyIsPresented", in: overlaySource),
+            2,
+            "renderer visibility and joint update must consume the same final gate"
+        )
+
+        XCTAssertEqual(
+            occurrences(of: "anatomyPresentation: liveAnatomyPresentation", in: contentSource),
+            1,
+            "the tracking renderer is no longer wired to the shared presentation"
+        )
+        XCTAssertEqual(
+            occurrences(of: "if liveAnatomyPresentation.anatomyIsPresented {", in: contentSource),
+            1,
+            "the disclosure is no longer wired to the renderer's final gate"
+        )
+        XCTAssertEqual(
+            occurrences(of: "if liveAnatomyPresentation.showsControl {", in: contentSource),
+            1,
+            "the Anatomy control is no longer wired to the shared presentation"
+        )
+        XCTAssertFalse(
+            contentSource.contains(
+                "nimble.isModelLoaded && bodyTracking.isTracking && showAnatomyOverlay"
+            ),
+            "the joint-only anatomy layer must not regain a Nimble model gate"
+        )
+
+        XCTAssertEqual(
+            occurrences(of: "anatomyPresentation: LiveAnatomyPresentation(",
+                           in: calibrationSource),
+            1
+        )
+        XCTAssertEqual(occurrences(of: "surface: .calibration", in: calibrationSource), 1)
+        XCTAssertEqual(occurrences(of: "isEnabled: true", in: calibrationSource), 1,
+                       "calibration must be refused by surface policy, not a lucky false toggle")
+    }
+
+    private func source(at relativePath: String) throws -> String {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repositoryRoot.appendingPathComponent(relativePath),
+            encoding: .utf8
+        )
+    }
+
+    private func normalizedSource(at relativePath: String) throws -> String {
+        try source(at: relativePath)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    private func occurrences(of needle: String, in haystack: String) -> Int {
+        haystack.components(separatedBy: needle).count - 1
+    }
+
     /// A subject standing upright and facing the camera, in ARKit world axes:
     /// X image-right, Y up, Z toward the camera. Their OWN right is at −X, the
     /// same convention `BodyFrameOrientationTests` pins.

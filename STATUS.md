@@ -318,7 +318,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 493 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 495 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -344,7 +344,9 @@ the algorithm — the same solver costs 58.0 us per one-wrap solve at -O0 and 0.
 The suites that pay are the ones that drive `computeMomentArms` in a loop
 (`GaitDynamicsTests`, `StraightLinePathErrorTests`, `CylinderWrapValidationTests`).
 
-Per class (2026-08-08, 408-test snapshot; +30 since): GaitLoadSummaryTests 39 · PostureFindingsTests 26 ·
+Historical per-class inventory for that 408-test receipt (2026-08-08; the later
+30-test wrapping increment and all subsequent tests are intentionally not represented):
+GaitLoadSummaryTests 39 · PostureFindingsTests 26 ·
 NimbleBridgeTests 22 · GaitClipFixtureTests / GaitReportTests 20 · StaticHoldTests 19 ·
 TRCExporterTests 14 · IKConvergenceTests / MuscleSolverTests 13 · MomentArmTests 12 ·
 BodyPlausibilityTests / CalibrationTests / GaitDynamicsTests / NativeWindowSamplingTests 11 ·
@@ -2268,11 +2270,13 @@ muscle capsules next to it invites the reading that they are what the paragraph 
   depend on one. Counted: ranked capsules 24 → 0, fixed anatomical capsules 26, activation bars
   12 → 0, and the activation→appearance map (hue across r/g/b plus alpha 0.45 → 0.95, four channels)
   → one constant.
-* `MuscleOverlayClaimTests` (5 tests) guards the seams a regression would have to come through: the
+* `MuscleOverlayClaimTests` (7 tests) guards the seams a regression would have to come through: the
   plan is the anatomical set and carries no `path_`-keyed entry; every capsule maps to ONE colour;
   `Capsule`'s stored properties are exactly `[end, name, radius, start]` (asserted by `Mirror`, so
   adding an `activation` field fails); a capsule with a missing joint is dropped without disturbing
-  the other side; the note states the absence first and contains no digit and no `%`.
+  the other side; the note states the absence first and contains no digit and no `%`; all 16
+  surface/tracking/frame/toggle combinations share one renderer/control/disclosure truth table; and
+  a source-wiring contract pins the renderer, disclosure, control and calibration call sites to it.
 * **No device run and no screenshot.** Simulator only, and no UI test — what is asserted is the
   string content and the plan, never the rendered appearance. Whether three lines of `caption2` sit
   well on the live screen under the diagnostics is unverified.
@@ -2472,12 +2476,12 @@ the rest stand.
    the derivation at `:263-268` say the residual's difference is `‖a_artic‖/g`. The shipping
    computation is `leftFootForce.y + rightFootForce.y` — one axis. The user-facing sentence gets this
    right (`verticalFalsifierSentence`); only the internals still say the retired thing.
-8. **On the LIVE screen the anatomy capsules and their caption have different gates.**
-   `SkeletonARView.updateUIView` draws capsules on `isTracking && showMuscles`;
-   `MuscleOverlay.anatomyOnlyNote` shows on `nimble.isModelLoaded && …`. If the .osim fails to load,
-   26 muscle-shaped capsules are drawn with no sentence. The offline path deliberately collapsed this
-   into one property; the live path was left with two. (The new GRF caption in M1 does NOT repeat
-   this — it is inside the same `if` as its badge.)
+8. ~~**On the LIVE screen the anatomy capsules and their caption have different gates.**~~
+   **CLOSED 2026-08-10.** `LiveAnatomyPresentation` now owns one 16-row contract for the renderer,
+   Anatomy control and disclosure. Calibration refuses all three even with a current frame and an
+   enabled preference; tracking requires an active session plus a current frame; capsules and the
+   sentence then share `anatomyIsPresented`. The anatomy path no longer depends on `.osim` loading,
+   while the separate IK/ID control retains that model gate.
 9. ~~**An analysed clip with no load summary loses the CONTACT-TIME finding too.**~~
    **CLOSED 2026-08-10.** Resolution, contact time and flags are now report-owned, non-optional
    sections; only the downstream muscle section follows `summary` availability.
@@ -3990,9 +3994,10 @@ accepted caller exclusions, and always appended the E1 skip — so asking it to 
 skipped the same class. The log could say success while no required test supplied evidence.
 
 The runner now has four explicit modes. `fast` owns the E1 exclusion and currently requires exactly
-**493** ordinary tests (488 when this gate itself landed, plus three temporal-isolation and two
-atomic-payload regressions below). `slow` owns the one exact E1 selector and requires exactly **1**
-test. `all` runs both lanes and is the commit gate. `subset` requires at least one caller-selected
+**495** ordinary tests (488 when this gate itself landed, plus three temporal-isolation, two
+atomic-payload regressions, and two live-anatomy contracts below). `slow` owns the one exact E1
+selector and requires exactly **1** test. `all` runs both lanes and is the commit gate. `subset`
+requires at least one caller-selected
 test, rejects all
 skips, and prints `SUBSET PASS` rather than a gate verdict. Gating lanes accept no caller arguments,
 so selection, configuration, repetition, destination, and result-path semantics cannot be changed
@@ -4074,6 +4079,39 @@ shell harness passes **49/49**. They move the fast lane's reviewed count from 49
 full commit gate passed fast **493/493** in **2416 s** plus slow E1 **1/1** in **6140 s**. Both
 `xcodebuild` and `xcresulttool` exited 0, both xcresults were `Passed`, and both lanes recorded zero
 failures, skips, expected failures, and restarts (`ALL GATE PASS`).
+
+
+## Live anatomy has one presentation gate (2026-08-10)
+
+The live anatomy layer had three independent policies. `SkeletonARView` defaulted both tracking and
+capsules to true, so the calibration surface drew muscle-shaped capsules without a disclosure.
+On the tracking surface the renderer consumed the raw user toggle, while the Anatomy control and
+`MuscleOverlay.anatomyOnlyNote` additionally required a loaded Nimble model. A missing `.osim`
+therefore removed the control and sentence without removing the joint-only capsules; conversely,
+tracking with no current frame could show both controls while the renderer necessarily hid them.
+
+The RED added one explicit 16-row truth table before its production seam existed. The selected build
+failed with xcodebuild 65 and zero executed tests because `LiveAnatomyPresentation` was not in scope;
+that is recorded as a compile RED, not a behavioural assertion. A later review found that a pure
+policy could remain unused while old wiring returned, so a second structural regression pins all
+three production call sites. A temporary reverse mutation restored the old model/raw-toggle caption
+gate; that selected test failed **1/1** on both the missing shared gate and the reintroduced Nimble
+dependency, then passed after the mutation was removed. The GREEN introduces a pure policy
+over `surface × tracking × current-frame × enabled`. Calibration always refuses the control and
+layer. Tracking exposes the control only for a usable live pose, and presents anatomy only when that
+pose exists and the user preference is enabled. `SkeletonARView` now requires both tracking state and
+the final presentation value—there are no fail-open defaults. The renderer and disclosure consume
+the same `anatomyIsPresented`; the Anatomy control consumes `showsControl`; and none of those gates
+depends on Nimble model loading because the fixed capsule plan consumes only joints. The separate
+IK/ID control retains its model-loaded gate.
+
+The new truth-table regression passes **1/1**, the complete `MuscleOverlayClaimTests` suite passes
+**7/7**, and the related calibration/orientation suites pass **14/14**, with zero failures, skips,
+expected failures, or restarts; the fail-closed shell harness passes **49/49**. It moves the reviewed
+fast count from 493 to **495**. The full commit gate passed fast **495/495** in **2364 s** plus slow E1
+**1/1** in **6026 s**. Both `xcodebuild` and `xcresulttool` exited 0, both xcresults were `Passed`,
+and both lanes recorded zero failures, skips, expected failures, and restarts
+(`ALL GATE PASS`).
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
@@ -4465,10 +4503,12 @@ arms must differ in the work that PRECEDES the mask.
     `maxNativeWindowFrames` budget. Whether the window can be extended without breaking the frame
     budget, and what that costs in memory, is unmeasured. This is the only route to a claim finer
     than ~20 % that does not need a new statistic.
-22. **The eight remaining minors** are listed in
+22. **The remaining and closed minors** are tracked in
     [Seventh round](#seventh-round-the-surviving-claim-was-gated-on-the-wrong-variance-too-2026-08-08)
     (minors 1, 3, 5, 6, 7, 8, 9 plus the round-six list). Minor 1 — `framesPerSecond` using the
-    NOMINAL rate under the sparse sampler — was closed 2026-08-10 by removing the duplicate source.
+    NOMINAL rate under the sparse sampler — was closed 2026-08-10 by removing the duplicate source;
+    minor 8 — live anatomy renderer/caption gate drift — was closed the same day by the unified
+    presentation contract.
 
 ### Newly opened by the 2026-08-09 re-measurement (eighth round)
 

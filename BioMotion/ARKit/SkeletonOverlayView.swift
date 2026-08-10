@@ -2,6 +2,31 @@ import SwiftUI
 import ARKit
 import RealityKit
 
+/// One fail-closed decision for every surface that can present the live
+/// anatomical capsules. The renderer and its disclosure must consume the same
+/// `anatomyIsPresented` value; neither depends on the Nimble model because the
+/// fixed capsule plan only consumes tracked joints.
+struct LiveAnatomyPresentation: Equatable {
+    enum Surface: CaseIterable, Hashable {
+        case calibration
+        case tracking
+    }
+
+    let showsControl: Bool
+    let anatomyIsPresented: Bool
+
+    init(
+        surface: Surface,
+        isTracking: Bool,
+        hasCurrentFrame: Bool,
+        isEnabled: Bool
+    ) {
+        let hasUsableLivePose = surface == .tracking && isTracking && hasCurrentFrame
+        showsControl = hasUsableLivePose
+        anatomyIsPresented = hasUsableLivePose && isEnabled
+    }
+}
+
 /// ARView wrapper that displays the camera feed with the skeleton and the
 /// muscle ANATOMY layer.
 ///
@@ -12,8 +37,8 @@ import RealityKit
 struct SkeletonARView: UIViewRepresentable {
     let session: ARSession
     @Binding var currentFrame: BodyFrame?
-    var isTracking: Bool = true
-    var showMuscles: Bool = true
+    let isTracking: Bool
+    let anatomyPresentation: LiveAnatomyPresentation
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -36,8 +61,8 @@ struct SkeletonARView: UIViewRepresentable {
             return
         }
         context.coordinator.updateSkeleton(frame: frame)
-        context.coordinator.muscleOverlay.setVisible(showMuscles)
-        if showMuscles {
+        context.coordinator.muscleOverlay.setVisible(anatomyPresentation.anatomyIsPresented)
+        if anatomyPresentation.anatomyIsPresented {
             context.coordinator.muscleOverlay.update(joints: frame.joints)
         }
     }

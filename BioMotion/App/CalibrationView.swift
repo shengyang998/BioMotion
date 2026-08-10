@@ -39,7 +39,13 @@ struct CalibrationView: View {
             SkeletonARView(
                 session: bodyTracking.arSession,
                 currentFrame: $bodyTracking.currentFrame,
-                isTracking: bodyTracking.isTracking
+                isTracking: bodyTracking.isTracking,
+                anatomyPresentation: LiveAnatomyPresentation(
+                    surface: .calibration,
+                    isTracking: bodyTracking.isTracking,
+                    hasCurrentFrame: bodyTracking.currentFrame != nil,
+                    isEnabled: true
+                )
             )
             .ignoresSafeArea()
 

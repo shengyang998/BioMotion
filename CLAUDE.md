@@ -133,7 +133,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 493 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 495 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`
@@ -401,7 +401,10 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   from one view is not retiring the claim: grep for every consumer of the same numbers. Since
   2026-08-08 `update(joints:)` takes no muscle solve at all, the capsules are a fixed 26-muscle set
   in one constant colour, the bar chart is deleted, and `MuscleOverlay.anatomyOnlyNote` states the
-  absence on both screens (`MuscleOverlayClaimTests`).
+  absence on both screens (`MuscleOverlayClaimTests`). `LiveAnatomyPresentation` is the live
+  renderer/control/disclosure gate: calibration always refuses the layer, and tracking requires an
+  active session plus a current frame before either the control or capsules can appear. Do not gate
+  this anatomical layer on Nimble model loading; it consumes joints, not a solve.
 - **A GREEN ASSERTION ON A STRING IS A LOCK ON A CLAIM, and it kept a refuted sentence on the most-
   read screen in the product.** `GaitLoadSummary.perMuscleRetirementSentence` told every user that
   "66 of its muscles are given a straight line where the real tendon wraps around bone" and that the
@@ -509,7 +512,8 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   both feet are down, and double support is statically indeterminate at ±18 pp with a perfectly
   known CoM against a ~10 pp meaningful threshold. The badge reads `GRF sum … BW` now, with
   `NimbleEngine.footLoadSplitIsNotMeasuredNote` under it on the SAME `if` (the live path had
-  already shipped one picture whose caption had a different gate — that one is still open, minor 8).
+  already shipped one picture whose caption had a different gate; that mismatch was closed on
+  2026-08-10 by the 16-row `LiveAnatomyPresentation` truth table).
 - **The gait residual is blind to WHICH foot carries the load.** `GaitFrameOutcome.residualInBodyWeights` is built from `leftFootForce.y + rightFootForce.y`, and the near-CoP solver's constraint fixes that SUM exactly — so a 50/50 split between the feet and a 100/0 split give the identical residual while halving one leg's torques. Only `contactDetectorsAgree` can see the split. A residual that passed says nothing about the left/right claim.
 - **That same residual is VERTICAL ONLY, and it is not `‖a_artic‖/g`.** `leftFootForce.x/.z` exist in the bridge's output (`NimbleBridge.h`: `[fx, fy, fz] N`) and are discarded. The fore-aft braking/push-off term STATUS sizes at 0.2-0.35 BW is 10-17× the measured vertical residual, is phase-dependent, and does NOT cancel out of a muscle-to-muscle ratio — and no check in this pipeline examines it. Read `GaitLoadSummary.maxVerticalForceResidualInBodyWeights`, whose name says so.
 - **A "peak" over a side's frames is not a left/right statistic.** The two legs contribute different numbers of usable frames (a contact one sample longer yields twice as many at `taps = 5`), and `E[max of n]` grows with `n` — measured at **+8.07 %** of fabricated left-high asymmetry on a symmetric runner, 80 % of `video_012`'s own 10.14 % publication floor. Any statistic over per-side frames must have an expectation independent of the count; `GaitLoadSummary.MuscleLoad` uses one sample per contact, averaged over contacts.

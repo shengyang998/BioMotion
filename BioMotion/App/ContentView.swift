@@ -14,6 +14,15 @@ struct ContentView: View {
     @State private var showAnatomyOverlay = true
     @State private var showOfflineImport = false
 
+    private var liveAnatomyPresentation: LiveAnatomyPresentation {
+        LiveAnatomyPresentation(
+            surface: .tracking,
+            isTracking: bodyTracking.isTracking,
+            hasCurrentFrame: bodyTracking.currentFrame != nil,
+            isEnabled: showAnatomyOverlay
+        )
+    }
+
     var body: some View {
         Group {
             if showCalibration {
@@ -80,7 +89,7 @@ struct ContentView: View {
                 session: bodyTracking.arSession,
                 currentFrame: $bodyTracking.currentFrame,
                 isTracking: bodyTracking.isTracking,
-                showMuscles: showAnatomyOverlay
+                anatomyPresentation: liveAnatomyPresentation
             )
             .ignoresSafeArea()
 
@@ -229,7 +238,7 @@ struct ContentView: View {
                 // diagnostics above (marker residual, |τ|/kg, foot-load
                 // fractions, frame check) are unchanged: they are labelled with
                 // their units and none of them is a per-muscle claim.
-                if nimble.isModelLoaded && bodyTracking.isTracking && showAnatomyOverlay {
+                if liveAnatomyPresentation.anatomyIsPresented {
                     Text(MuscleOverlay.anatomyOnlyNote)
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.85))
@@ -246,25 +255,30 @@ struct ContentView: View {
                 }
 
                 // Toggle buttons
-                if nimble.isModelLoaded && bodyTracking.isTracking {
+                if (nimble.isModelLoaded && bodyTracking.isTracking)
+                    || liveAnatomyPresentation.showsControl {
                     HStack(spacing: 8) {
-                        Button { withAnimation { showIKPanel.toggle() } } label: {
-                            Text(showIKPanel ? "Positions" : "IK/ID")
-                                .font(.caption2).foregroundStyle(.white)
+                        if nimble.isModelLoaded && bodyTracking.isTracking {
+                            Button { withAnimation { showIKPanel.toggle() } } label: {
+                                Text(showIKPanel ? "Positions" : "IK/ID")
+                                    .font(.caption2).foregroundStyle(.white)
+                                    .padding(.horizontal, 10).padding(.vertical, 4)
+                                    .background(.black.opacity(0.5), in: Capsule())
+                            }
+                        }
+                        if liveAnatomyPresentation.showsControl {
+                            // "Muscles ON" promised a muscle reading. The layer
+                            // is anatomy — where they are — so the control says so.
+                            Button { showAnatomyOverlay.toggle() } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "figure.stand")
+                                    Text(showAnatomyOverlay ? "Anatomy ON" : "Anatomy OFF")
+                                }
+                                .font(.caption2)
+                                .foregroundStyle(showAnatomyOverlay ? .green : .gray)
                                 .padding(.horizontal, 10).padding(.vertical, 4)
                                 .background(.black.opacity(0.5), in: Capsule())
-                        }
-                        // "Muscles ON" promised a muscle reading. The layer is
-                        // anatomy — where they are — so the control says so.
-                        Button { showAnatomyOverlay.toggle() } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "figure.stand")
-                                Text(showAnatomyOverlay ? "Anatomy ON" : "Anatomy OFF")
                             }
-                            .font(.caption2)
-                            .foregroundStyle(showAnatomyOverlay ? .green : .gray)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(.black.opacity(0.5), in: Capsule())
                         }
                     }
                     .padding(.top, 4)
