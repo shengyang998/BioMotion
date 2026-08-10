@@ -318,7 +318,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 495 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 498 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -827,8 +827,12 @@ are >50% vertex-driven and dropping the mesh outright would silently change the 
 `labs/sam-3d-body/export/e2e_check.py` runs the shipping chain — Core ML → retarget → anatomy — and
 is the only check that crosses that seam. 6/6 pass: vertical ordering, segment lengths in adult
 range, bilateral symmetry to 1e-7 (this is what proves the L/R indices are not crossed), and the
-three `scaleModelWithHeight` factors inside the `[0.7, 1.4]` clamp. Its scale factors
-(0.957 / 0.989 / 1.014) independently match the PyTorch-side measurement (0.954 / 0.984 / 1.017).
+three legacy constant-relative `scaleModelWithHeight` factors inside the `[0.7, 1.4]` clamp. Its
+recorded factors (0.957 / 0.989 / 1.014) independently matched the PyTorch-side measurement
+(0.954 / 0.984 / 1.017), but those denominators were not the loaded FullBody model and are now a
+historical export check, not the shipping ratios. The bridge now caches FullBody's actual
+lower/trunk/upper references (0.8061 / 0.4820 / 0.5360 m); the shipping dancer regression records
+1.044 / 1.094 / 0.997 and converges at 2.4586 cm marker RMS.
 
 Left/right assignment was confirmed three ways, all external to the model, because any
 model-internal chirality test is circular: COCO-WholeBody keypoint naming, a photo with externally
@@ -3994,8 +3998,9 @@ accepted caller exclusions, and always appended the E1 skip — so asking it to 
 skipped the same class. The log could say success while no required test supplied evidence.
 
 The runner now has four explicit modes. `fast` owns the E1 exclusion and currently requires exactly
-**495** ordinary tests (488 when this gate itself landed, plus three temporal-isolation, two
-atomic-payload regressions, and two live-anatomy contracts below). `slow` owns the one exact E1
+**498** ordinary tests (488 when this gate itself landed, plus three temporal-isolation, two
+atomic-payload regressions, two live-anatomy contracts, and three model-scaling contracts below).
+`slow` owns the one exact E1
 selector and requires exactly **1** test. `all` runs both lanes and is the commit gate. `subset`
 requires at least one caller-selected
 test, rejects all
@@ -4112,6 +4117,45 @@ fast count from 493 to **495**. The full commit gate passed fast **495/495** in 
 **1/1** in **6026 s**. Both `xcodebuild` and `xcresulttool` exited 0, both xcresults were `Passed`,
 and both lanes recorded zero failures, skips, expected failures, and restarts
 (`ALL GATE PASS`).
+
+
+## Model scaling is relative to the loaded model (2026-08-10)
+
+`scaleModelWithHeight` used three Rajagopal-era denominators (lower 0.88 m, trunk 0.52 m,
+upper 0.54 m), then wrote each resulting subject ratio as an absolute uniform body scale. Those
+numbers were not exact even for Rajagopal and were not the shipped FullBody model's references;
+the write also discarded any non-unit or anisotropic default declared by a future model. There was
+no load-time baseline, so an implementation that tried to repair the multiplication by reading the
+current skeleton would compound on a repeated call, while a model reload had no state whose refresh
+could be tested.
+
+The RED added a dedicated ObjC++ `ModelScalingTests` target seam and generated its project entry.
+All **3/3 failed** under the old implementation (xcodebuild 65, zero skips/restarts): passing
+Rajagopal's own joint-centre geometry produced lower/trunk/upper scales
+0.914191 / 0.891122 / 0.992541 instead of identity; a 1.12× subject produced
+1.023894 / 0.998056 / 1.111646 instead of 1.12× the loaded defaults; and loading FullBody on the
+same bridge then passing FullBody's own geometry produced 0.916012 / 0.926834 / 0.992541. The
+failure is therefore the old reference/assignment semantics, not a missing fixture or test target.
+
+Every successful model load now replaces one coherent baseline: the exact body-scale vector and
+lower/trunk/upper references computed from that skeleton's hip→ankle, pelvis→shoulder-midpoint and
+shoulder→wrist body origins. Subject ratios are measured against those cached lengths, clamped in
+`[0.7, 1.4]`, and multiplied component-wise into the cached defaults. Neither references nor scales
+are read from a previously scaled state. Missing references fall back to the existing height ratio,
+and a default-vector size mismatch refuses the scale. Rajagopal caches
+0.8045 / 0.4634 / 0.5360 m; FullBody caches 0.8061 / 0.4820 / 0.5360 m. A successful reload replaces
+all four cached values, including replacing an unavailable reference with invalid state rather than
+leaking the earlier model's value.
+
+The three permanent contracts pass **3/3**: loaded-model identity, repeated 1.12× idempotence, and
+Rajagopal→FullBody reload. The scaled dancer plus those contracts pass **4/4**; the broader bridge,
+IK, calibration, body-plausibility and offline-orchestration set passes **61/61**, all with zero
+failures, skips, expected failures, or restarts. The dancer now uses FullBody-relative ratios
+1.044 / 1.094 / 0.997 and converges at 2.4586 cm marker RMS. These tests move the reviewed fast
+count from 495 to **498**; the fail-closed shell harness passes **49/49**. The full commit gate for
+this exact change passed fast **498/498 in 2365s** plus slow E1 **1/1 in 6025s**. Both lanes report
+`xcodebuild` 0, `xcresulttool` 0, and zero failures, skips, expected failures, or restarts; the
+runner's final verdict is **ALL GATE PASS**.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

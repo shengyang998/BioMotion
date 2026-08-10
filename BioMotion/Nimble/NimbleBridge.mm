@@ -347,10 +347,65 @@ static double markerReliabilityWeight(const std::string& name) {
     return 1.00;
 }
 
+// Model-native scale references. `scaleModelWithHeight:` receives joint-centre
+// distances, so its denominator must come from the same joint-centre body
+// origins on the model that was actually loaded. A Rajagopal-era constant is
+// not a reference for FullBody (and was not exact for Rajagopal either).
+static double modelBodyOriginDistance(
+    const std::shared_ptr<dynamics::Skeleton>& skeleton,
+    const char *firstBody,
+    const char *secondBody) {
+    if (!skeleton) return NAN;
+    dynamics::BodyNode *first = skeleton->getBodyNode(std::string(firstBody));
+    dynamics::BodyNode *second = skeleton->getBodyNode(std::string(secondBody));
+    if (first == nullptr || second == nullptr) return NAN;
+    const double length = (
+        first->getWorldTransform().translation()
+        - second->getWorldTransform().translation()
+    ).norm();
+    return std::isfinite(length) && length > 0.0 ? length : NAN;
+}
+
+static double averageAvailableLengths(double left, double right) {
+    const bool hasLeft = std::isfinite(left) && left > 0.0;
+    const bool hasRight = std::isfinite(right) && right > 0.0;
+    if (hasLeft && hasRight) return 0.5 * (left + right);
+    if (hasLeft) return left;
+    if (hasRight) return right;
+    return NAN;
+}
+
+static double modelTrunkReferenceLength(
+    const std::shared_ptr<dynamics::Skeleton>& skeleton) {
+    if (!skeleton) return NAN;
+    dynamics::BodyNode *pelvis = skeleton->getBodyNode("pelvis");
+    dynamics::BodyNode *leftShoulder = skeleton->getBodyNode("humerus_l");
+    dynamics::BodyNode *rightShoulder = skeleton->getBodyNode("humerus_r");
+    if (pelvis == nullptr || leftShoulder == nullptr || rightShoulder == nullptr) {
+        return NAN;
+    }
+    const Eigen::Vector3s shoulderMidpoint = 0.5 * (
+        leftShoulder->getWorldTransform().translation()
+        + rightShoulder->getWorldTransform().translation()
+    );
+    const double length = (
+        shoulderMidpoint - pelvis->getWorldTransform().translation()
+    ).norm();
+    return std::isfinite(length) && length > 0.0 ? length : NAN;
+}
+
 @implementation NimbleBridge {
     std::shared_ptr<dynamics::Skeleton> _skeleton;
     std::map<std::string, std::pair<dynamics::BodyNode*, Eigen::Vector3s>> _markers;
     BOOL _modelLoaded;
+
+    // Immutable-for-one-load scaling baseline. Every subject scale is derived
+    // from these values, never from the skeleton's current (possibly already
+    // scaled) state. A successful model reload replaces all four together.
+    Eigen::VectorXs _loadedDefaultBodyScales;
+    double _loadedLowerReferenceLength;
+    double _loadedTrunkReferenceLength;
+    double _loadedUpperReferenceLength;
 
     // Ground-plane estimate for GRF detection, in the ARKit world frame (y-up).
     double _groundHeightY;
@@ -386,6 +441,9 @@ static double markerReliabilityWeight(const std::string& name) {
     self = [super init];
     if (self) {
         _modelLoaded = NO;
+        _loadedLowerReferenceLength = NAN;
+        _loadedTrunkReferenceLength = NAN;
+        _loadedUpperReferenceLength = NAN;
         _footHeightSamples.reserve(kGroundWindowSamples);
         _footHeightScratch.reserve(kGroundWindowSamples);
         [self resetSessionState];
@@ -605,6 +663,25 @@ static double markerReliabilityWeight(const std::string& name) {
                   [unplacedNames componentsJoinedByString:@", "]);
         }
 
+        // Cache the baseline only after the replacement model is fully
+        // installed. The body origins are the same joint centres consumed by
+        // scaleModelWithHeight:, and the default vector preserves any native
+        // anisotropic or non-unit scale declared by this exact model.
+        _loadedDefaultBodyScales = _skeleton->getBodyScales();
+        _loadedLowerReferenceLength = averageAvailableLengths(
+            modelBodyOriginDistance(_skeleton, "femur_l", "talus_l"),
+            modelBodyOriginDistance(_skeleton, "femur_r", "talus_r")
+        );
+        _loadedTrunkReferenceLength = modelTrunkReferenceLength(_skeleton);
+        _loadedUpperReferenceLength = averageAvailableLengths(
+            modelBodyOriginDistance(_skeleton, "humerus_l", "hand_l"),
+            modelBodyOriginDistance(_skeleton, "humerus_r", "hand_r")
+        );
+        NSLog(@"NimbleBridge: Loaded scale references — lower %.4f m, trunk %.4f m, upper %.4f m",
+              _loadedLowerReferenceLength,
+              _loadedTrunkReferenceLength,
+              _loadedUpperReferenceLength);
+
         _modelLoaded = YES;
         // A different skeleton invalidates both the IK warm-start pose (wrong
         // DOF layout) and the ground samples (measured through the old model's
@@ -669,7 +746,13 @@ static double markerReliabilityWeight(const std::string& name) {
 - (BOOL)scaleModelWithHeight:(double)height
              markerPositions:(NSArray<NSNumber *> *)markerPositions
                  markerNames:(NSArray<NSString *> *)markerNames {
-    if (!_modelLoaded) return NO;
+    if (!_modelLoaded || !_skeleton) return NO;
+
+    const size_t numBodies = _skeleton->getNumBodyNodes();
+    if (_loadedDefaultBodyScales.size() != (int)(numBodies * 3)) {
+        NSLog(@"NimbleBridge: Refusing scale without the loaded model baseline");
+        return NO;
+    }
 
     // Per-segment anthropometric scaling.
     //
@@ -681,17 +764,15 @@ static double markerReliabilityWeight(const std::string& name) {
     // joint-center positions, we derive per-group scale factors directly
     // from inter-joint distances measured in the ARKit world:
     //
-    //   lower-limb scale = (hip→ankle distance, averaged L/R) / model default
-    //   trunk scale      = (pelvis→shoulder-midpoint distance) / model default
-    //   upper-limb scale = (shoulder→wrist distance, averaged L/R) / model default
+    //   lower-limb ratio = (hip→ankle distance, averaged L/R) / loaded-model reference
+    //   trunk ratio      = (pelvis→shoulder-midpoint distance) / loaded-model reference
+    //   upper-limb ratio = (shoulder→wrist distance, averaged L/R) / loaded-model reference
     //
     // If markers are missing, we fall back to height/1.8 for that group.
     //
-    // For Rajagopal2016 with default male proportions the approximate
-    // reference segment lengths at 1.8m standing height are:
-    //   lower extremity (hip→ankle)    ≈ 0.88 m
-    //   trunk (pelvis→shoulder midpt)  ≈ 0.52 m
-    //   upper extremity (shoulder→wrist) ≈ 0.54 m
+    // The denominators and body-scale vector were cached together when this
+    // exact model loaded. Repeated calls therefore cannot compound, and a
+    // model reload cannot inherit the previous model's proportions.
 
     auto markerWorld = [&](const std::string& name) -> Eigen::Vector3s {
         for (NSUInteger i = 0; i < markerNames.count; i++) {
@@ -720,44 +801,52 @@ static double markerReliabilityWeight(const std::string& name) {
         return (markerWorld(a) - markerWorld(b)).norm();
     };
 
+    auto ratioFromMeasurement = [](
+        double measured,
+        double reference,
+        double fallback) -> double {
+        if (std::isfinite(measured) && measured > 0.0
+            && std::isfinite(reference) && reference > 0.0) {
+            return measured / reference;
+        }
+        return fallback;
+    };
+
     // Lower extremity: average of L and R
-    double lowerScale = fallbackScale;
     double lhl = segLength("LHJC", "LAJC");
     double rhl = segLength("RHJC", "RAJC");
-    std::vector<double> lowerLengths;
-    if (lhl > 0) lowerLengths.push_back(lhl);
-    if (rhl > 0) lowerLengths.push_back(rhl);
-    if (!lowerLengths.empty()) {
-        double avg = 0;
-        for (double l : lowerLengths) avg += l;
-        avg /= lowerLengths.size();
-        lowerScale = avg / 0.88;  // reference lower-limb length at 1.8m height
-    }
+    const double measuredLowerLength = averageAvailableLengths(lhl, rhl);
+    double lowerScale = ratioFromMeasurement(
+        measuredLowerLength,
+        _loadedLowerReferenceLength,
+        fallbackScale
+    );
 
     // Upper extremity: average of L and R
-    double upperScale = fallbackScale;
     double lal = segLength("LSJC", "LWJC");
     double ral = segLength("RSJC", "RWJC");
-    std::vector<double> upperLengths;
-    if (lal > 0) upperLengths.push_back(lal);
-    if (ral > 0) upperLengths.push_back(ral);
-    if (!upperLengths.empty()) {
-        double avg = 0;
-        for (double l : upperLengths) avg += l;
-        avg /= upperLengths.size();
-        upperScale = avg / 0.54;  // reference upper-limb length at 1.8m height
-    }
+    const double measuredUpperLength = averageAvailableLengths(lal, ral);
+    double upperScale = ratioFromMeasurement(
+        measuredUpperLength,
+        _loadedUpperReferenceLength,
+        fallbackScale
+    );
 
     // Trunk: pelvis to midpoint of shoulders
-    double trunkScale = fallbackScale;
+    double measuredTrunkLength = NAN;
     if (hasMarker("PELVIS") && hasMarker("LSJC") && hasMarker("RSJC")) {
         Eigen::Vector3s p = markerWorld("PELVIS");
         Eigen::Vector3s shoulderMid = 0.5 * (markerWorld("LSJC") + markerWorld("RSJC"));
         double len = (shoulderMid - p).norm();
         if (len > 0.1) {
-            trunkScale = len / 0.52;  // reference pelvis→shoulder length at 1.8m
+            measuredTrunkLength = len;
         }
     }
+    double trunkScale = ratioFromMeasurement(
+        measuredTrunkLength,
+        _loadedTrunkReferenceLength,
+        fallbackScale
+    );
 
     // Clamp to sensible anthropometric bounds so a bad single frame can't
     // blow up the skeleton (e.g. partially-tracked frame with wrist near ground).
@@ -767,9 +856,10 @@ static double markerReliabilityWeight(const std::string& name) {
     trunkScale = clampScale(trunkScale);
 
     // Assign per-body scale: nimble expects a flat VectorXs of size 3*numBodies
-    // arranged as [x,y,z, x,y,z, ...]. We group each body into lower/trunk/upper.
-    size_t numBodies = _skeleton->getNumBodyNodes();
-    Eigen::VectorXs bodyScales(numBodies * 3);
+    // arranged as [x,y,z, x,y,z, ...]. Multiply the subject ratio into the
+    // loaded default component, preserving native anisotropy and making the
+    // operation idempotent.
+    Eigen::VectorXs bodyScales = _loadedDefaultBodyScales;
 
     auto groupScale = [&](const std::string& bodyName) -> double {
         // Upper extremity bodies (incl. clavicle + scapula on the new
@@ -813,13 +903,13 @@ static double markerReliabilityWeight(const std::string& name) {
     for (size_t i = 0; i < numBodies; i++) {
         auto* body = _skeleton->getBodyNode(i);
         double s = groupScale(body->getName());
-        bodyScales(i * 3 + 0) = s;
-        bodyScales(i * 3 + 1) = s;
-        bodyScales(i * 3 + 2) = s;
+        bodyScales(i * 3 + 0) = _loadedDefaultBodyScales(i * 3 + 0) * s;
+        bodyScales(i * 3 + 1) = _loadedDefaultBodyScales(i * 3 + 1) * s;
+        bodyScales(i * 3 + 2) = _loadedDefaultBodyScales(i * 3 + 2) * s;
     }
     _skeleton->setBodyScales(bodyScales);
 
-    NSLog(@"NimbleBridge: Per-segment scale — lower %.3f, trunk %.3f, upper %.3f (height fallback %.3f)",
+    NSLog(@"NimbleBridge: Per-segment ratios — lower %.3f, trunk %.3f, upper %.3f (height fallback %.3f)",
           lowerScale, trunkScale, upperScale, fallbackScale);
 
     return YES;

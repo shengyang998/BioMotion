@@ -336,17 +336,18 @@ enum MHRRetarget {
     /// MHR gives us the joint centres, so the pose-invariant CHAIN sum
     /// (hip→knee + knee→ankle, shoulder→elbow + elbow→wrist) is free. Rebuilding a canonical
     /// straight-limb marker set from those chain sums makes the straight-line distances the
-    /// bridge measures equal the true segment lengths. Measured on the same three frames the
-    /// raw markers failed on, every scale then lands inside [0.7, 1.4]:
+    /// bridge measures equal the true segment lengths. Re-expressing the recorded lengths from
+    /// those same frames against FullBody's loaded references (lower 0.8061 m, upper 0.5360 m,
+    /// trunk 0.4820 m), every subject ratio lands inside [0.7, 1.4]:
     ///
-    ///   dancing  lower 0.954  upper 0.984  trunk 1.017
-    ///   yoga     lower 0.897  upper 0.921  trunk 0.911
-    ///   football lower 1.011  upper 0.999  trunk 0.785
-    ///   sample4  lower 0.918  upper 0.896  trunk 0.885
+    ///   dancing  lower 1.041  upper 0.991  trunk 1.097
+    ///   yoga     lower 0.979  upper 0.928  trunk 0.983
+    ///   football lower 1.104  upper 1.006  trunk 0.847
+    ///   sample4  lower 1.002  upper 0.903  trunk 0.955
     ///
     /// 5 of 6 runs pass. The exception is `sample2`, a small heavily-occluded rider on a horse
     /// where the model itself produced a degenerate fit — 0.070 m hip width, 0.116 m shoulder
-    /// width, 0.178 m humerus — giving upperScale 0.591, outside the clamp. This method cannot
+    /// width, 0.178 m humerus — giving an upper ratio about 0.595, outside the clamp. This method cannot
     /// rescue a bad prediction; the clamp truncates the damage, but a caller that wants to fail
     /// loudly should gate the frame first (e.g. reject hip width outside 0.10-0.28 m or
     /// estimated stature outside 1.3-2.1 m). Deliberately NOT implemented here.
@@ -354,12 +355,11 @@ enum MHRRetarget {
     /// So one good frame replaces the 60-frame T-pose capture. Only distances are read, so the
     /// synthetic layout's orientation is arbitrary; it is written pelvis-at-origin, Y-up.
     ///
-    /// NOTE (not fixed here — NimbleBridge.mm is not this file's to edit): the bridge's
-    /// reference constants 0.88 / 0.54 / 0.52 are Rajagopal2016-era numbers, but the shipped
-    /// model is FullBody.osim whose rest lengths are 0.8061 / 0.5360 / 0.4820 (FK'd from
-    /// findings/osim_skeleton_dump.json). Scale 1.0 therefore leaves FullBody's legs ~9% and
-    /// trunk ~8% shorter than the constants imply. The live ARKit path has the identical bias,
-    /// so this is not a regression introduced by the offline path.
+    /// Since 2026-08-10 the bridge caches these references and the model's original body-scale
+    /// vector on every successful load. It computes `measured / loadedReference`, clamps that
+    /// ratio, then multiplies it into the cached default; it never uses Rajagopal-era constants
+    /// or an already-scaled skeleton as the baseline. `ModelScalingTests` pins FullBody and
+    /// Rajagopal identity, repeat idempotence, and cross-model reload.
     ///
     /// - Returns: flat xyz triples and the matching OpenSim marker names, ready to be boxed
     ///   into `[NSNumber]` for the bridge.

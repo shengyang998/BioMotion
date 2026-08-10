@@ -131,8 +131,12 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// Get marker names defined in the loaded model.
 @property (nonatomic, readonly) NSArray<NSString *> *markerNames;
 
-/// Scale the model to match a person's body proportions.
-/// @param height Body height in meters.
+/// Scale the model to match a person's body proportions. Segment ratios are
+/// measured against references cached from the exact model at load time, then
+/// multiplied into that model's cached default body scales. Repeating the same
+/// input is idempotent; a successful model reload replaces the whole baseline.
+/// @param height Body height in meters, used only as the fallback ratio source
+/// when a segment's required markers or model reference are unavailable.
 /// @param markerPositions Flat array of marker 3D positions [x0,y0,z0, x1,y1,z1, ...] in meters.
 /// @param markerNames Names of the markers corresponding to positions.
 - (BOOL)scaleModelWithHeight:(double)height

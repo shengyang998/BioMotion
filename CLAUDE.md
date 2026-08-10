@@ -122,6 +122,12 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   report flags come from `GaitReport` through `GaitTimingSummary` and stay visible when
   `GaitLoadSummary.make` returns nil. Only muscle/load/honesty sections may follow that optional.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
+- **Subject scaling starts from the loaded model, never the current skeleton or another model's
+  constants.** `loadModelFromPath:` caches the exact default body-scale vector plus lower/trunk/upper
+  joint-centre reference lengths. `scaleModelWithHeight:` applies
+  `cachedDefault × clamp(measured/cachedReference)`. Recomputing references after a prior scale
+  compounds; writing a uniform ratio discards native anisotropy; failing to replace all caches on
+  reload leaks Rajagopal proportions into FullBody. `ModelScalingTests` pins all three seams.
 
 ## Readings that lie — each has already cost a wrong conclusion
 
@@ -133,7 +139,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 495 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 498 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`
