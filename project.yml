@@ -27,15 +27,17 @@ targets:
           - "AssetPack/Support/**"
           - "AssetPack/Support"
       # Developer-only escape hatch. Absent by default (hence `optional`), so a
-      # normal build/archive carries no model. Populate it to get a bundled,
-      # Xcode-compiled `SAM3DBodyPose.mlmodelc` that
+      # normal build/archive carries no model. Populate it from the canonical,
+      # receipt-verified AAR to get a bundled precompiled
+      # `SAM3DBodyPose.mlmodelc` that
       # `AssetPackModelStore.resolveCompiledModelURL()` prefers over the asset
       # pack — required for the Simulator, where Background Assets serves no
       # packs:
-      #   bash tools/assetpack/dev_bundle_model.sh on   (then xcodegen generate)
-      #   bash tools/assetpack/dev_bundle_model.sh off  (then xcodegen generate)
+      #   /bin/bash tools/assetpack/dev_bundle_model.sh on   (then xcodegen generate)
+      #   /bin/bash tools/assetpack/dev_bundle_model.sh off  (then xcodegen generate)
       # It lives under build/ because .gitignore already covers that — a 1.3 GiB
-      # copy must never be committable by accident.
+      # copy must never be committable by accident. The helper never accepts or
+      # compiles a raw `.mlpackage`.
       - path: build/DevBundledModel
         optional: true
     dependencies:

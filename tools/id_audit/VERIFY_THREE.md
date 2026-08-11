@@ -7,6 +7,12 @@
 > CoP, muscle effort, and gait load nil even for a perfectly held pose or explicit floor. The old
 > numbers remain useful only for unit, queue, and policy regression work.
 
+> **Historical model-loader receipt.** The five-step raw-package/compile-cache
+> findings in the Background Assets section also describe the 2026-08-07 code.
+> The current runtime accepts only precompiled `.mlmodelc` directories, and the
+> Simulator helper installs one only after receipt verification; see
+> `tools/assetpack/README.md` for the active contract.
+
 Scope: muscle-QP units, Background Assets delivery, static-hold detection.
 Method: read `git diff` first; re-derive every load-bearing number by an independent
 route; run the tests myself. No source was edited.

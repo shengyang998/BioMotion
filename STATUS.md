@@ -1108,10 +1108,12 @@ App bundle **1.3151 GiB → 0.0069 GiB**; archived payload 8 MB. Device-side `co
 rejected because it would need the package and its output resident simultaneously (~2.6 GiB of user
 disk), in the app container where iOS cannot evict it, and would stall the first import.
 
-Resolution ladder, first hit wins: bundled `.mlmodelc` → bundled `.mlpackage` (compile + cache) →
-pack `.mlmodelc` → pack `.mlpackage` (compile + cache) → start the download and **throw immediately**.
-It never blocks on the transfer. The bundled branch exists so the Simulator and local iteration need
-no download (`tools/assetpack/dev_bundle_model.sh on|off`).
+Resolution ladder, first hit wins: bundled `.mlmodelc` → pack `.mlmodelc` → start the download and
+**throw immediately**. The runtime no longer accepts a raw `.mlpackage`, imports the Core ML compiler,
+or owns an Application Support compile cache/source-mtime stamp. It never blocks on the transfer. The
+bundled branch exists so the Simulator and local iteration need no download; the
+`tools/assetpack/dev_bundle_model.sh on|off` helper installs only a receipt-verified precompiled
+directory from the canonical AAR/receipt pair.
 
 ⚠️ **The shipping load path has never been executed.** The Simulator is served no pack and the dev
 bundle is empty by default, so nothing in this checkout reaches `MLModel(contentsOf:)`.
@@ -4697,6 +4699,77 @@ arbitrary code execution as the same macOS user can still race paths or the cred
 already inside the trusted account boundary. A hard kill can also leave a mode-0700 temporary
 snapshot for manual removal from the system temporary directory. Those are conditional hardening
 items, not claims of privilege isolation.
+
+
+## The SAM runtime and developer bundle accept only verified precompiled models (2026-08-11)
+
+The shipping runtime previously advertised a precompiled asset pack while still
+accepting raw `.mlpackage` candidates from both the app bundle and Background
+Assets. Those branches called `MLModel.compileModel(at:)`, copied the result into
+Application Support, and keyed that cache with source size and modification
+time. The local Simulator helper reinforced the split contract by accepting a
+raw package and relying on Xcode to compile it. The causal runtime probe found
+all of those active paths, and the first developer-bundle receipt test failed
+because the helper rejected a valid canonical AAR/receipt pair while looking for
+a `.mlpackage`.
+
+`AssetPackModelStore` now has exactly two model candidates: a bundled
+`SAM3DBodyPose.mlmodelc`, then the same compiled directory in the managed asset
+pack. It no longer imports Core ML's compiler API, names or probes a raw package,
+owns an Application Support compile cache, or reads model modification time.
+The missing-pack path is unchanged: it starts/joins the Background Assets
+download and throws immediately rather than waiting on the transfer.
+
+`tools/assetpack/dev_bundle_model.sh on` now defaults to the canonical atomic
+pair under `build/assetpack/release/`. It rejects symlink/FIFO/special-file
+inputs, freezes the AAR and receipt through no-follow descriptors into one
+mode-0700 build-local transaction, and runs the isolated receipt verifier and
+extraction only against that frozen pair. The extracted compiled tree must
+contain only ordinary directories/files and a regular `coremldata.bin`; a raw
+package is never accepted or compiled. Publication fsyncs the candidate tree,
+uses one Darwin exclusive rename for the first install or `RENAME_SWAP` for a
+replacement, and synchronizes both parents changed by the cross-directory
+namespace operation. A classified post-publication failure swaps/renames the
+old state back and synchronizes both parents; if rollback cannot be proven, the
+helper returns status 2 and preserves the private transaction with both recovery
+paths.
+Preservation is armed before the publisher starts, so a signal or unclassified
+exit cannot make the shell cleanup erase a displaced model. Only private status
+10 proves a pre-namespace failure or completed rollback and is translated to
+public status 1 after disarming preservation; a raw unclassified status 1 keeps
+both recovery paths. They remain reported with that nonzero status.
+`off` removes only the fixed non-symlink `build/DevBundledModel` destination.
+
+The developer transaction suite passes **29/29** dynamic scenarios. Its copied
+fixtures mechanically inject failures without adding a production test
+override. Coverage includes a release-directory swap between copying the AAR
+and receipt, verifier-time live replacement after the snapshot, first and
+replacement namespace failures, first/replacement post-namespace sync failures
+and identity-inspection failures that execute real rollback, rollback-swap
+failure and post-swap SIGTERM with preserved recovery material, bad
+receipts/artifacts, a post-swap unclassified raw status 1, raw packages,
+symlink/FIFO/special-file input and extracted-tree entries, build/destination
+symlinks, exact `off` deletion, adjacent sentinel preservation, and a second
+idempotent disablement. Dynamic markers prove the intended verifier, namespace,
+rollback, signal/status, and refusal branches were actually reached.
+
+The compiled-only runtime probe, `/bin/bash -n`, ShellCheck, `git diff --check`,
+the existing **60/60** supply-chain tests, and the **16/16** package/receipt
+suite pass. The real 1,096,258,817-byte AAR/receipt was also reverified and
+extracted into a private transaction; the compiled probe was a regular file and
+the extracted tree contained no symlink. That was a local read-only dry run: it
+did not publish `DevBundledModel`, inspect credentials, invoke upload mode, or
+contact App Store Connect. A fresh arm64 Simulator `build-for-testing` passed.
+
+The remaining limits are explicit. Background Assets directory resolution and
+the final `MLModel(contentsOf:)` load still need a TestFlight device. The local
+install temporarily needs space for the roughly 1 GiB frozen AAR plus extracted
+model. Existing Nimble/OSQP simulator archives are arm64-only, so a universal
+x86_64 simulator link is not claimed. The mode-0700 transaction is a normal
+local-account boundary, not a sandbox against malicious code already running as
+the same UID. Removing the source-mtime cache also removes BioMotion's only File
+Timestamp required-reason API use; privacy-manifest wiring is the next separate
+gate.
 
 
 ## XML conversion no longer depends on a machine-specific Boost install (2026-08-11)

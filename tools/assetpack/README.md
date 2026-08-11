@@ -57,12 +57,12 @@ to `/usr/bin:/bin:/usr/sbin:/sbin`, and invokes `/usr/bin/python3`, so an
 untrusted caller PATH cannot substitute its verifier or basic system tools.
 
 **Integration status:** repository, source, compile, package, extraction,
-receipt, and local upload-preflight enforcement are complete. Developer
-bundling and runtime loading remain separate release gates. The existing App
-Store Connect version 1 still lacks the lock and license and is not a compliant
-shipping artifact; this slice did not upload a replacement. `--upload` remains
-an explicit release operation and must not be used without release approval and
-closure of the remaining delivery gates.
+receipt, local upload preflight, developer bundling, and compiled-only runtime
+enforcement are complete. The existing App Store Connect version 1 still lacks
+the lock and license and is not a compliant shipping artifact; no replacement
+was uploaded by these local gates. `--upload` remains an explicit release
+operation and must not be used without release approval and closure of the
+remaining privacy/resource and real-device delivery gates.
 
 ---
 
@@ -235,16 +235,14 @@ bundle id `com.soleil.BioMotion.AssetPackDownloader` as well.
 `BioMotion/AssetPack/AssetPackModelStore.swift`, first hit wins:
 
 1. `SAM3DBodyPose.mlmodelc` **in the app bundle** — developer/Simulator builds.
-2. `SAM3DBodyPose.mlpackage` in the app bundle → `MLModel.compileModel(at:)`, cached
-   in `Application Support/CompiledModels`.
-3. `SAM3DBodyPose.mlmodelc` **in the asset pack** — the shipping path.
-4. `SAM3DBodyPose.mlpackage` in the asset pack → compiled + cached.
-5. Nothing: start the download in the background and throw immediately with a
+2. `SAM3DBodyPose.mlmodelc` **in the asset pack** — the shipping path.
+3. Nothing: start the download in the background and throw immediately with a
    message carrying the live percentage.
 
-The pack carries a **pre-compiled `.mlmodelc`**, not the `.mlpackage`. Xcode
-compiles a bundled `.mlpackage` at build time; an asset-delivered one gets no
-build step. Compiling on the Mac instead of the phone means the shipped
+Both branches accept only a **precompiled `.mlmodelc`**. The runtime neither
+accepts a raw `.mlpackage` nor imports Core ML's compiler API, and it owns no
+Application Support compile cache or source-mtime stamp. Compiling on the Mac
+instead of the phone means the shipped
 directory is the same artifact Xcode was already embedding (verified: `model.mil`,
 `metadata.json`, `weights/weight.bin` and `analytics/coremldata.bin` are
 byte-identical to the 2026-08-07 archive's copy; only the 503-byte root
@@ -255,20 +253,54 @@ copy inside the OS-managed asset container where iOS can evict/update it.
 ### Local iteration / Simulator
 
 Background Assets serves **no packs in the Simulator**, and only serves them to
-App Store / TestFlight installs on a real device. So bundle a developer copy:
+App Store / TestFlight installs on a real device. Install a developer copy from
+the canonical atomic AAR/receipt pair:
 
 ```bash
-bash tools/assetpack/dev_bundle_model.sh on    # copies the .mlpackage to build/DevBundledModel/
+/bin/bash tools/assetpack/dev_bundle_model.sh on
 xcodegen generate
 # ... build/run ...
-bash tools/assetpack/dev_bundle_model.sh off
+/bin/bash tools/assetpack/dev_bundle_model.sh off
 xcodegen generate
+```
+
+`on` freezes the AAR and receipt into one private build-local transaction,
+receipt-verifies and extracts that exact snapshot, rejects symlink/special-file
+model entries, and atomically publishes only
+`SAM3DBodyPose.mlmodelc`. Optional explicit inputs must retain the canonical
+filenames:
+
+```bash
+/bin/bash tools/assetpack/dev_bundle_model.sh on \
+  /path/to/sam3d-body-pose.aar \
+  /path/to/sam3d-body-pose.aar.receipt.json
+```
+
+Run the compiled-only runtime and developer transaction contracts with:
+
+```bash
+/bin/bash tools/tests/assetpack_runtime_precompiled_probe.sh
+/bin/bash tools/tests/assetpack_dev_bundle_receipt_tests.sh
 ```
 
 `build/DevBundledModel` is an `optional:` source path in `project.yml`, so it
 simply does not exist in a normal checkout — and it sits under `build/`, which
 `.gitignore` already covers, so a 1.3 GiB copy can never be committed by
 accident. **Never archive with it on** — that re-adds the full 1.31 GiB.
+Run `off` before a Release archive; the separate release resource gate must
+also reject any bundled `.mlmodel`, `.mlpackage`, or `.mlmodelc`.
+
+Enabling requires temporary free space for the roughly 1 GiB frozen AAR plus
+the extracted compiled model. Verification and extraction failures occur before
+a new model becomes live. A classified post-namespace publication failure first
+restores the old state; if that rollback cannot be proven, the helper returns
+status 2 and prints the preserved mode-0700 recovery transaction and live
+destination paths instead of deleting either model. Preservation is armed before the
+publisher starts, so a signal or unclassified exit also retains and reports
+both paths with its nonzero status. Only the publisher's private status 10
+proves a pre-namespace failure or completed rollback; the shell translates it
+to public status 1 after disarming preservation. A raw, unclassified status 1
+therefore cannot erase the displaced model.
 
 ### When the pack is missing
 
@@ -343,8 +375,17 @@ Verified on this machine (2026-08-07 through 2026-08-11):
   the receipt gate, cleaned the snapshot, and never entered `altool`. No real
   credential was inspected and no App Store Connect request or mutation was
   performed by this slice.
-* Dev-bundled toggle produces `BioMotion.app/SAM3DBodyPose.mlmodelc` exactly where
-  `Bundle.main.url(forResource:withExtension:)` looks.
+* The compiled-only runtime contract passes, and the developer transaction
+  suite passes **29/29** dynamic scenarios. The helper consumes one frozen
+  receipt-verified AAR/receipt generation, publishes only
+  `SAM3DBodyPose.mlmodelc`, synchronizes both cross-directory namespace parents,
+  restores the exact old output after injected first/replacement durability
+  and identity-inspection failures, preserves both recovery paths when rollback
+  is injected to fail, receives SIGTERM, or exits with an unclassified raw
+  status 1 after the swap, proves idempotent `off`, and rejects raw packages,
+  symlinks, FIFOs, special-file trees, and unsafe `off` targets. A real
+  1,096,258,817-byte release pair also passed a private verifier/extraction dry
+  run without publishing the developer bundle.
 * Simulator build + launch, and the existing test suite still builds and passes.
 * The failure path, driven through the real UI on the Simulator (where the pack
   genuinely does not exist). `AssetPackManager` initialises without trapping —

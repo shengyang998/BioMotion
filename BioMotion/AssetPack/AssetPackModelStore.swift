@@ -1,5 +1,4 @@
 import BackgroundAssets
-import CoreML
 import Foundation
 import System
 
@@ -13,12 +12,11 @@ import System
 /// and stores it outside the app bundle, and app updates no longer re-download
 /// it. ODR is not used — it is deprecated as of iOS 27.
 ///
-/// # What is in the pack: a PRE-COMPILED `.mlmodelc`, not the `.mlpackage`
-/// Xcode compiles a bundled `.mlpackage` into `.mlmodelc` at build time; an
-/// asset-delivered file gets no such build step, so *something* has to compile
-/// it. This ships the already-compiled directory (see
-/// `tools/assetpack/package.sh`, which runs `xcrun coremlcompiler`) rather than
-/// calling `MLModel.compileModel(at:)` on device, because:
+/// # What is in the pack: a PRE-COMPILED model
+/// Asset delivery has no Xcode build step. Both production packs and local
+/// developer bundles therefore carry the already-compiled directory produced
+/// and receipt-verified by `tools/assetpack/package.sh` rather than accepting a
+/// source model at runtime, because:
 ///
 ///   * `.mlmodelc` is byte-for-byte the artifact Xcode already put in the app
 ///     bundle, loaded by exactly the same `MLModel(contentsOf:)` call that has
@@ -33,21 +31,12 @@ import System
 ///   * Compilation would land on the user's first import, adding a long,
 ///     unattributable stall to an action that already runs a heavy pipeline.
 ///
-/// The runtime `compileModel` path below is therefore NOT a general fallback —
-/// it is the branch taken only when what we find is a `.mlpackage`. That case
-/// is reachable (a developer drops the raw package in, or a future pack ships
-/// uncompiled) and the previous code silently mishandled it: `MLModel(contentsOf:)`
-/// only accepts a *compiled* model, so the old `resolveModelURL()`'s
-/// `.mlpackage` bundle candidate would have thrown at load time.
-///
 /// # Resolution order (first hit wins)
 ///   1. `SAM3DBodyPose.mlmodelc` in the app bundle  — developer builds and the
 ///      Simulator, where Background Assets serves no packs at all. Populate it
 ///      with `tools/assetpack/dev_bundle_model.sh on`.
-///   2. `SAM3DBodyPose.mlpackage` in the app bundle — compiled + cached once.
-///   3. `SAM3DBodyPose.mlmodelc` in the asset pack   — the shipping path.
-///   4. `SAM3DBodyPose.mlpackage` in the asset pack  — compiled + cached once.
-///   5. Nothing available: kick the download off and throw `.downloading`
+///   2. `SAM3DBodyPose.mlmodelc` in the asset pack   — the shipping path.
+///   3. Nothing available: kick the download off and throw `.downloading`
 ///      carrying live progress, or `.unavailable` with the real reason.
 ///
 /// # This never blocks on a 1.31 GiB download
@@ -65,15 +54,13 @@ final class AssetPackModelStore: ObservableObject {
     nonisolated static let assetPackID = "sam3d-body-pose"
     nonisolated static let modelBaseName = "SAM3DBodyPose"
     nonisolated static let compiledModelFileName = "SAM3DBodyPose.mlmodelc"
-    nonisolated static let sourceModelFileName = "SAM3DBodyPose.mlpackage"
+    nonisolated static let compiledModelInteriorFileName = "coremldata.bin"
 
     /// Where the model came from — surfaced so a bug report can say whether a
     /// device was running the bundled developer copy or the shipping pack.
     enum Provenance: String {
         case bundledCompiled = "app bundle (compiled)"
-        case bundledPackage = "app bundle (compiled on device)"
         case assetPackCompiled = "asset pack"
-        case assetPackPackage = "asset pack (compiled on device)"
     }
 
     enum State: Equatable {
@@ -115,21 +102,9 @@ final class AssetPackModelStore: ObservableObject {
             state = .ready(.bundledCompiled)
             return url
         }
-        if let package = Self.bundledPackageURL() {
-            let url = try await Self.compiledCopy(ofPackageAt: package)
-            state = .ready(.bundledPackage)
-            return url
-        }
-        let probe = await Self.probeAssetPack()
-        if let url = probe.compiled {
+        if let url = await Self.probeAssetPack() {
             cancelProgressWatch()
             state = .ready(.assetPackCompiled)
-            return url
-        }
-        if let package = probe.package {
-            let url = try await Self.compiledCopy(ofPackageAt: package)
-            cancelProgressWatch()
-            state = .ready(.assetPackPackage)
             return url
         }
         throw startDownloadAndDescribe()
@@ -152,9 +127,9 @@ final class AssetPackModelStore: ObservableObject {
     /// Off the main actor: `AssetPackManager.url(for:)` is synchronous and hits
     /// the filesystem / asset index, so probing it inline would block the UI.
     /// (The sibling locate-anything-ios store hit exactly this.)
-    private nonisolated static func probeAssetPack() async -> (compiled: URL?, package: URL?) {
-        await Task.detached(priority: .userInitiated) { () -> (URL?, URL?) in
-            (assetPackURL(for: compiledModelFileName), assetPackURL(for: sourceModelFileName))
+    private nonisolated static func probeAssetPack() async -> URL? {
+        await Task.detached(priority: .userInitiated) { () -> URL? in
+            assetPackURL(for: compiledModelFileName)
         }.value
     }
 
@@ -162,11 +137,6 @@ final class AssetPackModelStore: ObservableObject {
 
     private nonisolated static func bundledCompiledModelURL() -> URL? {
         guard let url = Bundle.main.url(forResource: modelBaseName, withExtension: "mlmodelc") else { return nil }
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
-    }
-
-    private nonisolated static func bundledPackageURL() -> URL? {
-        guard let url = Bundle.main.url(forResource: modelBaseName, withExtension: "mlpackage") else { return nil }
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
@@ -179,25 +149,18 @@ final class AssetPackModelStore: ObservableObject {
     /// directory path directly is therefore the expected call — but it is the
     /// one thing here that cannot be exercised without a device, because
     /// Background Assets serves no packs in the Simulator. If it turns out the
-    /// manager only indexes leaf files, `interiorProbe` recovers the directory
-    /// from a file that is guaranteed to exist inside every `.mlmodelc`.
+    /// manager only indexes leaf files, `coremldata.bin` recovers the directory
+    /// from a file that is guaranteed to exist inside every compiled model.
     private nonisolated static func assetPackURL(for fileName: String) -> URL? {
         if let direct = try? AssetPackManager.shared.url(for: FilePath(fileName)),
            FileManager.default.fileExists(atPath: direct.path) {
             return direct
         }
-        guard let probe = interiorProbe(for: fileName) else { return nil }
-        guard let inner = try? AssetPackManager.shared.url(for: FilePath("\(fileName)/\(probe)")) else { return nil }
+        guard let inner = try? AssetPackManager.shared.url(
+            for: FilePath("\(fileName)/\(compiledModelInteriorFileName)")
+        ) else { return nil }
         let container = inner.deletingLastPathComponent()
         return FileManager.default.fileExists(atPath: container.path) ? container : nil
-    }
-
-    /// A file every model directory of that kind contains: `coremldata.bin` for
-    /// a compiled model, `Manifest.json` for a package.
-    private nonisolated static func interiorProbe(for fileName: String) -> String? {
-        if fileName.hasSuffix(".mlmodelc") { return "coremldata.bin" }
-        if fileName.hasSuffix(".mlpackage") { return "Manifest.json" }
-        return nil
     }
 
     // MARK: - Download
@@ -216,10 +179,10 @@ final class AssetPackModelStore: ObservableObject {
                     // a permanent failure that must NOT keep reporting
                     // "downloading…", which is what the user would otherwise
                     // see forever.
-                    let probe = await Self.probeAssetPack()
+                    let compiledModel = await Self.probeAssetPack()
                     await MainActor.run {
                         self?.downloadTask = nil
-                        if probe.compiled == nil && probe.package == nil {
+                        if compiledModel == nil {
                             self?.cancelProgressWatch()
                             self?.state = .unavailable(
                                 "The pose model pack downloaded but contains no \(Self.compiledModelFileName). "
@@ -325,46 +288,4 @@ final class AssetPackModelStore: ObservableObject {
         return "Couldn't get the pose model from the App Store: \(error.localizedDescription)"
     }
 
-    // MARK: - Runtime compilation (only for a `.mlpackage`, see type doc)
-
-    private nonisolated static func compiledCopy(ofPackageAt source: URL) async throws -> URL {
-        let fm = FileManager.default
-        let cacheRoot = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                                   appropriateFor: nil, create: true)
-            .appendingPathComponent("CompiledModels", isDirectory: true)
-        try fm.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
-
-        let destination = cacheRoot.appendingPathComponent(compiledModelFileName, isDirectory: true)
-        let stampURL = cacheRoot.appendingPathComponent("\(modelBaseName).stamp")
-        let stamp = try sourceStamp(for: source)
-
-        if fm.fileExists(atPath: destination.path),
-           let existing = try? String(contentsOf: stampURL, encoding: .utf8),
-           existing == stamp {
-            return destination
-        }
-
-        let compiled = try await MLModel.compileModel(at: source)
-        // `compileModel` writes to a temporary location the system may reap, so
-        // the result has to be moved somewhere durable before it is used.
-        if fm.fileExists(atPath: destination.path) {
-            try fm.removeItem(at: destination)
-        }
-        try fm.moveItem(at: compiled, to: destination)
-        try stamp.write(to: stampURL, atomically: true, encoding: .utf8)
-        return destination
-    }
-
-    /// Identity of the source package, so a replaced model invalidates the cache.
-    /// Uses the package's own `Manifest.json` (present in every `.mlpackage`)
-    /// plus the directory's own mtime rather than hashing 1.3 GiB of weights.
-    private nonisolated static func sourceStamp(for source: URL) throws -> String {
-        let fm = FileManager.default
-        let manifest = source.appendingPathComponent("Manifest.json")
-        let probe = fm.fileExists(atPath: manifest.path) ? manifest : source
-        let attrs = try fm.attributesOfItem(atPath: probe.path)
-        let size = (attrs[.size] as? NSNumber)?.int64Value ?? -1
-        let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
-        return "\(source.lastPathComponent)|\(size)|\(modified)"
-    }
 }
