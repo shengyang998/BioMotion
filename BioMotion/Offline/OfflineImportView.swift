@@ -19,13 +19,12 @@ struct OfflineImportView: View {
 
     @StateObject private var runner: OfflineSessionRunner
     @State private var pickerItem: PhotosPickerItem?
-    @State private var pickedPhoto: UIImage?
-    @State private var pickedVideoURL: URL?
+    @State private var selection = OfflineImportSelectionState()
+    @State private var selectionLoadTask: Task<Void, Never>?
     @State private var isSingleFrameMode = false
     @State private var useNativeWindow = true
     @State private var fps: Double = OfflineImportView.defaultFPS
     @State private var showPlayback = false
-    @State private var pickError: String?
     @State private var selfTest: String?
     @State private var selfTestRunning = false
 
@@ -41,7 +40,7 @@ struct OfflineImportView: View {
         NavigationStack {
             Form {
                 pickerSection
-                if pickedPhoto != nil || pickedVideoURL != nil {
+                if selection.selectedPhoto != nil || selection.selectedVideo != nil {
                     samplingSection
                     runSection
                 }
@@ -95,7 +94,59 @@ struct OfflineImportView: View {
             .interactiveDismissDisabled(isRunning)
             .onChange(of: pickerItem) { _, newItem in
                 guard let newItem else { return }
-                Task { await loadPicked(newItem) }
+                // Advance the generation before cancelling A. If A handles its
+                // cancellation after B starts, its stale token cannot clear B's
+                // loading state or replace the last usable selection.
+                let generation = selection.beginLoading()
+                selectionLoadTask?.cancel()
+                selectionLoadTask = Task {
+                    let isVideo = newItem.supportedContentTypes.contains {
+                        $0.conforms(to: .movie) || $0.conforms(to: .video)
+                    }
+                    do {
+                        if isVideo {
+                            let movie = try await newItem.loadTransferable(
+                                type: PickedMovie.self
+                            )
+                            try Task.checkCancellation()
+                            guard let movie else {
+                                _ = selection.fail(
+                                    "Couldn't load the selected video.",
+                                    generation: generation
+                                )
+                                return
+                            }
+                            if selection.commit(video: movie.owner, generation: generation) {
+                                isSingleFrameMode = false
+                            }
+                        } else {
+                            let data = try await newItem.loadTransferable(type: Data.self)
+                            try Task.checkCancellation()
+                            guard let data else {
+                                _ = selection.fail(
+                                    "Couldn't load the selected photo.",
+                                    generation: generation
+                                )
+                                return
+                            }
+                            guard let image = UIImage(data: data) else {
+                                _ = selection.fail(
+                                    "Couldn't load the selected photo.",
+                                    generation: generation
+                                )
+                                return
+                            }
+                            _ = selection.commit(photo: image, generation: generation)
+                        }
+                    } catch is CancellationError {
+                        _ = selection.cancel(generation: generation)
+                    } catch {
+                        _ = selection.fail(
+                            "Couldn't load the selection: \(error.localizedDescription)",
+                            generation: generation
+                        )
+                    }
+                }
             }
             .onChange(of: runner.phase) { _, newPhase in
                 if case .finished(let processed, _, let cancelled) = newPhase, processed > 0, !cancelled {
@@ -109,6 +160,7 @@ struct OfflineImportView: View {
                 // Navigation to playback hides this form too; that transition
                 // owns the completed result store and must not trigger a reset.
                 guard !showPlayback else { return }
+                selectionLoadTask?.cancel()
                 runner.cancel()
             }
         }
@@ -119,26 +171,34 @@ struct OfflineImportView: View {
     private var pickerSection: some View {
         Section {
             PhotosPicker(selection: $pickerItem, matching: .any(of: [.images, .videos])) {
-                Label(pickedPhoto == nil && pickedVideoURL == nil ? "Choose Photo or Video" : "Change Selection",
+                Label(selection.selectedPhoto == nil && selection.selectedVideo == nil ? "Choose Photo or Video" : "Change Selection",
                       systemImage: "photo.on.rectangle")
             }
-            if let pickedPhoto {
-                Image(uiImage: pickedPhoto)
+            .disabled(isRunning)
+            if let selectedPhoto = selection.selectedPhoto {
+                Image(uiImage: selectedPhoto)
                     .resizable()
                     .scaledToFit()
                     .frame(maxHeight: 220)
-            } else if pickedVideoURL != nil {
+            } else if selection.selectedVideo != nil {
                 Label("Video selected", systemImage: "video.fill")
             }
-            if let pickError {
-                Text(pickError).foregroundStyle(.red).font(.caption)
+            if selection.isLoading {
+                HStack {
+                    ProgressView()
+                    Text("Loading selection…")
+                }
+                .font(.caption)
+            }
+            if let errorMessage = selection.errorMessage {
+                Text(errorMessage).foregroundStyle(.red).font(.caption)
             }
         }
     }
 
     private var samplingSection: some View {
         Section("Sampling") {
-            if pickedVideoURL != nil {
+            if selection.selectedVideo != nil {
                 Toggle("Single frame only", isOn: $isSingleFrameMode)
                 if !isSingleFrameMode {
                     Toggle("Analyse movement (every frame, up to \(Int(FrameSource.analysisWindowSeconds)) s)",
@@ -183,7 +243,7 @@ struct OfflineImportView: View {
             Button(action: startRun) {
                 runButtonLabel
             }
-            .disabled(isRunning)
+            .disabled(isRunning || selection.isLoading)
 
             if isRunning {
                 Button("Cancel", role: .destructive) { runner.cancel() }
@@ -227,14 +287,15 @@ struct OfflineImportView: View {
     private func close() {
         // Fence the shared Nimble engine synchronously before the containing
         // sheet/view can disappear and a later runner acquires it.
+        selectionLoadTask?.cancel()
         runner.cancel()
         onDismiss()
     }
 
     private func startRun() {
-        if let pickedPhoto {
-            runner.run(source: .photo(pickedPhoto), samplingMode: .singleFrame)
-        } else if let pickedVideoURL {
+        if let selectedPhoto = selection.selectedPhoto {
+            runner.run(source: .photo(selectedPhoto), samplingMode: .singleFrame)
+        } else if let selectedVideo = selection.selectedVideo {
             let mode: FrameSource.SamplingMode
             if isSingleFrameMode {
                 mode = .singleFrame
@@ -243,34 +304,7 @@ struct OfflineImportView: View {
             } else {
                 mode = .fps(fps)
             }
-            runner.run(source: .video(pickedVideoURL), samplingMode: mode)
-        }
-    }
-
-    private func loadPicked(_ item: PhotosPickerItem) async {
-        pickError = nil
-        pickedPhoto = nil
-        pickedVideoURL = nil
-
-        let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) || $0.conforms(to: .video) }
-        do {
-            if isVideo {
-                guard let movie = try await item.loadTransferable(type: PickedMovie.self) else {
-                    pickError = "Couldn't load the selected video."
-                    return
-                }
-                pickedVideoURL = movie.url
-                isSingleFrameMode = false
-            } else {
-                guard let data = try await item.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data) else {
-                    pickError = "Couldn't load the selected photo."
-                    return
-                }
-                pickedPhoto = image
-            }
-        } catch {
-            pickError = "Couldn't load the selection: \(error.localizedDescription)"
+            runner.run(source: .video(selectedVideo), samplingMode: mode)
         }
     }
 }
@@ -279,19 +313,14 @@ struct OfflineImportView: View {
 /// rather than loading it into memory as `Data` (the standard Apple-documented
 /// pattern for `PhotosPicker` video selection).
 private struct PickedMovie: Transferable {
-    let url: URL
+    let owner: AppOwnedTemporaryVideo
 
     static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(contentType: .movie) { movie in
-            SentTransferredFile(movie.url)
-        } importing: { received in
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent("biomotion_import_\(UUID().uuidString).mov")
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.copyItem(at: received.file, to: destination)
-            return Self(url: destination)
+        FileRepresentation(importedContentType: .movie) { received in
+            // `received.file` is borrowed from the Photos transfer provider and
+            // may disappear as soon as this closure returns. Finish the copy
+            // synchronously here; only the app-owned lifetime token escapes.
+            Self(owner: try AppOwnedTemporaryVideo(copying: received.file))
         }
     }
 }

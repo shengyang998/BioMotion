@@ -25,6 +25,8 @@ boundaries called out below.
 
 ```
 OfflineImportView (PhotosPicker: photo or video)
+  -> picker provider video is copied synchronously into one private 0700
+     UUID directory; an AppOwnedTemporaryVideo owns that copy
   -> OfflineSessionRunner.run(source:samplingMode:)
        -> poseEstimator.loadModelIfNeeded()          [SAM3DPoseEstimator]
        -> wait for nimble.isModelLoaded               [poll, ≤10s]
@@ -78,6 +80,35 @@ OfflineImportView (PhotosPicker: photo or video)
             -> then clear bridge/QP/filter/ground state in that FIFO block
   -> OfflinePlaybackView (RealityKit .nonAR ARView + MuscleOverlay + scrubber)
 ```
+
+### Picked media has explicit ownership and latest-selection-wins semantics
+
+A `PhotosPicker` file URL is borrowed from the transfer provider; it is not a
+stable application document. The import-only `FileRepresentation` therefore
+finishes a synchronous copy before its closure returns. Each video gets a new
+mode-0700 `biomotion-import-<UUID>` directory under the system temporary
+directory. `AppOwnedTemporaryVideo` retains that directory through the view,
+`RunSource`, both video decoders and their asynchronous size-cap work. Its final
+reference removes only that private directory, never the provider's file.
+Replacement, failed copy, and normal view/run teardown are covered. As with any
+`deinit` cleanup, force-kill or process crash cannot run it; the remaining
+system-temporary directory is an operating-system/manual-cleanup boundary, not
+durable user data.
+
+Picker loads use a monotonic generation. Starting B advances the generation
+before cancelling A, so late success, failure, or cancellation from A cannot
+replace B or clear B's loading state. A failed or cancelled B retains the last
+usable photo/video for retry; only a successful B atomically replaces it. The
+picker remains available while a selection is loading, is disabled during an
+analysis, and Run is disabled during either loading or analysis.
+
+Cancelling an active analysis snapshots its attempted counts, fences its exact
+runner/engine ownership, and clears partial playback. It deliberately retains
+the imported selection so the user can retry. Cancelling while idle leaves a
+completed playback store intact. Both the engine-release notification and the
+store reset can synchronously start a successor, so the cancelling invocation
+must still be latest before and after either notification; an old Cancel never
+clears or overwrites that successor.
 
 `BodyFrame` keeps a stable joint id separately from its source-specific OpenSim
 marker. Live `hips_joint` defaults to `PELVIS`; MHR `hips_joint` carries

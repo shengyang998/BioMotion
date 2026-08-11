@@ -316,6 +316,16 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   invocation and lease before a callback can start a successor. Do not reintroduce per-field
   `@Published` engine/store result writes, settle delays, ownerless resets, or global `lastSolve`
   reads.
+- **A picked video is an owned resource, not a naked provider URL.** `PhotosPicker`'s provider URL
+  is borrowed. `PickedMovie` must synchronously copy it inside the import-only transfer closure into
+  a unique mode-0700 system-temporary directory, then pass `AppOwnedTemporaryVideo` through the
+  selection, `RunSource`, decoder and every child task that reads the file. The final owner removes
+  only that directory; a crash/force-kill remains system-temporary cleanup territory. Selection
+  generations advance before predecessor cancellation: stale A success/failure/cancellation cannot
+  publish into B, while a failed/cancelled B retains the last usable selection. Active analysis
+  cancellation clears partial playback but keeps that selection for retry; idle cancellation keeps
+  completed playback. Preserve the pre-reset and post-reset invocation/lease fences because both
+  engine release and result-store reset notify synchronously and may start a successor.
 - **Analysis FPS has one source:** the median interval of surviving frame timestamps, copied from
   the internal `GaitReport` into `GaitTimingReport.timing.framesPerSecond`. AVAsset's nominal rate
   is valid for native decoding and frame-budget notices only. Do not add a second rate to

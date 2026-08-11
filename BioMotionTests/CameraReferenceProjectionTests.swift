@@ -479,8 +479,8 @@ final class CameraReferenceProjectionTests: XCTestCase {
         XCTAssertLessThan(fence.lowerBound, lease.lowerBound)
         XCTAssertLessThan(lease.lowerBound, engineLease.lowerBound)
         XCTAssertLessThan(engineLease.lowerBound, launch.lowerBound)
-        XCTAssertTrue(runBody.contains("Task { [self] in"),
-                      "the task must retain Runner until conditional defer is installed")
+        XCTAssertTrue(runBody.contains("Task { [self, source] in"),
+                      "the task must retain Runner and the picked-video owner until conditional defer is installed")
 
         let runInternalEnd = try XCTUnwrap(source.range(
             of: "    // MARK: - Gait pass",
@@ -490,6 +490,8 @@ final class CameraReferenceProjectionTests: XCTestCase {
                        "an actor-reentrant task must not acquire ownership after launch")
         XCTAssertTrue(runInternal.contains("guard isRunActive(token) else"))
         let cleanup = try XCTUnwrap(runInternal.range(of: "        defer {"))
+        XCTAssertTrue(runInternal.contains("withExtendedLifetime(source)"),
+                      "run cleanup must be the final use of the picked-video owner")
         let initialGuard = try XCTUnwrap(runInternal.range(
             of: "        guard isRunActive(token) else"))
         XCTAssertLessThan(cleanup.lowerBound, initialGuard.lowerBound,
@@ -605,6 +607,13 @@ final class CameraReferenceProjectionTests: XCTestCase {
                       "release notification must not clear a successor lease")
         XCTAssertTrue(fence.contains("runOwnership.activeToken == nil"),
                       "cancel publication must not overwrite a reentrant successor")
+        XCTAssertEqual(
+            fence.components(
+                separatedBy: "runOwnership.isLatestInvocation(cancelInvocation)"
+            ).count - 1,
+            2,
+            "both lease-release and store-reset notifications may synchronously start a successor"
+        )
 
         let internalStart = try XCTUnwrap(source.range(
             of: "    private func runInternal("))
@@ -632,7 +641,7 @@ final class CameraReferenceProjectionTests: XCTestCase {
             range: runStart.upperBound..<source.endIndex))
         let run = source[runStart.lowerBound..<fenceStart.lowerBound]
         let invocation = try XCTUnwrap(run.range(of: "runOwnership.beginInvocation()"))
-        let fence = try XCTUnwrap(run.range(of: "fenceCurrentRun(markCancelled: false)"))
+        let fence = try XCTUnwrap(run.range(of: "fenceCurrentRun(cancelInvocation: nil)"))
         let latest = try XCTUnwrap(run.range(
             of: "runOwnership.isLatestInvocation(invocation)",
             range: fence.upperBound..<run.endIndex))
@@ -657,7 +666,7 @@ final class CameraReferenceProjectionTests: XCTestCase {
         let cancelInvocation = try XCTUnwrap(cancel.range(
             of: "runOwnership.beginInvocation()"))
         let cancelFence = try XCTUnwrap(cancel.range(
-            of: "fenceCurrentRun(markCancelled: true)"))
+            of: "fenceCurrentRun(cancelInvocation: invocation)"))
         XCTAssertLessThan(cancelInvocation.lowerBound, cancelFence.lowerBound,
                           "Cancel must invalidate an outer run before publishing its fence")
 
@@ -680,6 +689,83 @@ final class CameraReferenceProjectionTests: XCTestCase {
         XCTAssertLessThan(complete.lowerBound, localLeaseClear.lowerBound)
         XCTAssertLessThan(localLeaseClear.lowerBound, notify.lowerBound)
         XCTAssertLessThan(notify.lowerBound, release.lowerBound)
+    }
+
+    func testVideoSourceRetainsItsOwnerAcrossRunnerAndDecoderTasks() throws {
+        let runner = try Self.source("BioMotion/Offline/OfflineSessionRunner.swift")
+        XCTAssertTrue(runner.contains("case video(AppOwnedTemporaryVideo)"),
+                      "a borrowed URL cannot express ownership of the app-private copy")
+        XCTAssertTrue(runner.contains("Task { [self, source] in"),
+                      "the launched task must explicitly retain its source")
+        XCTAssertTrue(runner.contains("withExtendedLifetime(source)"),
+                      "the source must live through run cleanup")
+        XCTAssertEqual(
+            runner.components(separatedBy: "FrameSource.VideoDecoder(video: video)").count - 1,
+            2,
+            "camera analysis and frame decode must both retain the same owner"
+        )
+        XCTAssertTrue(runner.contains("at: video.url"),
+                      "the camera analyzer must read the owner's copy")
+
+        let decoder = try Self.source("BioMotion/Offline/FrameSource.swift")
+        XCTAssertTrue(decoder.contains("private let video: AppOwnedTemporaryVideo?"))
+        XCTAssertTrue(decoder.contains("init(video: AppOwnedTemporaryVideo)"))
+        XCTAssertTrue(decoder.contains("self.video = video"))
+        XCTAssertTrue(decoder.contains("Task { [video] in"),
+                      "the unstructured size-cap task may outlive the decoder")
+        XCTAssertTrue(decoder.contains("withExtendedLifetime(video)"))
+        XCTAssertTrue(decoder.contains("init(url: URL)"),
+                      "stable URL construction remains available to fixture tests")
+    }
+
+    @MainActor
+    func testActiveCancelClearsPartialPlaybackButIdleCancelPreservesResults() {
+        let runner = OfflineSessionRunner(nimble: NimbleEngine())
+        runner.resultStore.append(Self.availableFrame(isStatic: false))
+
+        // `run` acquires ownership synchronously; its Task cannot begin while
+        // this main-actor test immediately issues Cancel.
+        runner.run(source: .photo(UIImage()), samplingMode: .singleFrame)
+        runner.cancel()
+
+        XCTAssertTrue(runner.resultStore.frames.isEmpty,
+                      "partial playback must not survive cancellation")
+        XCTAssertEqual(
+            runner.phase,
+            .finished(processed: 1, failed: 0, cancelled: true),
+            "the empty store must not erase the progress snapshot"
+        )
+
+        runner.resultStore.append(Self.availableFrame(id: 1, isStatic: false))
+        runner.cancel()
+        XCTAssertEqual(runner.resultStore.frames.count, 1,
+                       "Cancel with no active run must preserve completed playback")
+    }
+
+    @MainActor
+    func testCancelDoesNotResetPlaybackOwnedByReleaseNotificationSuccessor() {
+        let engine = NimbleEngine()
+        let runner = OfflineSessionRunner(nimble: engine)
+        runner.resultStore.append(Self.availableFrame(isStatic: false))
+        runner.run(source: .photo(UIImage()), samplingMode: .singleFrame)
+
+        var didStartSuccessor = false
+        let cancellable = engine.objectWillChange.sink {
+            guard !didStartSuccessor else { return }
+            didStartSuccessor = true
+            runner.run(source: .photo(UIImage()), samplingMode: .singleFrame)
+        }
+
+        runner.cancel()
+
+        XCTAssertTrue(didStartSuccessor)
+        XCTAssertEqual(runner.resultStore.frames.count, 1,
+                       "the old Cancel must not reset a successor's playback store")
+        XCTAssertEqual(runner.phase, .loadingModel,
+                       "the old Cancel must not publish over the successor")
+
+        cancellable.cancel()
+        runner.cancel()
     }
 
     func testSegmentResetAndModelScaleKeepTheCapturedRunLease() throws {

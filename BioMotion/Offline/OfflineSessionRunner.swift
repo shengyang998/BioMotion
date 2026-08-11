@@ -174,7 +174,7 @@ final class OfflineSessionRunner: ObservableObject {
 
     enum RunSource {
         case photo(UIImage)
-        case video(URL)
+        case video(AppOwnedTemporaryVideo)
     }
 
     enum RunPhase: Equatable {
@@ -272,8 +272,8 @@ final class OfflineSessionRunner: ObservableObject {
         // Cancel is a newer lifecycle command than any `run()` currently
         // unwinding a synchronous release/reset notification. Advance the same
         // epoch so that outer run cannot resume and acquire after cancellation.
-        _ = runOwnership.beginInvocation()
-        fenceCurrentRun(markCancelled: true)
+        let invocation = runOwnership.beginInvocation()
+        fenceCurrentRun(cancelInvocation: invocation)
     }
 
     func run(source: RunSource, samplingMode: FrameSource.SamplingMode) {
@@ -284,7 +284,7 @@ final class OfflineSessionRunner: ObservableObject {
         let invocation = runOwnership.beginInvocation()
         // Fence/cancel/restore the predecessor before acquiring the successor
         // lease. This also covers a Task cancelled before its closure starts.
-        fenceCurrentRun(markCancelled: false)
+        fenceCurrentRun(cancelInvocation: nil)
         guard runOwnership.isLatestInvocation(invocation) else { return }
         let token = runOwnership.beginRun()
         let engineLease = nimble.acquireOfflinePolicyLease()
@@ -309,7 +309,7 @@ final class OfflineSessionRunner: ObservableObject {
             retireUnlaunchedRun(token: token, engineLease: engineLease)
             return
         }
-        runTask = Task { [self] in
+        runTask = Task { [self, source] in
             await runInternal(
                 source: source,
                 samplingMode: samplingMode,
@@ -345,10 +345,22 @@ final class OfflineSessionRunner: ObservableObject {
     /// Synchronous lifecycle fence shared by Cancel, Close and run-to-run
     /// replacement. Invalidating ownership first removes the old task's defer
     /// authority before cancellation can resume it at a suspension point.
-    private func fenceCurrentRun(markCancelled: Bool) {
-        let invalidatedToken = runOwnership.invalidateCurrent()
+    private func fenceCurrentRun(cancelInvocation: UInt64?) {
+        guard runOwnership.activeToken != nil || enginePolicyLease != nil else {
+            // An idle Cancel must leave completed playback available. It still
+            // owns the invocation epoch established by `cancel()`, fencing an
+            // outer reentrant `run()` without manufacturing active work.
+            return
+        }
+
+        // Snapshot progress before invalidating the task and before resetting
+        // partial playback. The finished-cancelled phase reports what was
+        // attempted, while the store itself becomes an empty coherent session.
+        let processed = resultStore.frames.count
+        let failed = resultStore.frames.filter { $0.status != .success }.count
+
+        _ = runOwnership.invalidateCurrent()
         let lease = enginePolicyLease
-        guard invalidatedToken != nil || lease != nil else { return }
         runTask?.cancel()
         runTask = nil
         if let lease {
@@ -357,12 +369,25 @@ final class OfflineSessionRunner: ObservableObject {
                 enginePolicyLease = nil
             }
         }
-        if markCancelled,
+        guard let cancelInvocation else { return }
+
+        // Releasing the engine lease publishes synchronously too. If that
+        // notification started a successor, the old Cancel no longer owns the
+        // result store and must not clear it.
+        guard runOwnership.isLatestInvocation(cancelInvocation),
+              runOwnership.activeToken == nil,
+              enginePolicyLease == nil else { return }
+
+        // Reset publishes synchronously. A subscriber may start a newer run;
+        // the exact invocation fence below prevents this older Cancel from
+        // overwriting that successor's phase after the notification unwinds.
+        resultStore.reset()
+        if runOwnership.isLatestInvocation(cancelInvocation),
            runOwnership.activeToken == nil,
            enginePolicyLease == nil {
             phase = .finished(
-                processed: resultStore.frames.count,
-                failed: resultStore.frames.filter { $0.status != .success }.count,
+                processed: processed,
+                failed: failed,
                 cancelled: true
             )
             objectWillChange.send()
@@ -446,15 +471,17 @@ final class OfflineSessionRunner: ObservableObject {
         // the engine lease after `run()` launches this Task but before its body
         // starts; that stale task must still retire its local token/task state.
         defer {
-            if runOwnership.isCurrent(token),
-               enginePolicyLease == engineLease {
-                _ = runOwnership.complete(token)
-                enginePolicyLease = nil
-                runTask = nil
-                // Release publishes synchronously. All local ownership and
-                // handles are already retired, so a successor started by that
-                // notification cannot be cleared when this defer unwinds.
-                _ = nimble.releaseOfflinePolicyLease(engineLease)
+            withExtendedLifetime(source) {
+                if runOwnership.isCurrent(token),
+                   enginePolicyLease == engineLease {
+                    _ = runOwnership.complete(token)
+                    enginePolicyLease = nil
+                    runTask = nil
+                    // Release publishes synchronously. All local ownership and
+                    // handles are already retired, so a successor started by
+                    // that notification cannot be cleared when this defer unwinds.
+                    _ = nimble.releaseOfflinePolicyLease(engineLease)
+                }
             }
         }
         guard isRunActive(token) else {
@@ -1429,7 +1456,7 @@ final class OfflineSessionRunner: ObservableObject {
         token: UInt64
     ) async throws -> CameraReferenceState {
         try requireRunActive(token)
-        guard case .video(let url) = source else {
+        guard case .video(let video) = source else {
             return .notRequiredForSingleFrame
         }
         guard samplingMode != .singleFrame else {
@@ -1437,7 +1464,7 @@ final class OfflineSessionRunner: ObservableObject {
         }
 
         setPhase(.checkingCameraReference, for: token)
-        let decoder = FrameSource.VideoDecoder(url: url)
+        let decoder = FrameSource.VideoDecoder(video: video)
         let duration = try await decoder.duration()
         try requireRunActive(token)
         let nominalRate = await decoder.nominalFrameRate()
@@ -1458,7 +1485,7 @@ final class OfflineSessionRunner: ObservableObject {
             return .indeterminate(.insufficientCoverage)
         }
         let state = try await cameraMotionAnalyzer.analyzeVideo(
-            at: url,
+            at: video.url,
             range: range,
             derivativeWindowSeconds: derivativeWindow
         )
@@ -1488,9 +1515,9 @@ final class OfflineSessionRunner: ObservableObject {
                                 firstRequestedFrameNumber: 0,
                                 lastRequestedFrameNumber: 0)
 
-        case .video(let url):
+        case .video(let video):
             setPhase(.decodingFrames, for: token)
-            let decoder = FrameSource.VideoDecoder(url: url)
+            let decoder = FrameSource.VideoDecoder(video: video)
             let duration = try await decoder.duration()
             try requireRunActive(token)
             let rate = await decoder.nominalFrameRate()

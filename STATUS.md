@@ -5925,6 +5925,45 @@ passed **42/42** in 38 s with zero failures, skips, expected failures or test-ho
 restarts. It is compile and focused-behaviour evidence, not the final commit gate.
 
 
+## Picked-video lifetime and replacement are explicit (2026-08-12)
+
+The offline picker no longer lets a temporary provider URL escape or leaves each
+successful selection as an unowned file in the global temporary directory. Its
+import-only transfer closure now copies synchronously into a unique mode-0700
+directory and returns an `AppOwnedTemporaryVideo`. That owner is retained by the
+selection, runner source, both production decoders and the decoder's asynchronous
+size-cap task. Replacing the selection or releasing the last run/view reference
+removes only the app-created directory; failed copies clean their fresh directory
+too. Normal lifecycle cleanup is deterministic, while a force-kill/process crash
+still cannot run `deinit` and remains a system-temporary/manual-cleanup boundary.
+
+The selection state now has an exact generation. B advances it before A is
+cancelled; stale A success, failure or cancellation cannot replace B or clear its
+loading state. Failure/cancellation keeps the previous usable media for retry,
+and only successful replacement releases that media. Run is disabled while a
+selection loads, but the picker remains usable so B can replace A. An active
+analysis Cancel snapshots progress, releases its exact engine ownership and
+clears partial playback without clearing the selected media. Idle Cancel keeps
+completed playback. The Cancel path checks its invocation/token/lease both after
+the engine-release notification and after result-store reset, because either
+synchronous notification may start a successor that the older Cancel must not
+clear or overwrite.
+
+TDD receipt: the first protected lifecycle selection failed at compile time with
+the intended missing `AppOwnedTemporaryVideo` / `OfflineImportSelectionState`
+symbols (xcodebuild 65; zero tests). After implementation and project regeneration,
+`OfflineImportLifecycleTests` **7/7** plus `CameraReferenceProjectionTests`
+**40/40** passed together: **47/47 in 35 s**, zero failures, skips, expected
+failures or host restarts, with `** TEST SUCCEEDED **`. A fresh generated-project
+Debug iOS Simulator app build also succeeded. After the documentation was
+updated, the wider lifecycle/camera/disclosure/orchestration/derivative/muscle-
+chain/decode-memory/native-window selection passed **88/88 in 76 s** with the
+same zero-failure/zero-skip/zero-restart result. These are focused diagnostic
+receipts; the final protected fast gate remains separate. Physical-device Photos
+provider behaviour, kill-time residue, and cancellation latency remain external
+evidence.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /

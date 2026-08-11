@@ -382,24 +382,51 @@ enum FrameSource {
 
     final class VideoDecoder {
         let url: URL
+        /// Production decoders retain the app-owned copy for every asset read.
+        /// Fixture tests may still construct a decoder from a stable URL.
+        private let video: AppOwnedTemporaryVideo?
         private let asset: AVURLAsset
         private let generator: AVAssetImageGenerator
         private static let decodeQueue = DispatchQueue(label: "com.biomotion.offline.videodecode", qos: .userInitiated)
 
         /// The decode-size cap for this clip, resolved once.
         ///
-        /// Started in `init` and captured by URL rather than by `self` or by the
-        /// asset, so it is a plain `let` — no lazy field to race on, and no
-        /// assumption that the caller decodes serially. The value is applied to
-        /// the generator on `decodeQueue`, which is the only place the generator
-        /// is touched at all.
+        /// Started in `init`, so it is a plain `let` — no lazy field to race on,
+        /// and no assumption that the caller decodes serially. A production
+        /// task captures the video owner through completion because this
+        /// unstructured task can outlive the decoder itself. The value is
+        /// applied to the generator on `decodeQueue`, which is the only place
+        /// the generator is touched at all.
         private let sizeCap: Task<CGSize, Never>
 
+        init(video: AppOwnedTemporaryVideo) {
+            self.video = video
+            self.url = video.url
+            let asset = AVURLAsset(url: video.url)
+            self.asset = asset
+            self.sizeCap = Task { [video] in
+                let cap = await FrameSource.maximumDecodedSize(forVideoAt: video.url)
+                withExtendedLifetime(video) {}
+                return cap
+            }
+            let gen = Self.makeGenerator(asset: asset)
+            self.generator = gen
+        }
+
+        /// URL-only construction is reserved for tests whose fixture lifecycle
+        /// is controlled by the test itself. Picker-backed production paths use
+        /// `init(video:)` so the private copy cannot disappear during decode.
         init(url: URL) {
+            self.video = nil
             self.url = url
             let asset = AVURLAsset(url: url)
             self.asset = asset
             self.sizeCap = Task { await FrameSource.maximumDecodedSize(forVideoAt: url) }
+            let gen = Self.makeGenerator(asset: asset)
+            self.generator = gen
+        }
+
+        private static func makeGenerator(asset: AVURLAsset) -> AVAssetImageGenerator {
             let gen = AVAssetImageGenerator(asset: asset)
             // Pixel data comes out already upright, matching how the video plays
             // back — SAM3DPoseEstimator/Vision then just work in `UIImage.size`
@@ -411,7 +438,7 @@ enum FrameSource {
             // a biomechanics tool where frame timing matters.
             gen.requestedTimeToleranceBefore = .zero
             gen.requestedTimeToleranceAfter = .zero
-            self.generator = gen
+            return gen
         }
 
         func duration() async throws -> TimeInterval {

@@ -61,6 +61,7 @@
 		7D675D34A1FC4A52B6096561 /* GaitClaimSurvivalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */; };
 		7ED1CE05D8C199C942D22051 /* SkeletonOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */; };
 		8124CC275659661624C356FD /* PostureFindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFD138F9C20ED4CCDD68860 /* PostureFindings.swift */; };
+		81D288F9E6973ECD0B42F777 /* OfflineImportLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273C9F056CBEADDC1855F71A /* OfflineImportLifecycleTests.swift */; };
 		8642192F1B799220F845866A /* GaitContactAgreementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C84AF8B5E5E865A3939C9D2 /* GaitContactAgreementTests.swift */; };
 		86CC439C0B44FFAC6F3D2391 /* ClaimSurfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72797213E433B0F010275E7 /* ClaimSurfaceTests.swift */; };
 		8804D81FA38EF570856C727E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A021DA9E5DE28ED2E1F45BB4 /* Assets.xcassets */; };
@@ -77,6 +78,7 @@
 		A4E5CF602F7F6EA2A4112740 /* MuscleQPUnitsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F450A13A5F81381FF86F4B39 /* MuscleQPUnitsTests.swift */; };
 		ABE29919DAB357CEDBF7D9E5 /* MuscleOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCE04065D9DEF183FAB2526A /* MuscleOverlay.swift */; };
 		AD46F05ABFD3EA2F31330398 /* OfflineDisclosureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5CF5D0AED383C64CF63377B /* OfflineDisclosureTests.swift */; };
+		AD6BEAF0D19B8C0A76544DFD /* AppOwnedTemporaryVideo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D55A7CB3A0827EA6775003 /* AppOwnedTemporaryVideo.swift */; };
 		AEBD0D6F6A05031B4795C512 /* BodyTrackingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 675A6A481192DE8527711A02 /* BodyTrackingSession.swift */; };
 		B02E6F6E8214B6D20AF49FAF /* FrameSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938B58C5B8D77095B3471883 /* FrameSource.swift */; };
 		B255B36B5E61EAAB826546EC /* CameraRegistrationGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370E5FB68B25E2B0E780D49F /* CameraRegistrationGeometryTests.swift */; };
@@ -174,6 +176,7 @@
 		1F460BBF2CEB2DE7A1735390 /* ShoulderRotObservabilityTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ShoulderRotObservabilityTests.mm; sourceTree = "<group>"; };
 		2021A035EB1CD21341A0AF09 /* GaitLoadSummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitLoadSummaryTests.swift; sourceTree = "<group>"; };
 		2468254E57A86AF12F3123C0 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		273C9F056CBEADDC1855F71A /* OfflineImportLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineImportLifecycleTests.swift; sourceTree = "<group>"; };
 		28A3BA7029D6926197B5C2E6 /* OpenSimReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSimReferenceTests.swift; sourceTree = "<group>"; };
 		2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyFrameOrientationTests.swift; sourceTree = "<group>"; };
 		2DFA2909F8CB7C6E11AEBF61 /* FrameBudgetNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameBudgetNotice.swift; sourceTree = "<group>"; };
@@ -234,6 +237,7 @@
 		A01F5A8E43E144EF7C64ED03 /* OfflineResultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineResultStore.swift; sourceTree = "<group>"; };
 		A021DA9E5DE28ED2E1F45BB4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2B85FE37CE702C7D8D14A08 /* StaticHoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaticHoldTests.swift; sourceTree = "<group>"; };
+		A5D55A7CB3A0827EA6775003 /* AppOwnedTemporaryVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppOwnedTemporaryVideo.swift; sourceTree = "<group>"; };
 		A72797213E433B0F010275E7 /* ClaimSurfaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimSurfaceTests.swift; sourceTree = "<group>"; };
 		A7ABA5DC9C6C3A8A8A4798F3 /* SimmSplineExtrapolationTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = SimmSplineExtrapolationTests.mm; sourceTree = "<group>"; };
 		A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonOverlayView.swift; sourceTree = "<group>"; };
@@ -371,6 +375,7 @@
 				AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */,
 				F0EB06662FAF6CC71EDFBD44 /* OfflineDerivativeIsolationTests.swift */,
 				B5CF5D0AED383C64CF63377B /* OfflineDisclosureTests.swift */,
+				273C9F056CBEADDC1855F71A /* OfflineImportLifecycleTests.swift */,
 				FF0F23C51614668A2D0002E4 /* OfflineMuscleChainTests.swift */,
 				421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */,
 				F3D4BD895546357349F7302B /* OpenSimFiniteDifferenceFixture.swift */,
@@ -443,6 +448,7 @@
 		87F801CD2725DFE56017492C /* Offline */ = {
 			isa = PBXGroup;
 			children = (
+				A5D55A7CB3A0827EA6775003 /* AppOwnedTemporaryVideo.swift */,
 				ABC743B6BE41E0288942DEC9 /* CameraMotionAnalyzer.swift */,
 				D3F80540E0D03DB87FE06B89 /* CameraMotionVideoAnalyzer.swift */,
 				2DFA2909F8CB7C6E11AEBF61 /* FrameBudgetNotice.swift */,
@@ -712,6 +718,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD6BEAF0D19B8C0A76544DFD /* AppOwnedTemporaryVideo.swift in Sources */,
 				8A511E0DC6F90C2FD8E1DA83 /* AssetPackModelStore.swift in Sources */,
 				E1C04472A89C653399F92677 /* BioMotionApp.swift in Sources */,
 				CC6C983411E3BECBF5DD0CF8 /* BodyJoint.swift in Sources */,
@@ -814,6 +821,7 @@
 				59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */,
 				D59E7A15DFCE266734AE626E /* OfflineDerivativeIsolationTests.swift in Sources */,
 				AD46F05ABFD3EA2F31330398 /* OfflineDisclosureTests.swift in Sources */,
+				81D288F9E6973ECD0B42F777 /* OfflineImportLifecycleTests.swift in Sources */,
 				FAFDAE32C4C82F3339D97B8C /* OfflineMuscleChainTests.swift in Sources */,
 				A1255E337CF95E0639A20E10 /* OfflineOrchestrationTests.swift in Sources */,
 				A359C359FF4B8D850FEB185A /* OpenSimFiniteDifferenceFixture.swift in Sources */,
