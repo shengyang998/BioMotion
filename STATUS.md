@@ -23,7 +23,9 @@ biggest links were **not** where the effort had been going.
 - **IK is now a fixed point** (2026-08-07). Repeated converged solves on identical markers move
   exactly 0 rad and the answer no longer depends on how many solves preceded it. Under the former
   PELVIS-root mapping the dancer RMS went 5.4913 → 2.1224 cm; the source-specific MHR_ROOT repair on
-  2026-08-10 lowers the current fixture to **1.5365 cm**, or **1.2758 cm** after source-aware scaling. See
+  2026-08-10 puts the current fixture at **1.5365 cm against the unscaled model-marker reference**,
+  or **1.2758 cm after subject scaling changes that reference geometry**. Those last two values are
+  different marker/reference conditions, not two solver measurements against one fixed target. See
   [IK convergence](#ik-convergence-the-solver-is-now-a-fixed-point-2026-08-07).
 - A **kinematics-only findings layer** ships (forward head, rounded shoulders, trunk lean, …). It
   carries **no clinical threshold and no verdict** and suppresses any finding whose measurement axis
@@ -100,8 +102,9 @@ biggest links were **not** where the effort had been going.
   straight-line shortcut is out by a median of **13.7 %**, p90 124.4 %, worst **146.6 mm**, and
   **9.00 % of the pairs have the WRONG SIGN**. The control that makes it an attribution: the 454
   muscles with no wrap object are identical in the wrapped and unwrapped models to the last stored
-  digit — exactly 0.0. The shipped `MomentArmComputer` reproduces OpenSim-with-wrapping-off to
-  4.39 mm, so 97 % of its error is the missing solver.
+  digit — exactly 0.0. At that pre-wrap receipt, the then-shipped
+  `MomentArmComputer` reproduced OpenSim-with-wrapping-off to 4.39 mm, so 97 %
+  of its error was attributable to the missing solver.
   `BioMotionTests/Fixtures/opensim_moment_arms.txt` is now the gate a wrap solver has to pass. See
   [the reference](#the-moment-arms-now-have-a-reference-and-the-defect-is-measured-2026-08-08).
 - **CYLINDER PATH WRAPPING SHIPS** (2026-08-08; historical cylinder-stage numbers).
@@ -116,8 +119,9 @@ biggest links were **not** where the effort had been going.
   number. Wrap engagement matches on 2,016/2,016 rows.
   The discontinuity is handled by a signature-aware one-sided difference and proved on a
   constructed switch (raw centred **−19.62 m**, shipped **−0.0337 m**). Cost: 889 →
-  6,049 ms per solve in Debug, ~36 ms extrapolated at −O2, NOT measured on device. Still
-  missing: `WrapEllipsoid` (12 references, 10 elbow muscles). The per-muscle left/right
+  6,049 ms per solve in Debug, ~36 ms extrapolated at −O2, NOT measured on device.
+  At that cylinder-only stage, `WrapEllipsoid` was still missing (12 references, 10 elbow muscles).
+  The per-muscle left/right
   claim is NOT reopened.
   [Cylinder wrapping](#cylinder-path-wrapping-ships-2026-08-08).
 - **ELLIPSOID PATH WRAPPING SHIPS TOO, so every `PathWrap` in the model is solved**
@@ -126,7 +130,9 @@ biggest links were **not** where the effort had been going.
   muscles — are a port of opensim-core's `WrapEllipsoid.cpp` (`hybrid` method only; the
   other two are refused because they are not pure functions of the pose).
   `unmodelledPathWraps` is **0** and `GaitLoadSummary.musclesWithUnmodelledPaths` is
-  **empty**. Against OpenSim's own derivative: single-wrap p90 **2.438 mm**, max
+  **empty**. Current runtime receipts are **76/76 solved, 0 unmodelled** for FullBody and
+  **46/46 solved, 0 unmodelled** for Rajagopal2016. Against OpenSim's own derivative:
+  single-wrap p90 **2.438 mm**, max
   **4.414 mm**; path LENGTH max **0.210 mm**; engagement **600/600**; sign flips
   **135 → 0**; numerical refusals **0** over 60 poses. It was implemented rather than
   disclosed because the paired A/B says **1.28×** (7,688 vs 6,019 ms, Debug) against a
@@ -255,8 +261,13 @@ Do not re-litigate these; they are settled inputs.
 
 ## The root-cause chain
 
-Three symptoms that looked unrelated — IK drifting frame to frame, ~200 ms/frame solve time, and
-jittery muscle activations — are one root cause.
+The original diagnosis grouped three symptoms that looked unrelated — IK drifting frame to frame,
+a then-reported ~200 ms/frame cost, and jittery muscle activations — into one causal chain. The
+current measurements no longer support using **~200 ms/frame as an end-to-end total**:
+moving-input warm-start IK (~6 mm/frame) is **1567 ms/frame at 77.8 iterations**, an
+identical-marker warm/fixed solve is **49.0 ms/frame**,
+and the 520×109 muscle QP is **194.4 ms/frame**. All three are Debug Simulator measurements from
+different benchmark conditions; they are not additive, and there is no Release-device timing yet.
 
 1. **Observability.** 20 virtual markers = 60 scalar observations against **169 DOFs**
    (was "163 DOFs / ~12–14 markers" when this was written). The marker Jacobian is 60×169 with rank
@@ -299,7 +310,7 @@ being reported. Every fix has a test that fails on the old behaviour.
 | 418 `ConditionalPathPoint` + 4 `MovingPathPoint` silently dropped | `MomentArmComputer.mm:168` | tinyxml2 name-matched iteration skipped them. Now walks **all** children in document order (ordering matters — these are polyline vertices). All four FullBody MovingPathPoints parse, their SimmSpline components use `dart::math::SimmSpline`, malformed knots fail closed, and the runtime report is `parsed 4 / approximated 0 / skipped 0`. |
 | Ground height was a **monotonic ratchet** | `NimbleBridge.mm:634-638` | One crouch/landing/drift permanently sank it → both feet read >6 cm above "ground" → `contactCount==0` → ID solved a free-floating body with **zero external force for the rest of the session**. Replaced with a bounded rolling robust percentile that can rise as well as fall, plus a reset hook. |
 | `jointVelocities` accepted but never read | `MuscleSolver.mm:573,593` | Fiber velocity came from wall-clock finite differencing whose `dt` jittered with dropped frames and disagreed with the SG filter's own `dt`. Now uses the analytic identity `dL_MT/dt = −Rᵀ·dq`. Sign convention derived from `MomentArmComputer.mm:381` (`R = −∂L_MT/∂q`), not guessed. |
-| IK did **5 random restarts every frame** | `NimbleBridge.mm:472,510` | `IKConfig.lossLowerBound` defaults to 0 (header) / 1e-10 (ctor) — both unreachable against a realistic 0.01–0.03 m ARKit marker residual, so the restart loop always ran to completion, each iteration calling `getRandomPose()` and discarding the previous solution at 171 DOF. Now 1 restart, warm-started from the previous pose, plus a static marker-reliability weighting (trunk 1.00 → toes 0.40). |
+| IK did **5 random restarts every frame** | `NimbleBridge.mm:472,510` | `IKConfig.lossLowerBound` defaults to 0 (header) / 1e-10 (ctor) — both unreachable against a realistic 0.01–0.03 m ARKit marker residual, so the restart loop always ran to completion, each iteration calling `getRandomPose()` and discarding the previous solution on the then-171-coordinate model. Now 1 restart, warm-started from the previous pose, plus a static marker-reliability weighting (trunk 1.00 → toes 0.40). |
 
 Also: torque residual now exposed on `MuscleActivationResult`; `aMin` comment no longer justifies an
 optimizer bound by colormap appearance; dead `maxMuscleForceAtState` and the legacy
@@ -602,15 +613,18 @@ manual OpenSim audit is not represented as an iOS runtime gate.
 - `PathPoint` 1444 · `ConditionalPathPoint` 418 · `MovingPathPoint` 4
   (**runtime: 4 parsed, 0 approximated, 0 skipped**) · `PathWrap` 76 ·
   `WrapCylinder` 60 · `WrapEllipsoid` 9 · 15 `WeldJoint` · 53 `CustomJoint`.
+- Current runtime wrap resolution: **76/76 solved, 0 unmodelled**.
 - **PathWrap distribution** (settles a contradiction between two analyses): shoulder 24 muscles →
   **0 wraps**; trapezius/serratus 48 → **0 wraps**; elbow 18 → **16 have wraps**.
-  ⇒ The unimplemented-wrap gap does **not** block the shoulder. Unwelding the shoulder really does
-  deliver usable shoulder moment arms.
+  ⇒ Wrap support never governed the shoulder because those 24 muscles have no wraps. The former
+  shoulder weld was repaired on 2026-08-06; this is not a current unwelding task.
 
-`BioMotion/Resources/Rajagopal2016.osim` (fallback, lower-extremity only): 80 muscles,
-288 `PathPoint`, 0 conditional/moving, 46 `PathWrap`, 40 `WrapCylinder`. Parses cleanly.
+`BioMotion/Resources/Rajagopal2016.osim` (fallback, lower-extremity only): **80 muscles,
+39 XML coordinates and 37 Nimble runtime DOFs**; 288 `PathPoint`, 0 conditional/moving,
+46 `PathWrap`, 40 `WrapCylinder`. It parses cleanly and the current wrap path reports
+**46/46 solved, 0 unmodelled**.
 
-### Why the shoulders are welded
+### Historical diagnosis: why the shoulders were welded
 
 `shoulder_R` / `shoulder_L` are `CustomJoint`s with 3 coordinates and 6 `TransformAxis` entries.
 Their three rotation axes are **not mutually orthogonal**:
@@ -629,10 +643,13 @@ disguised EulerJoint) demanded `|dot| < 1e-4`, hit a Release-disabled `assert()`
 removed the trigger; the 2026-08-11 parser patch also deleted the substitution and now rejects such
 unsupported topology transactionally instead of returning a different joint.
 
-The generic `createCustomJoint<N>` path (`OpenSimParser.cpp:~5501`) does **not** require
-orthogonality and could represent this joint fine — it is simply never reached.
+The first diagnosis said the generic `createCustomJoint<N>` path (`OpenSimParser.cpp:~5501`) could
+represent the joint because it does not require orthogonality. That was only half right: its
+`getAxisOrder()` still requires exact signed unit axes, so merely reaching that path would not have
+worked. The later correction is retained in the fixed-blocker section below.
 
-**The fix is 6 lines of XML**, and the exact corrected values already exist in-repo:
+**The 2026-08-06 model fix was 6 lines of XML**, and the exact corrected values already existed
+in-repo:
 `nimblephysics/data/osim/Return11/unscaled_generic_ortho.osim` differs from `unscaled_generic.osim`
 by **exactly 6 lines** — the same shoulder axis triple, snapped to unit vectors, byte-identical
 "before" values to `FullBody.osim`. ⚠️ Caveat: `grep -r unscaled_generic_ortho nimblephysics/`
@@ -645,18 +662,32 @@ numbers are ground truth; the "upstream chose this approach" argument is not.
   L pair are literal `<WeldJoint>` in the XML. Scapular protraction / winging / scapulohumeral
   rhythm are unobtainable from this model — and unobservable from ARKit anyway (one point per
   shoulder).
-- **Patella is skipped by literal string match**, not by joint type: `OpenSimParser.cpp:6147`,
-  `:6562`, `:6737-6739`. Changing the joint to a WeldJoint does **not** help — the body must be
-  **renamed**. Its coordinate is driven by a `CoordinateCouplerConstraint`, which nimble does not
-  enforce. Consequence today: ~8 quadriceps muscles have zero knee moment arm and sit pinned at the
-  activation lower bound — i.e. **the app would report "your quadriceps are not loaded" during a
-  squat**. Ship blocker for the flagship posture.
-  ⚠️ If the rename is done, `NimbleBridge.mm` `groupScale()` must be patched in the same commit — it
-  matches `bodyName.find("patella")` to assign the lower-limb scale group, so a rename silently
-  reassigns the patella to `trunkScale`.
-- `CLAUDE.md`'s "OSQP ~0.5 ms / IK ~1 ms" figures are **stale** — measured on Rajagopal2016
-  (81 muscles / 39 DOF), not the shipped FullBody (520 / 171). Real cost is ~200 ms/frame, which is
-  why builds 15–16 needed frame-dropping backpressure.
+- **Historical patella crash guard (fixed 2026-08-06).** The old parser skipped patella bodies by
+  literal name rather than joint type (`OpenSimParser.cpp:6147`, `:6562`, `:6737-6739` at that
+  receipt). Merely changing the joint to a `WeldJoint` did not help: the repair renamed the body,
+  baked the unsupported coupler at its fixed pose, and updated `NimbleBridge.mm` `groupScale()` in
+  the same commit so the renamed kneecap stayed in the lower-limb scale group. Before that repair,
+  the quadriceps path/force-length state could pin activations at the floor during a squat; this is
+  not a current ship blocker. The exact corrected mechanism and measurements are retained under
+  [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
+- The old documentation's "OSQP ~0.5 ms / IK ~1 ms" figures were from Rajagopal2016, whose correct
+  inventory is **80 muscles / 39 XML coordinates / 37 runtime DOFs**, not the current FullBody
+  workload (**520 muscles / 169 DOFs**). Current Debug Simulator measurements are **194.4 ms/frame**
+  for the 520×109 QP, **1567 ms/frame at 77.8 iterations** for moving-input warm-start IK
+  (~6 mm/frame), and **49.0 ms/frame**
+  for identical-marker warm/fixed IK. They come from different benchmark conditions and must not be
+  added into a synthetic "chain" total. No Release-device performance measurement exists.
+
+### Current performance receipts (not an end-to-end total)
+
+| Component and input | Problem size | Measured cost | Scope |
+|---|---:|---:|---|
+| IK, moving input with the previous-frame warm start (~6 mm/frame) | 20 markers / 60 residual rows / 169 DOFs | **1567 ms/frame, 77.8 iterations** | Debug, iOS Simulator |
+| IK, identical-marker warm/fixed input | same IK problem | **49.0 ms/frame** | Debug, iOS Simulator |
+| Muscle QP | 520 muscles × 109 torque-coordinate rows | **194.4 ms/frame** | Debug, iOS Simulator |
+
+These receipts isolate different components and inputs. They are **not additive**, do not include a
+single common end-to-end frame, and do not predict Release performance on a phone.
 
 ---
 
@@ -709,14 +740,16 @@ does not buy spinal observability.
 
 The reason not to swap the marker set is **observability, not compute**. MHR carries 4 spine anchors
 and **0 rib anchors** against this model's 54 spine and 72 rib coordinates, so ≥114 of the spine+rib
-DOFs stay in the null space before and after the swap. Meanwhile 54 coordinates in `FullBody.osim`
-already carry `<locked>true</locked>` and nimble appears not to honour it (171 − 54 = 117, yet
-nimble reports 163 DOF). Runtime DOF masking is the cheaper lever by an order of magnitude.
+DOFs stay in the null space before and after the swap. At the 2026-08-06 E1 receipt, the model/parser
+inventory was 171 XML coordinates and 163 runtime DOFs despite 54 coordinates carrying
+`<locked>true</locked>`; that was evidence that Nimble did not honour the lock flag, not a current
+model count. Production now has **169 XML coordinates and 169 runtime DOFs** after the patella and
+shoulder repairs. Runtime DOF masking was the cheaper experimental lever by an order of magnitude.
 Full accounting, measurements and pre-registered gates: `labs/sam-3d-body/findings/DECISION.md`.
 
 ### Hard limits on "quantitative muscle activation"
 
-- The QP has ~520 unknowns against ~110 torque equations. The ~410-dimensional null space is filled
+- The current QP has 520 unknowns against 109 torque-coordinate rows. Its large null space is filled
   **entirely by the cost function**. `epsA`/`lambda`/`aMin` were tuned — per the original code
   comments — so the visualization would not go *"permanently blue"*. That is a rendering parameter,
   not a measurement.
@@ -805,9 +838,11 @@ was necessary, not merely convenient.
   are free of this particular limitation.
 - Moment arms are geometry — necessary but not sufficient. Whether OSQP now reports loaded
   quadriceps in a real squat also depends on force-length state and inverse-dynamics torque quality.
-- `shoulder_rot_{r,l}` (humeral axial rotation) is **not observable** from one point per shoulder
-  plus one at the elbow. Per this file's own E1 finding that unobservable DOFs get excited by the
-  solver, those two should enter the runtime DOF mask before shoulder output is trusted.
+- **Historical hypothesis, rejected 2026-08-07:** this receipt treated `shoulder_rot_{r,l}` as
+  unobservable and proposed masking it. Direct Jacobian measurement later found a non-zero
+  0.0343 m/rad column at neutral (0.266 at 90° elbow flexion), and masking worsened the current
+  dancer RMS by 0.7170 cm and broke standing convergence. The mask is not enabled; see
+  [Masking shoulder_rot](#masking-shoulder_rotrl-was-tested-and-rejected-2026-08-07).
 - Coordinate counts changed: **171 → 169** XML coordinates (the 2 `knee_angle_*_beta` are gone with
   the weld) and **nothing is dropped any more** (was 8: 2 patellofemoral + 6 shoulder). Test fixtures
   in `FullBodyDOFFixture.swift` were updated to match.
@@ -1837,8 +1872,9 @@ states the measurement and a lever.
   budget, so the native-rate window collapsed to 1.983 s at 60 fps, 0.992 s at 120 and 0.496 s at
   240 — below three complete contacts per side. `.nativeWindow` now has its own budget, DERIVED as
   `minimumAnalysisSeconds × 240 + 1 = 601`, holding ≥ 2.50 s at every rate up to 240 fps. 30 fps is
-  unchanged at 120 frames. Cost at 240 fps is 7-10 min of pose model at the ~1 s/frame the brief
-  quotes — estimated, not measured on device.
+  unchanged at 120 frames. At that receipt, the brief's unverified ~1 s/frame
+  assumption produced a 7–10 minute estimate at 240 fps; it was not a device
+  measurement.
 * The advice also promised a resolution the model said it could not deliver: it printed
   "filming at 61 fps would resolve ±5%" while `resolvableAsymmetryPercent = max(floor, repeatability)`
   would have been 7.2%. The target is now never finer than `bestAchievablePercentAtAnyFrameRate`,
@@ -2279,9 +2315,11 @@ against a 1.52 pp noise floor — so the per-muscle breakdown is one number repe
 is the torque scale ratio the contact block already reports from timing. **All per-muscle
 differentiation lives in the non-proportional part of the torque, which is precisely the part a wrong
 moment arm distorts.** There is no regime that is both safe and informative, so
-`perMuscleLeftRightClaimIsSupported` is a flat `false` and not a gate. The condition that would flip
-it back is registered in its doc: model the 76 missing `PathWrap` references, or bound their error,
-and re-run `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` against the 8.086 % floor.
+`perMuscleLeftRightClaimIsSupported` is a flat `false` and not a gate. At that historical receipt,
+the registered reopening condition was to model the then-missing 76 `PathWrap` references or bound
+their error, then re-run `testAShapeAsymmetryMakesABilateralMomentArmErrorLeak` against the 8.086 %
+floor. Wrapping later shipped, but the re-run still rejected the claim for the separately measured
+tail and solver-tolerance reasons recorded below.
 
 #### S2 — eight order statistics quoted as eight independent tests
 
@@ -2717,9 +2755,10 @@ on 99.2%).
 
 **The lever is measured and it is not the camera.** The timing floor binds on only 0.49% of draws —
 this claim is limited by the runner, not the sampling grid. The half-width falls as 1/√n, so halving
-16.5% needs ~20 contacts a side ≈ a 16 s steady run against the current 4 s window. Cost: 480 model
-calls ≈ 5.6 min at 0.7 s/frame, ~850 MB peak for 576×768 (it would NOT fit at 1080p). That is a
-bounded engineering change and it is the obvious next step; it is out of scope for build 30.
+16.5% needs ~20 contacts a side ≈ a 16 s steady run against the current 4 s window. At that receipt,
+480 model calls were estimated as ≈5.6 min using an unverified 0.7 s/frame assumption, with ~850 MB
+peak for 576×768 (it would NOT fit at 1080p). That was a bounded next step outside build 30, not a
+Release-device timing measurement.
 
 **What build 30 delivered at that historical stage:** a skeleton whose legs finally track the stride (the `upperBodyOnly`
 crop fix), gait timing per side with its scatter and step counts, a per-clip resolution figure the
@@ -2730,10 +2769,11 @@ muscle diagnostics, and a commit gate (`tools/run_tests.sh`) whose green actuall
 
 ## The moment arms now have a REFERENCE, and the defect is measured (2026-08-08)
 
-Build 30 retired the per-muscle left/right claim because the moment arms feeding it are wrong: the
-running muscles' paths WRAP around bone and `MomentArmComputer` cuts straight through. Until now
-that was an argument with a count attached (`unmodelledPathWraps = 76`) and no measurement, because
-this project had no authoritative moment arm to compare against. It has one now.
+At this 2026-08-08 pre-wrap receipt, Build 30 had retired the per-muscle left/right claim because
+the moment arms feeding it were wrong: running-muscle paths wrapped around bone while the
+then-shipped `MomentArmComputer` cut straight through. Until that receipt this had been an argument
+with a count attached (`unmodelledPathWraps = 76`) and no authoritative comparison. The reference
+below supplied that comparison; the wrapping implementation shipped in the following sections.
 
 ### The reference
 
@@ -2749,7 +2789,7 @@ Two models, same poses, same (muscle, coordinate) pairs:
 | | |
 |---|---|
 | **wrap ON** | the model as shipped, OpenSim solving all 76 PathWraps. **The reference.** |
-| **wrap OFF** | every `WrapObject.set_active(False)`, so each path is the straight polyline through its path points — what `MomentArmComputer` computes today, inside OpenSim's own numerics |
+| **wrap OFF** | every `WrapObject.set_active(False)`, so each path is the straight polyline through its path points — what the pre-wrap `MomentArmComputer` computed, inside OpenSim's own numerics |
 
 `tools/opensim_ref/dump_reference.py` writes both over **173 poses** (neutral, deep squat,
 trunk-flexed, six asymmetric running phases, five 1-D sweeps, a 48-point lower-limb grid) × **7,496
@@ -2790,27 +2830,29 @@ Worst named pairs, by median relative error over all 173 poses: `gasmed_l`/`knee
 error anywhere is `TR2_l`/`L5_S1_LB`, where the shipped code returns **−0.00448 m** and OpenSim
 returns **+0.14210 m**: wrong sign and 32× too small.
 
-### Is "wrap off" really what this code computes? Yes, to 4.4 mm
+### Did the pre-wrap code really compute "wrap off"? Yes, to 4.4 mm
 
-`StraightLinePathErrorTests` drives the SHIPPED `MomentArmComputer` — nimble skeleton, its own FK,
-its 1e-4 rad centred difference — over 35 of the fixture's poses and compares all three columns
-(12,384 samples, 31 s):
+At this receipt, `StraightLinePathErrorTests` drove the then-shipped
+`MomentArmComputer` — nimble skeleton, its own FK, its 1e-4 rad centred
+difference — over 35 fixture poses and compared all three columns (12,384
+samples, 31 s):
 
 | | median | p90 | p99 | max |
 |---|---|---|---|---|
 | ours vs OpenSim **wrap-OFF** | 0.000 | 0.000 | 3.79 mm | **4.39 mm** |
 | ours vs OpenSim **reference** | 0.000 | 67.1 mm | 119.1 mm | **146.6 mm** |
 
-The two independent implementations of the straight-line path agree to 4.4 mm worst case while the
-gap to the truth is 33× larger, so essentially the whole error is the missing wrap solver. The 4.4 mm
-residual is not wrapping at all: it is `BIClong_l`/`pro_sup_l` (ours +0.00957 vs +0.01396), i.e. the
+The two independent implementations of the straight-line path agreed to 4.4 mm worst case while the
+gap to the truth was 33× larger, so essentially the whole error was the missing wrap solver. The 4.4 mm
+residual was not wrapping at all: it was `BIClong_l`/`pro_sup_l` (ours +0.00957 vs +0.01396), i.e. the
 linearly-interpolated `MovingPathPoint` splines the fidelity report already counts, plus the latched
-`ConditionalPathPoint`s and nimble's FK. Worth fixing eventually; it is 3% of the wrap error.
+`ConditionalPathPoint`s and nimble's FK. The later exact-SimmSpline work is recorded below.
 
-`testOurStraightLineTracksOpenSimWithWrappingDisabled` is a **TRIPWIRE**: it asserts the shipped code
-matches the wrap-OFF column, which is true exactly as long as wrapping is missing. When the solver
-lands it must be repointed at the wrap-ON column, not deleted — the same comparison is then the gate
-that says the solver works.
+The then-named `testOurStraightLineTracksOpenSimWithWrappingDisabled` was the
+pre-registered **TRIPWIRE**. When wrapping landed it was repointed, not deleted:
+the current `testOurStraightLineTracksOpenSimOnMusclesWithNoWrapObject` keeps
+no-wrap muscles on the wrap-OFF reference, while a separate assertion requires
+wrapped muscles to leave that column behind.
 
 ### The discontinuity risk is sampled, and it is small but real
 
@@ -2870,9 +2912,9 @@ matters most.
 
 * It did not implement wrapping. No `WrapCylinder`, no `WrapEllipsoid`, no change to
   `MomentArmComputer`, no change to the QP, and **no retired claim reopened**.
-* It did not measure the per-frame COST of a wrap solver, because there is no solver to time. The
-  brief's second risk stands open: OpenSim's cylinder solve iterates (MAX_ITERATIONS 100) and the
-  ellipsoid is a numerical geodesic, against a chain that already costs ~200 ms/frame.
+* It did not measure the per-frame COST of a wrap solver, because there was no solver to time. At
+  this pre-wrap receipt, the brief compared that risk with a then-assumed ~200 ms/frame chain; the
+  later component receipts above supersede that assumption.
 * It did not decide anything about `quadrant`, which selects WHICH side the path wraps around. The
   reference will catch a backwards one; nothing here has looked at it.
 * It did not fix the 4.4 mm `MovingPathPoint` spline residual.
@@ -2991,10 +3033,11 @@ build:
 | 1-wrap solve | 58.0 us | **0.268 us** | 217x |
 | straight polyline | 0.253 us | 0.004 us | 63x |
 
-At the −O2 rates the wrap layer costs about **36 ms** per moment-arm solve
-(1,356 two-wrap solves at 22.1 us + 20,340 one-wrap solves at 0.268 us) against
-a chain STATUS sizes at ~200 ms/frame. **This is an extrapolation, not a
-measurement: nothing here ran in a Release build or on the phone.** The
+At the −O2 rates this historical arithmetic put the wrap layer at about **36 ms** per moment-arm
+solve (1,356 two-wrap solves at 22.1 us + 20,340 one-wrap solves at 0.268 us), compared with the
+~200 ms/frame assumption used at that receipt. **This is an extrapolation, not a measurement:
+nothing here ran in a Release build or on the phone, and later component timings do not form one
+additive chain total.** The
 two-wrap path is 80x the one-wrap path and dominates, so that is where an
 optimisation would go.
 
@@ -3230,8 +3273,9 @@ flips above the 3.758 mm control floor, control unchanged at max 3.758 mm.
   a desktop benchmark of the solver in isolation. Extrapolating the same
   Debug→Release ratio the cylinder measured (≈170× on the solver itself) puts the
   ellipsoid layer at roughly **10 ms** per moment-arm solve on top of the
-  cylinder's ~36 ms, against a chain this file sizes at ~200 ms/frame — but that
-  is arithmetic, not a measurement, and the LIVE ARKit path runs this every frame.
+  cylinder's ~36 ms, against the ~200 ms/frame assumption used at this historical receipt — but
+  that is arithmetic, not a measurement, and the LIVE ARKit path runs this every frame. Later
+  component timings are recorded separately above and are not additive.
 * The `MovingPathPoint` linear interpolation is untouched and is now, by
   measurement, the largest implementation gap left: 4.414 mm on
   `BICshort_l`/`pro_sup_l`, against a 3.758 mm floor at which nimble's FK and
@@ -4370,7 +4414,9 @@ raw joint 1 and labels that point `PELVIS`. Each successful load caches both tru
 FullBody is **0.4820 m PELVIS / 0.5517 m MHR_ROOT**, Rajagopal is
 **0.4634 / 0.5331 m**. The input alias chooses the matching denominator; lower/upper references and
 the loaded default body-scale vector remain the same baseline. The current dancer reaches
-**1.2758 cm** RMS after this source-aware scale, versus 1.5365 cm unscaled.
+**1.2758 cm** RMS after this source-aware scale, versus **1.5365 cm** against the unscaled model.
+Scaling changes the model-side marker/reference geometry, so these are two explicitly different
+reference conditions—not two IK solver results against one frozen target set.
 
 Model loading is transactional across layers. Native code constructs the candidate skeleton,
 marker map and all five scaling caches before swapping them. A failed reload retains the old model
@@ -5855,6 +5901,30 @@ header or static-archive member was selected by the compiler/linker, and it does
 against a malicious same-UID process that swaps files during inspection.
 
 
+## Current model/performance wording is reconciled (2026-08-12)
+
+The product, test comments and operator docs now use one current inventory:
+FullBody is 169 coordinates / 169 runtime DOFs with 520 muscles; Rajagopal2016
+is 39 XML coordinates / 37 Nimble runtime DOFs with 80 parsed muscles. Historical
+163-DOF, shoulder-weld, patella-skip and unimplemented-wrap observations remain
+only where they are labelled as the pre-fix receipt. Current wrap resolution is
+76/76 for FullBody and 46/46 for Rajagopal2016, with zero unmodelled references.
+
+Performance wording no longer turns separate Debug Simulator measurements into
+one invented end-to-end or phone number: moving-input warm-start IK
+(~6 mm/frame) measured 1567 ms/frame at 77.8 iterations, identical-marker warm
+IK measured 49.0 ms/frame, and the 520×109 muscle QP measured 194.4 ms/frame.
+They are not additive; no Release-device timing exists. The MHR figures are also labelled by their different
+reference conditions: 1.5365 cm against the unscaled model and 1.2758 cm after
+source-aware subject scaling changes the model geometry.
+
+The only executable contract tightened in this wording pass is Rajagopal's
+runtime-DOF assertion, from a loose `<= 39` to exact `37`. A fresh protected
+diagnostic subset covering `NimbleBridgeTests` and `OfflineDisclosureTests`
+passed **42/42** in 38 s with zero failures, skips, expected failures or test-host
+restarts. It is compile and focused-behaviour evidence, not the final commit gate.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -5892,10 +5962,10 @@ The unweighted RMS improved 2.6× because the old solver parked its error on the
 markers.
 
 ⚠️ **Cost regression on MOVING input, measured and not resolved.** A warm solve on identical
-markers went 409.6 → 49.0 ms (it exits on its first convergence test), but a moving subject
-(~6 mm/frame) costs **1567 ms/frame at 77.8 iterations** versus the old solver's ~410 ms — the old
-one ran a fixed budget and never terminated on convergence, which was the defect. Caveats: Debug
-simulator build, where the 169×169 `JᵀJ` and its LDLT are compiled at `-O0` while nimble's
+markers went 409.6 → 49.0 ms (it exits on its first convergence test), but moving-input
+warm-start IK (~6 mm/frame) costs **1567 ms/frame at 77.8 iterations** versus the old solver's
+~410 ms — the old one ran a fixed budget and never terminated on convergence, which was the
+defect. Caveats: Debug simulator build, where the 169×169 `JᵀJ` and its LDLT are compiled at `-O0` while nimble's
 equivalent sits in a Release static library, so the ratio is pessimistic for the new code. The
 obvious hypothesis was tested and is FALSE: relaxing `kIKStepTolerance` 100× moved iterations by 6%
 and the RMS not at all, so the iterations are real convergence work. The untried lever: the normal
@@ -5912,8 +5982,10 @@ error was 5.76 cm and dropping it took the remaining 19 markers to 1.5541 cm. Th
 was directionally right but called raw MHR joint 1 an exact mid-hip point; measurement shows it is
 15.081552 mm from the source HJC midpoint. The repair therefore does not globally redefine PELVIS.
 It adds source-specific `MHR_ROOT`, keeps live PELVIS unchanged, and preserves raw joint 1 as the
-target with the approximation disclosed. Current 20-marker RMS is 1.5365 cm unscaled and 1.2758 cm
-after source-aware scaling; shoulder geometry, not the root alias, is now the largest mismatch.
+target with the approximation disclosed. Current 20-marker RMS is **1.5365 cm against the unscaled
+model-marker reference** and **1.2758 cm after source-aware subject scaling changes that model
+reference**. The latter is not a solver-only improvement against the former's fixed targets;
+shoulder geometry, not the root alias, is now the largest mismatch.
 
 ---
 
@@ -6018,12 +6090,15 @@ Behaviour, A/B on the same bridge (`ShoulderRotMaskTests`):
 
 | | unmasked | masked |
 |---|---|---|
-| dancer marker RMS (current MHR_ROOT) | 1.5365 cm | **2.2535 cm** (+0.7170) |
+| dancer marker RMS (unscaled MHR_ROOT mask A/B) | 1.5365 cm | **2.2535 cm** (+0.7170) |
 | dancer relative torque residual | 0.5940 | **0.5064** (lower, but on a marker-worse pose) |
 | dancer `shoulder_rot_r` | 0.5876 rad (33.7°) | pinned 0 |
 | standing marker RMS | 0.0031813 cm | 0.0032228 cm (Δ 4.1e-5 — nothing to remove; the unmasked solver puts **0.04°** into the coordinate) |
 | standing iterations / converged | **0 / YES** | **123 / NO** |
 | standing per-solve drift | **0.0 rad** | **9.27e-5 rad** |
+
+The source-aware scaled path's unmasked RMS is 1.2758 cm; it changes the
+model-marker reference geometry and is not part of this unscaled mask A/B.
 
 Root cause of the standing non-convergence, traced with `kIKTraceSolve`: unmasked, both LM phases
 exit on the gradient test at `iters=0`, loss 2.0390e-8 — a genuine interior stationary point. Masked,
@@ -6095,8 +6170,8 @@ arms must differ in the work that PRECEDES the mask.
    [IK convergence](#ik-convergence-the-solver-is-now-a-fixed-point-2026-08-07). Damping toward the
    seed shipped as phase A (μ=1e-3) of a two-phase solve, together with five other fixes; the
    headline is that IK is now a fixed point and order-independent. **What remains on this line is
-   the cost regression on moving input (1567 ms/frame in a Debug simulator build) and the fact that
-   on-device Release timing has never been measured.**
+   the cost regression on moving-input warm-start IK (~6 mm/frame; 1567 ms/frame in a Debug
+   simulator build) and the fact that on-device Release timing has never been measured.**
 
    The DOF-mask half is built and reversible but **is not switched on anywhere** — see
    [Masking shoulder_rot](#masking-shoulder_rotrl-was-tested-and-rejected-2026-08-07) for why the
@@ -6116,7 +6191,10 @@ arms must differ in the work that PRECEDES the mask.
    Rest of the original rationale still stands — reversible, no new shipped artifact, no rename, no
    patella bake, and it avoids nimble's documented penalty for intermediate WeldJoints
    (`OpenSimParser.cpp:5229`).
-   This single change targets the red test, the ~200 ms/frame cost, and the `ddq` noise at once.
+   This change was originally motivated by the red test, the then-reported ~200 ms/frame cost and
+   the `ddq` noise. Current receipts split performance by component/input: moving-input warm-start
+   IK (~6 mm/frame) 1567 ms/frame, identical-marker warm/fixed IK 49.0 ms/frame, and the QP
+   194.4 ms/frame, all Debug Simulator; they are not an additive end-to-end timing.
    ⚠️ **Do not weld the sternum or costovertebral joints.** Because the clavicle and scapula are
    already welded, those are the shoulder girdle's *only* articulation; welding them kills all 24
    trapezius and all 20 serratus slips — the scapular stabilisers, i.e. exactly the muscles behind
@@ -6161,10 +6239,12 @@ arms must differ in the work that PRECEDES the mask.
 12. **Validate the findings layer on real photos** (see next-step 3's remainder). Currently the
     highest-value open item, because it is the only part of the product a user can check against
     their own photo.
-13. **Measure IK cost in a Release build on device.** The 1567 ms/frame moving-input figure is a
-    Debug simulator number and the app's live path depends on it. If it is real, the untried lever is
-    the Woodbury/dual form of the normal equations (169×169 vs a 60-row residual, ~8× on the cubic
-    term).
+13. **Measure IK cost in a Release build on device.** The 1567 ms/frame moving-input warm-start
+    figure (~6 mm/frame, 77.8 iterations) and the 49.0 ms/frame identical-marker warm/fixed figure
+    are separate Debug Simulator cases. Neither is a phone number, and neither may be added blindly to the separately
+    measured 194.4 ms/frame QP. If the moving-input warm-start cost survives a Release-device
+    measurement, the untried lever is the Woodbury/dual form of the normal equations (169×169 vs a 60-row residual,
+    ~8× on the cubic term).
 14. ~~**E1's 163-coordinate partition no longer covers the 169-coordinate model.**~~ **CLOSED
     2026-08-07.** The SHOULDER6 partition restored full coverage and `testE1RunAll` passed in
     **5706.9 s**. It is now the slow lane's exact one test. The separate V4 “does the harness
@@ -6236,8 +6316,9 @@ arms must differ in the work that PRECEDES the mask.
     has to be right because `r = dL/dq`. `BioMotionTests/Fixtures/opensim_moment_arms.txt` is the
     gate, `StraightLinePathErrorTests` is the harness already wired to it, and its
     `wrapPoints` column marks the 25 engage/disengage transitions a centred difference must not
-    straddle. Three things this stage did NOT do and the next one must: measure the per-frame COST
-    (the chain is already ~200 ms/frame and OpenSim's cylinder solve iterates), check `quadrant`
+    straddle. Three things this historical stage had not yet done: measure the per-frame COST (its
+    then-current text assumed a ~200 ms/frame chain; later receipts supersede that total), check
+    `quadrant`
     (getting the wrap side backwards produces a plausible wrong path), and decide the licence
     paperwork for opensim-core's Apache-2.0 `WrapCylinder`/`WrapEllipsoid`/`WrapMath` if that code
     is used (header + NOTICE).
@@ -6338,9 +6419,11 @@ arms must differ in the work that PRECEDES the mask.
     decision with its own gates and its own fixtures (`GaitLoadSummaryTests` pins 0.98 and builds
     frames at 0.982). If it is tightened, the falsifier is: no muscle that the exact solve puts on a
     bound may read as interior on any pinned clip.
-29. **The QP costs 194 ms of a ~200 ms/frame chain in Debug, and nobody has measured it in Release
-    or on the phone.** The fix added 3 %, so it did not create this, but the measurement now exists
-    at 520 muscles × 109 coordinates and it is the largest single term in the chain. `P` is built
+29. **The QP costs 194.4 ms/frame in its Debug Simulator benchmark, and nobody has measured it in
+    Release or on the phone.** The fix added 3 %, so it did not create this, but the isolated
+    measurement now exists at 520 muscles × 109 coordinates. It is not an end-to-end chain total
+    and cannot be added directly to either IK case, which used different inputs/benchmarks. `P` is
+    built
     DENSE upper-triangular (520×520 = 135k nonzeros) and re-factorised every frame; the standard
     OSQP formulation for a least-squares objective introduces `t = A·a` and keeps `P` DIAGONAL, which
     would make the KKT sparse. That is a rewrite of the OSQP wiring, not a constant, and it should be
@@ -6451,7 +6534,8 @@ arms must differ in the work that PRECEDES the mask.
 - **Does the upper limb need muscles, or only posture?** If the value is "rounded shoulders /
   forward head", that is pure geometry and the licence question does not block the product at all.
 - **Whether to keep `FullBody.osim` at all.** Rajagopal2016 is ruled out (no upper limb). Every
-  alternative surveyed trades the shoulder weld for a total *absence* of shoulder muscles.
+  alternative surveyed avoided the former FullBody shoulder-parser failure only by having a total
+  *absence* of shoulder muscles; FullBody's own shoulder weld defect has already been repaired.
   A proper survey of externally-sourced commercial-safe full-body models **has not been done** —
   one research agent silently returned placeholder output and that gap was never filled.
 

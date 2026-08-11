@@ -500,10 +500,12 @@ final class IKConvergenceTests: XCTestCase {
 
     // MARK: - 5. Cost
 
-    /// The solve has to stay affordable — the shipped model is 520 muscles /
-    /// 169 coordinates and already costs ~200 ms/frame end to end. A converged
-    /// warm solve should be CHEAPER than the old one, not dearer, because it
-    /// starts at its own fixed point.
+    /// The solve has to stay affordable. On the recorded Debug iOS Simulator
+    /// run, unchanged-marker warm IK cost 49 ms while moving-input warm-start
+    /// IK (~6 mm/frame) cost 1567 ms/frame at 77.8 iterations. The separate 520×109 QP receipt is
+    /// 194.4 ms; those stage benchmarks are not additive, and no Release-device
+    /// timing exists. A converged warm solve should still be cheaper than the
+    /// moving case because it starts at its own fixed point.
     func testWarmSolveCostDoesNotRegress() throws {
         try loadFullBody()
         let m = dancerMarkers

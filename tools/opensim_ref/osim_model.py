@@ -2,8 +2,8 @@
 
 Everything here is READ-ONLY with respect to `BioMotion/Resources/FullBody.osim`.
 The one mutation performed is `WrapObject.set_active(False)` on an in-memory
-copy, which is how the "straight-line shortcut the shipped code takes" model is
-built -- see `wrap_off_model()`.
+copy, which builds the historical straight-line baseline used before path
+wrapping shipped on 2026-08-08 -- see `wrap_off_model()`.
 """
 
 from __future__ import annotations
@@ -26,8 +26,9 @@ osim.Logger.removeFileSink()
 def load_model(disable_wrapping: bool = False):
     """Load FullBody.osim. With `disable_wrapping`, every WrapObject in the
     model is deactivated BEFORE `initSystem()`, so each GeometryPath degenerates
-    to the straight polyline through its path points -- exactly what
-    `MomentArmComputer.computeMuscleLengthForIndex:` walks."""
+    to the straight polyline through its path points -- exactly what the
+    pre-2026-08-08 `MomentArmComputer.computeMuscleLengthForIndex:` baseline
+    walked before applying any wrap solver."""
     model = osim.Model(OSIM_PATH)
     deactivated = 0
     if disable_wrapping:

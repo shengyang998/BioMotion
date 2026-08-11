@@ -513,8 +513,10 @@ static std::string jstrs(const std::vector<std::string>& v) {
   _skel->fitMarkersToWorldPositions(mk, tgt, w, false, e1::e1Config((int)mk.size()));
 }
 
-/// Reparameterised masked solve — the construction of
-/// `NimbleBridge -solveMaskedIKWithMarkers:` (NimbleBridge.mm:744-799).
+/// Historical reparameterised masked solve retained by the frozen E1 harness.
+/// Production now selects the same free-coordinate columns inside
+/// `NimbleBridge -runLMWithMarkers:...`; this method still exercises the old
+/// `fitMarkersToWorldPositions` algorithm by design.
 - (void)solveMasked:(const std::vector<std::pair<dynamics::BodyNode*, Eigen::Vector3s>>&)mk
             targets:(const Eigen::VectorXs&)tgt
             weights:(const Eigen::VectorXs&)w
@@ -1038,9 +1040,9 @@ static std::string jstrs(const std::vector<std::string>& v) {
   if (![b2 loadModelFromPath:path]) return "{\"status\":\"NOT EVALUATED\"}";
   std::shared_ptr<dynamics::Skeleton> sk2 = [b2 sharedSkeleton];
   sk2->setPositions(_seedDefault);
-  [b2 solveIKWithMarkerPositions:posA markerNames:nameA];   // cold, 5 restarts
+  [b2 solveIKWithMarkerPositions:posA markerNames:nameA];   // current two-phase LM, cold
   Eigen::VectorXs qCold = sk2->getPositions();
-  [b2 solveIKWithMarkerPositions:posA markerNames:nameA];   // warm, 1 restart
+  [b2 solveIKWithMarkerPositions:posA markerNames:nameA];   // current two-phase LM, warm
   Eigen::VectorXs qBridgeWarm = sk2->getPositions();
 
   auto weightFor = [](const std::string& n) -> double {
@@ -1079,12 +1081,12 @@ static std::string jstrs(const std::vector<std::string>& v) {
     << ",\"max_abs_dq_bridge_vs_harness_production_weights\":" << e1::jnum(dProd)
     << ",\"max_abs_dq_bridge_vs_harness_frozen_e1_config\":" << e1::jnum(dE1)
     << ",\"note\":"
-    << e1::jstr("Production's cold path uses 5 random restarts and a reliability "
-                "weight prior; neither is settable through the public API. The "
-                "comparison is therefore made against the bridge's WARM solve "
-                "(kIKWarmRestarts=1) with the harness configured identically. The "
-                "second number is the residual deviation of the frozen E1 config "
-                "(uniform weights) from the shipped one.")
+    << e1::jstr("Diagnostic only: the bridge now uses its custom two-phase LM, "
+                "while this frozen V4 harness still calls nimble's historical "
+                "fitMarkersToWorldPositions solver. The first harness arm applies "
+                "the current reliability weights to that old algorithm; the second "
+                "uses uniform E1 weights. Neither delta is production-equivalence "
+                "evidence.")
     << "}";
   return o.str();
 }

@@ -765,11 +765,11 @@ static const double kMomentArmFloor = 1e-6;
 
     // Weight split: the soft-equality QP solves
     //   min ½ aᵀ (εI + λ AᵀA) a − λ τᵀ A a
-    // We want τ matching to DOMINATE the activation L2 regularizer — otherwise
-    // ~520 muscles of redundancy cause the solver to flatten every a toward
-    // aMin, making visualization permanently blue. εA=0.01 keeps a² as a
-    // tie-breaker among redundant muscle sets; λ is tuned at the call site
-    // (NimbleEngine passes 100) so τ-match is the primary objective.
+    // We want τ matching to DOMINATE the activation L2 regularizer. With ~520
+    // muscles and far fewer actuated coordinates, εA=0.01 makes a² a strictly
+    // convex tie-breaker among redundant muscle sets; λ is set at the call
+    // site (NimbleEngine passes 100) so τ-match is the primary objective. These
+    // are objective parameters, not a colour-map or measurement threshold.
     const double epsA = 0.01;
     const double lambda = softPenalty;
 

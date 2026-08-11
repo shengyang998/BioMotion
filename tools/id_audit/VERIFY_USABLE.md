@@ -3,6 +3,8 @@
 > Historical receipt: this audit predates the 2026-08-10 source-specific
 > `MHR_ROOT` contract and intentionally records the former `PELVIS` fixture.
 > Do not read its 2.1224 cm dancer value as the current marker mapping.
+> The current receipt is 1.5365 cm unscaled and 1.2758 cm after source-aware
+> scaling; those are different measurement conditions and must not be mixed.
 
 Everything below was measured by me on this machine. Where I could not measure something I say so.
 I edited no source. I did create one temporary ObjC++ test (`BioMotionTests/ZZAuditTempTests.mm`),

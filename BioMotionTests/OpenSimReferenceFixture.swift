@@ -24,9 +24,9 @@ import Foundation
 /// - `...WrapOn`  — OpenSim with all 76 `PathWrap`s solved. **The reference.**
 /// - `...WrapOff` — the same model with every `WrapObject` deactivated, so each
 ///   path is the straight polyline through its path points. That is the
-///   shortcut the shipped code takes, computed inside OpenSim's own numerics,
-///   so the gap between the two columns isolates the missing wrap solver from
-///   every other difference between the two implementations.
+///   shortcut the pre-2026-08-08 code took, computed inside OpenSim's own
+///   numerics, so the gap between the two columns isolated the then-missing
+///   wrap solver from every other difference between the two implementations.
 ///
 /// # Nothing here force-unwraps a parsed value
 ///

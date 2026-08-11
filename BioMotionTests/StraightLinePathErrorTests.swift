@@ -8,13 +8,13 @@ import XCTest
 ///
 /// Two questions, and they are NOT the same question:
 ///
-/// 1. Is "OpenSim with every `WrapObject` deactivated" a faithful stand-in for
-///    what this code computes? If it is, the wrap-off column isolates the
-///    missing wrap solver from every other difference between two independent
-///    implementations (Nimble's FK vs Simbody's, live `MovingPathPoint` and
+/// 1. Was "OpenSim with every `WrapObject` deactivated" a faithful stand-in for
+///    what the pre-wrap code computed? If so, that historical column isolated
+///    the then-missing solver from every other implementation difference
+///    (Nimble's FK vs Simbody's, live `MovingPathPoint` and
 ///    `ConditionalPathPoint` evaluation, a 1e-4 rad centred difference vs
 ///    OpenSim's `MomentArmSolver`).
-/// 2. How far is the shipped number from the reference?
+/// 2. How far was that pre-wrap number from the reference?
 ///
 /// The suite answers 1 first, because a large answer to 1 would mean the
 /// wrap-off column is measuring something else and question 2 would have to be

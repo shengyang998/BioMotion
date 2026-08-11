@@ -5,13 +5,14 @@ import simd
 /// (`BodyFrame.joints`) and from nothing else.
 ///
 /// # Why this layer reads markers and not the solver
-/// It is deliberately independent of every open defect downstream. IK is not
-/// reliable on hard poses (STATUS.md: the dancer fixture misses its own markers
-/// by 3.5 cm RMS and lands on two different solutions from identical input), and
-/// the muscle solve carries the redundancy caveats STATUS.md documents (~520
-/// unknowns against ~110 torque equations, activation floor chosen so the
-/// visualisation would not go "permanently blue"). The marker positions, by
-/// contrast, come straight from the pose model and are exactly what
+/// It is deliberately independent of downstream inference. IK is now a fixed
+/// point for repeated identical input, but remains rank-deficient (169 DOFs
+/// from 20×3 marker observations) and seed-sensitive; the current MHR_ROOT
+/// dancer fixture measures 1.5365 cm RMS unscaled and 1.2758 cm after
+/// source-aware scaling. Per-muscle load comparisons remain retired because
+/// the 520-muscle QP redistributes load among redundant muscles and supplies no
+/// shared cross-muscle scale. The marker positions, by contrast, come straight
+/// from the pose model and are exactly what
 /// `PhotoOverlayView` already draws on the user's own photo — so a number
 /// computed here is checkable by eye against the image it came from.
 ///

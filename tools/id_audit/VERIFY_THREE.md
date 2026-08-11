@@ -25,6 +25,11 @@ Environment: iPhone 17 Pro simulator `AE80D4E1-…` (test runs), iPhone 17 `F85F
 
 ## 0. Tests I ran
 
+> Historical ledger: the failure count below is the 2026-08-07 run, not current
+> suite status. `testRepeatedIKOnIdenticalMarkersIsStable` now passes its original
+> bound unmodified (including the added 3-D regression fixture); there is no
+> current known-red test.
+
 | Suite | Result |
 |---|---|
 | `StaticEquilibriumBenchmarkTests` | 7 / 7 pass |

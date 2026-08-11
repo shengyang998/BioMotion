@@ -28,11 +28,12 @@ struct OfflinePlaybackView: View {
     ///
     /// Computed from `bodyFrame.joints` — the retargeted marker positions —
     /// and NOT from `ikResult` / `idResult` / `muscleResult`. That is
-    /// deliberate and load-bearing: it makes this panel independent of every
-    /// open defect downstream of the pose model (STATUS.md records IK landing
-    /// on two different solutions from identical markers, and the muscle
-    /// solve's redundancy caveats), and it means the numbers describe exactly
-    /// the points `PhotoOverlayView` draws on the photo beside them.
+    /// deliberate and load-bearing: repeated identical-marker IK is now a
+    /// fixed point, but the 169-DOF solve remains rank-deficient and
+    /// seed-sensitive (the current MHR_ROOT fixture is 1.5365 cm RMS unscaled,
+    /// 1.2758 cm after source-aware scaling), while per-muscle comparisons
+    /// remain unsupported. Keeping this panel upstream means its numbers
+    /// describe exactly the points `PhotoOverlayView` draws beside them.
     private var findings: PostureReport? {
         guard let frame = resultStore.selectedFrame, let body = frame.bodyFrame else { return nil }
         // A frame rejected by the body-size gate still carries its retargeted

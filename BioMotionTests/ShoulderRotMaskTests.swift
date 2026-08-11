@@ -27,7 +27,8 @@ import XCTest
 ///   d RWJC / d shoulder_rot_r   30.2 mm/rad  at 0° elbow flexion
 ///   ‖J[:, shoulder_rot_r]‖   0.266 m/rad at 90° elbow flexion (7.8x)
 ///
-///   dancer   marker RMS   1.53645 -> 2.25348 cm  (masking COSTS 0.71703 cm)
+///   dancer   marker RMS   1.53645 -> 2.25348 cm  (unscaled mask A/B; masking
+///                                                  COSTS 0.71703 cm)
 ///   dancer   rel. torque residual 0.59395 -> 0.50643 (still unusable; lower
 ///                                                        does not restore lost markers)
 ///   standing marker RMS   unchanged to 4.1e-5 cm (nothing to remove: the
@@ -37,7 +38,8 @@ import XCTest
 ///
 /// Torque/residual figures in this characterization come from the test-only,
 /// unconstrained contact diagnostic. They help compare masks on identical
-/// algebra but are not validated product dynamics.
+/// algebra but are not validated product dynamics. The source-aware scaling
+/// path's unmasked RMS is 1.2758 cm and is not part of this unscaled mask A/B.
 ///
 /// So the coordinate is WEAKLY OBSERVED, not unobservable, and pinning it
 /// trades accuracy on the pose where it matters while breaking the fixed-point

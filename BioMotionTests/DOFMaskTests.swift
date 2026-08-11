@@ -473,7 +473,8 @@ final class DOFMaskTests: XCTestCase {
     /// Same 12-marker standing fixture as `NimbleBridgeTests`, so the drift
     /// numbers here are comparable to the ones recorded in STATUS.md — with the
     /// caveat that STATUS.md's 0.006 rad figure was measured on Rajagopal2016
-    /// (39 DOF), while this file loads FullBody.osim (163 DOF).
+    /// (39 XML coordinates / 37 Nimble runtime DOFs), while this file loads
+    /// FullBody.osim (169 XML coordinates / 169 runtime DOFs).
     private func arkitStandingMarkers(shiftX: Double = 0)
         -> (positions: [NSNumber], names: [String]) {
         let layout: [(String, Double, Double, Double)] = [

@@ -63,10 +63,10 @@ enum FrameSource {
     }
 
     /// Safety cap on how many timestamps `sampleTimestamps` will ever emit for one
-    /// clip. The pose model runs at roughly 1s/frame on-device (per this file
-    /// set's task brief) — an accidental high-fps sample over a long clip must
-    /// not silently turn into an hours-long run. Callers should surface
-    /// `wasTruncated` to the user rather than truncating silently.
+    /// clip. No Release-device pose-model or end-to-end runtime has been
+    /// measured, so the cap bounds work by Core ML call count rather than by an
+    /// invented minutes estimate. Callers should surface `wasTruncated` to the
+    /// user rather than truncating silently.
     static let maxFramesPerRun = 120
 
     /// Length of the native-rate analysis window. 4 s holds 5-7 running strides
@@ -93,11 +93,14 @@ enum FrameSource {
     /// Resulting spans: 30 fps → 3.967 s, 60 → 3.983 s, 120 → 3.992 s,
     /// 240 → 2.500 s.
     ///
-    /// It is a real cost: at the ~0.7-1 s/frame the pose model takes on device,
-    /// 601 frames is 7-10 minutes. That is the user's own choice to film at
-    /// 240 fps, it is bounded, and `GaitTimingSummary.resolutionSentence` will not
-    /// recommend a rate this budget cannot cover — see
-    /// `highestAnalysableFrameRate`.
+    /// It is a real, bounded cost: 601 Core ML calls are materially more work
+    /// than 120. The only native-stage timing receipts are separate Debug iOS
+    /// Simulator measurements (moving-input warm-start IK at ~6 mm/frame:
+    /// 1567 ms/frame at 77.8 iterations,
+    /// unchanged-marker warm IK 49 ms, and a 520×109 QP at 194.4 ms). They are
+    /// not additive end-to-end timings and say nothing about Release-device
+    /// runtime. `GaitTimingSummary.resolutionSentence` will not recommend a rate
+    /// this budget cannot cover — see `highestAnalysableFrameRate`.
     static let maxNativeWindowFrames = Int(minimumAnalysisSeconds * plausibleFrameRates.upperBound) + 1
 
     /// Shortest analysed span that can still hold the minimum number of

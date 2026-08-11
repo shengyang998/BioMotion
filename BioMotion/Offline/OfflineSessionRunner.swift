@@ -221,11 +221,14 @@ final class OfflineSessionRunner: ObservableObject {
     /// token cannot see when two Runner instances share one NimbleEngine.
     private var enginePolicyLease: NimbleEngine.OfflinePolicyLease?
 
-    /// Generous upper bound on one `nimble.processFrame` solve. NimbleEngine's
-    /// module docs record ~200ms/frame for the shipped FullBody.osim (520
-    /// muscles / 169 coordinates) on comparable hardware; this leaves wide
-    /// margin for thermal throttling or a cold (non-warm-started) first solve
-    /// without letting one stuck frame stall the whole batch indefinitely.
+    /// Liveness fence on one `nimble.processFrame` solve, not a performance
+    /// claim. The available receipts are isolated Debug iOS Simulator stages:
+    /// moving-input warm-start IK at ~6 mm/frame measured 1567 ms/frame at
+    /// 77.8 iterations, while unchanged-marker warm IK measured
+    /// 49 ms, and the 520×109 QP 194.4 ms. They are not additive end-to-end
+    /// measurements, and Release-device timing has never been measured. Six
+    /// seconds therefore remains a provisional stuck-work bound to revisit
+    /// with device evidence, rather than a promised per-frame duration.
     private static let solveTimeout: TimeInterval = 6.0
     /// How many times to resubmit a frame the engine dropped because an earlier
     /// solve was still in flight. See `submitAndWait`.

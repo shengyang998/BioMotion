@@ -4,7 +4,7 @@ import QuartzCore
 import simd
 import os
 
-/// Manages the Nimble physics engine lifecycle and provides real-time IK/ID results.
+/// Manages the Nimble physics engine lifecycle and provides live, backpressured IK/ID results.
 /// Runs Nimble on a background queue to avoid blocking the main thread.
 final class NimbleEngine: ObservableObject {
     /// Exact identity of one accepted solver submission. A generation changes
@@ -1144,10 +1144,12 @@ final class NimbleEngine: ObservableObject {
     //     hand body origins are offset from the humeral long axis, and 0.266
     //     m/rad at 90° of elbow flexion. It is not one of the 72 identically-
     //     zero columns in `FullBodyDOFFixture.structurallyUnreachableCoordinates`.
-    //   * On the current MHR_ROOT fixture, masking it costs 0.717 cm of
-    //     marker RMS (1.536 -> 2.253). It lowers the already-unusable dancer
-    //     torque residual (0.594 -> 0.506), which does not compensate for
-    //     discarding observed marker information. The legacy PELVIS fixture
+    //   * On the unscaled MHR_ROOT mask fixture, masking it costs 0.717 cm of
+    //     marker RMS (1.536 -> 2.253). The source-aware scaling path measures
+    //     1.276 cm unmasked and is deliberately outside this mask A/B. The mask
+    //     lowers the already-unusable dancer torque residual (0.594 -> 0.506),
+    //     which does not compensate for discarding observed marker information.
+    //     The legacy PELVIS fixture
     //     measured 2.122 -> 2.687 cm and 0.3545 -> 0.3991.
     //   * At upright standing it buys nothing (the unmasked solver puts 0.04°
     //     into the coordinate) and it breaks convergence: 0 -> 123 iterations,
@@ -1180,7 +1182,7 @@ final class NimbleEngine: ObservableObject {
             print("NimbleEngine: loading FullBody.osim (cyclistFullBodyMuscle — 520 muscles, nimble OpenSimParser patched)")
         } else if let raj = Bundle.main.path(forResource: "Rajagopal2016", ofType: "osim") {
             path = raj
-            print("NimbleEngine: ⚠ FullBody.osim not found — falling back to Rajagopal2016 (81 lower-extremity muscles only)")
+            print("NimbleEngine: ⚠ FullBody.osim not found — falling back to Rajagopal2016 (80 parsed lower-extremity muscles; 39 XML coordinates / 37 runtime DOFs)")
         } else {
             print("NimbleEngine: no .osim model found in bundle")
             return

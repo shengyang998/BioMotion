@@ -154,7 +154,7 @@ struct OfflineImportView: View {
                         Stepper(value: $fps, in: 0.5...10.0, step: 0.5) {
                             Text(String(format: "%.1f frames / second", fps))
                         }
-                        Text("Sparse sampling over the whole clip — for a held pose, not for movement. The pose model runs at roughly 1 second per frame on-device.")
+                        Text("Sparse sampling over the whole clip — for a held pose, not for movement. Processing time rises with the selected frame count; actual iPhone run time has not been measured.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

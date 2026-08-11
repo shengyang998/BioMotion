@@ -1,6 +1,6 @@
 # BioMotion
 
-Real-time pose-analysis iOS app. ARKit or imported-video tracking feeds Nimble
+Pose-analysis iOS app. ARKit or imported-video tracking feeds Nimble
 IK, kinematics-only findings, gait contact timing, and a 3-D anatomy view.
 
 The two bundled OpenSim models do **not** currently publish dynamics. Their

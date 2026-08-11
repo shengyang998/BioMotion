@@ -49,11 +49,16 @@ photo or video through a Core ML SAM 3D Body model.
    set, ONE constant colour, takes       BodyFrame.joints, NOT ik/id/muscle)
    no activation input at all)            + 2-D overlay on the source photo
 
-# COST. The old "~1ms IK / ~0.5ms OSQP" figures were measured on Rajagopal2016
-# (81 muscles / 39 DOF). The shipped model is FullBody.osim — 169 coordinates
-# (was 171 before the 2026-08-06 patellofemoral weld removed the two
-# knee_angle_*_beta) and 520 muscles — and costs ~200ms/frame, hence the
-# frame-dropping backpressure added in build 15. See STATUS.md.
+# PERFORMANCE RECEIPT. Rajagopal2016 has 80 muscles and 39 XML coordinates,
+# of which Nimble exposes 37 runtime DOFs. FullBody.osim has 169 coordinates /
+# runtime DOFs (171 XML coordinates before the 2026-08-06 patellofemoral weld
+# removed knee_angle_*_beta) and 520 muscles. Current timings are separate Debug
+# iOS Simulator measurements and MUST NOT be added: moving-input warm-start IK
+# (~6 mm/frame) is 1567 ms/frame at 77.8 iterations, an identical-marker warm
+# solve is 49 ms/frame,
+# and the 520-muscle × 109-coordinate QP is 194.4 ms/frame. Release performance
+# on a physical device has not been measured; do not claim a one-second budget or
+# real-time throughput from these receipts. See STATUS.md.
 ```
 
 ### Swift ↔ C++ Bridge
@@ -62,7 +67,7 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 - `NimbleBridge.h/.mm` — loads .osim, runs IK, and owns the runtime DOF mask. Raw zero-external-force and near-CoP ID live in a Debug-host diagnostics category declared only to XCTest; Release contains neither selector, and Release-configuration tests do not support the diagnostics. The only product ID entry checks `hasValidatedFootContactSupport` first, and both bundled models return false. Registers virtual markers at joint centers for ARKit compatibility. **The IK solve is the app's own Levenberg-Marquardt**, not `Skeleton::fitMarkersToWorldPositions` / `math::refineIK`; the vendored nimble tree is untouched.
 - `MuscleSolver.h/.mm` — parses the model's muscles (520 in FullBody.osim, 80 in Rajagopal2016), runs OSQP static optimization
 - `MomentArmComputer.h/.mm` — parses muscle paths, computes moment arms via FK + numerical differentiation. Shares the bridge's skeleton (`NimbleBridge+Internal.h`) rather than parsing a second copy. Applies path WRAPPING, and picks a one-sided difference where the wrap state changes inside the stencil. FullBody's four `MovingPathPoint`s all survive; their `SimmSpline`s use Nimble's OpenSim-compatible evaluator (`parsed 4 / approximated 0`).
-- `MusclePathWrap.h/.cpp` — the cylinder AND ellipsoid wrap solvers, ported from opensim-core (Apache 2.0; licence header in the file, attribution in `./NOTICE`). Length only: no `wrap_pts` leave the solver, and only the ellipsoid's `hybrid` `<method>` is implemented — the other two are refused, not approximated. All 76 `PathWrap` references in `FullBody.osim` and all 46 in `Rajagopal2016.osim` are solved. Every intentional difference is listed under DEVIATIONS at the top of the .cpp (12 of them).
+- `MusclePathWrap.h/.cpp` — the cylinder AND ellipsoid wrap solvers, ported from opensim-core (Apache 2.0; licence header in the file, attribution in `./NOTICE`). Length only: no `wrap_pts` leave the solver, and only the ellipsoid's `hybrid` `<method>` is implemented — the other two are refused, not approximated. FullBody is 76/76 solved with 0 unmodelled references; Rajagopal2016 is 46/46 solved with 0 unmodelled references. Every intentional difference is listed under DEVIATIONS at the top of the .cpp (12 of them).
 - Bridging header: `BioMotion/Nimble/BioMotion-Bridging-Header.h`
 
 ### Key files
@@ -71,8 +76,8 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 |------|---------|
 | `project.yml` | XcodeGen project definition (team, signing, lib paths, build settings) |
 | `tools/dependencies.lock.json` | Exact Nimble/OSQP repositories, commits, dual-SDK CMake settings and reviewed archive receipts; enforced before any test simulator starts |
-| `BioMotion/Resources/FullBody.osim` | **Production** model — 169 coordinates, 520 muscles, full spine + ribcage + upper limb |
-| `BioMotion/Resources/Rajagopal2016.osim` | Fallback only (lower extremity: 80 muscles, 39 DOFs, 66 markers). Loaded when FullBody.osim is missing from the bundle. |
+| `BioMotion/Resources/FullBody.osim` | **Production** model — 169 coordinates / runtime DOFs, 520 muscles, full spine + ribcage + upper limb |
+| `BioMotion/Resources/Rajagopal2016.osim` | Fallback only (lower extremity: 80 muscles, 39 XML coordinates / 37 Nimble runtime DOFs, 66 markers). Loaded when FullBody.osim is missing from the bundle. |
 | `BioMotion/ARKit/BodyTrackingSession.swift` | ARKit body tracking + 1-euro filter |
 | `BioMotion/ARKit/MuscleOverlay.swift` | 3-D muscle **anatomy** capsules — fixed set, one colour, no activation input. Read its type doc before adding anything magnitude-shaped |
 | `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK and fail-closed gates on a serial queue. `processFrame` returns an exact generation/submission receipt; publication authority, physical solver occupancy, and engine-global offline policy ownership are separate leases. Contact capability is checked before camera authorization and any unauthorized solve stops before `solveIDGRF` |
@@ -193,7 +198,9 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
 - **Stable joint id is not marker anatomy.** Live `hips_joint` resolves to `PELVIS`; MHR keeps the
   same stable id but resolves to `MHR_ROOT`. Its coordinate remains raw MHR joint 1 (15.1 mm from
   the source HJC midpoint); the model marker is an explicit HJC-midpoint proxy, not a claim that
-  those points are identical. Preserve `opensimMarkerNameOverride` through every filter/copy. TRC
+  those points are identical. The current 20-marker MHR receipt reports **1.5365 cm before
+  source-aware scaling** and **1.2758 cm after it**; these are different measurement conditions,
+  not two interchangeable RMS values. Preserve `opensimMarkerNameOverride` through every filter/copy. TRC
   must fail if one id changes marker alias across frames or two ids collapse to one marker.
 - **C++ exceptions**: Always use C++ `try/catch`, never ObjC `@try/@catch` — ObjC exceptions don't catch `std::exception` or SIGSEGV.
 - **Build number**: Must increment `CURRENT_PROJECT_VERSION` in `project.yml` before each TestFlight upload.
@@ -510,9 +517,10 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   sign-flipped**. Path length itself is out by up to **51.8 % of the muscle's own length**. The
   control that makes this an attribution rather than a correlation: the 454 muscles with NO wrap
   object are identical in the wrapped and unwrapped models to the last stored digit, at every pose —
-  **exactly 0.0**. And the shipped `MomentArmComputer` reproduces OpenSim-with-wrapping-disabled to
-  **4.39 mm** worst case over 12,384 samples while the gap to the truth is **146.6 mm**, so 97 % of
-  the error is the missing solver, not the other implementation differences. Worst named pairs:
+  **exactly 0.0**. And the then-shipped, pre-wrap `MomentArmComputer` reproduced
+  OpenSim-with-wrapping-disabled to **4.39 mm** worst case over 12,384 samples
+  while the gap to the truth was **146.6 mm**, so 97 % of that historical error
+  was the then-missing solver, not the other implementation differences. Worst named pairs:
   `gasmed_l`/`knee_angle_l` 112.9 %, `gaslat140_l`/`knee_angle_l` 94.5 %, `psoas_r`/`hip_rotation_r`
   87.8 %. Do not reason about this from `unmodelledPathWraps` any more; read the fixture.
 - **Three ways FullBody.osim's coordinates lie to you, all caught in one afternoon.** (a)

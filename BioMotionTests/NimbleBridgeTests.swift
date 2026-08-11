@@ -25,9 +25,11 @@ final class NimbleBridgeTests: XCTestCase {
 
     func testModelDOFCount() {
         loadModel()
-        // Rajagopal2016 has 39 coordinates (some locked)
-        XCTAssertGreaterThan(bridge.numDOFs, 20, "Should have >20 DOFs")
-        XCTAssertLessThanOrEqual(bridge.numDOFs, 39, "Should have <=39 DOFs")
+        // Rajagopal2016 declares 39 XML coordinates. Nimble omits the two
+        // patellofemoral `knee_angle_*_beta` coordinates with their skipped
+        // patella bodies, leaving 37 runtime DOFs.
+        XCTAssertEqual(bridge.numDOFs, 37,
+                       "Rajagopal2016's 39 XML coordinates must parse to 37 runtime DOFs")
     }
 
     func testModelDOFNames() {

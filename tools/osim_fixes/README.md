@@ -352,17 +352,17 @@ published band for the quadriceps/patellar-tendon knee moment arm.
   inverse-dynamics torque quality and the ARKit input — none of which this touches.
 * **Scaling was not exercised.** All numbers are at the model's unscaled size; the
   `groupScale()` patch is justified by code reading, not by measurement.
-* **The 6 new shoulder DOFs are now unmasked and marker-observable only through
-  one ARKit point per shoulder** (`RSJC`/`LSJC` at the humerus origin, plus the
-  elbow). Elevation and elevation-plane are recoverable from the humerus direction;
-  `shoulder_rot` (axial rotation of the humerus) is **not** observable from a
-  point at each end of the segment. Expect `shoulder_rot_{r,l}` to be a null-space
-  DOF. That is a solver/masking question, not a model question, and it is not
-  addressed here.
+* **The earlier `shoulder_rot` null-space inference is superseded.** It considered
+  only points on the humeral long axis. The current marker set also observes the
+  offset ulna and hand origins: direct Jacobian measurement found a non-zero
+  `shoulder_rot_r` column norm of 0.0343 m/rad at neutral and 0.266 m/rad at 90°
+  elbow flexion. Masking these coordinates was tested, worsened the current MHR
+  fit, and was rejected; production installs no such mask. See the dated
+  `ShoulderRotObservabilityTests` evidence in `STATUS.md`.
 
 ---
 
-## Tests that will change behaviour (could not be run — list, not verification)
+## Historical test-impact prediction (tests had not yet been run)
 
 > Historical pre-fix expectation. The current E1 partition covers all 169 coordinates and its
 > 5706.9 s run passes; see `STATUS.md`.
@@ -377,9 +377,11 @@ published band for the quadriceps/patellar-tendon knee moment arm.
 | `MomentArmTests`, `MuscleSolverTests` | no hard-coded counts found; `testSoleusAnkleMomentArm` and `MuscleSolverTests:30` (`recfem_r` present) should still pass. Listed because they touch the changed geometry. |
 | `DOFMaskTests.testMaskedVsUnmaskedIK`, `IKDriftDiagnosticsTests` | print metrics rather than asserting them, but their numbers are now measured on 169 DOFs and are not comparable to previously recorded ones. |
 
-**Not affected:** `NimbleBridgeTests` — including the deliberately-red
-`testRepeatedIKOnIdenticalMarkersIsStable` — loads **Rajagopal2016**, not
-FullBody (`NimbleBridgeTests.swift:16`, and it asserts `numDOFs <= 39`).
-Rajagopal2016 was not touched. Leave that test red.
+**Historical non-impact note:** `NimbleBridgeTests`, including the test then known
+as deliberately red, loaded **Rajagopal2016**, not FullBody. The old instruction
+to leave `testRepeatedIKOnIdenticalMarkersIsStable` red is superseded: the original
+bound now passes unmodified, the 3-D regression fixture is covered too, and there
+is no known-red test. Rajagopal itself remains 39 XML coordinates / 37 Nimble
+runtime DOFs and was not changed by this model edit.
 
 These test files were **not** edited — they are outside this change's ownership.

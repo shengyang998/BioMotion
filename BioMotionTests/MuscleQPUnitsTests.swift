@@ -80,9 +80,10 @@ import XCTest
 /// the residual almost halved.
 ///
 /// CURRENT SOURCE CONTRACT (2026-08-10): the dancer uses MHR_ROOT rather than
-/// mislabelling raw MHR joint 1 as PELVIS. Marker RMS improves to 1.53645 cm,
-/// while this unscaled diagnostic's shipped relative torque residual moves to
-/// 0.5939547. Better marker fit therefore did not make the dancer a clean
+/// mislabelling raw MHR joint 1 as PELVIS. This deliberately unscaled diagnostic
+/// measures 1.53645 cm RMS; the production source-aware scaling path measures
+/// 1.2758 cm. The unscaled diagnostic's shipped relative torque residual moves
+/// to 0.5939547. Better marker fit therefore did not make the dancer a clean
 /// muscle benchmark; standing remains the stage's controlled benchmark.
 final class MuscleQPUnitsTests: XCTestCase {
 

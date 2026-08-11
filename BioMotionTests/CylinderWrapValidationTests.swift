@@ -404,10 +404,13 @@ final class CylinderWrapValidationTests: XCTestCase {
 
     // MARK: - Cost
 
-    /// The named risk. The whole chain costs ~200 ms/frame with 520 muscles; a
-    /// wrap solver that iterates could make the app unusable. This prints the
-    /// number rather than asserting a machine-dependent threshold — except for
-    /// one ceiling that would mean the feature cannot ship at all.
+    /// The named risk. Separate Debug iOS Simulator receipts put moving-input
+    /// warm-start IK (~6 mm/frame) at 1567 ms/frame (77.8 iterations) and the
+    /// 520×109 QP at 194.4 ms; they are
+    /// not additive end-to-end timings, and no Release-device timing exists. A
+    /// wrap solver that iterates can still make the app unusable, so this test
+    /// prints its own stage timing rather than borrowing either number. The one
+    /// asserted ceiling means the feature cannot ship at all.
     func testMomentArmSolveCostPerFrame() {
         let timings = WrapValidationHarness.solveMilliseconds
         guard !timings.isEmpty else { return XCTFail("no timings were collected") }

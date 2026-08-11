@@ -216,7 +216,7 @@ static const double kIKWarmStartRejectMeters = 0.15;
 //  * Its damping is a FIXED `leastSquaresDamping` (0.01). A fixed damping is
 //    wrong in both directions at once: too large near the solution (it caps the
 //    convergence rate at `1 - sigma^2/(sigma^2+lambda)` per step, which for the
-//    weakly-observed coordinates of a 163-DOF model is glacial) and too small
+//    weakly-observed coordinates of the 169-DOF model is glacial) and too small
 //    far from it (steps overshoot, the learning rate halves, and the solver
 //    falls into its gradient-transpose branch at `lr = 5e-5` and gives up).
 //  * `getRandomPose()` draws from `Eigen::VectorXs::Random`, i.e. the
@@ -268,13 +268,16 @@ static const double kIKSeedDamping = 1e-3;
 // The fixed-point property holds for ANY value of these, because it comes from
 // the entry test passing on re-entry, not from the tolerance being tight.
 //
-// ⚠️ MEASURED, AND IT REFUTES THE OBVIOUS HYPOTHESIS. A moving subject costs
-// ~78 solver iterations per frame, and the natural guess was that most of them
+// ⚠️ MEASURED, AND IT REFUTES THE OBVIOUS HYPOTHESIS. In a Debug iOS
+// Simulator run, moving-input warm-start IK (~6 mm/frame) cost 1567 ms/frame
+// at 77.8 solver iterations;
+// no Release-device timing exists. The natural guess was that most iterations
 // are spent grinding the step from "physically settled" down to machine
 // precision. That guess is wrong: relaxing this tolerance 100x, from 1e-9 to
 // 1e-7 rad, changed the iteration count by 6% (77.8 -> 73.2) and changed the
-// dancer's marker RMS by nothing at all (2.1224 cm either way, all printed
-// digits identical). The iterations are real convergence work, not last-digit
+// legacy PELVIS-root dancer's marker RMS by nothing at all (2.1224 cm either
+// way, all printed digits identical). The iterations are real convergence
+// work, not last-digit
 // polishing, so the tolerance was left at the conservative value. Do not
 // relax it expecting speed.
 //
@@ -299,8 +302,9 @@ static const double kIKLambdaUp   = 8.0;
 // Numerical floor on the damping, also relative to `max(diag(JᵀJ))`.
 //
 // This is a conditioning constant, not a regularisation choice: `JᵀJ` is
-// 163x163 with rank at most 3 x 20 markers = 60, so 103 of its eigenvalues are
-// exactly zero. Solving `(JᵀJ + lambda I) d = g` with lambda below the level at
+// 169x169 with rank at most 3 x 20 markers = 60, so it has at least 109
+// zero-eigenvalue directions. Solving `(JᵀJ + lambda I) d = g` with lambda
+// below the level at
 // which double-precision round-off in `g` (relative ~1e-16) is amplified past
 // the step tolerance produces pure noise in the null space: at lambda = 1e-9
 // that noise is ~1e-7 rad per step, a hundred times the step tolerance, so the
@@ -1149,11 +1153,12 @@ static double modelMHRTrunkReferenceLength(
     // is no DOF selection vector of any kind, and `refineIK` explicitly
     // discards the bounds it is handed (`(void)upperBound; (void)lowerBound;`
     // at IKSolver.cpp:303-304). So a mask cannot be expressed as a config
-    // option; it has to be expressed as a smaller *parameterisation* handed to
-    // `math::solveIK`. That is what `solveMaskedIKWithMarkers:` does.
+    // option; it has to be expressed as a smaller *parameterisation*. The
+    // production `runLMWithMarkers:...` path does that by selecting only the
+    // free columns and writing each masked coordinate from its pinned value.
     //
     // Reversibility: this touches only `_dofMasked` / `_freeDofIndices` /
-    // `_dofPinnedValues`. The skeleton keeps all 163 DOFs, no joint is welded,
+    // `_dofPinnedValues`. The skeleton keeps all 169 DOFs, no joint is welded,
     // and the .osim on disk is never written. `clearDOFMask` restores the
     // original solve bit-for-bit.
     if (!_modelLoaded) return 0;
