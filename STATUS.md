@@ -5575,10 +5575,14 @@ arms must differ in the work that PRECEDES the mask.
 
 ### Newly opened by the 2026-08-07 work
 
-11. **`MuscleOverlay.computeBodyFrame`'s `forward` points posteriorly.** `simd_cross(pelvisRight, up)`
-    is −anterior, so every anterior/posterior capsule offset is drawn on the wrong side of the limb:
-    quadriceps behind the thigh, hamstrings in front, erector spinae in front of the spine. Rendering
-    only — it does not touch any solved number — but it is visibly wrong and it is cheap.
+11. ~~**`MuscleOverlay.computeBodyFrame`'s `forward` points posteriorly.**~~ **DONE 2026-08-07.**
+    Commit `bd1ce43` changed the third axis from `right × up` to the anatomical
+    `up × right`, then re-orthogonalised the subject-right axis. The permanent
+    `BodyFrameOrientationTests` assert anterior direction, orthonormal/left-handed
+    anatomy, and quadriceps in front of hamstrings; all **3/3** passed unchanged
+    in the later **526/526** fast-gate receipt. Rendering only — no solved number
+    changed. This item remained open here after its implementation was already
+    committed and tested.
 12. **Validate the findings layer on real photos** (see next-step 3's remainder). Currently the
     highest-value open item, because it is the only part of the product a user can check against
     their own photo.
