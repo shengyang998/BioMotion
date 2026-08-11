@@ -303,27 +303,66 @@ Everything here is read-only against `BioMotion/Resources/FullBody.osim`.
 `BioMotion/Muscle/MusclePathWrap.{h,cpp}` is a port of OpenSim's path-wrapping code —
 `WrapCylinder`, `WrapEllipsoid`, `WrapObject`, `WrapMath` and
 `GeometryPath::applyWrapObjects` (Apache License 2.0, Stanford University). The licence
-header is in both files and the attribution is in [`NOTICE`](./NOTICE), which must ship
-with any binary distribution.
+header is in both files and the attribution is in [`NOTICE`](./NOTICE). Complete selected
+binary-redistribution terms for BioMotion, Nimble/DART, ODE, OSQP/QDLDL/AMD, Eigen,
+tinyxml2, OpenSim, and the Rajagopal model are consolidated in
+[`BioMotion/Resources/THIRD-PARTY-NOTICES.txt`](./BioMotion/Resources/THIRD-PARTY-NOTICES.txt).
+Both files are explicit app resources and must ship byte-for-byte with every binary
+distribution.
+
+Those notices do not grant commercial rights to the 42 MoBL-ARMS-derived upper-limb
+muscles in `FullBody.osim`. A commercial/App Store release remains blocked until the
+owner obtains written commercial permission or replaces/removes that material. See
+[`STATUS.md`](./STATUS.md) for the evidence and open owner decision.
 
 ## TestFlight upload
 
+The Release configuration uses manual App Store signing. Install an Apple
+Distribution certificate for team `N7VVB6PWZS` and the two App Store profiles
+named `BioMotion AppStore AG` and `BioMotion Ext AppStore AG`; both profiles
+must authorize `group.com.soleilyu.biomotion`. Renewing a profile may keep the
+same name, but the archive gate will still reject the wrong team, bundle id,
+certificate, entitlement set, development/ad-hoc signing, or a profile/certificate
+with less than 30 days of remaining validity.
+
 ```bash
-xcodegen generate
 # Bump CURRENT_PROJECT_VERSION in project.yml
+# Regenerate only after the bump; the source gate rejects a stale pbxproj.
+xcodegen generate
+/bin/bash tools/tests/app_resource_boundary_probe.sh
 xcodebuild archive -project BioMotion.xcodeproj -scheme BioMotion \
   -destination 'generic/platform=iOS' -archivePath build/BioMotion.xcarchive
-/bin/bash tools/tests/privacy_manifest_probe.sh \
-  build/BioMotion.xcarchive/Products/Applications/BioMotion.app
-xcodebuild -exportArchive -archivePath build/BioMotion.xcarchive \
-  -exportOptionsPlist build/ExportOptions.plist -exportPath build/export \
-  -allowProvisioningUpdates
+
+# Local-only default: archive/resource/privacy gates, tracked export options,
+# local re-sign/export, and a final IPA-vs-archive gate. The export directory
+# must be new or empty.
+/bin/bash tools/release/testflight_release.sh \
+  --archive build/BioMotion.xcarchive \
+  --export-dir build/testflight-30
 ```
 
-Do not export or upload when the privacy gate does not print
-`PRIVACY_MANIFEST_PROBE_PASS`. The gate validates the target-scoped project
-membership, App Store-valid manifest shape, archive bundle contents, every
-embedded Mach-O image, dynamic dependencies, and code signatures.
+The tracked `tools/release/ExportOptions-TestFlight.plist` uses manual signing,
+the two named profiles, the generic `Apple Distribution` certificate selector,
+and `destination=export`; export never uploads implicitly. To authorize an
+App Store Connect validation without upload, add `--validate`. To authorize the
+complete validate-then-upload transaction for the same private byte-pinned IPA,
+add `--upload` and provide `ASC_API_KEY_ID` and `ASC_API_ISSUER`. Do not invoke
+raw `xcodebuild destination=upload` or `altool` around the wrapper.
+
+Do not export, validate, or upload unless the resource gate prints
+`APP_RESOURCE_BOUNDARY_PROBE_PASS source-project` and
+`APP_RESOURCE_BOUNDARY_PROBE_PASS release-archive`, then the exported-package gate
+prints `APP_RESOURCE_BOUNDARY_PROBE_PASS release-ipa` with its SHA-256, the privacy
+gate prints `PRIVACY_MANIFEST_PROBE_PASS`, and every documented legal/product release
+blocker is closed. The resource gate requires a signed arm64 device `.xcarchive`; it
+pins the complete app/extension resource inventory, model and notice identities, asset
+catalog, bundle metadata, platform, team, architecture, CMS-authenticated provisioning
+profiles, and signatures. The final IPA gate independently verifies the raw ZIP headers,
+compressed streams, CRCs, real expansion sizes, and executable permissions before it
+extracts the locally re-signed package; it then repeats those checks and permits only
+signature/profile bytes to differ from the reviewed archive. Simulator apps and test
+bundles have separate smoke modes and are not accepted as release evidence; see
+[`docs/app-resource-boundary.md`](./docs/app-resource-boundary.md).
 
 ## Architecture & gotchas
 

@@ -25,6 +25,7 @@
 		29D930260612AA4E66B15B3B /* SAM3DPoseEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7AB824FE7872485E9CEBFC3 /* SAM3DPoseEstimator.swift */; };
 		2C7506D9DF3193772049F56A /* PhotoOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B44E86911B6D34B6D8EEBA /* PhotoOverlayView.swift */; };
 		2F4B1D605685C704A60D6AB2 /* EllipsoidWrapValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0B4A120BDBA3ABB42E6A11 /* EllipsoidWrapValidationTests.swift */; };
+		3097F9F24BACE6EDA2F0EC46 /* THIRD-PARTY-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 2F600416A165493606037223 /* THIRD-PARTY-NOTICES.txt */; };
 		32F526B0CAC7BDF4677DC5BF /* BodyJointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39C64A42A229077EC3CF47FD /* BodyJointTests.swift */; };
 		333F198CF066EA275F326047 /* OpenSimReferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28A3BA7029D6926197B5C2E6 /* OpenSimReferenceTests.swift */; };
 		33EE0024E2EEA2DEC59B9DDA /* GaitLoadSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A0577D615043AFBD9112E8 /* GaitLoadSummary.swift */; };
@@ -35,17 +36,17 @@
 		41CA409DD6CBEBF78E2B0EEE /* GaitSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DD62C1285CC0A293F53014 /* GaitSignal.swift */; };
 		440AB016E47D178EFB6CA14F /* OfflineImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 809295CEBE3A3EE0C68051A9 /* OfflineImportView.swift */; };
 		469D5E7D0D00332AACFF1224 /* OpenSimReferenceFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BF52FB3C8BA65005EACE6F3 /* OpenSimReferenceFixture.swift */; };
+		472603D6720300F933498494 /* Rajagopal2016.osim in Resources */ = {isa = PBXBuildFile; fileRef = 0BE6D8732D8958953447293F /* Rajagopal2016.osim */; };
 		48CD1D0034287855D0319D28 /* BoxQPTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6714B170D3735DD500D2ADE4 /* BoxQPTests.swift */; };
-		4E7BB08733F58643DA1F0946 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 548ECA121A57E096D1964D0B /* README.md */; };
 		58D9B346925617BEEE77A5D3 /* FullBodyDOFFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E68C0715E9D9E407234A2F8 /* FullBodyDOFFixture.swift */; };
 		59DA26453868CF7B43C39B26 /* NimbleBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF341D3E417E0E3014A867EA /* NimbleBridgeTests.swift */; };
 		5B04B5EC2DC03F8598906B57 /* MomentArmErrorCancellationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E8B8C3CE8F2D82F14349982 /* MomentArmErrorCancellationTests.swift */; };
+		5B737BB2CF7ED98E845E6C7D /* NOTICE in Resources */ = {isa = PBXBuildFile; fileRef = 03BFC1A32EAECDBA68216767 /* NOTICE */; };
 		5EAF2F8A2F45C0B4C65E83C0 /* CalibrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */; };
 		5EB4E09CAD2BF5644147136D /* MomentArmTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBA3DB595817CE4AC35EB1E9 /* MomentArmTests.swift */; };
 		61C67AFA01C9529323A6BF7B /* DerivativeWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7125E0AE9F8D942866F064D4 /* DerivativeWindowTests.swift */; };
 		61CD4F1738AF0810A73A53FD /* MultiWrapReferenceTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 620F5686F648C8A342A1BD9C /* MultiWrapReferenceTests.mm */; };
 		6206476EBE4A5F4BAC631212 /* SimmSplineExtrapolationTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = A7ABA5DC9C6C3A8A8A4798F3 /* SimmSplineExtrapolationTests.mm */; };
-		639C32C764196A6DA7B8B6B5 /* SAM-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4BCD1C2BB85D2242E4FE60E7 /* SAM-LICENSE.txt */; };
 		667892EA2E6CC9FACD3EA3C5 /* StanceDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F4015F4D866CCE543FF3AD /* StanceDetector.swift */; };
 		67CEFB68CF7663A8A68FD9D7 /* GaitContactClaimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AA2EB0530BD8326A67BCE60 /* GaitContactClaimTests.swift */; };
 		68975B28DCF3CD55E9EB1746 /* PostureFindingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */; };
@@ -55,6 +56,7 @@
 		732EF1424B7BE159A1A2A35B /* GaitClipFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */; };
 		776F7C63402275798F72DCF9 /* GaitReportPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6812C3DE8176C6B95FB8FFB6 /* GaitReportPanel.swift */; };
 		79FE63924DDD5F2194802099 /* C3DIOSBoundaryTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = EA08C791AB48AA5A4C976822 /* C3DIOSBoundaryTests.mm */; };
+		7A101672F8C9139F60CE7C32 /* Rajagopal2016.osim in Resources */ = {isa = PBXBuildFile; fileRef = 0BE6D8732D8958953447293F /* Rajagopal2016.osim */; };
 		7CC7D377AAE200F3C611F8F2 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = BB09CCB3DD5A4B20A3553080 /* Fixtures */; };
 		7D675D34A1FC4A52B6096561 /* GaitClaimSurvivalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */; };
 		7ED1CE05D8C199C942D22051 /* SkeletonOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */; };
@@ -63,14 +65,12 @@
 		868099F18F8814906F1D269C /* IKSolverInternalsTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 9C8305C52C48DE409E73AB10 /* IKSolverInternalsTests.mm */; };
 		86CC439C0B44FFAC6F3D2391 /* ClaimSurfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72797213E433B0F010275E7 /* ClaimSurfaceTests.swift */; };
 		8804D81FA38EF570856C727E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A021DA9E5DE28ED2E1F45BB4 /* Assets.xcassets */; };
-		891D391F31678EA1AB467893 /* SAM3DBodyPose.lock.json in Resources */ = {isa = PBXBuildFile; fileRef = D9F9508D7CB27578AE19211E /* SAM3DBodyPose.lock.json */; };
 		8A511E0DC6F90C2FD8E1DA83 /* AssetPackModelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4472D307677A7F2DBB60C275 /* AssetPackModelStore.swift */; };
 		8C53B4FE0721E7BA93A0356B /* OfflinePlaybackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 371D7852068443A4209F4461 /* OfflinePlaybackView.swift */; };
 		8CF37DE4171D50EAADF24A4D /* StraightLinePathErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F418BB721F83050352688C5E /* StraightLinePathErrorTests.swift */; };
 		91A0F486E88C77E1E700D9C5 /* GaitStanceDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C0E18BE1C40CA18DEADE2D0 /* GaitStanceDetectionTests.swift */; };
 		91ACE3253ECA63DC711B95E2 /* MeanDifferenceUncertainty.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2EABEF689D0C38904B09457 /* MeanDifferenceUncertainty.swift */; };
 		95BAAF1059E75E5002D4E766 /* IKConvergenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 037B01AB81518DD0C605F421 /* IKConvergenceTests.swift */; };
-		98613DC9BB618D40355A1196 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = DD8D8EE2FB43D7D0467DA761 /* Resources */; };
 		996F78503AE114D8BC755847 /* MusclePathWrapTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = CC4A4FA01B959D2821BCD0B1 /* MusclePathWrapTests.mm */; };
 		9E21BE688E44914BC27DF801 /* MHRRootMarkerTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7E605F90420D361EAE240B29 /* MHRRootMarkerTests.mm */; };
 		A1255E337CF95E0639A20E10 /* OfflineOrchestrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */; };
@@ -80,7 +80,8 @@
 		AD46F05ABFD3EA2F31330398 /* OfflineDisclosureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5CF5D0AED383C64CF63377B /* OfflineDisclosureTests.swift */; };
 		AEBD0D6F6A05031B4795C512 /* BodyTrackingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 675A6A481192DE8527711A02 /* BodyTrackingSession.swift */; };
 		B02E6F6E8214B6D20AF49FAF /* FrameSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938B58C5B8D77095B3471883 /* FrameSource.swift */; };
-		B1670D1FDAE907294D961E3F /* FullBody.osim in Resources */ = {isa = PBXBuildFile; fileRef = 4B9713307F6A75E4289F37D8 /* FullBody.osim */; };
+		B3E710BA6F91A6FC596D58E7 /* FullBody.osim in Resources */ = {isa = PBXBuildFile; fileRef = DCF38E9BAF28D725D456AB3F /* FullBody.osim */; };
+		B48D699E930697B821BB13F6 /* FullBody.osim in Resources */ = {isa = PBXBuildFile; fileRef = DCF38E9BAF28D725D456AB3F /* FullBody.osim */; };
 		BBC1A480E4FC736ABFD96A8C /* AssetPackDownloader.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 63E261BAC88A15FDC743D492 /* AssetPackDownloader.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BFE358FA68B0E8249A400DBF /* MotionRecorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85CB2DC650F7D9EA6AA72EF6 /* MotionRecorderTests.swift */; };
 		C46293E89DE399B7557FE5B5 /* NativeWindowSamplingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6518DB5CBEDA2DA4D714B81B /* NativeWindowSamplingTests.swift */; };
@@ -118,7 +119,6 @@
 		FB1B50B5A799E4C3E1EA5C6C /* DecodedFrameMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1369BE0A94C795B81633F179 /* DecodedFrameMemoryTests.swift */; };
 		FCF85FDD27BCE3D45741E313 /* RootTranslationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2B9AAD0354C5643CD4E31D /* RootTranslationTests.swift */; };
 		FD1FE9596B21A15A5811F83C /* OfflineResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A01F5A8E43E144EF7C64ED03 /* OfflineResultStore.swift */; };
-		FD38E7F1B9C09FAC1FE3C10A /* Rajagopal2016.osim in Resources */ = {isa = PBXBuildFile; fileRef = 44D59B2D4FBCD3D020D9136A /* Rajagopal2016.osim */; };
 		FF414DA499FA347E42CA9E02 /* GaitForceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D771BFB2C0C4E889668C7A46 /* GaitForceModel.swift */; };
 		FFA748003ECB954CB9A5BAAF /* MuscleOverlayClaimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BACF32AD900AF070B3BA8BB7 /* MuscleOverlayClaimTests.swift */; };
 /* End PBXBuildFile section */
@@ -156,8 +156,10 @@
 
 /* Begin PBXFileReference section */
 		037B01AB81518DD0C605F421 /* IKConvergenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IKConvergenceTests.swift; sourceTree = "<group>"; };
+		03BFC1A32EAECDBA68216767 /* NOTICE */ = {isa = PBXFileReference; path = NOTICE; sourceTree = "<group>"; };
 		069BD05C894EA1A3D4B71811 /* SavitzkyGolayFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavitzkyGolayFilter.swift; sourceTree = "<group>"; };
 		08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostureFindingsTests.swift; sourceTree = "<group>"; };
+		0BE6D8732D8958953447293F /* Rajagopal2016.osim */ = {isa = PBXFileReference; path = Rajagopal2016.osim; sourceTree = "<group>"; };
 		0C0B4A120BDBA3ABB42E6A11 /* EllipsoidWrapValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EllipsoidWrapValidationTests.swift; sourceTree = "<group>"; };
 		0C28EDD6674979DABB128FB8 /* ModelScalingTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ModelScalingTests.mm; sourceTree = "<group>"; };
 		1369BE0A94C795B81633F179 /* DecodedFrameMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodedFrameMemoryTests.swift; sourceTree = "<group>"; };
@@ -171,6 +173,7 @@
 		28A3BA7029D6926197B5C2E6 /* OpenSimReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSimReferenceTests.swift; sourceTree = "<group>"; };
 		2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyFrameOrientationTests.swift; sourceTree = "<group>"; };
 		2DFA2909F8CB7C6E11AEBF61 /* FrameBudgetNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameBudgetNotice.swift; sourceTree = "<group>"; };
+		2F600416A165493606037223 /* THIRD-PARTY-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "THIRD-PARTY-NOTICES.txt"; sourceTree = "<group>"; };
 		3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationTests.swift; sourceTree = "<group>"; };
 		371D7852068443A4209F4461 /* OfflinePlaybackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflinePlaybackView.swift; sourceTree = "<group>"; };
 		39C64A42A229077EC3CF47FD /* BodyJointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyJointTests.swift; sourceTree = "<group>"; };
@@ -178,18 +181,14 @@
 		3F2FCB0E08D59A9A2F873C83 /* BodyJoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyJoint.swift; sourceTree = "<group>"; };
 		421024FCAE182411034B98F7 /* OfflineOrchestrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineOrchestrationTests.swift; sourceTree = "<group>"; };
 		4472D307677A7F2DBB60C275 /* AssetPackModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetPackModelStore.swift; sourceTree = "<group>"; };
-		44D59B2D4FBCD3D020D9136A /* Rajagopal2016.osim */ = {isa = PBXFileReference; path = Rajagopal2016.osim; sourceTree = "<group>"; };
 		45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitClaimSurvivalTests.swift; sourceTree = "<group>"; };
 		47A0577D615043AFBD9112E8 /* GaitLoadSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitLoadSummary.swift; sourceTree = "<group>"; };
 		4874B31C9C33272450AE6B44 /* GaitDynamicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitDynamicsTests.swift; sourceTree = "<group>"; };
 		4A5E8807D42FF44784FCF22F /* OneEuroFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneEuroFilter.swift; sourceTree = "<group>"; };
 		4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TRCExporterTests.swift; sourceTree = "<group>"; };
 		4B51E2644E744BA3FADE38F5 /* BodyPlausibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyPlausibilityTests.swift; sourceTree = "<group>"; };
-		4B9713307F6A75E4289F37D8 /* FullBody.osim */ = {isa = PBXFileReference; path = FullBody.osim; sourceTree = "<group>"; };
-		4BCD1C2BB85D2242E4FE60E7 /* SAM-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "SAM-LICENSE.txt"; sourceTree = "<group>"; };
 		5228395220C31B9ECF44A0CE /* WrappedMomentArmLeakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WrappedMomentArmLeakTests.swift; sourceTree = "<group>"; };
 		52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitClipFixtureTests.swift; sourceTree = "<group>"; };
-		548ECA121A57E096D1964D0B /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoulderRotMaskTests.swift; sourceTree = "<group>"; };
 		5AA2EB0530BD8326A67BCE60 /* GaitContactClaimTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitContactClaimTests.swift; sourceTree = "<group>"; };
 		5BF52FB3C8BA65005EACE6F3 /* OpenSimReferenceFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSimReferenceFixture.swift; sourceTree = "<group>"; };
@@ -258,11 +257,10 @@
 		D771BFB2C0C4E889668C7A46 /* GaitForceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitForceModel.swift; sourceTree = "<group>"; };
 		D8B9BD44107DF71632646C0E /* MuscleSolver.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = MuscleSolver.mm; sourceTree = "<group>"; };
 		D9088479745639791C018F55 /* OpenSimGeometryBoundaryTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = OpenSimGeometryBoundaryTests.mm; sourceTree = "<group>"; };
-		D9F9508D7CB27578AE19211E /* SAM3DBodyPose.lock.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = SAM3DBodyPose.lock.json; sourceTree = "<group>"; };
 		DA78E54425FFDD8F2CC557C3 /* GaitLoadStatisticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitLoadStatisticTests.swift; sourceTree = "<group>"; };
 		DB99C395726EDA0E87378FE8 /* NimbleBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NimbleBridge.h; sourceTree = "<group>"; };
+		DCF38E9BAF28D725D456AB3F /* FullBody.osim */ = {isa = PBXFileReference; path = FullBody.osim; sourceTree = "<group>"; };
 		DCFAD06A6BF102ABB5018D18 /* GaitReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitReportTests.swift; sourceTree = "<group>"; };
-		DD8D8EE2FB43D7D0467DA761 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Resources; path = BioMotion/Resources; sourceTree = SOURCE_ROOT; };
 		DE061204EBCA562182A0C976 /* NimbleBridge+Internal.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "NimbleBridge+Internal.h"; sourceTree = "<group>"; };
 		DFB5E836348FD533923DAD62 /* FixtureScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureScanner.swift; sourceTree = "<group>"; };
 		E09CC28BA4450B3F4385431E /* MusclePathWrap.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MusclePathWrap.h; sourceTree = "<group>"; };
@@ -311,7 +309,6 @@
 				08F57E3256D709AB42C7883E /* Nimble */,
 				87F801CD2725DFE56017492C /* Offline */,
 				FB82DF9480DFE46692CE459F /* Recording */,
-				855C11D1FAD67039BFAEBF2B /* Resources */,
 			);
 			path = BioMotion;
 			sourceTree = "<group>";
@@ -390,6 +387,17 @@
 			path = BioMotionTests;
 			sourceTree = "<group>";
 		};
+		45D67842736B23EF8B1626A1 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				DCF38E9BAF28D725D456AB3F /* FullBody.osim */,
+				0BE6D8732D8958953447293F /* Rajagopal2016.osim */,
+				2F600416A165493606037223 /* THIRD-PARTY-NOTICES.txt */,
+			);
+			name = Resources;
+			path = BioMotion/Resources;
+			sourceTree = "<group>";
+		};
 		4E9B509994F9A754BD54A17D /* Gait */ = {
 			isa = PBXGroup;
 			children = (
@@ -425,17 +433,6 @@
 			path = Findings;
 			sourceTree = "<group>";
 		};
-		855C11D1FAD67039BFAEBF2B /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				4B9713307F6A75E4289F37D8 /* FullBody.osim */,
-				44D59B2D4FBCD3D020D9136A /* Rajagopal2016.osim */,
-				4BCD1C2BB85D2242E4FE60E7 /* SAM-LICENSE.txt */,
-				D9F9508D7CB27578AE19211E /* SAM3DBodyPose.lock.json */,
-			);
-			path = Resources;
-			sourceTree = "<group>";
-		};
 		87F801CD2725DFE56017492C /* Offline */ = {
 			isa = PBXGroup;
 			children = (
@@ -449,7 +446,6 @@
 				A01F5A8E43E144EF7C64ED03 /* OfflineResultStore.swift */,
 				1B380AE0D8895B17AF002FC4 /* OfflineSessionRunner.swift */,
 				76B44E86911B6D34B6D8EEBA /* PhotoOverlayView.swift */,
-				548ECA121A57E096D1964D0B /* README.md */,
 				C7AB824FE7872485E9CEBFC3 /* SAM3DPoseEstimator.swift */,
 			);
 			path = Offline;
@@ -459,10 +455,11 @@
 			isa = PBXGroup;
 			children = (
 				BB09CCB3DD5A4B20A3553080 /* Fixtures */,
-				DD8D8EE2FB43D7D0467DA761 /* Resources */,
+				03BFC1A32EAECDBA68216767 /* NOTICE */,
 				1E9AE25735CD2EDA1455FE54 /* BioMotion */,
 				2F98D548592CA55E3235266C /* BioMotionTests */,
 				C6C56A4977C0D290C86679DE /* Downloader */,
+				45D67842736B23EF8B1626A1 /* Resources */,
 				A5BA15E011D2144C8A6C2302 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -540,9 +537,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = BBD8AA9B86F67B4ED7141590 /* Build configuration list for PBXNativeTarget "BioMotion" */;
 			buildPhases = (
+				75AE7369868AEF160470F4EF /* Reject developer model before non-Simulator build */,
 				12E607D4EEB2C17ABFF1B5D0 /* Sources */,
 				04DC4A8D81F83AC40B0C472B /* Resources */,
 				2D9EE8D6477B72E0E0B439CF /* Embed ExtensionKit Extensions */,
+				E808DCB80A6D66454827AAB1 /* Reject bundled model after resources */,
 			);
 			buildRules = (
 			);
@@ -603,11 +602,9 @@
 				TargetAttributes = {
 					C13EF626D0B416A66FE2CD86 = {
 						DevelopmentTeam = N7VVB6PWZS;
-						ProvisioningStyle = Automatic;
 					};
 					CBC2C3A9CA797ACD05021317 = {
 						DevelopmentTeam = N7VVB6PWZS;
-						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -638,12 +635,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				8804D81FA38EF570856C727E /* Assets.xcassets in Resources */,
-				B1670D1FDAE907294D961E3F /* FullBody.osim in Resources */,
+				B3E710BA6F91A6FC596D58E7 /* FullBody.osim in Resources */,
+				5B737BB2CF7ED98E845E6C7D /* NOTICE in Resources */,
 				CF84BF87BE967613DBC2A792 /* PrivacyInfo.xcprivacy in Resources */,
-				4E7BB08733F58643DA1F0946 /* README.md in Resources */,
-				FD38E7F1B9C09FAC1FE3C10A /* Rajagopal2016.osim in Resources */,
-				639C32C764196A6DA7B8B6B5 /* SAM-LICENSE.txt in Resources */,
-				891D391F31678EA1AB467893 /* SAM3DBodyPose.lock.json in Resources */,
+				472603D6720300F933498494 /* Rajagopal2016.osim in Resources */,
+				3097F9F24BACE6EDA2F0EC46 /* THIRD-PARTY-NOTICES.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -652,11 +648,55 @@
 			buildActionMask = 2147483647;
 			files = (
 				7CC7D377AAE200F3C611F8F2 /* Fixtures in Resources */,
-				98613DC9BB618D40355A1196 /* Resources in Resources */,
+				B48D699E930697B821BB13F6 /* FullBody.osim in Resources */,
+				7A101672F8C9139F60CE7C32 /* Rajagopal2016.osim in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		75AE7369868AEF160470F4EF /* Reject developer model before non-Simulator build */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Reject developer model before non-Simulator build";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "#!/bin/bash\nset -euo pipefail\nPATH=/usr/bin:/bin:/usr/sbin:/sbin\nexport PATH\n\nif [ -z \"${CONFIGURATION+x}\" ] || [ -z \"$CONFIGURATION\" ]; then\n  printf '%s\\n' 'CONFIGURATION is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${SRCROOT+x}\" ] || [ -z \"$SRCROOT\" ]; then\n  printf '%s\\n' 'SRCROOT is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${PLATFORM_NAME+x}\" ] || [ -z \"$PLATFORM_NAME\" ]; then\n  printf '%s\\n' 'PLATFORM_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${EFFECTIVE_PLATFORM_NAME+x}\" ] || [ -z \"$EFFECTIVE_PLATFORM_NAME\" ]; then\n  printf '%s\\n' 'EFFECTIVE_PLATFORM_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${SDK_NAME+x}\" ] || [ -z \"$SDK_NAME\" ]; then\n  printf '%s\\n' 'SDK_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${SDKROOT+x}\" ] || [ -z \"$SDKROOT\" ]; then\n  printf '%s\\n' 'SDKROOT is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${TARGET_BUILD_DIR+x}\" ] || [ -z \"$TARGET_BUILD_DIR\" ]; then\n  printf '%s\\n' 'TARGET_BUILD_DIR is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${WRAPPER_NAME+x}\" ] || [ -z \"$WRAPPER_NAME\" ]; then\n  printf '%s\\n' 'WRAPPER_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\n\nDEVELOPER_MODEL=\"$SRCROOT/build/DevBundledModel\"\nBUILT_PRODUCT=\"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\nEXPECTED_SIMULATOR_SDK=\"$(/usr/bin/xcrun --sdk iphonesimulator --show-sdk-path)\"\nSDKROOT_CANONICAL=''\nEXPECTED_SIMULATOR_SDK_CANONICAL=''\nif [ -d \"$SDKROOT\" ]; then\n  SDKROOT_CANONICAL=\"$(cd \"$SDKROOT\" && /bin/pwd -P)\"\nfi\nif [ -d \"$EXPECTED_SIMULATOR_SDK\" ]; then\n  EXPECTED_SIMULATOR_SDK_CANONICAL=\"$({\n    cd \"$EXPECTED_SIMULATOR_SDK\" && /bin/pwd -P\n  })\"\nfi\n\nALLOW_DEVELOPER_MODEL=0\nif [ \"$CONFIGURATION\" = 'Debug' ] \\\n  && [ \"$PLATFORM_NAME\" = 'iphonesimulator' ] \\\n  && [ \"$EFFECTIVE_PLATFORM_NAME\" = '-iphonesimulator' ] \\\n  && [[ \"$SDK_NAME\" == iphonesimulator* ]] \\\n  && [ -n \"$SDKROOT_CANONICAL\" ] \\\n  && [ \"$SDKROOT_CANONICAL\" = \"$EXPECTED_SIMULATOR_SDK_CANONICAL\" ]; then\n  ALLOW_DEVELOPER_MODEL=1\nfi\n\nif [ \"$ALLOW_DEVELOPER_MODEL\" -eq 1 ] \\\n  && { [ -e \"$DEVELOPER_MODEL\" ] || [ -L \"$DEVELOPER_MODEL\" ]; } \\\n  && { [ ! -d \"$DEVELOPER_MODEL\" ] || [ -L \"$DEVELOPER_MODEL\" ]; }; then\n  printf 'developer model source is not a regular directory: %s\\n' \\\n    \"$DEVELOPER_MODEL\" >&2\n  exit 1\nfi\n\nBUNDLED_MODEL=''\nif [ -e \"$BUILT_PRODUCT\" ] || [ -L \"$BUILT_PRODUCT\" ]; then\n  if [ ! -d \"$BUILT_PRODUCT\" ] || [ -L \"$BUILT_PRODUCT\" ]; then\n    printf 'built product is not a regular app directory: %s\\n' \\\n      \"$BUILT_PRODUCT\" >&2\n    exit 1\n  fi\n  BUNDLED_MODEL=\"$(\n    /usr/bin/find \"$BUILT_PRODUCT\" \\\n      \\( -iname '*.mlmodel' -o -iname '*.mlpackage' -o -iname '*.mlmodelc' \\) \\\n      -print -quit\n  )\"\nfi\n\n# The optional source is available only to Debug Simulator iteration. `-L`\n# also catches a dangling symlink, which `-e` alone misses. The same script is\n# run before compilation and after resources: the latter scans an existing\n# product and closes the source-check/copy interval. PLATFORM_NAME alone is not\n# provenance: xcodebuild lets a caller contradict it while retaining an\n# iphoneos SDK. The effective platform, SDK name, and canonical SDKROOT must all\n# identify the active Simulator SDK.\nif [ \"$ALLOW_DEVELOPER_MODEL\" -ne 1 ]; then\n  if [ -e \"$DEVELOPER_MODEL\" ] || [ -L \"$DEVELOPER_MODEL\" ]; then\n    printf '%s\\n' \\\n      'developer model is enabled outside verified Debug Simulator; run tools/assetpack/dev_bundle_model.sh off and regenerate the project' >&2\n    exit 1\n  fi\n\n  if [ -n \"$BUNDLED_MODEL\" ]; then\n    printf 'developer model reached a non-Simulator product: %s\\n' \\\n      \"$BUNDLED_MODEL\" >&2\n    exit 1\n  fi\nelif [ -n \"$BUNDLED_MODEL\" ]; then\n  PRODUCT_INFO=\"$BUILT_PRODUCT/Info.plist\"\n  if [ ! -f \"$PRODUCT_INFO\" ] || [ -L \"$PRODUCT_INFO\" ]; then\n    printf 'developer-model product has no regular Info.plist: %s\\n' \\\n      \"$PRODUCT_INFO\" >&2\n    exit 1\n  fi\n  PRODUCT_PLATFORM=\"$(\n    /usr/libexec/PlistBuddy -c 'Print :DTPlatformName' \"$PRODUCT_INFO\" 2>/dev/null \\\n      || true\n  )\"\n  PRODUCT_EXECUTABLE_NAME=\"$(\n    /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$PRODUCT_INFO\" 2>/dev/null \\\n      || true\n  )\"\n  PRODUCT_EXECUTABLE=\"$BUILT_PRODUCT/$PRODUCT_EXECUTABLE_NAME\"\n  if [ \"$PRODUCT_PLATFORM\" != 'iphonesimulator' ] \\\n    || [ -z \"$PRODUCT_EXECUTABLE_NAME\" ] \\\n    || [ ! -f \"$PRODUCT_EXECUTABLE\" ] \\\n    || [ -L \"$PRODUCT_EXECUTABLE\" ]; then\n    printf 'developer model reached a product not proven to be Simulator: %s\\n' \\\n      \"$BUILT_PRODUCT\" >&2\n    exit 1\n  fi\n  BUILD_RECEIPT=\"$(\n    /usr/bin/xcrun vtool -show-build \"$PRODUCT_EXECUTABLE\" 2>/dev/null || true\n  )\"\n  PLATFORM_LINES=\"$(\n    printf '%s\\n' \"$BUILD_RECEIPT\" \\\n      | /usr/bin/grep -Ec '^[[:space:]]*platform[[:space:]]+[A-Za-z0-9]+[[:space:]]*$' \\\n      || true\n  )\"\n  SIMULATOR_LINES=\"$(\n    printf '%s\\n' \"$BUILD_RECEIPT\" \\\n      | /usr/bin/grep -Ec '^[[:space:]]*platform[[:space:]]+IOSSIMULATOR[[:space:]]*$' \\\n      || true\n  )\"\n  if [ \"$PLATFORM_LINES\" -ne 1 ] || [ \"$SIMULATOR_LINES\" -ne 1 ]; then\n    printf 'developer model executable is not an iOS Simulator image: %s\\n' \\\n      \"$PRODUCT_EXECUTABLE\" >&2\n    exit 1\n  fi\nfi\n\nprintf '%s\\n' 'DEVELOPER_MODEL_BUILD_GUARD_PASS'\n";
+			showEnvVarsInLog = 0;
+		};
+		E808DCB80A6D66454827AAB1 /* Reject bundled model after resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Reject bundled model after resources";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "#!/bin/bash\nset -euo pipefail\nPATH=/usr/bin:/bin:/usr/sbin:/sbin\nexport PATH\n\nif [ -z \"${CONFIGURATION+x}\" ] || [ -z \"$CONFIGURATION\" ]; then\n  printf '%s\\n' 'CONFIGURATION is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${SRCROOT+x}\" ] || [ -z \"$SRCROOT\" ]; then\n  printf '%s\\n' 'SRCROOT is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${PLATFORM_NAME+x}\" ] || [ -z \"$PLATFORM_NAME\" ]; then\n  printf '%s\\n' 'PLATFORM_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${EFFECTIVE_PLATFORM_NAME+x}\" ] || [ -z \"$EFFECTIVE_PLATFORM_NAME\" ]; then\n  printf '%s\\n' 'EFFECTIVE_PLATFORM_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${SDK_NAME+x}\" ] || [ -z \"$SDK_NAME\" ]; then\n  printf '%s\\n' 'SDK_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${SDKROOT+x}\" ] || [ -z \"$SDKROOT\" ]; then\n  printf '%s\\n' 'SDKROOT is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${TARGET_BUILD_DIR+x}\" ] || [ -z \"$TARGET_BUILD_DIR\" ]; then\n  printf '%s\\n' 'TARGET_BUILD_DIR is required for the developer-model build guard' >&2\n  exit 2\nfi\nif [ -z \"${WRAPPER_NAME+x}\" ] || [ -z \"$WRAPPER_NAME\" ]; then\n  printf '%s\\n' 'WRAPPER_NAME is required for the developer-model build guard' >&2\n  exit 2\nfi\n\nDEVELOPER_MODEL=\"$SRCROOT/build/DevBundledModel\"\nBUILT_PRODUCT=\"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\nEXPECTED_SIMULATOR_SDK=\"$(/usr/bin/xcrun --sdk iphonesimulator --show-sdk-path)\"\nSDKROOT_CANONICAL=''\nEXPECTED_SIMULATOR_SDK_CANONICAL=''\nif [ -d \"$SDKROOT\" ]; then\n  SDKROOT_CANONICAL=\"$(cd \"$SDKROOT\" && /bin/pwd -P)\"\nfi\nif [ -d \"$EXPECTED_SIMULATOR_SDK\" ]; then\n  EXPECTED_SIMULATOR_SDK_CANONICAL=\"$({\n    cd \"$EXPECTED_SIMULATOR_SDK\" && /bin/pwd -P\n  })\"\nfi\n\nALLOW_DEVELOPER_MODEL=0\nif [ \"$CONFIGURATION\" = 'Debug' ] \\\n  && [ \"$PLATFORM_NAME\" = 'iphonesimulator' ] \\\n  && [ \"$EFFECTIVE_PLATFORM_NAME\" = '-iphonesimulator' ] \\\n  && [[ \"$SDK_NAME\" == iphonesimulator* ]] \\\n  && [ -n \"$SDKROOT_CANONICAL\" ] \\\n  && [ \"$SDKROOT_CANONICAL\" = \"$EXPECTED_SIMULATOR_SDK_CANONICAL\" ]; then\n  ALLOW_DEVELOPER_MODEL=1\nfi\n\nif [ \"$ALLOW_DEVELOPER_MODEL\" -eq 1 ] \\\n  && { [ -e \"$DEVELOPER_MODEL\" ] || [ -L \"$DEVELOPER_MODEL\" ]; } \\\n  && { [ ! -d \"$DEVELOPER_MODEL\" ] || [ -L \"$DEVELOPER_MODEL\" ]; }; then\n  printf 'developer model source is not a regular directory: %s\\n' \\\n    \"$DEVELOPER_MODEL\" >&2\n  exit 1\nfi\n\nBUNDLED_MODEL=''\nif [ -e \"$BUILT_PRODUCT\" ] || [ -L \"$BUILT_PRODUCT\" ]; then\n  if [ ! -d \"$BUILT_PRODUCT\" ] || [ -L \"$BUILT_PRODUCT\" ]; then\n    printf 'built product is not a regular app directory: %s\\n' \\\n      \"$BUILT_PRODUCT\" >&2\n    exit 1\n  fi\n  BUNDLED_MODEL=\"$(\n    /usr/bin/find \"$BUILT_PRODUCT\" \\\n      \\( -iname '*.mlmodel' -o -iname '*.mlpackage' -o -iname '*.mlmodelc' \\) \\\n      -print -quit\n  )\"\nfi\n\n# The optional source is available only to Debug Simulator iteration. `-L`\n# also catches a dangling symlink, which `-e` alone misses. The same script is\n# run before compilation and after resources: the latter scans an existing\n# product and closes the source-check/copy interval. PLATFORM_NAME alone is not\n# provenance: xcodebuild lets a caller contradict it while retaining an\n# iphoneos SDK. The effective platform, SDK name, and canonical SDKROOT must all\n# identify the active Simulator SDK.\nif [ \"$ALLOW_DEVELOPER_MODEL\" -ne 1 ]; then\n  if [ -e \"$DEVELOPER_MODEL\" ] || [ -L \"$DEVELOPER_MODEL\" ]; then\n    printf '%s\\n' \\\n      'developer model is enabled outside verified Debug Simulator; run tools/assetpack/dev_bundle_model.sh off and regenerate the project' >&2\n    exit 1\n  fi\n\n  if [ -n \"$BUNDLED_MODEL\" ]; then\n    printf 'developer model reached a non-Simulator product: %s\\n' \\\n      \"$BUNDLED_MODEL\" >&2\n    exit 1\n  fi\nelif [ -n \"$BUNDLED_MODEL\" ]; then\n  PRODUCT_INFO=\"$BUILT_PRODUCT/Info.plist\"\n  if [ ! -f \"$PRODUCT_INFO\" ] || [ -L \"$PRODUCT_INFO\" ]; then\n    printf 'developer-model product has no regular Info.plist: %s\\n' \\\n      \"$PRODUCT_INFO\" >&2\n    exit 1\n  fi\n  PRODUCT_PLATFORM=\"$(\n    /usr/libexec/PlistBuddy -c 'Print :DTPlatformName' \"$PRODUCT_INFO\" 2>/dev/null \\\n      || true\n  )\"\n  PRODUCT_EXECUTABLE_NAME=\"$(\n    /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$PRODUCT_INFO\" 2>/dev/null \\\n      || true\n  )\"\n  PRODUCT_EXECUTABLE=\"$BUILT_PRODUCT/$PRODUCT_EXECUTABLE_NAME\"\n  if [ \"$PRODUCT_PLATFORM\" != 'iphonesimulator' ] \\\n    || [ -z \"$PRODUCT_EXECUTABLE_NAME\" ] \\\n    || [ ! -f \"$PRODUCT_EXECUTABLE\" ] \\\n    || [ -L \"$PRODUCT_EXECUTABLE\" ]; then\n    printf 'developer model reached a product not proven to be Simulator: %s\\n' \\\n      \"$BUILT_PRODUCT\" >&2\n    exit 1\n  fi\n  BUILD_RECEIPT=\"$(\n    /usr/bin/xcrun vtool -show-build \"$PRODUCT_EXECUTABLE\" 2>/dev/null || true\n  )\"\n  PLATFORM_LINES=\"$(\n    printf '%s\\n' \"$BUILD_RECEIPT\" \\\n      | /usr/bin/grep -Ec '^[[:space:]]*platform[[:space:]]+[A-Za-z0-9]+[[:space:]]*$' \\\n      || true\n  )\"\n  SIMULATOR_LINES=\"$(\n    printf '%s\\n' \"$BUILD_RECEIPT\" \\\n      | /usr/bin/grep -Ec '^[[:space:]]*platform[[:space:]]+IOSSIMULATOR[[:space:]]*$' \\\n      || true\n  )\"\n  if [ \"$PLATFORM_LINES\" -ne 1 ] || [ \"$SIMULATOR_LINES\" -ne 1 ]; then\n    printf 'developer model executable is not an iOS Simulator image: %s\\n' \\\n      \"$PRODUCT_EXECUTABLE\" >&2\n    exit 1\n  fi\nfi\n\nprintf '%s\\n' 'DEVELOPER_MODEL_BUILD_GUARD_PASS'\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		12E607D4EEB2C17ABFF1B5D0 /* Sources */ = {
@@ -809,6 +849,7 @@
 					"$(inherited)",
 					"DART_IOS_BUILD=1",
 					"DART_USE_IDENTITY_JACOBIAN=1",
+					"EIGEN_MPL2_ONLY=1",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -855,6 +896,7 @@
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
 					"DART_USE_IDENTITY_JACOBIAN=1",
+					"EIGEN_MPL2_ONLY=1",
 					"BIOMOTION_TEST_DIAGNOSTICS=1",
 				);
 				HEADER_SEARCH_PATHS = (
@@ -958,6 +1000,7 @@
 					"$(inherited)",
 					"DART_IOS_BUILD=1",
 					"DART_USE_IDENTITY_JACOBIAN=1",
+					"EIGEN_MPL2_ONLY=1",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -1081,12 +1124,14 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/BioMotion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 30;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DART_IOS_BUILD=1",
 					"DART_USE_IDENTITY_JACOBIAN=1",
+					"EIGEN_MPL2_ONLY=1",
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(PROJECT_DIR)/nimblephysics",
@@ -1117,6 +1162,7 @@
 					"-lc++",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.soleil.BioMotion;
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "BioMotion AppStore AG";
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "BioMotion/Nimble/BioMotion-Bridging-Header.h";
 				SWIFT_VERSION = 5.9;
@@ -1128,7 +1174,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = BioMotion/AssetPack/Support/AssetPackDownloader.entitlements;
-				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 30;
 				DEVELOPMENT_TEAM = N7VVB6PWZS;
 				INFOPLIST_FILE = "BioMotion/AssetPack/Support/AssetPackDownloader-Info.plist";
@@ -1138,6 +1185,7 @@
 				);
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.soleil.BioMotion.AssetPackDownloader;
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "BioMotion Ext AppStore AG";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";

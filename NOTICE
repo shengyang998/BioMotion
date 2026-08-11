@@ -15,9 +15,12 @@ are a port of the muscle path-wrapping code in OpenSim:
     OpenSim/Simulation/Wrap/WrapObject.cpp
     OpenSim/Simulation/Wrap/WrapMath.cpp
     OpenSim/Simulation/Model/GeometryPath.cpp
+    OpenSim/Common/SimmMacros.h
 
     Copyright (c) 2005-2017 Stanford University and the Authors
-    Author(s): Peter Loan, Frank C. Anderson
+    Author(s): Peter Loan, Frank C. Anderson, Ajay Seth
+    Portions of WrapMath.cpp were originally developed by
+    Realistic Dynamics Inc.; author Frank C. Anderson.
 
     The OpenSim API is a toolkit for musculoskeletal modeling and simulation.
     See http://opensim.stanford.edu and the NOTICE file in the opensim-core
@@ -54,6 +57,7 @@ STATUS.md ("The upper-limb licence blocker").
 Other third-party components
 --------------------------------------------------------------------------------
 
-nimblephysics (vendored under `nimblephysics/`), OSQP (under `osqp/`), Eigen and
-tinyxml2 (vendored under `nimblephysics/third_party/`) carry their own licences
-in their own trees.
+nimblephysics, OSQP, QDLDL, SuiteSparse AMD, Eigen, tinyxml2, and the Open
+Dynamics Engine LCP solver are linked into the application. Their full selected
+licence terms and required notices are reproduced in
+`BioMotion/Resources/THIRD-PARTY-NOTICES.txt`; both files ship in the app.

@@ -4821,6 +4821,98 @@ whitespace. Existing Swift concurrency/deprecation and Nimble/Eigen
 documentation warnings remain, but the build has no new compile or link error.
 
 
+## App resources and release provenance are now an exact allowlist (2026-08-11)
+
+The generated app had inherited files from the broad `BioMotion/` source root: source-only
+README/lock/license material could enter the product while the repository's root `NOTICE` was
+missing. Conversely, the first product probe required a few known files but did not reject an
+extra OSIM, a renamed compiled model, arbitrary large data, or payload hidden in an asset catalog.
+It also accepted a bare Debug/Simulator `.app` as if it were release evidence.
+
+`project.yml` now excludes the whole source resource directory from broad inference and adds an
+explicit shipping allowlist: the privacy manifest, exactly two reviewed OSIM files, root `NOTICE`,
+and `BioMotion/Resources/THIRD-PARTY-NOTICES.txt`. The test target separately owns only its Fixtures
+folder and the two model files. The consolidated legal resource carries the complete selected
+binary-distribution terms and attributions for BioMotion, Nimble/DART, ODE, OSQP/QDLDL/AMD, Eigen,
+tinyxml2, OpenSim, and Rajagopal. `EIGEN_MPL2_ONLY=1` is now part of the app and test consumer
+contract. This closes notice delivery; it does **not** grant commercial rights to FullBody's 42
+MoBL-ARMS-derived muscles, so the owner/legal blocker below remains unchanged.
+
+`tools/release/resource_boundary.py` is the shared source/project/product inspector. It resolves
+actual PBX group ancestry, pins every model/legal/asset source identity, and requires exact
+target-scoped Resources phases. Its built-product modes are deliberately distinct:
+
+- `--simulator-smoke` checks an exact Simulator app and extension inventory;
+- `--tests-bundle-smoke` checks the exact model and seven-fixture `.xctest` inventory;
+- `--release-archive` accepts only the signed arm64 iPhoneOS `.xcarchive`, validates its archive
+  receipt/team/path/platform, exact app and extension contents, compiled icon catalog, size budgets,
+  model/legal bytes, Mach-O architecture, and strict deep signature;
+- `--release-ipa` safely extracts the locally re-signed IPA, repeats the distribution/privacy
+  checks, and binds it back to the archive while allowing only profiles, CodeResources, and
+  normalized Mach-O signatures to change.
+
+The optional 1.3 GiB developer model is now legal only for a Debug iOS Simulator build. The app
+target runs `tools/release/reject_dev_model.sh` as its first and last phases: non-Simulator or
+non-Debug builds reject the source path (including a dangling symlink), and the final phase scans
+the copied product so a model toggled during compilation cannot cross the release boundary.
+
+The first adversarial rerun found two provenance holes before commit. `PLATFORM_NAME` could be
+overridden to say Simulator while Xcode retained the iphoneos SDK, and the original archive fixture
+was merely ad-hoc signed with self-reported Team/profile text. The guard now cross-checks
+`EFFECTIVE_PLATFORM_NAME`, `SDK_NAME`, canonical `SDKROOT`, and—after resources—the product
+Info.plist plus its executable's Mach-O platform receipt. The product inspector checks every
+accepted Mach-O's real `LC_BUILD_VERSION`; Release further binds an Apple Distribution certificate,
+actual signing Team, exact signed entitlements, App Store provisioning profile, profile-authorized
+leaf certificate, bundle id, architecture, and archive receipt. A macOS image renamed as iOS and
+the former ad-hoc archive are both causal negatives.
+
+A second release-engineering review found three later-stage gaps. The documented build-number bump
+occurred after XcodeGen, the export plist lived only under ignored `build/`, and Xcode could re-sign
+and directly upload an IPA after only the pre-export archive had been checked. The order is now
+`project.yml` bump, XcodeGen, source gate, archive. The exact manual TestFlight export plist is
+tracked with `destination=export` and the generic `Apple Distribution` selector. A fail-fast
+`tools/release/testflight_release.sh` validates source/archive/privacy, exports locally, validates
+the final IPA and its SHA-256, and remains network-free by default; only `--validate` or `--upload`
+can contact App Store Connect, and upload uses the same private byte-pinned snapshot it validates.
+
+The same review invalidated an apparent provisioning-profile proof: `security cms -D` decodes CMS
+but accepted an equal-length mutation of the signed XML. Profiles now pass OpenSSL content-signature
+verification and an offline signer-chain verification to the pinned classic Apple Root CA, followed
+by exact Apple provisioning-profile signer subject/issuer, CA/key-usage, and private-OID checks.
+Both current named App Store profiles pass that path; the mutated parseable CMS negative fails at
+the content signature. The embedded profile and actual leaf distribution certificate must each
+retain at least 30 days of validity. Because this project does not enable Keychain Sharing, any signed
+`keychain-access-groups` entitlement is now unreviewed and rejected instead of receiving wildcard
+subset treatment.
+
+The strengthened resource suite passes **37/37** source, PBX, arm64 Simulator-app, test-bundle,
+archive-provenance, stale-version, export-option, and unsafe-IPA cases. The IPA negatives include
+a raw ZIP name whose NUL suffix Python would otherwise truncate, an 8 MiB DEFLATE stream whose
+local and central metadata falsely claim one byte, and an app executable with its execute bits
+removed. The gate independently checks raw central/local headers, actual inflate EOF/CRC/size and
+data descriptors, then binds Unix execute permissions back to the archive. The developer-model guard
+suite passes **16/16**, the CMS mutation suite **2/2**, and the fail-fast TestFlight wrapper suite
+**9/9**. A fresh arm64 Debug Simulator `build-for-testing` succeeded and its actual `.xctest` passed
+the exact bundle smoke gate. A separate clean app-only product—so no embedded test plugin could be
+mistaken for shipping content—passed both the exact Simulator app gate and the recursive privacy
+gate after an ad-hoc local re-seal. A separate clean arm64 Release Simulator build also succeeded,
+ran both developer-model guards, and passed the same resource and privacy gates; the manual
+iphoneos signing settings do not poison the Simulator configuration. The checked-in
+source/generated-project probe passes. The Release configuration records the two manual App Store
+profile names instead of relying on external memory. A controlled real Xcode negative temporarily
+enabled a symlinked `build/DevBundledModel`; the Release Simulator build failed in the first guard
+before the app target compiled, and the exact symlink was removed. A real signed archive attempt
+compiled to the signing phase but remains blocked on the interactive macOS private-key access
+prompt; therefore neither a successful signed archive nor its exported IPA is yet claimed.
+Simulator evidence cannot close that device/archive/signing gate.
+
+These pathname checks assume a quiescent artifact and a trusted macOS account. They reject ordinary
+drift, symlinks, and invalid signatures, but they are not a sandbox against malicious code already
+running as the same UID and racing inspection or mutating the archive after the gate returns. Run
+the integrated gate immediately before export/upload; arbitrary same-account code execution means
+the release host is compromised.
+
+
 ## XML conversion no longer depends on a machine-specific Boost install (2026-08-11)
 
 `dart/utils/XmlHelpers.cpp` previously pulled header-only Boost string and lexical-conversion code

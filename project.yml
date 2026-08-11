@@ -22,6 +22,12 @@ targets:
         excludes:
           - "CoreML/**"
           - "CoreML"
+          # Resource membership is an explicit shipping allowlist below. The
+          # source tree also contains authority/license documents that belong
+          # in source control or the managed asset pack, not the app root.
+          - "Resources/**"
+          - "Resources"
+          - "**/*.md"
           - "AssetPack/Downloader/**"
           - "AssetPack/Downloader"
           - "AssetPack/Support/**"
@@ -30,6 +36,19 @@ targets:
           # memberships from the broad source root.
           - "PrivacyInfo.xcprivacy"
       - path: BioMotion/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: BioMotion/Resources/FullBody.osim
+        buildPhase: resources
+      - path: BioMotion/Resources/Rajagopal2016.osim
+        buildPhase: resources
+      # Complete selected binary-redistribution terms for every currently
+      # linked native dependency. The resource probe pins its identity.
+      - path: BioMotion/Resources/THIRD-PARTY-NOTICES.txt
+        buildPhase: resources
+      # Apache/OpenSim attribution required by this binary distribution.
+      # This is notice compliance, not a grant of commercial model rights;
+      # STATUS.md records the separate FullBody licence blocker.
+      - path: NOTICE
         buildPhase: resources
       # Developer-only escape hatch. Absent by default (hence `optional`), so a
       # normal build/archive carries no model. Populate it from the canonical,
@@ -45,6 +64,24 @@ targets:
       # compiles a raw `.mlpackage`.
       - path: build/DevBundledModel
         optional: true
+    preBuildScripts:
+      # `optional` is evaluated when XcodeGen runs, not per configuration. A
+      # developer model that was enabled for Simulator work must therefore be
+      # rejected before every non-Debug build rather than relying on memory.
+      - path: tools/release/reject_dev_model.sh
+        name: Reject developer model before non-Simulator build
+        shell: /bin/bash
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
+    postBuildScripts:
+      # Re-run after Copy Resources. This closes the interval between the
+      # pre-build source check and resource copying if another process toggles
+      # the developer bundle while a non-Simulator build is compiling.
+      - path: tools/release/reject_dev_model.sh
+        name: Reject bundled model after resources
+        shell: /bin/bash
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
     dependencies:
       - target: AssetPackDownloader   # embeds the Background Download extension
     settings:
@@ -80,6 +117,9 @@ targets:
         GCC_PREPROCESSOR_DEFINITIONS:
           - "DART_IOS_BUILD=1"
           - "DART_USE_IDENTITY_JACOBIAN=1"
+          # Make accidental inclusion of Eigen's non-MPL2 headers a compile
+          # error. The pinned native-library CMake target mirrors this flag.
+          - "EIGEN_MPL2_ONLY=1"
       configs:
         Debug:
           # Compiles the zero-external-force and unconstrained near-CoP
@@ -89,7 +129,16 @@ targets:
           GCC_PREPROCESSOR_DEFINITIONS:
             - "DART_IOS_BUILD=1"
             - "DART_USE_IDENTITY_JACOBIAN=1"
+            - "EIGEN_MPL2_ONLY=1"
             - "BIOMOTION_TEST_DIAGNOSTICS=1"
+        Release:
+          # A release archive must be signed as an App Store distribution,
+          # not with Xcode's default Apple Development identity. These two
+          # checked profile names authorize the reviewed Background Assets app
+          # group and are independently cross-checked by the archive gate.
+          CODE_SIGN_STYLE: Manual
+          "CODE_SIGN_IDENTITY[sdk=iphoneos*]": "Apple Distribution"
+          "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": "BioMotion AppStore AG"
     info:
       path: BioMotion/Info.plist
       properties:
@@ -145,6 +194,11 @@ targets:
         CURRENT_PROJECT_VERSION: "30"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: BioMotion/AssetPack/Support/AssetPackDownloader.entitlements
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          "CODE_SIGN_IDENTITY[sdk=iphoneos*]": "Apple Distribution"
+          "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": "BioMotion Ext AppStore AG"
 
   BioMotionTests:
     type: bundle.unit-test
@@ -164,8 +218,9 @@ targets:
       - path: BioMotionTests/Fixtures
         type: folder
         buildPhase: resources
-      - path: BioMotion/Resources
-        type: folder
+      - path: BioMotion/Resources/FullBody.osim
+        buildPhase: resources
+      - path: BioMotion/Resources/Rajagopal2016.osim
         buildPhase: resources
     dependencies:
       - target: BioMotion
@@ -192,6 +247,7 @@ targets:
           - "$(inherited)"
           - "DART_IOS_BUILD=1"
           - "DART_USE_IDENTITY_JACOBIAN=1"
+          - "EIGEN_MPL2_ONLY=1"
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(PROJECT_DIR)/nimblephysics/build_sim"
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":

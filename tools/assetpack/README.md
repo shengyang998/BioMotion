@@ -212,21 +212,34 @@ this gate with a raw `altool` command.
 Nothing about archiving changes, except that the archive is now 7 MiB.
 
 ```bash
+# Bump CURRENT_PROJECT_VERSION in project.yml before generation.
 xcodegen generate
+/bin/bash tools/tests/app_resource_boundary_probe.sh
 xcodebuild archive -project BioMotion.xcodeproj -scheme BioMotion -configuration Release \
-  -destination 'generic/platform=iOS' -archivePath build/BioMotion.xcarchive \
-  -allowProvisioningUpdates
+  -destination 'generic/platform=iOS' -archivePath build/BioMotion.xcarchive
+/bin/bash tools/release/testflight_release.sh \
+  --archive build/BioMotion.xcarchive \
+  --export-dir build/testflight-30
 ```
 
 Bump `CURRENT_PROJECT_VERSION` in `project.yml` first — it feeds **both** the app
 and the extension, which must carry the same version or the upload warns
-ITMS-90473.
+ITMS-90473. Run `xcodegen generate` only after that bump; the resource gate
+rejects a stale generated project.
 
-TestFlight distribution on this Mac still needs the manual-signing path recorded
-in memory (`project_ios_appstore_signing`): a self-created DISTRIBUTION
-certificate plus an `IOS_APP_STORE` profile. Cloud signing is refused here. That
-is unchanged by this work — and note the profile now has to cover the extension
-bundle id `com.soleil.BioMotion.AssetPackDownloader` as well.
+Release signing is now recorded in `project.yml` rather than external memory. It
+uses the installed Apple Distribution identity for team `N7VVB6PWZS` and the
+App Store profiles `BioMotion AppStore AG` and `BioMotion Ext AppStore AG`.
+Both profiles authorize `group.com.soleilyu.biomotion`; the extension profile
+covers `com.soleil.BioMotion.AssetPackDownloader`. Cloud signing is not used.
+The tracked `tools/release/ExportOptions-TestFlight.plist` uses
+`destination=export`, manual signing, and the generic `Apple Distribution`
+selector. The wrapper cryptographically checks the archive, exports locally,
+then verifies the final IPA's raw ZIP streams, CRCs, real expansion sizes, and
+execute bits before rechecking the re-signed app against that archive.
+Its default is local-only; `--validate` authorizes App Store Connect validation,
+and only `--upload` authorizes validation followed by upload of the same
+byte-pinned private snapshot. Do not bypass it with raw `xcodebuild` or `altool`.
 
 ---
 
@@ -286,9 +299,18 @@ Run the compiled-only runtime and developer transaction contracts with:
 `build/DevBundledModel` is an `optional:` source path in `project.yml`, so it
 simply does not exist in a normal checkout — and it sits under `build/`, which
 `.gitignore` already covers, so a 1.3 GiB copy can never be committed by
-accident. **Never archive with it on** — that re-adds the full 1.31 GiB.
-Run `off` before a Release archive; the separate release resource gate must
-also reject any bundled `.mlmodel`, `.mlpackage`, or `.mlmodelc`.
+accident. It is permitted only in a **Debug iOS Simulator** build. The generated
+app target runs the same fail-closed guard before compilation and after Copy
+Resources; every other configuration or platform rejects an enabled source model,
+and the post-build pass rejects any `.mlmodel`, `.mlpackage`, or `.mlmodelc` that
+reached the product during compilation. **Never archive with it on** — that re-adds
+the full 1.31 GiB. Run `off` and regenerate the project before any device, Release,
+archive, or distribution build. The final signed `.xcarchive` must additionally pass:
+
+```bash
+/bin/bash tools/tests/app_resource_boundary_probe.sh \
+  --release-archive build/BioMotion.xcarchive
+```
 
 Enabling requires temporary free space for the roughly 1 GiB frozen AAR plus
 the extracted compiled model. Verification and extraction failures occur before

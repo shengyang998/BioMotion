@@ -5,9 +5,11 @@
  *  Ported from OpenSim (opensim-core), which carries:                         *
  *                                                                            *
  *      OpenSim:  WrapCylinder.cpp / WrapEllipsoid.cpp / WrapObject.cpp /      *
- *                WrapMath.cpp / GeometryPath.cpp                             *
+ *                WrapMath.cpp / GeometryPath.cpp / SimmMacros.h              *
  *      Copyright (c) 2005-2017 Stanford University and the Authors            *
- *      Author(s): Peter Loan, Frank C. Anderson                              *
+ *      Author(s): Peter Loan, Frank C. Anderson, Ajay Seth                   *
+ *      WrapMath portions were originally developed by Realistic Dynamics     *
+ *      Inc.; author Frank C. Anderson.                                       *
  *                                                                            *
  *      Licensed under the Apache License, Version 2.0 (the "License"); you    *
  *      may not use this file except in compliance with the License. You may   *
