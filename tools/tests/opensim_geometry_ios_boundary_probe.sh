@@ -56,6 +56,7 @@ DEVICE_WHY_LOAD="$PROBE_TMP/OpenSimGeometryBoundary.device.why_load"
 "$SIM_CXX" \
   -target arm64-apple-ios17.0-simulator \
   -isysroot "$SIM_SDK" \
+  -I"$NIMBLE_ROOT/build_sim" \
   "${COMMON[@]}" \
   -c "$SOURCE" \
   -o "$SIM_OBJECT"
@@ -63,6 +64,7 @@ DEVICE_WHY_LOAD="$PROBE_TMP/OpenSimGeometryBoundary.device.why_load"
 "$DEVICE_CXX" \
   -target arm64-apple-ios17.0 \
   -isysroot "$DEVICE_SDK" \
+  -I"$NIMBLE_ROOT/build_ios" \
   "${COMMON[@]}" \
   -c "$SOURCE" \
   -o "$DEVICE_OBJECT"

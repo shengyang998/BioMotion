@@ -28,6 +28,7 @@ SIM_COMMON=(
   -DEIGEN_DONT_PARALLELIZE
   -Wno-deprecated-literal-operator
   -Wno-sign-compare
+  -I"$NIMBLE_ROOT/build_sim"
   -I"$NIMBLE_ROOT"
   -I"$NIMBLE_ROOT/third_party/eigen"
   -I"$NIMBLE_ROOT/third_party/tinyxml2"
@@ -42,6 +43,7 @@ DEVICE_COMMON=(
   -DEIGEN_DONT_PARALLELIZE
   -Wno-deprecated-literal-operator
   -Wno-sign-compare
+  -I"$NIMBLE_ROOT/build_ios"
   -I"$NIMBLE_ROOT"
   -I"$NIMBLE_ROOT/third_party/eigen"
   -I"$NIMBLE_ROOT/third_party/tinyxml2"

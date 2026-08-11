@@ -116,6 +116,7 @@ COMMON=(
 if ! "$SIM_CXX" \
     -target arm64-apple-ios17.0-simulator \
     -isysroot "$SIM_SDK" \
+    -I"$NIMBLE_ROOT/build_sim" \
     "${COMMON[@]}" \
     -fsyntax-only "$SOURCE" \
     >"$PROBE_TMP/simulator-compile.log" 2>&1; then
@@ -125,6 +126,7 @@ fi
 if ! "$DEVICE_CXX" \
     -target arm64-apple-ios17.0 \
     -isysroot "$DEVICE_SDK" \
+    -I"$NIMBLE_ROOT/build_ios" \
     "${COMMON[@]}" \
     -fsyntax-only "$SOURCE" \
     >"$PROBE_TMP/device-compile.log" 2>&1; then
@@ -133,10 +135,11 @@ if ! "$DEVICE_CXX" \
 fi
 
 if ! cmake \
-    -S "$NIMBLE_ROOT" \
+    -S "$NIMBLE_ROOT/ios" \
     -B "$PROBE_TMP/build" \
     -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
+    -DNIMBLE_IOS_HOST_PROBE=ON \
     >"$CONFIGURE_LOG" 2>&1; then
   cat "$CONFIGURE_LOG" >&2
   record_failure 'host transaction-probe configure failed'
@@ -169,6 +172,7 @@ if [ -f "$INJECTED_ARCHIVE" ]; then
       -isysroot "$HOST_SDK" \
       -O0 \
       -g \
+      -I"$PROBE_TMP/build" \
       "${COMMON[@]}" \
       "$SOURCE" \
       "$INJECTED_ARCHIVE" \

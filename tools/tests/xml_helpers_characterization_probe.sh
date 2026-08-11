@@ -45,6 +45,7 @@ done
 "$SIM_CXX" \
   -target arm64-apple-ios17.0-simulator \
   -isysroot "$SIM_SDK" \
+  -I"$NIMBLE_ROOT/build_sim" \
   "${COMMON_INCLUDES[@]}" \
   -c "$SOURCE" \
   -o "$SIM_OBJECT"
@@ -84,6 +85,7 @@ fi
 "$DEVICE_CXX" \
   -target arm64-apple-ios17.0 \
   -isysroot "$DEVICE_SDK" \
+  -I"$NIMBLE_ROOT/build_ios" \
   "${COMMON_INCLUDES[@]}" \
   -c "$SOURCE" \
   -o "$DEVICE_OBJECT"

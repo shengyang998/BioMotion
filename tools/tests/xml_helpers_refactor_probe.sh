@@ -48,6 +48,7 @@ fi
 "$SIM_CXX" \
   -target arm64-apple-ios17.0-simulator \
   -isysroot "$SIM_SDK" \
+  -I"$NIMBLE_ROOT/build_sim" \
   "${COMMON_FLAGS[@]}" \
   -c "$XML_SOURCE" \
   -o "$PROBE_TMP/XmlHelpers.sim.o"
@@ -55,6 +56,7 @@ fi
 "$DEVICE_CXX" \
   -target arm64-apple-ios17.0 \
   -isysroot "$DEVICE_SDK" \
+  -I"$NIMBLE_ROOT/build_ios" \
   "${COMMON_FLAGS[@]}" \
   -c "$XML_SOURCE" \
   -o "$PROBE_TMP/XmlHelpers.device.o"
@@ -104,6 +106,7 @@ DEVICE_WHY_LOAD="$PROBE_TMP/xml_locale.device.why_load"
 "$SIM_CXX" \
   -target arm64-apple-ios17.0-simulator \
   -isysroot "$SIM_SDK" \
+  -I"$NIMBLE_ROOT/build_sim" \
   "${COMMON_FLAGS[@]}" \
   -c "$LOCALE_SOURCE" \
   -o "$SIM_OBJECT"
@@ -128,6 +131,7 @@ fi
 "$DEVICE_CXX" \
   -target arm64-apple-ios17.0 \
   -isysroot "$DEVICE_SDK" \
+  -I"$NIMBLE_ROOT/build_ios" \
   "${COMMON_FLAGS[@]}" \
   -c "$LOCALE_SOURCE" \
   -o "$DEVICE_OBJECT"

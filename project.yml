@@ -5,6 +5,13 @@ options:
     iOS: "26.0"
   xcodeVersion: "16.0"
 
+settings:
+  base:
+    # The reproducible Nimble and OSQP simulator archives are arm64-only.
+    # Pin the whole target graph so a generic Simulator build cannot add an
+    # unsupported x86_64 link slice behind the app target's back.
+    "ARCHS[sdk=iphonesimulator*]": arm64
+
 targets:
   BioMotion:
     type: application
@@ -101,13 +108,21 @@ targets:
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(PROJECT_DIR)/nimblephysics/build_sim"
           - "$(PROJECT_DIR)/osqp/build_sim/out"
-        HEADER_SEARCH_PATHS:
+        "HEADER_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(PROJECT_DIR)/nimblephysics/build_ios"
           - "$(PROJECT_DIR)/nimblephysics"
           - "$(PROJECT_DIR)/nimblephysics/third_party/eigen"
           - "$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2"
           - "$(PROJECT_DIR)/osqp/include/public"
           - "$(PROJECT_DIR)/osqp/include/private"
           - "$(PROJECT_DIR)/osqp/build_ios/include/public"
+        "HEADER_SEARCH_PATHS[sdk=iphonesimulator*]":
+          - "$(PROJECT_DIR)/nimblephysics/build_sim"
+          - "$(PROJECT_DIR)/nimblephysics"
+          - "$(PROJECT_DIR)/nimblephysics/third_party/eigen"
+          - "$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2"
+          - "$(PROJECT_DIR)/osqp/include/public"
+          - "$(PROJECT_DIR)/osqp/include/private"
           - "$(PROJECT_DIR)/osqp/build_sim/include/public"
         OTHER_LDFLAGS:
           - "-lnimble_ios"
@@ -117,6 +132,7 @@ targets:
         GCC_PREPROCESSOR_DEFINITIONS:
           - "DART_IOS_BUILD=1"
           - "DART_USE_IDENTITY_JACOBIAN=1"
+          - "EIGEN_DONT_PARALLELIZE=1"
           # Make accidental inclusion of Eigen's non-MPL2 headers a compile
           # error. The pinned native-library CMake target mirrors this flag.
           - "EIGEN_MPL2_ONLY=1"
@@ -129,6 +145,7 @@ targets:
           GCC_PREPROCESSOR_DEFINITIONS:
             - "DART_IOS_BUILD=1"
             - "DART_USE_IDENTITY_JACOBIAN=1"
+            - "EIGEN_DONT_PARALLELIZE=1"
             - "EIGEN_MPL2_ONLY=1"
             - "BIOMOTION_TEST_DIAGNOSTICS=1"
         Release:
@@ -235,7 +252,17 @@ targets:
         # target call nimblephysics directly. Remove with
         # BioMotionTests/IKSolverInternalsTests.mm.
         CLANG_CXX_LANGUAGE_STANDARD: "c++17"
-        HEADER_SEARCH_PATHS:
+        "HEADER_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(PROJECT_DIR)/nimblephysics/build_ios"
+          - "$(PROJECT_DIR)/BioMotion/Nimble"
+          # MusclePathWrapTests.mm calls the ported cylinder wrap solver
+          # directly, so the geometry is unit-tested without a skeleton.
+          - "$(PROJECT_DIR)/BioMotion/Muscle"
+          - "$(PROJECT_DIR)/nimblephysics"
+          - "$(PROJECT_DIR)/nimblephysics/third_party/eigen"
+          - "$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2"
+        "HEADER_SEARCH_PATHS[sdk=iphonesimulator*]":
+          - "$(PROJECT_DIR)/nimblephysics/build_sim"
           - "$(PROJECT_DIR)/BioMotion/Nimble"
           # MusclePathWrapTests.mm calls the ported cylinder wrap solver
           # directly, so the geometry is unit-tested without a skeleton.
@@ -247,6 +274,7 @@ targets:
           - "$(inherited)"
           - "DART_IOS_BUILD=1"
           - "DART_USE_IDENTITY_JACOBIAN=1"
+          - "EIGEN_DONT_PARALLELIZE=1"
           - "EIGEN_MPL2_ONLY=1"
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(PROJECT_DIR)/nimblephysics/build_sim"

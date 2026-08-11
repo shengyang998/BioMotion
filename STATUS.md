@@ -4486,8 +4486,8 @@ Verification is layered instead of treating one green XCTest line as sufficient:
   `leakForPositiveControl()` allocation (160 bytes after allocator rounding); 32 `World()` plus 32
   `World::create()` rejection attempts report **0 leaks for 0 total leaked bytes** and end in
   `WORLD_COLLISION_REJECTION_LEAK_PROBE_PASS`. This proves the exception-order repair with the host
-  allocator, not the iOS allocator; reproducing it still depends on the not-yet-exported iOS CMake
-  source manifest.
+  allocator, not the iOS allocator. That historical receipt predates the standalone CMake export;
+  the later migration section records the current revalidation boundary separately.
 - The shell gate-policy harness passes **49/49**. The full outer commit gate passed fast
   **524/524 in 1685s** and slow **1/1 in 6172s**. Both `xcodebuild` and `xcresulttool` returned 0,
   both result bundles reported `Passed`, and the receipts contained zero failures, skips, expected
@@ -4504,9 +4504,9 @@ reverse-checks against the branch head, is 210 lines, and has SHA-256
 `d8c50a8f58e4e4a79c43d4e1be173e9d4f5d539d3be44b717c561ac97b304399`.
 
 This closes an unsupported-API boundary; it does **not** add collision/contact simulation, validate
-foot support, or reopen torque, GRF, CoP, muscle-effort, or gait-load product output. The patch also
-does not export the older dirty CMake/source-manifest port, so it is not yet a complete fresh-clone
-bootstrap.
+foot support, or reopen torque, GRF, CoP, muscle-effort, or gait-load product output. This isolated
+patch did not export the older CMake/source-manifest port; the later standalone-CMake section closes
+that separate fresh-clone boundary.
 
 
 ## The SAM3DBodyPose artifact and license contract is now pinned (2026-08-11)
@@ -4949,9 +4949,9 @@ Both arm64 simulator and device archives rebuilt. The refactor gate:
 
 `project.yml` and the generated Xcode project no longer carry the absolute Boost include path.
 Whole-app no-signing builds passed for the dedicated arm64 simulator and generic arm64 device
-destinations. This closes the XML helper dependency and its locale ambiguity. It does not yet make
-the older dirty iOS CMake/source-manifest port fresh-clone reproducible; that migration remains a
-separate tracked item.
+destinations. This closes the XML helper dependency and its locale ambiguity. This isolated commit
+did not itself make the older iOS CMake/source-manifest port reproducible; the later migration
+section closes that separate boundary.
 
 
 ## OpenSim geometry now fails closed on the no-Assimp iOS build (2026-08-11)
@@ -5149,11 +5149,12 @@ applies to the pinned `c405b05` baseline in a temporary clean worktree, and
 reverse-checks at the branch head.
 
 This closes a refusal and constructor-transaction boundary. It does not add
-Assimp, mesh rendering/loading, collision/contact, or soft-mesh simulation.
-The dirty iOS CMake/source manifest still has to be exported separately and
-must publish `DART_IOS_BUILD` consistently to all header consumers. This slice
-adds no XCTest methods or count change, and no post-change XCTest execution is
-claimed while the local Xcode 26.4 testmanager launch channel remains broken.
+Assimp, mesh rendering/loading, collision/contact, or soft-mesh simulation. At
+this slice's receipt the CMake/source manifest still needed a separate export
+and consistent `DART_IOS_BUILD` publication; the later standalone-CMake section
+closes that build boundary. This slice adds no XCTest methods or count change,
+and no post-change XCTest execution is claimed while the local Xcode 26.4
+testmanager launch channel remains broken.
 
 
 ## The iOS C3D header surface now matches the absent ezc3d backend (2026-08-11)
@@ -5209,15 +5210,94 @@ the branch head, is 116 lines, and has SHA-256
 `63b5bc8ad9206738eedabf89100a1fee84ce856f3cba6895dc63bb5fc50ea6a7`.
 
 Every iOS consumer target must define `DART_IOS_BUILD=1`; the current CMake target, app, tests, and
-probe do. This closes a false public API. It does **not** add C3D file loading, and the older dirty
-CMake/source-manifest port is still not exported as a fresh-clone bootstrap.
+probe do. This closes a false public API. It does **not** add C3D file loading. This isolated slice
+did not export the older CMake/source-manifest port; the following section records that separate
+fresh-clone result.
+
+
+## The Nimble iOS port is pinned and fresh-clone reproducible (2026-08-11)
+
+The complete BioMotion port now lives on the maintained
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
+branch. The final integration receipt is
+`0ecf26a1557ee738146511cd81fbe99f2bc94d38`, and `git ls-remote` resolved the
+remote branch to that same SHA. Fresh setup therefore clones this fork/branch
+and detaches that exact commit; it no longer clones upstream and reconstructs
+the port with hand edits or `git apply`. The outer `nimble-patches/` files remain
+historical single-diff audit, pinned-baseline replay, and reverse-check records.
+They are not a second source of the complete tree.
+
+Three nested commits close the dependency/build/header chain:
+
+- `f039af4c19ec12a3af3e6fa29ae926a7f0449981` pins the vendored Eigen and
+  tinyxml2 sources and restores their license files. The iOS build has no
+  Homebrew dependency include and no Boost dependency.
+- `bf6519c91b74b387b2a999ce59afd35f26abd6ba` adds the standalone
+  `ios/CMakeLists.txt`, `ios/config.hpp.in`, and build instructions. The reviewed
+  workflow requires CMake 3.24+ and Ninja and configures cleanly with
+  `cmake --fresh -S ios -B build_ios` or `build_sim`. Each build tree generates
+  its own DART 6.9.0 `dart/config.hpp`; a source-tree `dart/config.hpp` is a hard
+  error. The target accepts only arm64 iphoneos/iphonesimulator product builds,
+  exports all four public definitions, and exposes macOS test compilation only
+  through the explicit `NIMBLE_IOS_HOST_PROBE=ON` option.
+- `0ecf26a1557ee738146511cd81fbe99f2bc94d38` removes unavailable GUI/asio and
+  Ipopt transitive includes from the six supported biomechanics headers while
+  preserving the desktop surface behind the platform guard.
+
+Both archives were recreated from fresh caches. The device SHA-256 is
+`77b483af8f555ca5d2a2ab6344d183b0945245a8fc6b62084d7e648d739105e3`; the
+Simulator SHA-256 is
+`483f77cff99518b7832290690c6086994c9c78e0c9196a39d549e51731348b34`.
+Each archive has exactly **162** `ar` members: one symbol table and **161**
+reviewed object members. The compile-command audit covered all 161 translation
+units in each build and required the four target definitions plus the matching
+generated-config directory ahead of the source root. The dual-SDK public-header
+probe passed **12/12** positive compiles and **8/8** poisoned-dependency
+negatives; it also proved the selected DART 6.9.0 config, vendored Eigen, and
+vendored tinyxml2 came from the intended roots.
+
+An independent clean clone from the published HTTPS branch then detached the
+same exact receipt and rebuilt both SDK variants. It reproduced both archive
+hashes and both 162-member inventories, ending in
+`FRESH_REMOTE_NIMBLE_REPRODUCIBILITY_PASS`; the checkout remained clean.
+
+Outer integration then passed all eight archive probes: anthropometrics, C3D,
+collision static-link, mesh shape, OpenSim geometry, OpenSim utilities, XML
+characterization, and XML refactor. The separate `SoftBodyNode` rejection
+transaction completed its root/child rollback checks and AddressSanitizer-clean
+normal path to `SOFT_BODY_MESH_REJECTION_TRANSACTION_PASS`.
+
+The first fresh generic-Simulator product build correctly exposed one remaining
+integration defect: Xcode selected x86_64 even though the reviewed Nimble and
+OSQP Simulator archives are intentionally arm64-only. The project now declares
+that arm64 boundary explicitly instead of failing later at link time. A fresh
+generic Simulator build and a fresh unsigned Release generic-device build both
+pass after the fix. The generated app-and-test target also passes
+`build-for-testing` and emits `BIOMOTION_NIMBLE_TEST_TARGET_BUILD_PASS`.
+
+No new `leaks` result is claimed for this migration. The current host has
+`DevToolsSecurity -status` disabled, so non-interactive `leaks` attachment to
+the target process is not authorized or reliable under the current host policy.
+The hardened probe now fails immediately with exit **25** under that condition;
+when permission is available it inspects a live child PID rather than a dead
+process. That fail-fast policy and the older
+historical leak receipt do not substitute for a new permitted run.
+
+This closes build reproducibility and header/dependency integration only. It
+does not add collision/contact, Assimp/mesh, ezc3d, anthropometric scoring, or
+dynamics support. It also does not grant commercial rights to the
+**42 MoBL-ARMS-derived upper-limb muscles** in `FullBody.osim`: commercial/App
+Store release remains blocked until the owner obtains written commercial
+permission or replaces/removes that material.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
 `math::solveIK` / `math::refineIK`; it runs its own bound-projected Levenberg-Marquardt at the call
-site. **The vendored nimble tree is byte-identical** (`git status nimblephysics/ osqp/` = 0 lines).
+site. **At this historical 2026-08-07 receipt, the vendored nimble tree was byte-identical**
+(`git status nimblephysics/ osqp/` = 0 lines); the maintained iOS fork described above was published
+later.
 
 Six distinct defects, each with its own mechanism:
 

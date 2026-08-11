@@ -70,16 +70,23 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `BioMotion/Recording/TRCExporter.swift` | OpenSim .trc export |
 | `BioMotion/App/CalibrationView.swift` | T-pose calibration with live camera (live path only — the offline path scales from one frame's chain sums, see `MHRRetarget.segmentScaleMarkers`) |
 | `BioMotion/Muscle/osqp_interrupt_stub.c` | OSQP interrupt handler stub for iOS |
-| `nimblephysics/CMakeLists.txt` | iOS-specific CMake (NOT the original — upstream is preserved as `CMakeLists_original.txt`) |
+| `nimblephysics/ios/CMakeLists.txt` | Standalone, reproducible `nimble_ios` CMake target; generates the matching build-tree `dart/config.hpp` |
 | `tools/osim_fixes/` | The FullBody.osim edit (patella weld + shoulder axis unit-snap), its measurement harness and revert instructions |
 | `tools/opensim_ref/` | The OpenSim 4.6 reference generators (`uv` venv, PyPI `opensim` wheel), all read-only against the shipped `.osim`. `dump_reference.py` → CSV, `analyse.py --write-fixture` → `BioMotionTests/Fixtures/opensim_moment_arms.txt`; `dump_finite_difference.py` → `opensim_moment_arms_fd.txt`, OpenSim's own central difference of its own length (the column a `-dL/dq` implementation is comparable with); `fd_check.py` → analytic vs central for one pose/muscle; `inspect_wrap.py` → the wrapped path point by point, with the solver's raw inputs; `pose_coverage.py` → what the pose grid covers |
 | `tools/assetpack/` | Pack build + upload; `dev_bundle_model.sh on\|off` receipt-verifies and bundles the precompiled model locally so the Simulator needs no download |
 
-### Nimble iOS patches
+### Nimble iOS fork boundary
 
-The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_IOS_BUILD` to find them. Touched areas:
+Fresh setup clones the maintained
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
+fork and detaches exact receipt
+`0ecf26a1557ee738146511cd81fbe99f2bc94d38`. That fork is the complete source
+of truth for the port; do not rebuild it from upstream with hand edits or apply
+the historical `nimble-patches/*.patch` files on top. Those files remain for
+audit, pinned-baseline replay, and reverse-checks. Grep the fork for
+`DART_IOS_BUILD` to find platform boundaries. Key areas:
 
-- `config.hpp` — manual config with `HAVE_IPOPT=0`, `DART_IOS_BUILD=1`
+- `ios/CMakeLists.txt` / `ios/config.hpp.in` — standalone arm64 iOS target and generated DART 6.9.0 config; a source-tree `dart/config.hpp` is forbidden
 - `MeshShape.hpp` / `MeshShape_ios.cpp` — Assimp stubs
 - `OpenSimParser.cpp` — guarded MarkerFitter, GUIRecording, SdfParser, MJCFExporter includes
 - `MarkerAspect.hpp` / `Marker.hpp` — enum `NO` → `CONSTRAINT_NONE` (ObjC macro conflict)
@@ -87,12 +94,20 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 - `C3DLoader.*` / `C3DForcePlatforms.*` — iOS keeps the pure C3D/ForcePlate data surface but hides
   loader-only ezc3d and GUI adapters; every iOS consumer target must define `DART_IOS_BUILD=1`
 - `XmlHelpers.cpp` — classic-locale standard-library conversion with no Boost dependency
-- `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` etc — GUIWebsocketServer guards
+- `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` etc — GUIWebsocketServer guards and explicit iOS header boundaries
 - `DARTCollisionDetector_ios.cpp` — stub for collision detector factory
-- Vendored: Eigen 3.4.0 (`third_party/eigen`), tinyxml2 (`third_party/tinyxml2`)
+- Vendored and pinned: Eigen 3.4.0 (`third_party/eigen`) and tinyxml2 (`third_party/tinyxml2`), including their licenses; no Homebrew or Boost dependency path
 
 ## Gotchas
 
+- **Nimble build boundary**: use CMake 3.24+ with Ninja and configure with
+  `cmake --fresh -S ios -B build_ios` / `build_sim`. Each build tree owns its
+  generated `dart/config.hpp` and must precede the source root in header search
+  paths. The target exports `DART_IOS_BUILD=1`,
+  `DART_USE_IDENTITY_JACOBIAN=1`, `EIGEN_DONT_PARALLELIZE=1`, and
+  `EIGEN_MPL2_ONLY=1`. Both device and Simulator archives are arm64-only.
+  Host-native fault/leak probes require the explicit
+  `-DNIMBLE_IOS_HOST_PROBE=ON` option.
 - **Eigen version**: Nimble requires Eigen 3.x. Eigen 5.x (Homebrew default) has breaking API changes. Use vendored `third_party/eigen` (3.4.0).
 - **Marker names**: ARKit joints map to virtual markers at body node origins, NOT to the model's surface markers (RASI, LASI etc). See `NimbleBridge.mm` virtual marker registration.
 - **Stable joint id is not marker anatomy.** Live `hips_joint` resolves to `PELVIS`; MHR keeps the
@@ -105,9 +120,10 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 - **Library search paths**: Conditional on SDK — `[sdk=iphoneos*]` for device, `[sdk=iphonesimulator*]` for simulator.
 - **Nimble source is not the linked artefact.** The app links
   `nimblephysics/build_ios/libnimble_ios.a` and `build_sim/libnimble_ios.a`, not
-  the stale XCFramework. After changing vendored C++, rebuild BOTH archives and
-  add a reviewed patch under `nimble-patches/`; a source-only fix can otherwise
-  look correct in `git diff` while every test still runs the old object code.
+  the stale XCFramework. After changing vendored C++, commit the change on the
+  maintained fork, rebuild BOTH archives from `nimblephysics/ios/CMakeLists.txt`,
+  and update the pinned receipt/docs. A source-only fix can otherwise look
+  correct in `git diff` while every test still runs the old object code.
 - **XcodeGen**: Always run `xcodegen generate` after editing `project.yml` — never edit `BioMotion.xcodeproj/` by hand. A **new test file** needs it too, even when `project.yml` is unchanged, or it sits on disk silently not running.
 - **Native-rate sampling is span-bounded and frame-bounded.** It targets up to 4 s, but the
   601-frame cap covers about 2.5 s at 240 fps; it is not the same 120-call budget as sparse mode.

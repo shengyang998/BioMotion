@@ -1,15 +1,25 @@
 # Nimble patches
 
-This folder holds reviewed local patches to `nimblephysics/` that BioMotion
-needs but has not upstreamed. `nimblephysics/` itself is a gitignored vendored
-clone, so every behaviour change made for BioMotion needs a patch here.
+This folder preserves reviewed historical patches to `nimblephysics/` that
+BioMotion has not upstreamed. They remain authoritative audit artifacts for the
+individual diffs listed below: each pins its upstream baseline, patch hash,
+causal evidence, and reverse-check. They are not the complete port and are not
+the fresh-setup mechanism.
 
-The folder is authoritative for the patches listed below, not yet for the
-entire vendored tree. The current iOS port also contains older build and header
-changes that predate this record; a fresh clone therefore still needs the
-repository's iOS-port setup in addition to these patches. Do not describe a
-fresh Nimble checkout as reproducible until those remaining changes have also
-been exported and checked.
+The complete source of truth is the maintained
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
+fork at exact receipt
+`0ecf26a1557ee738146511cd81fbe99f2bc94d38`; `git ls-remote` resolved the
+remote branch to that same SHA on 2026-08-11. It includes these behavior
+changes, the reproducible standalone `ios/CMakeLists.txt`, generated-config
+template, public-header cleanup, and pinned Eigen/tinyxml2 sources and licenses.
+
+For a fresh build, clone that branch and detach the exact receipt as documented
+in the outer `README.md`. Do not clone upstream and hand-apply this patch series,
+and do not apply these files on top of the maintained fork. The patch replay
+commands below are historical, single-diff audit recipes for a disposable
+checkout at the named baseline. Current builds and product probes run from the
+maintained fork after its standard dual-SDK `cmake --fresh -S ios` build.
 
 ## `opensimparser-fail-closed.patch`
 
@@ -88,20 +98,22 @@ inspecting source:
   E1 **1/1 in 6170 s**, with zero failures, skips, expected failures or
   test-host restarts; the runner ended with `ALL GATE PASS`.
 
-### How to apply after a fresh `nimblephysics/` clone
+### Historical baseline replay and current-fork verification
+
+The apply step below is for a disposable checkout of the pinned upstream
+baseline. It audits this one patch; it is not a BioMotion bootstrap.
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/opensimparser-fail-closed.patch
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/opensimparser-fail-closed.patch
 ```
 
-Then run the product regressions:
+On the maintained fork, build both archives through `ios/CMakeLists.txt` as
+documented in the outer `README.md`, then run the product regressions:
 
 ```sh
-cd ..
+cd /path/to/BioMotion
 tools/run_tests.sh subset \
   -only-testing:BioMotionTests/DOFMaskTests/testFailedReloadPreservesActiveDOFMask \
   -only-testing:BioMotionTests/IKSolverInternalsTests/testP8ModelCoordinateRepresentation \
@@ -178,7 +190,9 @@ Regression evidence is intentionally layered:
   **0 leaks / 0 bytes** and ended in
   `WORLD_COLLISION_REJECTION_LEAK_PROBE_PASS`. This proves the exception-order
   fix with the macOS allocator; it is not an iOS allocator measurement and it
-  currently depends on the still-unexported iOS CMake source manifest.
+  predates the standalone CMake export. The 2026-08-11 CMake migration has a
+  separate revalidation receipt below; do not treat this historical result as a
+  new post-migration `leaks` pass.
 - The shell gate policy self-tests pass **49/49**. The enclosing full gate
   passed the fast lane **524/524 in 1685s** and the slow lane **1/1 in
   6172s**. Both `xcodebuild` and `xcresulttool` returned 0, both result bundles
@@ -188,23 +202,22 @@ Regression evidence is intentionally layered:
 This is an explicit refusal boundary. It does not add collision/contact
 simulation and does not reopen any dynamics product claim.
 
-### Apply and verify
+### Historical baseline replay and current-fork verification
 
-The patch can be applied independently at the pinned source baseline, but its
-new iOS source file still has to be selected by the current iOS-port CMake
-manifest. That older manifest is not yet represented by this patch, so the
-commands below describe the maintained current port, not a complete fresh-clone
-bootstrap:
+The patch can be replayed independently at the pinned baseline for audit. It is
+already present in the maintained fork; use the outer `README.md` for a buildable
+checkout and dual-SDK archive commands.
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/ios-collision-fail-closed.patch
-# Install/apply the current iOS source manifest before these two builds.
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/ios-collision-fail-closed.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 tools/run_tests.sh subset \
   -only-testing:BioMotionTests/CollisionFailClosedTests
 bash tools/tests/collision_static_link_probe.sh
@@ -291,17 +304,18 @@ Every iOS consumer must define `DART_IOS_BUILD=1`; the current CMake target,
 app, tests, and probes do. This patch aligns the header contract with an absent
 backend. It does not add C3D file loading.
 
-### Apply and verify
+### Historical baseline replay and current-fork verification
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/ios-c3d-boundary.patch
-# Install/apply the current iOS source manifest before these two builds.
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/ios-c3d-boundary.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 tools/run_tests.sh subset \
   -only-testing:BioMotionTests/C3DIOSBoundaryTests/testC3DAndForcePlateRemainUsableValueTypes
 tools/run_tests.sh subset \
@@ -372,20 +386,21 @@ Verification is split so the refactor cannot define its own expected behavior:
 - App and test build settings no longer contain the absolute Homebrew Boost
   include path. Whole-app, no-signing builds passed for the dedicated arm64
   simulator and the generic arm64 device destination. This removes the XML
-  consumer dependency; the still-dirty older iOS CMake port is tracked
-  separately and is not claimed reproducible by this patch.
+  consumer dependency. The later standalone-CMake receipt independently closes
+  the full-port reproducibility boundary.
 
-### Apply and verify
+### Historical baseline replay and current-fork verification
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/xml-helpers-no-boost.patch
-# Install/apply the current iOS source manifest before these two builds.
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/xml-helpers-no-boost.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 bash tools/tests/xml_helpers_refactor_probe.sh
 ```
 
@@ -454,17 +469,18 @@ test, while the independently linked simulator executable continued to run.
 The gate treats that missing xcresult as failure. A fresh runner must execute
 the focused six methods and then `tools/run_tests.sh all` before release.
 
-### Apply and verify
+### Historical baseline replay and current-fork verification
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/ios-opensim-geometry-boundary.patch
-# Install/apply the current iOS source manifest before these two builds.
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/ios-opensim-geometry-boundary.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 bash tools/tests/opensim_geometry_ios_boundary_probe.sh
 tools/run_tests.sh subset \
   -only-testing:BioMotionTests/OpenSimGeometryBoundaryTests
@@ -542,17 +558,18 @@ overloads, `loadTRC`, `loadMot`, `loadGRF`, and
   claimed desktop binary receipt. Final independent review reported zero
   blocker, high, medium, or low issue.
 
-### Apply and verify
+### Historical baseline replay and current-fork verification
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/ios-opensim-utilities-boundary.patch
-# Install/apply the current iOS source manifest before these two builds.
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/ios-opensim-utilities-boundary.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 bash tools/tests/opensim_utils_ios_boundary_probe.sh
 ```
 
@@ -637,17 +654,18 @@ boundary, not an iOS implementation of mesh-backed anthropometric scoring.
   test-causality and skeleton-state observations were incorporated before the
   final green run.
 
-### Apply and verify
+### Historical baseline replay and current-fork verification
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/ios-anthropometrics-boundary.patch
-# Install/apply the current iOS source manifest before these two builds.
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/ios-anthropometrics-boundary.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 bash tools/tests/anthropometrics_ios_boundary_probe.sh
 ```
 
@@ -740,18 +758,18 @@ No post-change XCTest execution is claimed: the local Xcode 26.4 testmanager
 channel remains unable to launch even the unrelated smoke test. This boundary
 adds no XCTest methods or reviewed fast-count change.
 
-### Apply and verify
+### Historical baseline replay and current-fork verification
 
 ```sh
-cd labs/BioMotion/nimblephysics
+cd /path/to/disposable-nimble-audit-clone
 git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
-git apply ../nimble-patches/ios-mesh-shape-boundary.patch
-# Install/apply the current iOS source manifest, selecting MeshShape_ios.cpp
-# instead of the two Assimp-backed desktop implementation files.
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+git apply /path/to/BioMotion/nimble-patches/ios-mesh-shape-boundary.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 SIMULATOR_UDID=<booted-udid> tools/tests/mesh_shape_ios_boundary_probe.sh
 tools/tests/soft_body_node_mesh_rejection_probe.sh
 ```
@@ -764,8 +782,9 @@ git -C nimblephysics apply --reverse --check \
 ```
 
 The compile definition must remain consistent across every consumer of these
-conditional public headers. Exporting `DART_IOS_BUILD` as a public property of
-the reproducible CMake target remains part of the later source-manifest slice.
+conditional public headers. The standalone target now exports
+`DART_IOS_BUILD=1` publicly, while the outer app and tests mirror the same
+definition for their direct header consumption.
 
 ## `simmspline-linear-extrapolation.patch`
 
@@ -807,15 +826,18 @@ out-of-domain endpoint-tangent evaluation through the production
 `MomentArmComputer`; FullBody's fidelity report is `Moving 4 parsed
 (0 approximated, 0 skipped)`.
 
-### Apply and rebuild
+### Historical baseline replay and current-fork verification
 
 ```sh
-cd labs/BioMotion/nimblephysics
-git apply ../nimble-patches/simmspline-linear-extrapolation.patch
-cmake --build build_ios --target nimble_ios --parallel
-cmake --build build_sim --target nimble_ios --parallel
+cd /path/to/disposable-nimble-audit-clone
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply /path/to/BioMotion/nimble-patches/simmspline-linear-extrapolation.patch
+```
 
-cd ..
+After the standard maintained-fork build:
+
+```sh
+cd /path/to/BioMotion
 xcodegen generate
 tools/run_tests.sh subset \
   -only-testing:BioMotionTests/SimmSplineExtrapolationTests

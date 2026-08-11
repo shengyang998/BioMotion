@@ -40,6 +40,7 @@ COMMON=(
   -DDART_USE_IDENTITY_JACOBIAN=1
   -DEIGEN_DONT_PARALLELIZE
   -Wno-deprecated-literal-operator
+  -I"$REPO_ROOT/nimblephysics/build_sim"
   -I"$REPO_ROOT/nimblephysics"
   -I"$REPO_ROOT/nimblephysics/third_party/eigen"
 )

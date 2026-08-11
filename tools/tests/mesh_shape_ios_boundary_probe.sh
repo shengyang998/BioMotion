@@ -29,6 +29,7 @@ SIM_COMMON=(
   -DDART_USE_IDENTITY_JACOBIAN=1
   -DEIGEN_DONT_PARALLELIZE
   -Wno-deprecated-literal-operator
+  -I"$NIMBLE_ROOT/build_sim"
   -I"$NIMBLE_ROOT"
   -I"$NIMBLE_ROOT/third_party/eigen"
   -I"$NIMBLE_ROOT/third_party/tinyxml2"
@@ -42,6 +43,7 @@ DEVICE_COMMON=(
   -DDART_USE_IDENTITY_JACOBIAN=1
   -DEIGEN_DONT_PARALLELIZE
   -Wno-deprecated-literal-operator
+  -I"$NIMBLE_ROOT/build_ios"
   -I"$NIMBLE_ROOT"
   -I"$NIMBLE_ROOT/third_party/eigen"
   -I"$NIMBLE_ROOT/third_party/tinyxml2"
