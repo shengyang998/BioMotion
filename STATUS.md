@@ -4885,12 +4885,13 @@ retain at least 30 days of validity. Because this project does not enable Keycha
 `keychain-access-groups` entitlement is now unreviewed and rejected instead of receiving wildcard
 subset treatment.
 
-The strengthened resource suite passes **37/37** source, PBX, arm64 Simulator-app, test-bundle,
+The strengthened resource suite passes **40/40** source, PBX, arm64 Simulator-app, test-bundle,
 archive-provenance, stale-version, export-option, and unsafe-IPA cases. The IPA negatives include
 a raw ZIP name whose NUL suffix Python would otherwise truncate, an 8 MiB DEFLATE stream whose
 local and central metadata falsely claim one byte, and an app executable with its execute bits
 removed. The gate independently checks raw central/local headers, actual inflate EOF/CRC/size and
-data descriptors, then binds Unix execute permissions back to the archive. The developer-model guard
+data descriptors, rejects semantic ASi Unix metadata and ZIP comments, then binds Unix execute
+permissions back to the archive. The developer-model guard
 suite passes **16/16**, the CMS mutation suite **2/2**, and the fail-fast TestFlight wrapper suite
 **9/9**. A fresh arm64 Debug Simulator `build-for-testing` succeeded and its actual `.xctest` passed
 the exact bundle smoke gate. A separate clean app-only product—so no embedded test plugin could be

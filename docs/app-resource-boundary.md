@@ -70,6 +70,8 @@ symlinks, special entries, unreviewed compression, and size/entry-count expansio
 independently binds every raw central-directory record to its local header, decodes the
 actual STORED or DEFLATED byte span under the total expansion budget, and requires the
 real EOF, CRC, compressed/uncompressed sizes, and optional data descriptor to agree.
+Only reviewed timestamp/UID-GID extra fields are accepted; alternate path/type metadata
+and entry/archive comments are rejected rather than left to extractor interpretation.
 This prevents a ZIP parser from accepting a declared one-byte entry that Apple's
 extractor would expand into megabytes. Unix file types and execute bits are also part
 of the contract: the app and extension code images must be executable, ordinary
@@ -133,9 +135,9 @@ fixtures plus an ad-hoc arm64 device archive that must be rejected, then mutates
 boundary at a time. Its negative cases cover
 wrong target membership, stale guards, changed source identities, nested/renamed
 models, extra OSIM or large data, hidden asset-catalog entries, altered legal files,
-symlinks, unsafe IPA paths, forged ZIP expansion metadata, missing executable bits,
-macOS images relabelled as iOS, and wrong archive provenance. The CMS suite signs a
-parseable fixture then mutates its embedded plist
+symlinks, unsafe IPA paths, forged ZIP expansion or semantic metadata, ZIP comments,
+missing executable bits, macOS images relabelled as iOS, and wrong archive provenance.
+The CMS suite signs a parseable fixture then mutates its embedded plist
 without changing its length, proving payload parsing cannot substitute for signature
 verification. The TestFlight suite causally proves local-only default behavior,
 gate-before-export ordering, credential deferral, unique IPA selection, byte-change

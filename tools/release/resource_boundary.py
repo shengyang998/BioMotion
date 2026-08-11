@@ -71,6 +71,7 @@ ZIP_ALLOWED_FLAGS = (
 )
 ZIP64_EXTRA_ID = 0x0001
 ZIP_ALTERNATE_UNICODE_EXTRA_IDS = {0x6375, 0x7075}
+ZIP_REVIEWED_NON_SEMANTIC_EXTRA_IDS = {0x5455, 0x5855, 0x7875}
 
 MODEL_IDENTITIES = {
     "FullBody.osim": (
@@ -1359,7 +1360,7 @@ def resolve_release_archive(archive: Path) -> tuple[Path, dict]:
 
 
 def validate_zip_extra(extra: bytes, label: str) -> None:
-    """Reject malformed and ZIP64 extras; release IPAs fit the 32-bit format."""
+    """Accept only metadata that cannot change an extracted path, type, or bytes."""
     offset = 0
     while offset < len(extra):
         if len(extra) - offset < 4:
@@ -1372,6 +1373,8 @@ def validate_zip_extra(extra: bytes, label: str) -> None:
             fail(f"{label} uses unreviewed ZIP64 metadata")
         if field_id in ZIP_ALTERNATE_UNICODE_EXTRA_IDS:
             fail(f"{label} uses an alternate Unicode ZIP name or comment")
+        if field_id not in ZIP_REVIEWED_NON_SEMANTIC_EXTRA_IDS:
+            fail(f"{label} uses an unreviewed ZIP extra field: 0x{field_id:04x}")
         offset += field_size
 
 
@@ -1428,6 +1431,8 @@ def parse_zip_central_entries(
                 extra = read_exact(stream, extra_size, f"{label} extra field")
                 comment = read_exact(stream, comment_size, f"{label} comment")
                 validate_zip_extra(extra, label)
+                if comment:
+                    fail(f"{label} contains an unreviewed ZIP entry comment")
                 decoded_name = decode_zip_name(raw_name, flags, label)
                 if "\x00" in decoded_name:
                     fail(
@@ -1691,6 +1696,8 @@ def extract_release_ipa(ipa: Path, destination: Path) -> Path:
     except (OSError, zipfile.BadZipFile) as error:
         fail(f"release IPA is not a valid ZIP archive: {error}")
     with archive:
+        if archive.comment:
+            fail("release IPA contains an unreviewed ZIP archive comment")
         entries = archive.infolist()
         if not (1 <= len(entries) <= MAX_IPA_ENTRIES):
             fail(f"release IPA entry count is outside the reviewed budget: {len(entries)}")

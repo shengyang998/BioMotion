@@ -671,7 +671,10 @@ expect_failure release_ipa_nul_filename \
 /usr/bin/python3 - \
   "$TEST_ROOT/normal-raw.ipa" \
   "$TEST_ROOT/forged-size.ipa" \
-  "$TEST_ROOT/non-executable.ipa" <<'PY'
+  "$TEST_ROOT/non-executable.ipa" \
+  "$TEST_ROOT/semantic-extra.ipa" \
+  "$TEST_ROOT/entry-comment.ipa" \
+  "$TEST_ROOT/archive-comment.ipa" <<'PY'
 from pathlib import Path
 import stat
 import struct
@@ -746,6 +749,30 @@ with zipfile.ZipFile(non_executable, "w") as archive:
         b"app-code",
         stat.S_IFREG | 0o644,
     )
+
+semantic_extra = Path(sys.argv[4])
+with zipfile.ZipFile(semantic_extra, "w") as archive:
+    entry = zipfile.ZipInfo("Payload/BioMotion.app/Info.plist")
+    entry.create_system = 3
+    entry.external_attr = (stat.S_IFREG | 0o644) << 16
+    entry.extra = struct.pack("<HH", 0x756E, 0)
+    archive.writestr(entry, b"resource")
+
+entry_comment = Path(sys.argv[5])
+with zipfile.ZipFile(entry_comment, "w") as archive:
+    entry = zipfile.ZipInfo("Payload/BioMotion.app/Info.plist")
+    entry.create_system = 3
+    entry.external_attr = (stat.S_IFREG | 0o644) << 16
+    entry.comment = b"alternate entry metadata"
+    archive.writestr(entry, b"resource")
+
+archive_comment = Path(sys.argv[6])
+with zipfile.ZipFile(archive_comment, "w") as archive:
+    entry = zipfile.ZipInfo("Payload/BioMotion.app/Info.plist")
+    entry.create_system = 3
+    entry.external_attr = (stat.S_IFREG | 0o644) << 16
+    archive.writestr(entry, b"resource")
+    archive.comment = b"alternate archive metadata"
 PY
 
 expect_extractor_pass release_ipa_raw_normal "$TEST_ROOT/normal-raw.ipa"
@@ -755,8 +782,17 @@ expect_extractor_failure release_ipa_forged_real_size \
 expect_extractor_failure release_ipa_executable_bits_zero \
   'release IPA code image is not executable: BioMotion' \
   "$TEST_ROOT/non-executable.ipa"
+expect_extractor_failure release_ipa_semantic_extra \
+  'uses an unreviewed ZIP extra field: 0x756e' \
+  "$TEST_ROOT/semantic-extra.ipa"
+expect_extractor_failure release_ipa_entry_comment \
+  'contains an unreviewed ZIP entry comment' \
+  "$TEST_ROOT/entry-comment.ipa"
+expect_extractor_failure release_ipa_archive_comment \
+  'release IPA contains an unreviewed ZIP archive comment' \
+  "$TEST_ROOT/archive-comment.ipa"
 
-if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 37 ]; then
+if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 40 ]; then
   printf 'app-resource boundary suite count mismatch: %s/%s\n' \
     "$pass_count" "$total_count" >&2
   exit 1
