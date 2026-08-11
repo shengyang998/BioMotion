@@ -498,6 +498,32 @@ always trace the provenance chain of composite models.**
 The **48 trapezius/serratus muscles come from the Bruno/Allaire spine+ribcage model, which is
 verified stock MIT** and is not affected.
 
+### Trapezius / serratus geometry audit (2026-08-11)
+
+The licence-clear 48 are not geometrically dead everywhere. At the fixed
+`FullBody.osim` SHA-256 `0003473937af6883034df358194bd8f52853818e79e36fd23eb5ca2c8d741c09`,
+OpenSim 4.6 found **59 unlocked rotational coordinates and 852 structural
+muscle-coordinate pairs**. At both neutral and the committed `spine_flexed` pose, all **852/852**
+had `|r| > 1e-6 m`; neutral min / median / max was **0.104 / 53.303 / 199.825 mm**, and
+`spine_flexed` was **0.082 / 48.154 / 194.438 mm**. OpenSim's analytic result agreed with an
+independent `-dL/dq` central difference with zero sign disagreements and maximum absolute error
+`5.793e-8 m` / `4.717e-8 m` at the two poses.
+
+That positive result has a hard boundary. The same 48 paths have **exactly zero** moment arm in all
+**48 × 6 = 288** glenohumeral samples because the clavicle/scapula chain is welded. Only
+`trap_cl`, `trap_acr_scap` and their left counterparts cross the three head/neck rotations, and
+52 other muscles also cross that joint. Across a separate `-4° / 0° / +4°` sample all 2556 values
+were non-zero, but 147/852 pairs changed sign. Therefore this is a sampled local geometry fact,
+not evidence of activation, load, shoulder stabilisation, or an identifiable *"upper trapezius
+overworking"* result. Spine coordinates remain priors rather than observations, and the static
+optimisation remains underdetermined.
+
+The permanent read-only receipt is
+`tools/opensim_ref/audit_trapezius_serratus.py`; it also records the 28 trapezius / 20 serratus
+partition, the head-neck / thoracic / rib / sternum groups, and the absence of shoulder action.
+The existing `opensim_moment_arms.txt` regression fixture contains none of these 48 muscles, so this
+manual OpenSim audit is not represented as an iOS runtime gate.
+
 ---
 
 ## Model facts (verified — do not re-derive)
@@ -5500,10 +5526,14 @@ arms must differ in the work that PRECEDES the mask.
    coordinates) in `FullBody.osim` against the **BSD-3 Holzbaur 2005** model. If they are the 2005
    values, the provenance is BSD-3 and the licence question changes character entirely. Hours of
    scripting, and it converts a legal inference into a fact. **Do this first.**
-2. **Measure whether trapezius / serratus moment arms are non-zero** about the free thoracic DOFs.
-   These 48 muscles are MIT-clear. Their scapular action is dead (spans a weld), but their thoracic
-   action may be live. If it is, *"upper trapezius overworking from forward head"* is a
-   commercially-clear, muscle-level, upper-body finding available today. Half a day.
+2. ~~**Measure whether trapezius / serratus moment arms are non-zero** about the free thoracic
+   DOFs.~~ **GEOMETRY AUDIT DONE 2026-08-11; the proposed product inference is rejected.** All
+   852/852 structural rotational pairs were non-zero at neutral and `spine_flexed`, and analytic
+   OpenSim arms agreed with independent length differentiation. However all 288 shoulder samples
+   are exactly zero, only four paths cross head/neck rotation, the spine coordinates are priors,
+   and a non-zero lever arm cannot identify activation or *"overworking"*. See
+   [Trapezius / serratus geometry audit](#trapezius--serratus-geometry-audit-2026-08-11) and its
+   reproducible script.
 3. ~~**Build the kinematics-only findings layer.**~~ **DONE 2026-08-07** — see
    [Posture findings](#posture-findings-a-kinematics-only-layer-2026-08-07). Nine findings, no
    clinical thresholds, view-gated. Note the basis was NOT lifted from
