@@ -5829,10 +5829,14 @@ arms must differ in the work that PRECEDES the mask.
     `rootTranslationObservable` is false on every real frame. It also fixes things that have nothing
     to do with dynamics: the ground-height estimator, GRF contact detection and the CoP all currently
     run on a body whose pelvis sits at a model constant.
-16. **Surface `MotionVerdict` in the UI.** `OfflineResultStore.MotionState` has two cases and
-    `OfflinePlaybackView.motionDetail` hard-codes *"muscle loads need a still pose"*. The engine now
-    reports four reasons with a sentence each (`MotionVerdict.advice`), including
-    `.indistinguishableFromNoise`, which is *not* the user's fault and has a different remedy.
+16. ~~**Surface `MotionVerdict` in the UI.**~~ **DONE 2026-08-07.** Commit
+    `5e9b370` removed the parallel `hold`/`moving` taxonomy:
+    `OfflineResultStore.MotionState` now carries the engine's exact
+    `MotionVerdict`, and `OfflinePlaybackView.motionDetail` renders its advice.
+    `.indistinguishableFromNoise` shows the measured pose-noise floor beside
+    the speed instead of blaming the user; `.movingBeyondStaticBudget` retains
+    the distinct hold-still remedy. The later **526/526** fast gate exercised
+    the current verdict/store/UI target with zero failures or skips.
 17. **Build the camera-static check, upstream where the frames are.** Measured to separate the
     owner's clips by 20-60× (§ cam_t). Two constraints from the measurement: it must run at the
     video's NATIVE rate (at 10 fps sampling the estimator aliased a 13.5 °/s pan down to ~0), and it
