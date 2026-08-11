@@ -316,6 +316,86 @@ git -C nimblephysics apply --reverse --check \
   ../nimble-patches/ios-c3d-boundary.patch
 ```
 
+## `xml-helpers-no-boost.patch`
+
+**Applies to**: `nimblephysics/dart/utils/XmlHelpers.cpp`
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commit** on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05):
+`78b292e19af13ad77501c9b22f49c1fa06146501` — remove the XML helper's Boost
+string/lexical dependency while preserving the reviewed conversion contract.
+
+**Patch receipt**: 492 lines; SHA-256
+`86bf0987efa9961a06679115e926408fc451a5ca4ee165fee29c5b808ec58aa9`.
+
+### Problem
+
+`XmlHelpers.cpp` used header-only Boost string algorithms and
+`boost::lexical_cast`. That forced both app and test targets to carry an
+absolute `/opt/homebrew/Cellar/boost/1.90.0_1/include` search path even though
+the final archive needed no Boost library. The path is host-specific and made
+a clean machine depend on one exact Homebrew installation.
+
+A direct replacement is behavior-sensitive. Existing callers observe exact
+float/double formatting, a `std::bad_cast` base exception, unsigned `"-1"`
+wrapping, literal-space vector tokenization, and Apple libc++ `ERANGE` behavior
+for overflow, underflow, and subnormal parsing. Boost also follows the global
+C++ locale, which is unsuitable for XML's locale-independent decimal dot.
+
+### Fix and verification
+
+The replacement uses standard streams imbued with `std::locale::classic()` and
+a local exception derived from `std::bad_cast`. It preserves the characterized
+scalar, vector, transform, tinyxml2, `errno`, NaN/Infinity, hexadecimal-float,
+and formatting behavior. The intentional improvement is locale stability:
+hostile global comma/grouping punctuation can no longer change XML output or
+input.
+
+Verification is split so the refactor cannot define its own expected behavior:
+
+- `xml_helpers_characterization_probe.sh` first passed against the old Boost
+  archive and pins the legacy contract independently.
+- Both arm64 simulator and device archives were rebuilt after the source
+  change. Fresh source compiles use `-Wall -Wextra -Werror` for both SDKs and
+  emit no Boost symbol.
+- `xml_helpers_refactor_probe.sh` requires exactly one `XmlHelpers.cpp.o` in
+  each archive and rejects `boost::` in those exact members. Ordinary
+  dead-stripped links extract the member without force-loading.
+- The simulator hostile-locale run emitted
+  `XML_HELPERS_CLASSIC_LOCALE_PASS`; the rebuilt archive then reran the complete
+  characterization to `XML_HELPERS_CHARACTERIZATION_PASS` and
+  `XML_HELPERS_ARCHIVE_PROBE_PASS`, before the final
+  `XML_HELPERS_NO_BOOST_ARCHIVES_PASS` sentinel.
+- App and test build settings no longer contain the absolute Homebrew Boost
+  include path. Whole-app, no-signing builds passed for the dedicated arm64
+  simulator and the generic arm64 device destination. This removes the XML
+  consumer dependency; the still-dirty older iOS CMake port is tracked
+  separately and is not claimed reproducible by this patch.
+
+### Apply and verify
+
+```sh
+cd labs/BioMotion/nimblephysics
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/xml-helpers-no-boost.patch
+# Install/apply the current iOS source manifest before these two builds.
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
+
+cd ..
+bash tools/tests/xml_helpers_refactor_probe.sh
+```
+
+On the reviewed branch head, provenance must reverse-check:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/xml-helpers-no-boost.patch
+```
+
 ## `simmspline-linear-extrapolation.patch`
 
 **Applies to**: `nimblephysics/dart/math/SimmSpline.cpp` and its upstream unit

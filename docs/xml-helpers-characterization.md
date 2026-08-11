@@ -49,7 +49,9 @@ XML_HELPERS_CHARACTERIZATION_PASS
 XML_HELPERS_ARCHIVE_PROBE_PASS
 ```
 
-This characterization step does not itself prove that Boost has been removed.
-The subsequent refactor gate must rebuild both native archives, reject Boost
-symbols specifically in each `XmlHelpers.cpp.o`, and rerun this same behavior
-contract against the rebuilt artifacts.
+The behavior-only characterization commit does not by itself prove that Boost
+has been removed. The completed refactor gate in
+`tools/tests/xml_helpers_refactor_probe.sh` therefore performs fresh simulator
+and device source compiles, requires exactly one `XmlHelpers.cpp.o` in each
+rebuilt archive, rejects Boost symbols in those members, runs a hostile-locale
+probe, and finally reruns this same contract against the rebuilt artifacts.

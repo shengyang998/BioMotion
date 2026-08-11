@@ -4507,6 +4507,46 @@ does not export the older dirty CMake/source-manifest port, so it is not yet a c
 bootstrap.
 
 
+## XML conversion no longer depends on a machine-specific Boost install (2026-08-11)
+
+`dart/utils/XmlHelpers.cpp` previously pulled header-only Boost string and lexical-conversion code
+into the iOS archive. The Xcode app and test targets consequently named the absolute local path
+`/opt/homebrew/Cellar/boost/1.90.0_1/include`, so a clean machine needed the same Homebrew formula
+revision even though no Boost library was linked.
+
+The behavior was characterized before changing the implementation. The old archive passed exact
+formatting and parsing cases for bool, signed/unsigned integers, char, float/double round trips,
+NaN/Infinity, hexadecimal floats, overflow/underflow/subnormals, vectors, transforms, and tinyxml2
+value/attribute wrappers. Every scalar failure is required to derive from `std::bad_cast`; successful
+conversions preserve caller `errno`, while the range failures leave `ERANGE` on the reviewed Apple
+libc++ targets. The surprising unsigned `"-1"` wrap and untrimmed boolean behavior remain pinned.
+
+Nested commit `78b292e19af13ad77501c9b22f49c1fa06146501`
+(`refactor(utils): remove Boost from XML helpers`) replaces Boost with classic-locale standard
+streams and is published on
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05).
+`git ls-remote` resolved the branch to that exact SHA. The exported
+`nimble-patches/xml-helpers-no-boost.patch` is byte-identical to the commit diff, reverse-checks at
+the branch head, is 492 lines, and has SHA-256
+`86bf0987efa9961a06679115e926408fc451a5ca4ee165fee29c5b808ec58aa9`.
+
+Both arm64 simulator and device archives rebuilt. The refactor gate:
+
+- fresh-compiled the source for both SDKs with `-Wall -Wextra -Werror` and found no Boost symbol;
+- required exactly one `XmlHelpers.cpp.o` in each rebuilt archive and rejected `boost::` in those
+  exact members;
+- ordinary-linked both archives with dead stripping and no force-load;
+- ran under a hostile global comma/grouping locale to `XML_HELPERS_CLASSIC_LOCALE_PASS`; and
+- reran the independent characterization to `XML_HELPERS_CHARACTERIZATION_PASS`,
+  `XML_HELPERS_ARCHIVE_PROBE_PASS`, and `XML_HELPERS_NO_BOOST_ARCHIVES_PASS`.
+
+`project.yml` and the generated Xcode project no longer carry the absolute Boost include path.
+Whole-app no-signing builds passed for the dedicated arm64 simulator and generic arm64 device
+destinations. This closes the XML helper dependency and its locale ambiguity. It does not yet make
+the older dirty iOS CMake/source-manifest port fresh-clone reproducible; that migration remains a
+separate tracked item.
+
+
 ## The iOS C3D header surface now matches the absent ezc3d backend (2026-08-11)
 
 The iOS source manifest has never compiled `C3DLoader.cpp` or `C3DForcePlatforms.cpp`, but the public

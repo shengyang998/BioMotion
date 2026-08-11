@@ -801,7 +801,6 @@
 					"$(PROJECT_DIR)/nimblephysics",
 					"$(PROJECT_DIR)/nimblephysics/third_party/eigen",
 					"$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2",
-					/opt/homebrew/Cellar/boost/1.90.0_1/include,
 				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -846,7 +845,6 @@
 					"$(PROJECT_DIR)/nimblephysics",
 					"$(PROJECT_DIR)/nimblephysics/third_party/eigen",
 					"$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2",
-					/opt/homebrew/Cellar/boost/1.90.0_1/include,
 					"$(PROJECT_DIR)/osqp/include/public",
 					"$(PROJECT_DIR)/osqp/include/private",
 					"$(PROJECT_DIR)/osqp/build_ios/include/public",
@@ -952,7 +950,6 @@
 					"$(PROJECT_DIR)/nimblephysics",
 					"$(PROJECT_DIR)/nimblephysics/third_party/eigen",
 					"$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2",
-					/opt/homebrew/Cellar/boost/1.90.0_1/include,
 				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1079,7 +1076,6 @@
 					"$(PROJECT_DIR)/nimblephysics",
 					"$(PROJECT_DIR)/nimblephysics/third_party/eigen",
 					"$(PROJECT_DIR)/nimblephysics/third_party/tinyxml2",
-					/opt/homebrew/Cellar/boost/1.90.0_1/include,
 					"$(PROJECT_DIR)/osqp/include/public",
 					"$(PROJECT_DIR)/osqp/include/private",
 					"$(PROJECT_DIR)/osqp/build_ios/include/public",

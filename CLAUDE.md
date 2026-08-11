@@ -86,6 +86,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 - `AssimpInputResourceAdaptor.hpp`, `SoftMeshShape.hpp` — Assimp guards
 - `C3DLoader.*` / `C3DForcePlatforms.*` — iOS keeps the pure C3D/ForcePlate data surface but hides
   loader-only ezc3d and GUI adapters; every iOS consumer target must define `DART_IOS_BUILD=1`
+- `XmlHelpers.cpp` — classic-locale standard-library conversion with no Boost dependency
 - `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` etc — GUIWebsocketServer guards
 - `DARTCollisionDetector_ios.cpp` — stub for collision detector factory
 - Vendored: Eigen 3.4.0 (`third_party/eigen`), tinyxml2 (`third_party/tinyxml2`)

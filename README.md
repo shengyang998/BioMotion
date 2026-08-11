@@ -91,6 +91,7 @@ Then apply the iOS-specific patches. Search the existing tree for `DART_IOS_BUIL
 - `AssimpInputResourceAdaptor.hpp`, `SoftMeshShape.hpp` — Assimp guards
 - `C3DLoader.*` / `C3DForcePlatforms.*` — preserve the C3D value type while hiding unavailable
   ezc3d loading and adapter APIs from iOS consumers
+- `XmlHelpers.cpp` — classic-locale standard-library conversion with no Boost dependency
 - `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` — GUIWebsocketServer guards
 - `CollisionDetector.cpp` / `DARTCollisionDetector_ios.cpp` / `World.cpp` —
   explicit fail-closed collision boundary when Assimp/libccd is not linked
@@ -105,6 +106,7 @@ git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
 git -C nimblephysics apply ../nimble-patches/ios-collision-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/ios-c3d-boundary.patch
+git -C nimblephysics apply ../nimble-patches/xml-helpers-no-boost.patch
 ```
 
 See `nimble-patches/README.md` for pinned SHAs, reverse-checks and regression
@@ -115,7 +117,7 @@ remaining port diff has also been exported.
 The reviewed nested commits are published on the maintained
 [`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
 branch. At the latest 2026-08-11 receipt that branch resolved to
-`03fa30ca524376747f7e0e884c8c8c14c4d5526f`; the fork's remote symbolic `HEAD`
+`78b292e19af13ad77501c9b22f49c1fa06146501`; the fork's remote symbolic `HEAD`
 remained `refs/heads/master` at the pinned upstream baseline
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
@@ -140,6 +142,12 @@ linked. `C3DLoader`, the loader-only weighted-convention heuristic, and the
 `ForcePlatform` / `ForcePlatforms` ezc3d adapters are absent from the iOS public
 surface. Consumers must compile with `DART_IOS_BUILD=1`, as the current app,
 tests, CMake target, and probes do.
+
+The XML scalar/vector helpers no longer depend on Boost or a machine-specific
+Homebrew include path. Their standard-library replacement pins the classic
+locale for XML decimal dots, preserves the reviewed `std::bad_cast`, `errno`,
+formatting, tokenization, and unsigned-conversion behavior, and is checked in
+both simulator and device archives for zero Boost symbols.
 
 Here “linear extrapolation” means continuation along an endpoint tangent only:
 SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses
