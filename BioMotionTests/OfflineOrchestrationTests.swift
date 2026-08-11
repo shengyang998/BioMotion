@@ -26,7 +26,12 @@ final class OfflineOrchestrationTests: XCTestCase {
             TrackedJoint(id: arkitId, name: arkitId, worldPosition: p, isTracked: true,
                          opensimMarkerNameOverride: opensimMarker)
         }
-        return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
+        return BodyFrame(
+            timestamp: timestamp,
+            frameNumber: frameNumber,
+            joints: joints,
+            dynamicsReference: .mhrRootRelative
+        )
     }
 
     /// How long one submission may take before this test calls it dead.

@@ -1,17 +1,18 @@
+import CoreML
 import simd
 import XCTest
 @testable import BioMotion
 
-/// Covers the root translation the offline pose source drops, and the engine's
-/// ability to tell whether the stream it is being fed carries it.
+/// Covers the camera-relative root-position transform the offline solver input
+/// omits, plus the position-variation diagnostic. Neither is dynamics authority.
 ///
 /// # The finding these tests encode
 /// `joint_coords` zeroes `global_trans`, so the pelvis is pinned at the model
-/// constant (0, 0.924, 0) in every frame. That is NOT a limitation of the pose
-/// model: the model emits the translation separately as `cam_t`, the app
-/// already exports it, already stores it on `FrameResult`, and already uses it
-/// to project the overlay. `MHRRetarget.makeBodyFrame(jointCoords:camT:…)`
-/// composes it back in.
+/// constant (0, 0.924, 0) in every frame. The model emits camera-relative root
+/// position separately as `cam_t`; the app exports it, stores it on
+/// `FrameResult`, and uses it to project the overlay.
+/// `MHRRetarget.makeBodyFrame(jointCoords:camT:…)` can compose that position for
+/// geometry/projection tests, while tagging the result position-only.
 ///
 /// Verified on 309 frames of `video_012.mov` through the shipping Core ML model
 /// (`labs/sam-3d-body/export/camt_probe.py`, 2026-08-07): depth 4.34 m, 1.10 m
@@ -58,6 +59,48 @@ final class RootTranslationTests: XCTestCase {
         Dictionary(uniqueKeysWithValues: f.joints.map { ($0.id, $0.worldPosition) })
     }
 
+    private static func outputProvider(
+        camT: SIMD3<Float>,
+        camTShape: [Int] = [3],
+        invalidJoint: (index: Int, component: Int, value: Float)? = nil
+    ) throws -> MLDictionaryFeatureProvider {
+        func array(_ shape: [Int]) throws -> MLMultiArray {
+            let value = try MLMultiArray(
+                shape: shape.map(NSNumber.init(value:)),
+                dataType: .float32
+            )
+            for index in 0..<value.count { value[index] = 0 }
+            return value
+        }
+
+        let jointCount = SAM3DPoseEstimator.PreprocessingConstants.numBodyJoints
+        let joints = try array([jointCount, 3])
+        if let invalidJoint {
+            joints[invalidJoint.index * 3 + invalidJoint.component] =
+                NSNumber(value: invalidJoint.value)
+        }
+        let rotations = try array([jointCount, 3, 3])
+        for joint in 0..<jointCount {
+            for axis in 0..<3 {
+                rotations[joint * 9 + axis * 3 + axis] = 1
+            }
+        }
+        let camera = try array(camTShape)
+        camera[0] = NSNumber(value: camT.x)
+        camera[1] = NSNumber(value: camT.y)
+        camera[2] = NSNumber(value: camT.z)
+        let keypoints = try array([
+            SAM3DPoseEstimator.PreprocessingConstants.numOutputKeypoints2D,
+            2,
+        ])
+        return try MLDictionaryFeatureProvider(dictionary: [
+            "joint_coords": MLFeatureValue(multiArray: joints),
+            "global_rots": MLFeatureValue(multiArray: rotations),
+            "cam_t": MLFeatureValue(multiArray: camera),
+            "keypoints_2d": MLFeatureValue(multiArray: keypoints),
+        ])
+    }
+
     // MARK: - The default is byte-for-byte the old behaviour
 
     /// The parameter is opt-in. Every existing caller omits it and must get the
@@ -68,6 +111,8 @@ final class RootTranslationTests: XCTestCase {
         let j = pinnedSkeleton()
         let a = MHRRetarget.makeBodyFrame(jointCoords: j, timestamp: 1.0, frameNumber: 3)
         let b = MHRRetarget.makeBodyFrame(jointCoords: j, camT: nil, timestamp: 1.0, frameNumber: 3)
+        XCTAssertEqual(a.dynamicsReference, .mhrRootRelative)
+        XCTAssertEqual(b.dynamicsReference, .mhrRootRelative)
         XCTAssertEqual(a.joints.count, b.joints.count)
         for (index, pair) in zip(a.joints, b.joints).enumerated() {
             let (x, y) = pair
@@ -84,18 +129,25 @@ final class RootTranslationTests: XCTestCase {
 
     // MARK: - What composing cam_t does, and does not, change
 
-    /// The composition is a pure translation: it moves where the body IS
-    /// without touching what the body is DOING. Every inter-marker distance —
-    /// i.e. everything IK fits and every joint angle downstream — is unchanged
-    /// to float precision. That is what makes this safe to switch on: it can
-    /// only add the missing 3 root translational DOFs.
+    /// The composition is a pure translation: every inter-marker distance —
+    /// i.e. the relative geometry IK fits — is unchanged to float precision.
+    /// This proves geometry preservation only and does not authorize production
+    /// activation: camera motion, gravity and root/depth derivative quality
+    /// require independent evidence.
     func testCamTIsARigidTranslationAndChangesNoRelativeGeometry() {
         let j = pinnedSkeleton()
         let camT = SIMD3<Float>(0.31, 1.10, 4.34)      // the measured scale on real video
-        let pinned = positions(MHRRetarget.makeBodyFrame(jointCoords: j, timestamp: 0, frameNumber: 0))
-        let world = positions(MHRRetarget.makeBodyFrame(jointCoords: j, camT: camT,
-                                                        timestamp: 0, frameNumber: 0))
+        let pinnedFrame = MHRRetarget.makeBodyFrame(jointCoords: j, timestamp: 0, frameNumber: 0)
+        let cameraFrame = MHRRetarget.makeBodyFrame(jointCoords: j, camT: camT,
+                                                    timestamp: 0, frameNumber: 0)
+        let pinned = positions(pinnedFrame)
+        let world = positions(cameraFrame)
         let expected = MHRRetarget.rootTranslation(camT: camT)
+
+        XCTAssertEqual(pinnedFrame.dynamicsReference, .mhrRootRelative)
+        XCTAssertEqual(cameraFrame.dynamicsReference, .mhrCameraRelativePosition)
+        XCTAssertFalse(cameraFrame.dynamicsReference.permits(.staticEquilibrium))
+        XCTAssertFalse(cameraFrame.dynamicsReference.permits(.temporal))
 
         var maxOffsetError: Float = 0
         var maxDistanceError: Float = 0
@@ -136,20 +188,65 @@ final class RootTranslationTests: XCTestCase {
         let pinned = positions(MHRRetarget.makeBodyFrame(jointCoords: j, timestamp: 0, frameNumber: 0))
         let world = positions(MHRRetarget.makeBodyFrame(jointCoords: j, camT: camT,
                                                         timestamp: 0, frameNumber: 0))
+        let pinnedBody = MHRRetarget.makeBodyFrame(
+            jointCoords: j, timestamp: 0, frameNumber: 0)
+        let composedBody = MHRRetarget.makeBodyFrame(
+            jointCoords: j, camT: camT, timestamp: 0, frameNumber: 0)
+
+        XCTAssertEqual(PhotoOverlayView.projectionCameraTranslation(
+            bodyFrame: pinnedBody, storedCameraTranslation: camT), camT)
+        XCTAssertEqual(PhotoOverlayView.projectionCameraTranslation(
+            bodyFrame: composedBody, storedCameraTranslation: camT), .zero,
+                       "a camera-relative body already contains cam_t")
+        XCTAssertNil(PhotoOverlayView.projectionCameraTranslation(
+            bodyFrame: BodyFrame(timestamp: 0, frameNumber: 0, joints: []),
+            storedCameraTranslation: camT),
+                     "an untyped coordinate frame must not be projected by assumption")
+        for inconsistentReference in [
+            BodyFrame.DynamicsReference(
+                gravity: .gravityAligned,
+                rootTrajectory: .rootRelative
+            ),
+            BodyFrame.DynamicsReference(
+                gravity: .gravityAligned,
+                rootTrajectory: .cameraRelativePositionOnly
+            ),
+        ] {
+            XCTAssertNil(PhotoOverlayView.projectionCameraTranslation(
+                bodyFrame: BodyFrame(
+                    timestamp: 0,
+                    frameNumber: 0,
+                    joints: [],
+                    dynamicsReference: inconsistentReference
+                ),
+                storedCameraTranslation: camT
+            ), "a root enum case alone does not prove this frame matches stored MHR cam_t")
+        }
 
         var maxPixelGap: CGFloat = 0
+        var maxDoubleTranslationGap: CGFloat = 0
         var compared = 0
         for id in pinned.keys.sorted() {
             guard let old = MHRRetarget.projectToImage(pinned[id]!, camT: camT, imageSize: size),
                   let new = MHRRetarget.projectToImage(world[id]!, camT: .zero, imageSize: size)
             else { continue }
             maxPixelGap = max(maxPixelGap, hypot(old.x - new.x, old.y - new.y))
+            if let doubled = MHRRetarget.projectToImage(
+                world[id]!, camT: camT, imageSize: size
+            ) {
+                maxDoubleTranslationGap = max(
+                    maxDoubleTranslationGap,
+                    hypot(old.x - doubled.x, old.y - doubled.y)
+                )
+            }
             compared += 1
         }
         print("ROOT-METRIC projection compared=\(compared) max_pixel_gap=\(maxPixelGap)")
         XCTAssertEqual(compared, 20, "all twenty markers must project in front of the camera")
         XCTAssertLessThan(maxPixelGap, 0.5,
                           "composing cam_t must be the same transform the validated projection applies")
+        XCTAssertGreaterThan(maxDoubleTranslationGap, 20,
+                             "a composed marker plus raw cam_t applies translation twice")
     }
 
     /// The depth sign is the one that is easy to get backwards and expensive to
@@ -158,20 +255,124 @@ final class RootTranslationTests: XCTestCase {
     /// in this file's Y-up frame — camera at the origin looking along −Z — the
     /// subject must land at NEGATIVE z, and BELOW the optical axis for a phone
     /// held above hip height.
-    func testRootTranslationSigns() {
+    func testRootTranslationSigns() throws {
         let t = MHRRetarget.rootTranslation(camT: SIMD3<Float>(0.31, 1.10, 4.34))
         print("ROOT-METRIC signs \(t)")
         XCTAssertEqual(t.x, 0.31, accuracy: 1e-6, "lateral passes through unchanged")
         XCTAssertEqual(t.y, -1.10, accuracy: 1e-6, "cam_t.y is DOWN-positive; the Y-up frame negates it")
         XCTAssertEqual(t.z, -4.34, accuracy: 1e-6, "cam_t.z is AWAY-positive; −Z is in front of the camera")
+
+        XCTAssertTrue(MHRRetarget.isValidCameraTranslation(SIMD3<Float>(0, 0, 0.01)))
+        for invalid in [
+            SIMD3<Float>(.nan, 0, 1),
+            SIMD3<Float>(0, .infinity, 1),
+            SIMD3<Float>(0, 0, 0),
+            SIMD3<Float>(0, 0, -1),
+            SIMD3<Float>(1_001, 0, 4),
+            SIMD3<Float>(0, 0, 1_001),
+        ] {
+            XCTAssertFalse(MHRRetarget.isValidCameraTranslation(invalid), "\(invalid)")
+            XCTAssertTrue(MHRRetarget.makeBodyFrame(
+                jointCoords: pinnedSkeleton(), camT: invalid,
+                timestamp: 0, frameNumber: 0
+            ).joints.isEmpty, "invalid cam_t must fail closed before IK")
+
+            let provider = try Self.outputProvider(camT: invalid)
+            XCTAssertThrowsError(try SAM3DPoseEstimator.parseOutput(
+                provider, usedFallbackBBox: false, inputChecksum: 0,
+                sourceHash: 0, bboxHash: 0, warpHash: 0
+            )) { error in
+                guard case SAM3DPoseEstimator.EstimatorError.invalidOutputValue(let detail) = error
+                else { return XCTFail("wrong parser error: \(error)") }
+                XCTAssertTrue(detail.contains("cam_t"), detail)
+            }
+        }
+
+        let valid = try SAM3DPoseEstimator.parseOutput(
+            Self.outputProvider(camT: SIMD3<Float>(0, 1, 4)),
+            usedFallbackBBox: false, inputChecksum: 0,
+            sourceHash: 0, bboxHash: 0, warpHash: 0
+        )
+        XCTAssertEqual(valid.camT, SIMD3<Float>(0, 1, 4))
+
+        let wrongRankCamera = try Self.outputProvider(
+            camT: SIMD3<Float>(0, 1, 4),
+            camTShape: [1, 3]
+        )
+        XCTAssertThrowsError(try SAM3DPoseEstimator.parseOutput(
+            wrongRankCamera, usedFallbackBBox: false, inputChecksum: 0,
+            sourceHash: 0, bboxHash: 0, warpHash: 0
+        )) { error in
+            guard case SAM3DPoseEstimator.EstimatorError
+                .unexpectedOutputShape(let detail) = error
+            else { return XCTFail("wrong parser error: \(error)") }
+            XCTAssertTrue(detail.contains("cam_t: expected [3]"), detail)
+        }
+
+        let invalidJoint = try Self.outputProvider(
+            camT: SIMD3<Float>(0, 1, 4),
+            invalidJoint: (Idx.cSpine1, 0, .nan)
+        )
+        XCTAssertThrowsError(try SAM3DPoseEstimator.parseOutput(
+            invalidJoint, usedFallbackBBox: false, inputChecksum: 0,
+            sourceHash: 0, bboxHash: 0, warpHash: 0
+        )) { error in
+            guard case SAM3DPoseEstimator.EstimatorError.invalidOutputValue(let detail) = error
+            else { return XCTFail("wrong parser error: \(error)") }
+            XCTAssertTrue(detail.contains("joint_coords[\(Idx.cSpine1)]"), detail)
+        }
+
+        var directJointCoords = pinnedSkeleton()
+        directJointCoords[Idx.cSpine1].x = .infinity
+        XCTAssertTrue(MHRRetarget.makeBodyFrame(
+            jointCoords: directJointCoords, timestamp: 0, frameNumber: 0
+        ).joints.isEmpty, "direct retarget callers must also fail closed")
     }
 
-    // MARK: - The engine can tell whether it was given the translation
+    func testRetargetRejectsFiniteInputsThatOverflowDuringMarkerConstruction() {
+        var outOfRange = pinnedSkeleton()
+        outOfRange[0].x = 11
+        XCTAssertTrue(MHRRetarget.makeBodyFrame(
+            jointCoords: outOfRange, timestamp: 0, frameNumber: 0
+        ).joints.isEmpty,
+        "all 127 model joints must stay inside the structural metre-domain bound")
 
-    /// `rootTranslationObservable` reads the data, not a flag. A pinned stream
-    /// repeats one model constant bit-for-bit, so there is no way for a flag and
-    /// the stream to disagree — which matters because the flag would have to be
-    /// set in `OfflineSessionRunner`, a file this change does not own.
+        var blendedOverflow = pinnedSkeleton()
+        blendedOverflow[Idx.cSpine1].x = .greatestFiniteMagnitude
+        blendedOverflow[Idx.cSpine2].x = -.greatestFiniteMagnitude
+        XCTAssertTrue(MHRRetarget.makeBodyFrame(
+            jointCoords: blendedOverflow, timestamp: 0, frameNumber: 0
+        ).joints.isEmpty,
+        "finite source joints can still overflow a blended marker and must fail before IK")
+
+        var translatedOverflow = pinnedSkeleton()
+        translatedOverflow[Idx.root].x = .greatestFiniteMagnitude
+        XCTAssertTrue(MHRRetarget.makeBodyFrame(
+            jointCoords: translatedOverflow,
+            camT: SIMD3<Float>(.greatestFiniteMagnitude, 1, 4),
+            timestamp: 0,
+            frameNumber: 0
+        ).joints.isEmpty,
+        "finite camera composition can overflow and must fail before IK")
+
+        XCTAssertNil(MHRRetarget.projectToImage(
+            SIMD3<Float>(.greatestFiniteMagnitude, 0, 0),
+            camT: SIMD3<Float>(0, 0, 4),
+            imageSize: CGSize(width: 1_024, height: 1_024)
+        ), "projection must not construct an infinite CGPoint")
+        XCTAssertNil(MHRRetarget.projectToImage(
+            .zero,
+            camT: SIMD3<Float>(0, 0, 4),
+            imageSize: CGSize(width: CGFloat.greatestFiniteMagnitude, height: 1_024)
+        ), "non-finite Float camera intrinsics must fail closed")
+    }
+
+    // MARK: - Position variation diagnostic (not dynamics authorization)
+
+    /// `rootTranslationObservable` reports only whether a recognized root marker
+    /// varies in this input coordinate frame. A pinned stream repeats one model
+    /// constant bit-for-bit. A positive result would still say nothing about
+    /// gravity, camera motion, depth noise, or acceleration quality.
     func testPinnedStreamReportsRootUnobservable() {
         var detector = StaticHoldDetector()
         let names = ["PELVIS", "LHJC", "RHJC", "LKJC", "RKJC"]
@@ -206,9 +407,9 @@ final class RootTranslationTests: XCTestCase {
                        "switching source aliases is not evidence of physical root motion")
     }
 
-    /// The same sequence with `cam_t` composed in flips it. Built through
-    /// `makeBodyFrame` rather than by hand so the test exercises the real
-    /// composition, not a restatement of it.
+    /// The same sequence with `cam_t` composed in flips the position diagnostic.
+    /// This deliberately does NOT mean acceleration is qualified: camera motion,
+    /// gravity and monocular depth remain separate typed gates.
     func testComposedStreamReportsRootObservable() {
         var detector = StaticHoldDetector()
         for k in 0..<SavitzkyGolayFilter.windowSize {
@@ -216,6 +417,7 @@ final class RootTranslationTests: XCTestCase {
             let camT = SIMD3<Float>(0, 1.10, 4.34 - 0.02 * Float(k))
             let frame = MHRRetarget.makeBodyFrame(jointCoords: pinnedSkeleton(), camT: camT,
                                                   timestamp: Double(k) * 0.1, frameNumber: k)
+            XCTAssertEqual(frame.dynamicsReference, .mhrCameraRelativePosition)
             var flat: [NSNumber] = []
             var names: [String] = []
             for joint in frame.joints {
@@ -232,7 +434,7 @@ final class RootTranslationTests: XCTestCase {
         print("ROOT-METRIC composed rootObservable=\(v.rootTranslationObservable) "
             + "peak=\(v.peakMarkerSpeedMetersPerSecond) verdict=\(v.verdict)")
         XCTAssertTrue(v.rootTranslationObservable,
-                      "with cam_t composed in, the root moves and its acceleration is observable")
+                      "with cam_t composed in, root position varies in the camera frame")
         XCTAssertEqual(v.peakMarkerSpeedMetersPerSecond, 0.2, accuracy: 1e-6,
                        "2 cm per 0.1 s of pure root translation, on every marker equally")
     }

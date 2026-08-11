@@ -517,7 +517,12 @@ final class StaticHoldTests: XCTestCase {
                                 isTracked: true,
                                 opensimMarkerNameOverride: opensim)
         }
-        return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
+        return BodyFrame(
+            timestamp: timestamp,
+            frameNumber: frameNumber,
+            joints: joints,
+            dynamicsReference: .mhrRootRelative
+        )
     }
 
     @MainActor

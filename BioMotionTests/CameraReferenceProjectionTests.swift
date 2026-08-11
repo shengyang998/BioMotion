@@ -391,6 +391,7 @@ final class CameraReferenceProjectionTests: XCTestCase {
             NimbleEngine.dynamicsPreflightAvailability(
                 hasValidatedFootContactSupport: false,
                 cameraAuthorization: denied,
+                dynamicsReference: .mhrRootRelative,
                 solveClass: .staticEquilibrium
             ),
             .contactSupportUnavailable
@@ -399,15 +400,66 @@ final class CameraReferenceProjectionTests: XCTestCase {
             NimbleEngine.dynamicsPreflightAvailability(
                 hasValidatedFootContactSupport: true,
                 cameraAuthorization: denied,
+                dynamicsReference: .mhrRootRelative,
                 solveClass: .staticEquilibrium
             ),
             .cameraReferenceUnavailable
         )
+        XCTAssertEqual(
+            NimbleEngine.dynamicsPreflightAvailability(
+                hasValidatedFootContactSupport: true,
+                cameraAuthorization: .unrestricted,
+                dynamicsReference: .mhrCameraRelativePosition,
+                solveClass: .staticEquilibrium
+            ),
+            .gravityReferenceUnavailable
+        )
+        let gravityOnly = BodyFrame.DynamicsReference(
+            gravity: .gravityAligned,
+            rootTrajectory: .cameraRelativePositionOnly
+        )
         XCTAssertNil(NimbleEngine.dynamicsPreflightAvailability(
             hasValidatedFootContactSupport: true,
             cameraAuthorization: .unrestricted,
+            dynamicsReference: gravityOnly,
+            solveClass: .staticEquilibrium
+        ), "a gravity-aligned pose is sufficient for explicitly static equilibrium")
+        XCTAssertEqual(NimbleEngine.dynamicsPreflightAvailability(
+            hasValidatedFootContactSupport: true,
+            cameraAuthorization: .unrestricted,
+            dynamicsReference: gravityOnly,
+            solveClass: .temporal
+        ), .rootTrajectoryUnavailable)
+        XCTAssertEqual(NimbleEngine.dynamicsPreflightAvailability(
+            hasValidatedFootContactSupport: true,
+            cameraAuthorization: .unrestricted,
+            dynamicsReference: .liveARKit,
+            solveClass: .temporal
+        ), .rootTrajectoryUnavailable,
+        "an ARKit position stream needs measured continuity/noise evidence")
+        XCTAssertNil(NimbleEngine.dynamicsPreflightAvailability(
+            hasValidatedFootContactSupport: true,
+            cameraAuthorization: .unrestricted,
+            dynamicsReference: .dynamicsQualifiedWorld,
             solveClass: .temporal
         ))
+
+        XCTAssertFalse(NimbleEngine.dynamicsReferenceTransitionRequiresReset(
+            from: nil, to: .liveARKit),
+            "the first reference starts an empty history")
+        XCTAssertFalse(NimbleEngine.dynamicsReferenceTransitionRequiresReset(
+            from: .liveARKit, to: .liveARKit))
+        XCTAssertTrue(NimbleEngine.dynamicsReferenceTransitionRequiresReset(
+            from: .liveARKit, to: .dynamicsQualifiedWorld),
+            "an authorization upgrade cannot reuse unqualified SG samples")
+        XCTAssertTrue(NimbleEngine.dynamicsReferenceTransitionRequiresReset(
+            from: .dynamicsQualifiedWorld, to: .mhrRootRelative),
+            "a coordinate-space change cannot reuse IK/ground history")
+        XCTAssertTrue(NimbleEngine.DynamicsAvailability
+            .referenceTransitionWarmup.invalidatesPreviousDynamics,
+            "a rebuilt derivative window must erase dynamics from the old reference")
+        XCTAssertTrue(NimbleEngine.DynamicsAvailability
+            .referenceTransitionWarmup.detail.contains("reference changed"))
     }
 
     func testRunnerAcquiresLeaseBeforeLaunchingTaskAndRechecksSuspensions() throws {
@@ -777,6 +829,52 @@ final class CameraReferenceProjectionTests: XCTestCase {
         let resetNotify = try XCTUnwrap(reset.range(of: "objectWillChange.send()"))
         let resetLastWrite = try XCTUnwrap(reset.range(of: "rootResidualPerKg = 0"))
         XCTAssertLessThan(resetLastWrite.lowerBound, resetNotify.lowerBound)
+        XCTAssertTrue(reset.contains("lastIDResult = nil"))
+        XCTAssertTrue(reset.contains("lastMuscleResult = nil"))
+        XCTAssertTrue(reset.contains("displayMuscleResult = nil"))
+
+        let supersedeStart = try XCTUnwrap(source.range(
+            of: "    @discardableResult\n    func supersedeFrame(",
+            range: completionStart.upperBound..<source.endIndex))
+        let completion = source[completionStart.lowerBound..<supersedeStart.lowerBound]
+        XCTAssertTrue(completion.contains("if status == .failed"))
+        XCTAssertTrue(completion.contains("resetRealtimeState("),
+                      "a post-transition IK failure must synchronously clear old dynamics")
+
+        let processStart = try XCTUnwrap(source.range(of: "    func processFrame("))
+        let process = source[processStart.lowerBound..<resetStart.lowerBound]
+        let referenceFence = try XCTUnwrap(process.range(
+            of: "self.prepareForDynamicsReference(dynamicsReference)"))
+        let solveIK = try XCTUnwrap(process.range(
+            of: "self.bridge.solveIK(",
+            range: referenceFence.upperBound..<process.endIndex))
+        XCTAssertLessThan(referenceFence.lowerBound, solveIK.lowerBound,
+                          "reference changes must reset warm-start state before IK")
+
+        let referenceResetStart = try XCTUnwrap(source.range(
+            of: "    private func prepareForDynamicsReference("))
+        let referenceReset = source[referenceResetStart.lowerBound..<processStart.lowerBound]
+        XCTAssertTrue(referenceReset.contains("dofFilters.removeAll"))
+        XCTAssertTrue(referenceReset.contains("holdDetector.reset()"))
+        XCTAssertTrue(referenceReset.contains("bridge.resetSessionState()"),
+                      "coordinate changes must discard the old ground and IK warm start")
+        XCTAssertTrue(referenceReset.contains("muscleSolver.resetSessionState()"))
+        XCTAssertTrue(referenceReset.contains("activationFilters.removeAll"))
+        XCTAssertTrue(referenceReset.contains(
+            "dynamicsReferenceWarmupInvalidationPending = true"),
+            "the first post-transition publication must erase the old overlay")
+
+        let warmupStart = try XCTUnwrap(process.range(of: "            guard sgWarmedUp else"))
+        let warmupEnd = try XCTUnwrap(process.range(
+            of: "            // Smoothed IK output",
+            range: warmupStart.upperBound..<process.endIndex))
+        let warmup = process[warmupStart.lowerBound..<warmupEnd.lowerBound]
+        XCTAssertTrue(warmup.contains("dynamicsReferenceWarmupInvalidationPending"))
+        XCTAssertTrue(warmup.contains(".referenceTransitionWarmup"))
+        XCTAssertFalse(warmup.contains(".rootTrajectoryUnavailable"),
+                       "a qualified new reference must not be mislabeled unqualified")
+        XCTAssertFalse(warmup.contains(".gravityReferenceUnavailable"),
+                       "transition warm-up is distinct from a missing gravity reference")
 
         let sessionEnd = try XCTUnwrap(source.range(
             of: "    func resetAnalysisPassStatePreservingGround(",
@@ -1061,15 +1159,35 @@ final class CameraReferenceProjectionTests: XCTestCase {
             of: "    static let rootVerticalDOFName",
             range: processStart.upperBound..<source.endIndex))
         let process = source[processStart.lowerBound..<processEnd.lowerBound]
+        let finiteFence = try XCTUnwrap(process.range(
+            of: "guard joint.worldPosition.x.isFinite"))
+        let receiptCreation = try XCTUnwrap(process.range(of: "let frameGeneration"))
+        XCTAssertLessThan(finiteFence.lowerBound, receiptCreation.lowerBound,
+                          "invalid marker numbers must be rejected before native IK admission")
         let capture = try XCTUnwrap(process.range(
             of: "let cameraAuthorization = cameraDynamicsAuthorization"))
+        let referenceCapture = try XCTUnwrap(process.range(
+            of: "let dynamicsReference = frame.dynamicsReference"))
         let solverQueue = try XCTUnwrap(process.range(of: "solverQueue.async"))
         XCTAssertLessThan(capture.lowerBound, solverQueue.lowerBound)
+        XCTAssertLessThan(referenceCapture.lowerBound, solverQueue.lowerBound)
 
         let preflight = try XCTUnwrap(process.range(
             of: "Self.dynamicsPreflightAvailability("))
         let inverseDynamics = try XCTUnwrap(process.range(of: "self.bridge.solveIDGRF("))
         XCTAssertLessThan(preflight.lowerBound, inverseDynamics.lowerBound)
+        XCTAssertEqual(process.components(
+            separatedBy: "dynamicsReference: dynamicsReference").count - 1, 2,
+                       "gait and ordinary ID paths must use the captured reference")
+
+        let runner = try Self.source("BioMotion/Offline/OfflineSessionRunner.swift")
+        XCTAssertEqual(runner.components(
+            separatedBy: "dynamicsReference: bodyFrame.dynamicsReference").count - 1, 2,
+                       "head and tail SG padding must preserve provenance")
+
+        let tracking = try Self.source("BioMotion/ARKit/BodyTrackingSession.swift")
+        XCTAssertTrue(tracking.contains("config.worldAlignment = .gravity"))
+        XCTAssertTrue(tracking.contains("dynamicsReference: .liveARKit"))
     }
 
     func testPermanentCapabilityBannerSuppressesCameraQualityAdvice() throws {
@@ -1134,7 +1252,8 @@ final class CameraReferenceProjectionTests: XCTestCase {
             timestamp: timestamp,
             frameNumber: id,
             joints: [TrackedJoint(id: "hips_joint", name: "Pelvis",
-                                  worldPosition: .zero, isTracked: true)]
+                                  worldPosition: .zero, isTracked: true)],
+            dynamicsReference: .dynamicsQualifiedWorld
         )
         return OfflineResultStore.FrameResult(
             id: id,

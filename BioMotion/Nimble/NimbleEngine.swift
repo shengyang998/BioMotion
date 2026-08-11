@@ -139,20 +139,25 @@ final class NimbleEngine: ObservableObject {
     ///   global translation, so `M·q̈` and the centre-of-mass acceleration are
     ///   computed from motion that did not happen — in a squat the pelvis never
     ///   descends and the feet appear to rise instead.
-    /// * The live ARKit path supplies real world-space joint positions
-    ///   including global translation, so its q̈ is observable and gating it
-    ///   would remove working behaviour. Untouched by default.
+    /// * The live ARKit path supplies gravity-aligned world positions including
+    ///   global translation, unlike the pinned MHR input. That source property
+    ///   is necessary but not sufficient for temporal dynamics: the typed
+    ///   reference still withholds q̈ until tracking continuity and root
+    ///   derivative noise pass a measured budget. Static-hold gating itself
+    ///   remains off by default; every later provenance gate still applies.
     ///
-    /// ⚠️ **The pinning is not a limitation of the pose model — it is a
-    /// quantity the app has and does not consume.** The model emits the root
+    /// ⚠️ **The pinning is not a limitation of the pose model.** The model emits the root
     /// translation separately as `cam_t`; it is exported, stored on
     /// `FrameResult`, and already used to project the overlay.
     /// `MHRRetarget.makeBodyFrame(jointCoords:camT:…)` composes it back in, and
-    /// `OfflineSessionRunner` has `estimate.camT` in hand at the call site.
+    /// labels the result camera-relative/position-only. The production Photos
+    /// runner intentionally does not feed that frame here until synchronized
+    /// gravity and calibrated root-depth evidence can authorize it.
     /// Verified on 309 frames of real video: depth 4.34 m, 1.10 m below the
     /// optical axis, `corr(1/bbox_side, depth) = +0.74`.
     ///
-    /// Composing it in is NECESSARY for dynamics and NOT SUFFICIENT. Measured,
+    /// Composing it and rotating into gravity-aligned space are necessary for
+    /// temporal dynamics and still not sufficient. Measured,
     /// same clip: the depth channel carries 12.7 cm (std) of high-frequency
     /// residual about its own 0.5 s mean, which through this engine's own
     /// 9-tap Savitzky-Golay filter is 3.1 g of pure acceleration noise at
@@ -177,10 +182,11 @@ final class NimbleEngine: ObservableObject {
     }
 
     /// External camera-reference authorization captured with each submitted
-    /// frame. The default preserves the live ARKit path, whose world-space
-    /// reference is established outside the offline video analyzer. Offline
-    /// import replaces it with the exact permissions derived from the clip's
-    /// `CameraReferenceState` before submitting any frame.
+    /// frame. The default preserves live camera authorization, whose reference
+    /// is established outside the offline video analyzer; independent spatial
+    /// gravity/root admission still applies. Offline import replaces it with
+    /// the exact permissions derived from the clip's `CameraReferenceState`
+    /// before submitting any frame.
     struct CameraDynamicsAuthorization: Equatable, Sendable {
         let permitsStaticEquilibrium: Bool
         let permitsTemporalDynamics: Bool
@@ -461,6 +467,11 @@ final class NimbleEngine: ObservableObject {
     enum DynamicsAvailability: Equatable {
         /// The centred derivative window has not filled yet.
         case waitingForMotionWindow
+        /// The coordinate/provenance label changed and the centred derivative
+        /// window is being rebuilt entirely from the new reference. This is
+        /// distinct from an unqualified reference: the new label may already
+        /// be qualified, but old-reference samples cannot be reused.
+        case referenceTransitionWarmup
         /// Product policy intentionally did not request dynamics for this
         /// motion class (moving, flight, outside a gait interval, and so on).
         case withheld(MotionVerdict)
@@ -475,6 +486,12 @@ final class NimbleEngine: ObservableObject {
         /// camera reference for this solve class. The clip-level evidence and
         /// exact reason live in `OfflineResultStore.cameraReferenceState`.
         case cameraReferenceUnavailable
+        /// The marker axes are not proven to align with physical gravity.
+        /// Upright image pixels and a stationary camera are insufficient.
+        case gravityReferenceUnavailable
+        /// The root position may be useful for IK, but its depth/noise/camera
+        /// provenance is not qualified for temporal differentiation.
+        case rootTrajectoryUnavailable
         /// Contact capability exists, but the rolling floor estimate does not
         /// yet have the 30 observations required for trust.
         case groundPlaneUntrusted
@@ -526,6 +543,8 @@ final class NimbleEngine: ObservableObject {
             switch self {
             case .waitingForMotionWindow:
                 return "Pose only — collecting neighbouring frames"
+            case .referenceTransitionWarmup:
+                return "Pose only — rebuilding motion history"
             case .withheld(let verdict):
                 switch verdict {
                 case .gaitFlight: return "Pose only — both feet off the ground"
@@ -544,6 +563,10 @@ final class NimbleEngine: ObservableObject {
                 return "Pose only — foot contact is not supported"
             case .cameraReferenceUnavailable:
                 return "Pose only — camera reference is unavailable"
+            case .gravityReferenceUnavailable:
+                return "Pose only — gravity reference is unavailable"
+            case .rootTrajectoryUnavailable:
+                return "Pose only — root trajectory is not dynamics-qualified"
             case .groundPlaneUntrusted:
                 return "Pose only — establishing the ground plane"
             case .inverseDynamicsFailed:
@@ -559,6 +582,8 @@ final class NimbleEngine: ObservableObject {
             switch self {
             case .waitingForMotionWindow:
                 return "More neighbouring frames are needed before velocity and acceleration can be computed."
+            case .referenceTransitionWarmup:
+                return "The spatial reference changed, so the motion window is being rebuilt before any new dynamics can be claimed."
             case .withheld(let verdict):
                 return verdict.advice
             case .missingRootVerticalDOF:
@@ -567,6 +592,10 @@ final class NimbleEngine: ObservableObject {
                 return "This model and solver do not provide validated foot-support mechanics, so joint torque, ground force, centre of pressure, muscle effort and gait-load values are withheld. Pose, anatomy and contact timing remain available; refilming cannot enable the missing outputs."
             case .cameraReferenceUnavailable:
                 return "The clip did not establish a calibrated visible-background camera reference for this calculation. Pose, anatomy and contact timing remain available."
+            case .gravityReferenceUnavailable:
+                return "The pose axes were not accompanied by a synchronized gravity reference establishing the physical vertical used by the dynamics model. Pose, anatomy and contact timing remain available."
+            case .rootTrajectoryUnavailable:
+                return "The root position is available for kinematics, but its tracking continuity and derivative-noise evidence are not calibrated for velocity or acceleration. Temporal dynamics are withheld."
             case .groundPlaneUntrusted:
                 return "Ground reaction force, centre of pressure and muscle output require a trusted floor as well as validated foot-support mechanics; this rolling floor estimate does not yet have 30 observations."
             case .inverseDynamicsFailed:
@@ -586,6 +615,8 @@ final class NimbleEngine: ObservableObject {
             switch self {
             case .missingRootVerticalDOF, .contactSupportUnavailable,
                  .cameraReferenceUnavailable,
+                 .gravityReferenceUnavailable, .rootTrajectoryUnavailable,
+                 .referenceTransitionWarmup,
                  .groundPlaneUntrusted, .inverseDynamicsFailed,
                  .analysisPassIncomplete:
                 return true
@@ -601,6 +632,7 @@ final class NimbleEngine: ObservableObject {
     static func dynamicsPreflightAvailability(
         hasValidatedFootContactSupport: Bool,
         cameraAuthorization: CameraDynamicsAuthorization,
+        dynamicsReference: BodyFrame.DynamicsReference,
         solveClass: DynamicsSolveClass
     ) -> DynamicsAvailability? {
         guard hasValidatedFootContactSupport else {
@@ -609,7 +641,45 @@ final class NimbleEngine: ObservableObject {
         guard cameraAuthorization.permits(solveClass) else {
             return .cameraReferenceUnavailable
         }
+        guard dynamicsReference.gravity == .gravityAligned else {
+            return .gravityReferenceUnavailable
+        }
+        guard dynamicsReference.permits(solveClass) else {
+            return .rootTrajectoryUnavailable
+        }
         return nil
+    }
+
+    /// The first frame starts an empty temporal history. Any later change in
+    /// coordinate/provenance meaning is a hard session seam: a newly-qualified
+    /// label must never authorize SG samples, a ground plane, or an IK warm
+    /// start accumulated under the previous label.
+    static func dynamicsReferenceTransitionRequiresReset(
+        from previous: BodyFrame.DynamicsReference?,
+        to next: BodyFrame.DynamicsReference
+    ) -> Bool {
+        guard let previous else { return false }
+        return previous != next
+    }
+
+    /// Solver-queue-only fence applied before IK consumes the next frame.
+    private func prepareForDynamicsReference(
+        _ next: BodyFrame.DynamicsReference
+    ) {
+        if Self.dynamicsReferenceTransitionRequiresReset(
+            from: activeDynamicsReference,
+            to: next
+        ) {
+            dofFilters.removeAll(keepingCapacity: false)
+            dofFilterTaps = WindowedDerivativeFilter.maximumTaps
+            holdDetector.reset()
+            lastMuscleSolveTimestamp = nil
+            activationFilters.removeAll(keepingCapacity: false)
+            bridge.resetSessionState()
+            muscleSolver.resetSessionState()
+            dynamicsReferenceWarmupInvalidationPending = true
+        }
+        activeDynamicsReference = next
     }
 
     /// Historical research outcome for one capability-valid gait-dynamics
@@ -964,6 +1034,11 @@ final class NimbleEngine: ObservableObject {
     private var dofFilters: [WindowedDerivativeFilter] = []
     private var dofFilterTaps = SavitzkyGolayFilter.windowSize
 
+    // SolverQueue-only provenance paired with the temporal histories below.
+    // A change clears those histories before the new frame reaches IK.
+    private var activeDynamicsReference: BodyFrame.DynamicsReference?
+    private var dynamicsReferenceWarmupInvalidationPending = false
+
     // Marker-motion history behind `staticHoldGating`. Pushed in lockstep with
     // `dofFilters` (both only on a frame whose IK succeeded), so "the last 9
     // samples" means the same nine frames in both. solverQueue-only state.
@@ -1237,6 +1312,11 @@ final class NimbleEngine: ObservableObject {
             // The stable joint id remains the whitelist. Offline sources may
             // override only the anatomical marker attached to that known id.
             if let markerName = JointMapping.opensimMarkerName(for: joint) {
+                guard joint.worldPosition.x.isFinite,
+                      joint.worldPosition.y.isFinite,
+                      joint.worldPosition.z.isFinite else {
+                    return .rejected
+                }
                 names.append(markerName)
                 positions.append(NSNumber(value: Double(joint.worldPosition.x)))
                 positions.append(NSNumber(value: Double(joint.worldPosition.y)))
@@ -1259,6 +1339,7 @@ final class NimbleEngine: ObservableObject {
         // consistent policy even if the flag flips mid-clip.
         let gateOnHolds = staticHoldGating
         let cameraAuthorization = cameraDynamicsAuthorization
+        let dynamicsReference = frame.dynamicsReference
         let plan = gaitPlan
 
         solverQueue.async { [weak self] in
@@ -1271,6 +1352,8 @@ final class NimbleEngine: ObservableObject {
                 self.completeFrame(receipt: receipt, status: .failed)
                 return
             }
+
+            self.prepareForDynamicsReference(dynamicsReference)
 
             // --- IK (runs on every frame, on 1€-filtered markers) ---
             let ikStart = CACurrentMediaTime()
@@ -1366,15 +1449,24 @@ final class NimbleEngine: ObservableObject {
                 // Still warming up: publish live IK only, no ID/muscle yet.
                 // No motion verdict either — there is no window centre to date
                 // one at, so `lastSolve` stays nil rather than carrying a guess.
+                // After a reference change, use a hard provenance reason during
+                // warm-up so an older coloured overlay is erased immediately.
+                // The flag stays set until a complete all-new SG window exists,
+                // including when an intervening IK attempt fails.
+                let warmupAvailability: DynamicsAvailability =
+                    self.dynamicsReferenceWarmupInvalidationPending
+                    ? .referenceTransitionWarmup
+                    : .waitingForMotionWindow
                 self.publishResults(ik: liveIkOutput, id: nil, muscle: nil,
                                     motion: nil, isStaticHoldEstimate: false,
                                     ikTime: ikTime, idTime: 0, muscleTime: 0,
                                     ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
                                     groundY: self.bridge.groundHeightY,
                                     receipt: receipt,
-                                    dynamicsAvailability: .waitingForMotionWindow)
+                                    dynamicsAvailability: warmupAvailability)
                 return
             }
+            self.dynamicsReferenceWarmupInvalidationPending = false
 
             // Smoothed IK output, dated at the center of the SG window.
             // This is what ID and muscle solves operate on — it matches dq/ddq
@@ -1422,12 +1514,12 @@ final class NimbleEngine: ObservableObject {
 
             // --- Which policy decides this frame? ------------------------------
             //
-            // Two mutually exclusive regimes, and the gait plan wins when it is
-            // present. On a running clip the static-hold question is not just
-            // answered "no", it is the WRONG QUESTION: nothing about a runner is
-            // still, and the reason the dynamics are computable anyway is that
-            // the gait cycle supplies the root acceleration the stillness test
-            // was standing in for.
+            // Two mutually exclusive policies, and the gait plan wins when it
+            // is present. On a running clip the static-hold question is not just
+            // answered "no", it is the wrong policy question. A gait plan may
+            // substitute a hypothetical vertical root term only after the
+            // shared contact/camera/gravity/root admission gates pass; bundled
+            // models never pass that boundary and publish timing only.
             var solveAsStatics = false
             var idDQ: [Double]
             var idDDQ: [Double]
@@ -1467,6 +1559,7 @@ final class NimbleEngine: ObservableObject {
                     hasValidatedFootContactSupport:
                         self.bridge.hasValidatedFootContactSupport,
                     cameraAuthorization: cameraAuthorization,
+                    dynamicsReference: dynamicsReference,
                     solveClass: .temporal
                 ) {
                     self.publishPoseOnly(ik: smoothedIkOutput,
@@ -1494,9 +1587,10 @@ final class NimbleEngine: ObservableObject {
                 // THE SUBSTITUTION. Whole-body Newton in the vertical:
                 // `F − m·g = m·a`, so `a = g·(F/(m·g) − 1)`. In flight
                 // `F/(m·g) = 0` and this is exactly `−g`, free fall; at the
-                // half-sine peak of 2.87 BW it is +1.87 g upward. No mass, no
-                // camera, no depth channel enters it — which is the whole
-                // reason a hand-held tracking shot is analysable at all.
+                // half-sine peak of 2.87 BW it is +1.87 g upward. The
+                // substitution itself does not read mass or depth, but the
+                // remaining measured DOFs still require the shared camera,
+                // gravity and root-trajectory admission above.
                 rootVerticalAccel = StaticHoldDetector.gravityMetersPerSecondSquared
                     * (entry.verticalForceInBodyWeights - 1.0)
 
@@ -1547,6 +1641,7 @@ final class NimbleEngine: ObservableObject {
                     hasValidatedFootContactSupport:
                         self.bridge.hasValidatedFootContactSupport,
                     cameraAuthorization: cameraAuthorization,
+                    dynamicsReference: dynamicsReference,
                     solveClass: solveClass
                 ) {
                     self.publishPoseOnly(ik: smoothedIkOutput,
@@ -2034,6 +2129,8 @@ final class NimbleEngine: ObservableObject {
             }
             self.dofFilters.removeAll(keepingCapacity: false)
             self.dofFilterTaps = WindowedDerivativeFilter.maximumTaps
+            self.activeDynamicsReference = nil
+            self.dynamicsReferenceWarmupInvalidationPending = false
             // Must be cleared with the SG filters, not separately: the two are
             // pushed in lockstep and the classifier reads "the last 9 samples"
             // as "the samples that produced this ddq".
@@ -2604,9 +2701,9 @@ final class WindowedDerivativeFilter {
 ///
 /// ⚠️ This does NOT make a squat or a run publishable, and it is not meant to.
 /// A runner's markers move at metres per second; no budget expressed as a
-/// fraction of g reaches that. Motions that fast need the ROOT TRANSLATION,
-/// which this input only carries when `cam_t` is composed in
-/// (`MHRRetarget.makeBodyFrame(jointCoords:camT:…)`) — see
+/// fraction of g reaches that. Motions that fast need a gravity-aligned,
+/// dynamics-qualified root trajectory. Raw `cam_t` composition supplies only
+/// camera-relative position and is rejected by `DynamicsReference` — see
 /// `rootTranslationObservable` below and STATUS.md.
 ///
 /// ─────────────────────────────────────────────────────────────────────────

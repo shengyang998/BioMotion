@@ -137,7 +137,8 @@ final class SkeletonFilter {
         return BodyFrame(
             timestamp: frame.timestamp,
             frameNumber: frame.frameNumber,
-            joints: filteredJoints
+            joints: filteredJoints,
+            dynamicsReference: frame.dynamicsReference
         )
     }
 

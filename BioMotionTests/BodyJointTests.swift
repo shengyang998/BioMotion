@@ -22,10 +22,13 @@ final class BodyJointTests: XCTestCase {
         XCTAssertEqual(joint.opensimMarkerNameOverride, "MHR_ROOT")
 
         let filtered = SkeletonFilter().filter(
-            BodyFrame(timestamp: 0, frameNumber: 1, joints: [joint])
+            BodyFrame(timestamp: 0, frameNumber: 1, joints: [joint],
+                      dynamicsReference: .mhrCameraRelativePosition)
         )
         XCTAssertEqual(filtered.joints.first?.opensimMarkerNameOverride, "MHR_ROOT",
                        "smoothing positions must not erase marker provenance")
+        XCTAssertEqual(filtered.dynamicsReference, .mhrCameraRelativePosition,
+                       "position smoothing must not upgrade spatial provenance")
     }
 
     func testUntrackedJoint() {
@@ -51,6 +54,15 @@ final class BodyJointTests: XCTestCase {
         let frame = BodyFrame(timestamp: 0.0, frameNumber: 1, joints: joints)
 
         XCTAssertNotNil(frame.rootPosition)
+        XCTAssertEqual(frame.dynamicsReference, .unmeasured,
+                       "legacy/adversarial constructors must fail closed")
+        XCTAssertEqual(BodyFrame.DynamicsReference.liveARKit.gravity, .gravityAligned)
+        XCTAssertEqual(BodyFrame.DynamicsReference.liveARKit.rootTrajectory,
+                       .worldPositionOnly,
+                       "ARKit source class alone does not prove derivative quality")
+        XCTAssertTrue(BodyFrame.DynamicsReference.liveARKit.permits(.staticEquilibrium))
+        XCTAssertFalse(BodyFrame.DynamicsReference.liveARKit.permits(.temporal))
+        XCTAssertTrue(BodyFrame.DynamicsReference.dynamicsQualifiedWorld.permits(.temporal))
         XCTAssertEqual(Double(frame.rootPosition!.x), 0.5, accuracy: 0.001)
         XCTAssertEqual(Double(frame.rootPosition!.y), 1.0, accuracy: 0.001)
     }

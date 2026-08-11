@@ -64,7 +64,11 @@ struct PhotoOverlayView: View {
     }
 
     private func projectedPoints() -> [String: CGPoint]? {
-        guard let camT = frame.camT, let body = frame.bodyFrame else { return nil }
+        guard let body = frame.bodyFrame,
+              let camT = Self.projectionCameraTranslation(
+                bodyFrame: body,
+                storedCameraTranslation: frame.camT
+              ) else { return nil }
         var out: [String: CGPoint] = [:]
         for joint in body.joints where joint.isTracked {
             if let p = MHRRetarget.projectToImage(joint.worldPosition,
@@ -74,6 +78,27 @@ struct PhotoOverlayView: View {
             }
         }
         return out.isEmpty ? nil : out
+    }
+
+    /// Chooses exactly one place to apply MHR `cam_t`. The production runner
+    /// currently stores a root-relative body, so projection adds the raw value.
+    /// A future camera-relative body has already composed it and must project
+    /// with zero; every other coordinate space fails closed instead of guessing.
+    static func projectionCameraTranslation(
+        bodyFrame: BodyFrame,
+        storedCameraTranslation: SIMD3<Float>?
+    ) -> SIMD3<Float>? {
+        guard let storedCameraTranslation,
+              MHRRetarget.isValidCameraTranslation(storedCameraTranslation)
+        else { return nil }
+
+        if bodyFrame.dynamicsReference == .mhrRootRelative {
+            return storedCameraTranslation
+        }
+        if bodyFrame.dynamicsReference == .mhrCameraRelativePosition {
+            return .zero
+        }
+        return nil
     }
 
     /// Letterboxes `imageSize` inside `container`, and maps image pixels into

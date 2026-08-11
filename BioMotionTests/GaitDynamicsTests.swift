@@ -548,7 +548,12 @@ final class GaitDynamicsTests: XCTestCase {
                                 isTracked: true,
                                 opensimMarkerNameOverride: opensim)
         }
-        return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
+        return BodyFrame(
+            timestamp: timestamp,
+            frameNumber: frameNumber,
+            joints: joints,
+            dynamicsReference: .mhrRootRelative
+        )
     }
 
     private func loadedBridge() throws -> NimbleBridge {

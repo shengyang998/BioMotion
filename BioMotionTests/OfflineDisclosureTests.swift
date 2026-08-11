@@ -557,7 +557,7 @@ final class OfflineDisclosureTests: XCTestCase {
                 idResult: nil,
                 muscleResult: Self.muscle(generation: 2, timestamp: 0),
                 dynamicsAvailability: .available,
-                isStaticHoldEstimate: true,
+                isStaticHoldEstimate: false,
                 motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
         XCTAssertEqual(validatedCapability.frames[0].dynamicsAvailability,
                        .inverseDynamicsFailed)
@@ -575,7 +575,7 @@ final class OfflineDisclosureTests: XCTestCase {
                 idResult: Self.id(generation: 3, timestamp: 0.002),
                 muscleResult: Self.muscle(generation: 3, timestamp: 0),
                 dynamicsAvailability: .available,
-                isStaticHoldEstimate: true,
+                isStaticHoldEstimate: false,
                 motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
         XCTAssertEqual(validatedCapability.frames[0].dynamicsAvailability,
                        .inverseDynamicsFailed)
@@ -594,7 +594,7 @@ final class OfflineDisclosureTests: XCTestCase {
                 idResult: Self.id(generation: 4, timestamp: 0),
                 muscleResult: Self.muscle(generation: 4, timestamp: 0.002),
                 dynamicsAvailability: .available,
-                isStaticHoldEstimate: true,
+                isStaticHoldEstimate: false,
                 motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
         XCTAssertEqual(validatedCapability.frames[0].dynamicsAvailability, .available)
         XCTAssertEqual(validatedCapability.frames[0].ikResult?.jointAngles["generation"], 4)
@@ -604,6 +604,85 @@ final class OfflineDisclosureTests: XCTestCase {
         XCTAssertEqual(validatedCapability.frames[0].motionState.verdict, .gaitStance)
         XCTAssertNil(validatedCapability.frames[0].motionState.gaitOutcome)
         XCTAssertEqual(validatedCapability.gait?.report, timing)
+
+        // A caller cannot promote camera-relative position into inertial
+        // dynamics merely by pairing it with valid contact/camera flags. The
+        // store repeats the engine's gravity/root boundary and strips stale
+        // load payloads while retaining the owner-matched IK pose.
+        let cameraRelativeStore = OfflineResultStore()
+        cameraRelativeStore.setCameraReferenceState(
+            .staticWithinBudget(Self.cameraEvidence))
+        cameraRelativeStore.setValidatedFootContactSupport(true)
+        cameraRelativeStore.append(OfflineResultStore.FrameResult(
+            id: 40, sourceImage: UIImage(), timestamp: 40, status: .success,
+            usedFallbackBBox: false, camT: SIMD3<Float>(0, 1, 4), modelChecksums: nil,
+            bodyFrame: Self.trackedBodyFrame(
+                timestamp: 40, frameNumber: 40,
+                dynamicsReference: .mhrCameraRelativePosition),
+            ikResult: Self.ik(generation: 40, timestamp: 40),
+            idResult: Self.id(generation: 40, timestamp: 40),
+            muscleResult: Self.muscle(generation: 40, timestamp: 40),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: false,
+            motionState: .measured(verdict: .hold,
+                                   peakSpeedMetersPerSecond: 0,
+                                   windowSeconds: 1,
+                                   noiseFloorMetersPerSecond: 0.001)))
+        XCTAssertEqual(cameraRelativeStore.frames[0].dynamicsAvailability,
+                       .gravityReferenceUnavailable)
+        XCTAssertNotNil(cameraRelativeStore.frames[0].ikResult)
+        XCTAssertNil(cameraRelativeStore.frames[0].idResult)
+        XCTAssertNil(cameraRelativeStore.frames[0].muscleResult)
+
+        let positionOnlyStore = OfflineResultStore()
+        positionOnlyStore.setCameraReferenceState(
+            .staticWithinBudget(Self.cameraEvidence))
+        positionOnlyStore.setValidatedFootContactSupport(true)
+        positionOnlyStore.append(OfflineResultStore.FrameResult(
+            id: 41, sourceImage: UIImage(), timestamp: 41, status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil,
+            bodyFrame: Self.trackedBodyFrame(
+                timestamp: 41, frameNumber: 41,
+                dynamicsReference: .liveARKit),
+            ikResult: Self.ik(generation: 41, timestamp: 41),
+            idResult: Self.id(generation: 41, timestamp: 41),
+            muscleResult: Self.muscle(generation: 41, timestamp: 41),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: false,
+            motionState: .measured(verdict: .movingBeyondStaticBudget,
+                                   peakSpeedMetersPerSecond: 0.2,
+                                   windowSeconds: 1,
+                                   noiseFloorMetersPerSecond: 0.001)))
+        XCTAssertEqual(positionOnlyStore.frames[0].dynamicsAvailability,
+                       .rootTrajectoryUnavailable)
+        XCTAssertNotNil(positionOnlyStore.frames[0].ikResult)
+        XCTAssertNil(positionOnlyStore.frames[0].idResult)
+        XCTAssertNil(positionOnlyStore.frames[0].muscleResult)
+
+        // Static equilibrium needs a gravity-aligned pose, but no root
+        // derivative. The store must not accidentally apply its temporal root
+        // gate to an explicit same-generation single-frame hold.
+        let staticPositionStore = OfflineResultStore()
+        staticPositionStore.setCameraReferenceState(.notRequiredForSingleFrame)
+        staticPositionStore.setValidatedFootContactSupport(true)
+        staticPositionStore.append(OfflineResultStore.FrameResult(
+            id: 42, sourceImage: UIImage(), timestamp: 42, status: .success,
+            usedFallbackBBox: false, camT: nil, modelChecksums: nil,
+            bodyFrame: Self.trackedBodyFrame(
+                timestamp: 42, frameNumber: 42,
+                dynamicsReference: .liveARKit),
+            ikResult: Self.ik(generation: 42, timestamp: 42),
+            idResult: Self.id(generation: 42, timestamp: 42),
+            muscleResult: Self.muscle(generation: 42, timestamp: 42),
+            dynamicsAvailability: .available,
+            isStaticHoldEstimate: true,
+            motionState: .measured(verdict: .hold,
+                                   peakSpeedMetersPerSecond: 0,
+                                   windowSeconds: 1,
+                                   noiseFloorMetersPerSecond: 0.001)))
+        XCTAssertEqual(staticPositionStore.frames[0].dynamicsAvailability, .available)
+        XCTAssertNotNil(staticPositionStore.frames[0].idResult)
+        XCTAssertNotNil(staticPositionStore.frames[0].muscleResult)
 
         // Direct admission rejects missing/stale pose provenance before the
         // capability or ID gates. Every case clears the entire solve envelope.
@@ -733,7 +812,7 @@ final class OfflineDisclosureTests: XCTestCase {
             idResult: Self.id(generation: 30, timestamp: 30),
             muscleResult: Self.muscle(generation: 30, timestamp: 30),
             dynamicsAvailability: .available,
-            isStaticHoldEstimate: true,
+            isStaticHoldEstimate: false,
             motionState: .gait(verdict: .gaitStance, outcome: staleGait)))
         XCTAssertTrue(downgradeStore.frames[0].hasFullBiomechanics)
         downgradeStore.setValidatedFootContactSupport(false)
@@ -1057,7 +1136,8 @@ final class OfflineDisclosureTests: XCTestCase {
 
     private static func trackedBodyFrame(
         timestamp: TimeInterval,
-        frameNumber: Int
+        frameNumber: Int,
+        dynamicsReference: BodyFrame.DynamicsReference = .dynamicsQualifiedWorld
     ) -> BodyFrame {
         BodyFrame(
             timestamp: timestamp,
@@ -1066,7 +1146,8 @@ final class OfflineDisclosureTests: XCTestCase {
                 id: "hips_joint",
                 name: "Pelvis",
                 worldPosition: .zero,
-                isTracked: true)])
+                isTracked: true)],
+            dynamicsReference: dynamicsReference)
     }
 
     private static func emptyFrame(id: Int) -> OfflineResultStore.FrameResult {

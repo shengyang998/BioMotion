@@ -41,7 +41,8 @@ final class SAM3DPoseEstimator {
         /// `readMat3x3Array`. Not currently consumed by MHRRetarget's given
         /// signature; exposed here for fidelity to the contract and future use.
         let globalRots: [simd_float3x3]
-        /// Camera translation, model units.
+        /// Camera-relative translation in metres: OpenCV-style X-right,
+        /// Y-down and positive Z away from the camera.
         let camT: SIMD3<Float>
         /// 70 2D keypoints in the 512x384 crop pixel frame (x, y).
         let keypoints2D: [SIMD2<Float>]
@@ -129,6 +130,7 @@ final class SAM3DPoseEstimator {
         case predictionFailed(Error)
         case missingOutputFeature(String)
         case unexpectedOutputShape(String)
+        case invalidOutputValue(String)
 
         var errorDescription: String? {
             switch self {
@@ -144,6 +146,8 @@ final class SAM3DPoseEstimator {
                 return "Pose model output is missing expected field \"\(name)\" — check SAM3DBodyPose.mlpackage matches the frozen contract."
             case .unexpectedOutputShape(let detail):
                 return "Pose model output shape mismatch: \(detail)"
+            case .invalidOutputValue(let detail):
+                return "Pose model returned an invalid value: \(detail)"
             }
         }
     }
@@ -650,10 +654,10 @@ final class SAM3DPoseEstimator {
 
     // MARK: - Output parsing
 
-    private static func parseOutput(_ provider: MLFeatureProvider, usedFallbackBBox: Bool,
-                                    inputChecksum: UInt64,
-                                    sourceHash: UInt64, bboxHash: UInt64,
-                                    warpHash: UInt64) throws -> Output {
+    static func parseOutput(_ provider: MLFeatureProvider, usedFallbackBBox: Bool,
+                            inputChecksum: UInt64,
+                            sourceHash: UInt64, bboxHash: UInt64,
+                            warpHash: UInt64) throws -> Output {
         guard let jointCoordsArray = provider.featureValue(for: "joint_coords")?.multiArrayValue else {
             throw EstimatorError.missingOutputFeature("joint_coords")
         }
@@ -668,8 +672,18 @@ final class SAM3DPoseEstimator {
         }
 
         let jointCoords = try readVec3Array(jointCoordsArray, count: PreprocessingConstants.numBodyJoints, name: "joint_coords")
+        guard jointCoords.allSatisfy(MHRRetarget.isValidSourceJointCoordinate) else {
+            throw EstimatorError.invalidOutputValue(
+                "joint_coords must remain inside the supported metric coordinate domain"
+            )
+        }
         let globalRots = try readMat3x3Array(globalRotsArray, count: PreprocessingConstants.numBodyJoints, name: "global_rots")
         let camT = try readVec3(camTArray, name: "cam_t")
+        guard MHRRetarget.isValidCameraTranslation(camT) else {
+            throw EstimatorError.invalidOutputValue(
+                "cam_t must contain bounded finite x/y values and bounded positive depth"
+            )
+        }
         let keypoints2D = try readVec2Array(keypoints2DArray, count: PreprocessingConstants.numOutputKeypoints2D, name: "keypoints_2d")
 
         // Checksum the joints exactly as the model returned them, before any
@@ -699,6 +713,11 @@ final class SAM3DPoseEstimator {
             let x = array[idx(i, 0)].floatValue
             let y = array[idx(i, 1)].floatValue
             let z = array[idx(i, 2)].floatValue
+            guard x.isFinite, y.isFinite, z.isFinite else {
+                throw EstimatorError.invalidOutputValue(
+                    "\(name)[\(i)] must contain three finite coordinates"
+                )
+            }
             result.append(SIMD3<Float>(x, y, z))
         }
         return result
@@ -717,8 +736,10 @@ final class SAM3DPoseEstimator {
     }
 
     private static func readVec3(_ array: MLMultiArray, name: String) throws -> SIMD3<Float> {
-        guard array.count == 3 else {
-            throw EstimatorError.unexpectedOutputShape("\(name): expected 3 elements, got \(array.count)")
+        guard array.shape.map(\.intValue) == [3] else {
+            throw EstimatorError.unexpectedOutputShape(
+                "\(name): expected [3], got \(array.shape)"
+            )
         }
         return SIMD3<Float>(array[idx(0)].floatValue, array[idx(1)].floatValue, array[idx(2)].floatValue)
     }

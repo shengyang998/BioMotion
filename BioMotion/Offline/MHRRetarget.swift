@@ -73,8 +73,9 @@ import simd
 /// "cam_t recovers the root translation; its depth cannot be differentiated twice".
 ///
 /// # What this file deliberately does NOT do
-///  * It does not floor-align. Even with `camT` composed in, y = 0 is the camera's optical
-///    axis, not the ground; the ground-contact / GRF stage must keep estimating the floor.
+///  * It does not gravity- or floor-align. Even with `camT` composed in, y = 0 is the camera's
+///    optical axis, not the ground. `DynamicsReference` therefore labels the result position-only
+///    and the dynamics boundary rejects it before inverse-dynamics solving.
 ///  * It does not smooth. Filtering is `NimbleEngine`'s job.
 ///  * It does not compensate camera motion. `cam_t` is camera-relative, so a camera that
 ///    ROTATES makes the reconstructed frame non-inertial (measured on the user's own clips:
@@ -82,6 +83,14 @@ import simd
 ///    single 0.27 s filter window). Constant-velocity camera translation is Galilean and
 ///    harmless; camera acceleration is not, and is not measured here.
 enum MHRRetarget {
+
+    /// Structural numeric domains, deliberately much wider than the product's
+    /// 1.3–2.1 m stature policy. They prevent finite-but-astronomical model
+    /// values from overflowing retarget/projection arithmetic or entering the
+    /// native solver; they are not a claim that a pose inside these bounds is
+    /// physically plausible.
+    static let maximumSourceJointMagnitudeMeters: Float = 10
+    static let maximumCameraTranslationMagnitudeMeters: Float = 1_000
 
     // MARK: - MHR joint indices
     //
@@ -275,11 +284,32 @@ enum MHRRetarget {
     /// own `keypoints_2d` at 1.0 px mean). Undoing that axis flip gives the translation in
     /// the Y-up frame `joint_coords` and every marker in this file live in.
     ///
-    /// The resulting frame has the CAMERA at the origin looking along −Z. It is metric and
-    /// (for a non-rotating camera) inertial. It is NOT floor-aligned and its Y axis is the
-    /// camera's up, not gravity — a tilted phone tilts the whole reconstruction.
+    /// The resulting frame has the CAMERA at the origin looking along −Z and is metric, but it is
+    /// only camera-relative. It is not an inertial, gravity-aligned, or floor-aligned frame: even a
+    /// non-rotating camera may translate with acceleration, and a tilted phone makes camera-up differ
+    /// from gravity-up.
     static func rootTranslation(camT: SIMD3<Float>) -> SIMD3<Float> {
         mhrToARKit(SIMD3<Float>(camT.x, -camT.y, -camT.z))
+    }
+
+    /// The camera head defines `cam_t.z` as a positive distance in front of
+    /// the camera. Reject malformed model output before it can turn all twenty
+    /// markers into NaN/Inf or place the subject behind the projection plane.
+    /// This validates a position only; it does not qualify the trajectory for
+    /// dynamics, gravity alignment, or differentiation.
+    static func isValidCameraTranslation(_ camT: SIMD3<Float>) -> Bool {
+        camT.x.isFinite && camT.y.isFinite && camT.z.isFinite
+            && abs(camT.x) <= maximumCameraTranslationMagnitudeMeters
+            && abs(camT.y) <= maximumCameraTranslationMagnitudeMeters
+            && camT.z > 0
+            && camT.z <= maximumCameraTranslationMagnitudeMeters
+    }
+
+    static func isValidSourceJointCoordinate(_ p: SIMD3<Float>) -> Bool {
+        p.x.isFinite && p.y.isFinite && p.z.isFinite
+            && abs(p.x) <= maximumSourceJointMagnitudeMeters
+            && abs(p.y) <= maximumSourceJointMagnitudeMeters
+            && abs(p.z) <= maximumSourceJointMagnitudeMeters
     }
 
     /// Build a `BodyFrame` that `NimbleEngine.processFrame` can consume directly.
@@ -287,24 +317,31 @@ enum MHRRetarget {
     /// - Parameters:
     ///   - jointCoords: 127 MHR joint positions, meters, MHR-native (un-flipped) frame.
     ///   - camT: the model's `cam_t` output for the same frame. When supplied, the root
-    ///     translation is composed back in and the emitted markers are camera-frame world
-    ///     positions — so the pelvis descends in a squat instead of the feet appearing to
-    ///     rise, and `q̈` describes motion that actually happened. When nil (the default),
-    ///     the markers stay pelvis-pinned, which is bit-for-bit the behaviour every caller
-    ///     had before this parameter existed.
+    ///     translation is composed back in and the emitted markers carry camera-relative
+    ///     metric position. This is useful for root IK, but not an inertial trajectory:
+    ///     `DynamicsReference` marks it position-only. When nil (the production Photos
+    ///     default), markers stay pelvis-pinned and are marked root-relative.
     /// - Returns: a frame with the twenty joints of `JointMapping.primary`, or a frame with an
-    ///   empty joint list if `jointCoords` is the wrong length (`processFrame` already guards
+    ///   empty joint list if the source length is wrong, a source/camera value is invalid, or
+    ///   finite inputs overflow while constructing a marker (`processFrame` already guards
     ///   `names.isEmpty` and returns without touching the solver).
     ///
-    /// ⚠️ Supplying `camT` is necessary for dynamics but NOT sufficient — read
-    /// `rootTranslation` and this type's header for the measured depth noise, and
-    /// `NimbleEngine.StaticHoldDetector` for the conditions the engine then checks.
+    /// ⚠️ Supplying raw `camT` never authorizes dynamics. Read `rootTranslation`
+    /// and this type's header for the missing gravity transform and measured depth noise.
     static func makeBodyFrame(jointCoords: [SIMD3<Float>],
                               camT: SIMD3<Float>? = nil,
                               timestamp: TimeInterval,
                               frameNumber: Int) -> BodyFrame {
-        guard jointCoords.count >= MHR.jointCount else {
-            return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: [])
+        guard jointCoords.count >= MHR.jointCount,
+              jointCoords.prefix(MHR.jointCount).allSatisfy(
+                  isValidSourceJointCoordinate
+              ) else {
+            return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: [],
+                             dynamicsReference: .unmeasured)
+        }
+        if let camT, !isValidCameraTranslation(camT) {
+            return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: [],
+                             dynamicsReference: .unmeasured)
         }
         let offset = camT.map(rootTranslation(camT:)) ?? .zero
         let joints = table.map { src -> TrackedJoint in
@@ -314,11 +351,26 @@ enum MHRRetarget {
                          isTracked: true,
                          opensimMarkerNameOverride: src.opensimMarker)
         }
-        return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: joints)
+        guard joints.allSatisfy({ joint in
+            joint.worldPosition.x.isFinite
+                && joint.worldPosition.y.isFinite
+                && joint.worldPosition.z.isFinite
+        }) else {
+            return BodyFrame(timestamp: timestamp, frameNumber: frameNumber, joints: [],
+                             dynamicsReference: .unmeasured)
+        }
+        return BodyFrame(
+            timestamp: timestamp,
+            frameNumber: frameNumber,
+            joints: joints,
+            dynamicsReference: camT == nil
+                ? .mhrRootRelative
+                : .mhrCameraRelativePosition
+        )
     }
 
     /// Resolve one table row into a position, in the ARKit-facing frame, RELATIVE to the
-    /// pelvis-pinned origin. Add `rootTranslation(camT:)` for a camera-frame world position.
+    /// pelvis-pinned origin. Add `rootTranslation(camT:)` for a camera-relative metric position.
     static func markerPosition(_ src: JointSource, in jointCoords: [SIMD3<Float>]) -> SIMD3<Float> {
         let a = jointCoords[src.mhrJointIndex]
         let b = jointCoords[src.blendJointIndex]
@@ -577,12 +629,20 @@ enum MHRRetarget {
                                camT: SIMD3<Float>,
                                imageSize: CGSize) -> CGPoint? {
         let w = Float(imageSize.width), h = Float(imageSize.height)
-        guard w > 0, h > 0 else { return nil }
+        guard w.isFinite, h.isFinite, w > 0, h > 0,
+              p.x.isFinite, p.y.isFinite, p.z.isFinite,
+              camT.x.isFinite, camT.y.isFinite, camT.z.isFinite else {
+            return nil
+        }
         let focal = (w * w + h * h).squareRoot()
         let cam = SIMD3<Float>(p.x, -p.y, -p.z) + camT
-        guard cam.z > 1e-4 else { return nil }
-        return CGPoint(x: CGFloat(focal * cam.x / cam.z + w / 2),
-                       y: CGFloat(focal * cam.y / cam.z + h / 2))
+        guard focal.isFinite,
+              cam.x.isFinite, cam.y.isFinite, cam.z.isFinite,
+              cam.z > 1e-4 else { return nil }
+        let x = focal * cam.x / cam.z + w / 2
+        let y = focal * cam.y / cam.z + h / 2
+        guard x.isFinite, y.isFinite else { return nil }
+        return CGPoint(x: CGFloat(x), y: CGFloat(y))
     }
 
     // MARK: - Self-check

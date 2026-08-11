@@ -1342,7 +1342,8 @@ final class OfflineSessionRunner: ObservableObject {
             guard isRunActive(token) else { return false }
             let padded = BodyFrame(timestamp: bodyFrame.timestamp - Double(step) * dt,
                                    frameNumber: bodyFrame.frameNumber,
-                                   joints: bodyFrame.joints)
+                                   joints: bodyFrame.joints,
+                                   dynamicsReference: bodyFrame.dynamicsReference)
             let submission = await submitAndWait(
                 padded,
                 timeout: Self.solveTimeout,
@@ -1372,7 +1373,8 @@ final class OfflineSessionRunner: ObservableObject {
             guard isRunActive(token) else { return false }
             let padded = BodyFrame(timestamp: bodyFrame.timestamp + Double(step) * dt,
                                    frameNumber: bodyFrame.frameNumber,
-                                   joints: bodyFrame.joints)
+                                   joints: bodyFrame.joints,
+                                   dynamicsReference: bodyFrame.dynamicsReference)
             let submission = await submitAndWait(
                 padded,
                 timeout: Self.solveTimeout,

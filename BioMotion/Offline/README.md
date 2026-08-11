@@ -47,7 +47,10 @@ OfflineImportView (PhotosPicker: photo or video)
        -> FrameSource.decodePhoto / VideoDecoder       [decode]
        -> for each frame:
             SAM3DPoseEstimator.estimate(uiImage:)      [Vision bbox -> warp -> CoreML predict]
-            MHRRetarget.makeBodyFrame(jointCoords:)    [-> BodyFrame + source marker names]
+            MHRRetarget.makeBodyFrame(jointCoords:)    [-> pelvis-pinned BodyFrame
+                                                         + .mhrRootRelative provenance]
+            retain raw camT on FrameResult             [finite/positive-depth structure check;
+                                                         camera-relative overlay position only]
             (first successful frame only) nimble.scaleModel(...)  [MHRRetarget.segmentScaleMarkers/estimatedStatureMeters]
             nimble.processFrame(bodyFrame, exact offline lease)
               + await that exact receipt, or fail closed
@@ -60,6 +63,8 @@ OfflineImportView (PhotosPicker: photo or video)
             snapshot hasValidatedFootContactSupport
             future validated-contact branch only:
               also require clip camera state to permit TEMPORAL dynamics
+              require each solver derivative window to carry one
+                gravity-aligned, dynamics-qualified root reference
               resultStore.beginGaitReplacementPass() before analysed publication
             publish detached GaitTimingReport
             guard the capability snapshot
@@ -196,10 +201,11 @@ because a camera cannot repair an absent support model; both bundled models
 therefore continue to report `.contactSupportUnavailable`. For a future model
 that passes contact capability, the runner maps the state to
 `CameraDynamicsAuthorization`. `NimbleEngine.processFrame` captures that value
-before crossing to `solverQueue`, and `dynamicsPreflightAvailability` refuses
-before `solveIDGRF`, avoiding computation of values the product cannot publish.
-`OfflineResultStore` independently applies the same
-contact-then-camera order when projecting a complete solve generation and
+and the frame's `DynamicsReference` before crossing to `solverQueue`, and
+`dynamicsPreflightAvailability` refuses before `solveIDGRF`. The complete order
+is contact capability, camera authorization, gravity alignment, then (for a
+temporal solve) dynamics-qualified root trajectory. `OfflineResultStore`
+independently applies the same order when projecting a complete solve generation and
 purges ID/muscle on a downgrade. That second check is a stale-payload safety
 boundary, not the mechanism that makes an unauthorized solve acceptable. Its
 frames, capability, camera state, gait and selection are ordinary stored state:
@@ -217,6 +223,43 @@ future contact-valid multi-frame path would finalize
 state. Visible-background registration does not prove absolute physical camera
 translation, and uncalibrated thresholds do not become truth because a clip
 looks steady.
+
+### Camera-relative position is not an inertial root trajectory
+
+SAM 3D Body emits `cam_t` in metres in an OpenCV camera frame. The exact
+Y-up translation used by `MHRRetarget` is `(x, -y, -z)`, and the pure
+composition remains useful and tested. It establishes only where the body sits
+relative to the image camera. It does not establish physical gravity, a floor,
+camera acceleration, or a depth channel safe to differentiate twice.
+
+`BodyFrame.DynamicsReference` keeps those claims separate:
+
+- `.liveARKit` records gravity alignment and global position, but intentionally
+  remains position-only for temporal dynamics until source-specific root
+  continuity/noise evidence is calibrated.
+- `.dynamicsQualifiedWorld` is the explicit future/test authority for a
+  gravity-aligned root trajectory whose derivatives have been qualified.
+- `.mhrRootRelative` is the current production offline solver frame: metric
+  relative pose, pelvis pinned, no synchronized gravity reference.
+- `.mhrCameraRelativePosition` means raw `cam_t` was composed for position/IK;
+  it still permits neither static nor temporal dynamics without a gravity
+  transform, and its root remains position-only for temporal work.
+- the initializer default is `.unmeasured`, so legacy/adversarial callers do
+  not inherit live authority accidentally.
+
+The Photos runner intentionally continues to use pinned markers plus raw
+`cam_t` for projection. Passing `cam_t` into `makeBodyFrame` without changing
+the overlay would apply the translation twice. Production activation therefore
+waits for one atomic path that supplies synchronized camera-to-gravity evidence,
+a calibrated camera/reference decision, a pre-registered depth-drift and root
+noise policy, continuity resets, and physical-device ground truth. A derivative
+window must carry one unanimous qualified reference; one newer trusted frame
+cannot authorize older samples. Non-finite or structurally out-of-domain
+`joint_coords`, wrong-rank/non-finite/out-of-domain `cam_t`, non-positive
+`cam_t.z`, non-finite retarget arithmetic, and non-finite projection results
+are rejected before native IK/display. The broad 10 m source-joint and 1,000 m
+camera-translation ceilings are numeric safety domains, not physical
+validation; the separate stature/hip gate remains the human plausibility test.
 
 ### Backpressure (constraint: never submit frame N+1 while N is in flight)
 
@@ -271,6 +314,15 @@ pushes before it emits a centred derivative window. That is a filtering
 requirement, not evidence of foot support and not permission to treat replayed
 poses as new observations of the floor. This means:
 
+- A `DynamicsReference` change clears IK/filter/ground history. Until a full
+  all-new window exists, the explicit `referenceTransitionWarmup` state clears
+  any old coloured dynamics display without falsely claiming that the new
+  reference itself lacks gravity or root qualification.
+- Before any production source may emit `.dynamicsQualifiedWorld`, its
+  reference generation must change on world-origin/relocalization events, or
+  those events must force the same explicit session reset. Equal category
+  labels alone do not prove two world frames share one origin.
+
 - **A single photo can produce a centred pose/IK result, but it remains
   pose-only with either floor source.** Edge replay can fill the derivative
   window; it cannot manufacture missing contact-support mechanics. It also
@@ -315,31 +367,36 @@ poses as new observations of the floor. This means:
   converted into a measured zero. Image/frame/model provenance and `FrameStatus`
   are not owned by the solve and remain unchanged. If a same-generation ID is
   otherwise valid, the projector applies the session gates in the same order as
-  the engine: contact capability first, then the clip camera permission for
-  static-equilibrium or temporal dynamics. Either downgrade strips ID and
-  muscle while preserving pose and report-neutral motion evidence.
+  the engine: contact capability, clip camera permission, gravity alignment,
+  then solve-class root provenance (required for temporal dynamics). Any
+  downgrade strips ID and muscle while preserving pose and report-neutral
+  motion evidence.
   Starting the gait replacement pass first clears every eligible pass-one ID,
   muscle, and static flag to `.analysisPassIncomplete`; each successful
   same-generation gait solve then replaces that marker. A timeout or missing
   centred publication therefore cannot leave static physics under a running
   result.
 
-### Contact support gates dynamics before camera reference and ground trust
+### Contact, camera, spatial reference, then ground trust
 
-The three requirements answer different questions. Contact support says how a
-foot may transmit force. Camera reference says whether image derivatives can be
-treated in one stationary reference frame. Ground provenance says where the
-floor is. Both bundled models have empty `ContactGeometrySet`s, and the active
-solver does not impose a validated support domain itself, so the permanent
-contact capability is checked first and both bundled models remain pose-only.
-An explicit floor, a calibrated camera, 30 observations, a session reset, or a
-second pass cannot unlock a missing capability.
+The boundaries answer different questions. Contact support says how a foot may
+transmit force. Camera authorization says whether image derivatives share a
+calibrated stationary reference. `DynamicsReference` separately says whether
+marker axes follow physical gravity and whether the requested solve class has a
+qualified root trajectory. Ground provenance says where the floor is. Both
+bundled models have empty `ContactGeometrySet`s, and the active solver does not
+impose a validated support domain itself, so the permanent contact capability
+is checked first and both bundled models remain pose-only. An explicit floor, a
+calibrated camera, a qualified coordinate label, 30 observations, a session
+reset, or a second pass cannot unlock a missing capability.
 
 For a future model/solver pair that does define validated support, the requested
-solve class must next be authorized by the clip camera state before the engine
-may enter `solveIDGRF`. The rolling estimator then remains a necessary later
-gate. An external caller may pin an explicit ground height; that source is
-trusted immediately and observed
+solve class must next be authorized by the clip camera state, then by gravity
+provenance and—only for temporal dynamics—a dynamics-qualified root trajectory
+across the whole derivative window. Those checks all refuse upstream of
+`solveIDGRF`. The rolling ground estimator remains a necessary later gate. An
+external caller may pin an explicit ground height; that source is trusted
+immediately and observed
 foot heights cannot overwrite it during the session. Without one,
 `NimbleBridge` maintains a bounded rolling low-percentile estimate from the
 solved model's lowest heel height: the 10th percentile of the most recent 180

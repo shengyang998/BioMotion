@@ -28,11 +28,13 @@ biggest links were **not** where the effort had been going.
 - A **kinematics-only findings layer** ships (forward head, rounded shoulders, trunk lean, …). It
   carries **no clinical threshold and no verdict** and suppresses any finding whose measurement axis
   points into depth. See [Posture findings](#posture-findings-a-kinematics-only-layer-2026-08-07).
-- **`cam_t` is the root translation the offline path was throwing away** — it is exported, stored and
-  already used for the overlay, and the "needs SLAM" line in this file was wrong. Composing it back
-  in is shipped and default-off; activating it is one argument at a call site another task owns.
-  It is necessary and **not sufficient**: the depth channel carries 3.1 g of pure acceleration noise
-  at 30 fps, and all three of the owner's clips are tracking shots with no inertial frame at all. See
+- **`cam_t` contains the camera-relative root position the offline solver path leaves out** — it is
+  exported, structurally checked for finite values and positive depth, stored, and already used by
+  the overlay. The exact composition helper is tested, but production deliberately keeps its solver
+  markers pelvis-pinned: turning composition on is not a one-argument change. Raw `cam_t` supplies
+  neither gravity alignment nor a dynamics-qualified trajectory; its depth channel carries 3.1 g of
+  pure acceleration noise at 30 fps, and all three owner clips are tracking shots with no inertial
+  frame. See
   [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
 - **Offline camera reference is now a contact-first authorization boundary, not an after-the-fact
   banner.** The bundled models fail contact capability and skip native camera analysis entirely;
@@ -1348,8 +1350,10 @@ the offline path spent a build refusing every moving frame.** The model emits th
 separately, as `cam_t`, which this app already exports, already stores on `FrameResult` and already
 uses to project the overlay. Measured and corrected 2026-08-07 — see
 [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
-Static-equilibrium ID over a detected hold remains the honest reading, but for a *narrower* reason
-than "the translation is unavailable".
+**Superseded by the 2026-08-12 spatial-reference audit:** a detected hold removes the need to
+differentiate the root, but it cannot manufacture gravity alignment or validated foot support.
+Static-equilibrium ID is honest only after those independent gates pass; the current MHR Photos
+path does not pass them.
 
 T-pose calibration **is** skippable, but only via `segmentScaleMarkers`, which rebuilds a synthetic
 straight-limb marker set from pose-invariant chain sums. Handing the bridge raw posed markers fails
@@ -1469,38 +1473,82 @@ Shipped (files this change owned):
   third case is new and is Finding 7 made operational — the pose noise floor is now **measured per
   clip** from `rigidPairs`, distances that physically cannot change, as `median|Δd|/(2·dt)`
   (a rigorous lower bound, since a distance change of `d` needs ≥ `d/2` on one marker).
-* `MotionClassification.rootTranslationObservable` reads the DATA, not a flag: a pinned stream
-  repeats the model constant bit-for-bit, so the engine cannot disagree with the stream about
-  whether it was handed a root translation.
+* `MotionClassification.rootTranslationObservable` is a position-variation diagnostic: a pinned
+  stream repeats the model constant bit-for-bit, while a composed stream can vary. It does not
+  establish gravity alignment, camera stationarity, depth quality, or usable acceleration.
 * Tests: 197 → **219, all passing**, including a new `RootTranslationTests` (6) and 5 new
   noise-floor / budget tests.
 
-⚠️ **Blocked, and deliberately not worked around.** Two seams live in files another task owns:
+#### 2026-08-12 correction — `cam_t` activation is not one argument
 
-1. `OfflineSessionRunner.swift:242` calls `MHRRetarget.makeBodyFrame(jointCoords:timestamp:frameNumber:)`
-   and has `estimate.camT` in hand one line above. Adding `camT: estimate.camT` is the entire
-   activation. **Until that line changes, `rootTranslationObservable` is false on every real frame
-   and the composition is exercised only by tests.**
-2. The user-facing sentence comes from `OfflineResultStore.MotionState` (two cases: `.hold`,
-   `.moving`) rendered by `OfflinePlaybackView.motionDetail`, which hard-codes *"muscle loads need a
-   still pose"*. `MotionVerdict` carries the reason and the advice; surfacing it needs those two
-   files.
+The old note above treated the production call in `OfflineSessionRunner.processOneFrame` as a
+mechanical seam. A full call-chain audit falsified that description:
 
-⚠️ **No dynamic-ID branch was shipped**, and that is a decision, not an omission. It cannot be
-reached by the app without seam 1, and its correctness turns on an unresolved design question — see
-the owner decision below. Shipping an unreachable branch whose depth handling has never been
-validated end-to-end is exactly the "silent wrong number" this file warns about.
+* `(camT.x, -camT.y, -camT.z)` is the correct metric rigid translation, but the result is in a
+  **camera-oriented** frame. Image up is not measured gravity up. A perfectly fixed phone can be
+  rolled while Nimble still applies gravity along world −Y.
+* Passing `camT` to the runner while leaving `PhotoOverlayView` unchanged would apply translation
+  twice: pinned markers project with raw `camT`; composed markers must project with zero `camT`.
+* Background stillness does not provide the missing camera-to-gravity transform, and the existing
+  rigid-pair pose floor cancels common translation exactly, so it cannot qualify monocular depth.
+
+The repository now enforces the separation instead of relying on that warning. Every `BodyFrame`
+carries a fail-closed `DynamicsReference` with independent gravity and root-trajectory provenance.
+Live ARKit construction explicitly supplies `.liveARKit`, which records gravity-aligned global
+position but does not by itself qualify temporal root derivatives; MHR construction supplies
+`.mhrRootRelative` or `.mhrCameraRelativePosition`. Filters plus synthetic edge padding preserve
+the value, and a derivative window cannot borrow authority from one differently labelled frame.
+`NimbleEngine` and `OfflineResultStore` both apply the same order:
+
+`validated contact -> camera authorization -> gravity alignment -> temporal root quality`.
+
+Static equilibrium stops after gravity because it differentiates no root trajectory. Temporal
+dynamics additionally requires dynamics-qualified root provenance across the derivative window;
+raw `cam_t` and an otherwise global position stream without calibrated derivative evidence cannot
+grant that case. Non-finite or structurally out-of-domain `joint_coords`, wrong-rank/non-finite/
+out-of-domain `cam_t`, non-positive `cam_t.z`, non-finite retarget arithmetic, or non-finite
+projection results now fail before native IK/display. The broad 10 m source-joint and 1,000 m
+camera-translation ceilings are numeric safety domains, not physical validation. The current
+Photos runner deliberately
+remains pelvis-pinned while continuing to store raw `cam_t` and use the tested overlay projection;
+no hidden depth-constant assumption was activated.
+
+The expanded focused runtime receipt is **28/28** (the seven root-translation/parser/overlay tests,
+nine BodyFrame/joint tests, eleven engine/store provenance tests and the disclosure projection
+test), and complete Simulator plus generic-device `build-for-testing` runs pass. RED receipts are
+`/tmp/biomotion-root-reference-red-2.log` and
+`/tmp/biomotion-reference-transition-red.log`,
+`/tmp/biomotion-reference-hardening-red.log`,
+`/tmp/biomotion-generic-joint-finite-red.log` and
+`/tmp/biomotion-output-magnitude-red-2.log`; GREEN receipts are
+`/tmp/biomotion-reference-transition-green.log`,
+`/tmp/biomotion-reference-hardening-green.log`,
+`/tmp/biomotion-generic-joint-finite-green.log`,
+`/tmp/biomotion-output-magnitude-green.log`,
+`/tmp/biomotion-root-reference-simulator-build-final-2.log`,
+`/tmp/biomotion-root-reference-device-build-final.log` and
+`/tmp/biomotion-root-reference-focused-final-2.log`. The current-tree gate harness is **49/49**
+(`/tmp/biomotion-root-reference-gate-tests-final.log`); Swift parsing, the privacy-manifest probe
+and the app-resource boundary probe also pass.
+
+Actual offline root activation now has an explicit external evidence boundary: synchronized
+camera-to-gravity data, a calibrated camera/reference profile, a pre-registered depth-drift policy,
+root-specific noise/continuity handling and physical-device ground truth. It must also switch the
+overlay projection convention atomically and reset the IK/SG/ground state before any authorized
+replay. A production dynamics-qualified source must additionally carry a reference epoch or force
+that reset whenever its world origin/relocalization changes; an equal category label is not proof
+of a continuous coordinate frame. Until those facts exist, pose/anatomy/contact timing remain
+available and dynamics stay closed.
 
 #### SUPERSEDED 2026-08-07 — the question was wrongly framed
 
-Both options below assume the root's acceleration is something we must MEASURE. For running it is
-not: the gait cycle supplies it. See
-[Gait-cycle dynamics](#gait-cycle-dynamics-the-route-survives-its-evidence-did-not-2026-08-07),
-which measures the required signals on the user's own clips and passes. The depth-hold gate below
-was not built. The (a)/(b) framing is kept because the reasoning inside it is still correct for
-NON-periodic motion, where there is no gait cycle to close the system.
+The 2026-08-07 text claimed that a gait cycle supplied the missing root acceleration and that the
+route passed on the owner's clips. Later extraction and contact-support audits falsified that claim:
+the load route is closed, and gait timing does not supply a validated inertial root trajectory or
+foot-support model. The (a)/(b) framing below is retained only as historical design reasoning for
+non-periodic motion. Neither option currently authorizes dynamics.
 
-#### Owner decision this raised — DECIDED 2026-08-07: (b), as a checked precondition
+#### Historical owner decision — pursue (b) only after its precondition is built and validated
 
 Given Finding 2 — in-plane root motion is measurable, depth is not — there were two defensible
 products:
@@ -1511,11 +1559,11 @@ products:
   dynamics on the in-plane channels, and tell the user the assumption plus the measured slow depth
   drift so they can check it.
 
-**Decision: (b), with the assumption implemented as a gate rather than a disclaimer.** Hold the
-root's depth at its low-passed value, let in-plane root motion through, and refuse the frame when
-the low-passed depth drift itself exceeds a pre-registered budget. The drift is already computed, so
-this adds no mechanism — it converts a modelling assumption into a precondition the data has to
-satisfy, and a subject walking toward the camera gets refused with the reason.
+**Historical decision: pursue (b) as a gate rather than a disclaimer.** The proposed gate would
+hold root depth at a low-passed value, let in-plane motion through, and refuse a frame when slow
+depth drift exceeds a pre-registered budget. That depth-hold/root-noise gate was not implemented or
+validated. It remains an evidence-blocked design requirement behind the typed admission boundary;
+the current product neither freezes depth nor uses this proposal to authorize dynamics.
 
 Three reasons (a) was rejected:
 
@@ -1527,13 +1575,14 @@ Three reasons (a) was rejected:
    measurement is inconvenient.
 3. Sagittal-plane 2-D analysis is a recognised biomechanics method. Naming it as such is honest.
 
-**A gap found while reviewing, still open at the time of writing:** `poseNoiseFloorMetersPerSecond`
+**A gap found while reviewing, now isolated behind the typed boundary:** `poseNoiseFloorMetersPerSecond`
 is derived from `rigidPairs`, i.e. inter-joint distances — which are **invariant to root
 translation**, since both endpoints shift together. So the floor measures articulation noise and is
 structurally blind to `cam_t` depth jitter. Once `camT` is composed in, ~12.7 cm of depth residual
 at the 0.5 s offline cadence is ~0.36 m/s of root-speed noise, above the 0.20 m/s hold threshold,
 while the rigid-pair floor stays put — a motionless subject would be told to hold still. The root
-channel needs its own floor before the `camT` line in `OfflineSessionRunner` is wired.
+channel still needs its own calibrated floor before an authorized offline replay can be enabled;
+the position-only provenance prevents that missing calibration from reaching dynamics today.
 
 ---
 
@@ -1541,10 +1590,13 @@ channel needs its own floor before the `camT` line in `OfflineSessionRunner` is 
 
 **Read this before trusting any gait number anywhere in this file or in git history.**
 
-#### The reasoning, which still stands
+#### Hypothetical mechanics after typed admission — not current evidence
 
-The earlier "muscle force is unobtainable on a tracking shot" conclusion was wrong at the framing.
-It assumed the root's acceleration must be MEASURED. Two facts say otherwise:
+The algebra below describes a hypothetical route only after independent contact, camera, gravity,
+and dynamics-qualified-root admission. It does not supply that admission, and the bundled models
+never reach it. The earlier "muscle force is unobtainable on a tracking shot" conclusion was too
+broad as a theoretical statement because it assumed root acceleration must always be measured.
+Two modelling facts explain the narrower hypothesis:
 
 1. **Joint angles are invariant to camera motion.** Translation shifts every reconstructed point
    together; rotation preserves lengths and included angles. Only the 6 root DOFs are affected by a
@@ -1554,9 +1606,11 @@ It assumed the root's acceleration must be MEASURED. Two facts say otherwise:
    claiming `GaitRootAccelerationTests` had verified it on the real 169-DOF model was found to cite
    a test that does not exist.
 
-For running, `a_root` then comes from the gait cycle rather than from differentiation: flight is
-free fall, and stance is closed by the stride's vertical impulse `m·g·T` being delivered during
-contact alone. `Fmax = m·g·(π/2)(1 + tf/tc)` is that statement for a half-sine stance force.
+In that already-admitted hypothetical model, the gait policy substitutes `a_root` from its cycle
+rather than differentiation: flight is treated as free fall, and stance is closed by the stride's
+vertical impulse `m·g·T` being delivered during contact alone. This substitution is a model input,
+not measured inertial root evidence and not authorization to bypass the typed gates.
+`Fmax = m·g·(π/2)(1 + tf/tc)` is that statement for a half-sine stance force.
 
 #### The measurements were an artefact of a bug in the probe
 
@@ -5764,10 +5818,11 @@ arms must differ in the work that PRECEDES the mask.
    [Static-hold gating](#static-hold-gating-2026-08-07). ⚠️ Re-scoped TWICE by measurement. First:
    now that IK is a fixed point there is no drift left for the filter to differentiate, so on a HOLD
    the gate is a measurable no-op (peak torque identical to 16 significant figures). Second: the
-   claim that "the root-pinned pose source cannot supply accelerations" is **half wrong** — it can,
-   via `cam_t`, which the app already has. What it cannot supply is a usable *depth* acceleration,
-   and no clip filmed from a moving camera has an inertial frame regardless. Both constants were
-   re-derived from a stated error budget in the same pass.
+   earlier claim that "the root-pinned pose source cannot supply accelerations" conflated
+   position with a qualified trajectory. `cam_t` supplies camera-relative root position, but not
+   gravity alignment, camera acceleration, or a depth channel safe to differentiate twice. No clip
+   filmed from an accelerating/rotating camera has an inertial subject frame without additional
+   evidence. Both static-hold constants were re-derived from a stated error budget in the same pass.
 6. ~~**Patella rename + weld** (with the `groupScale()` patch). Ship blocker for squat analysis.~~
    **DONE 2026-08-06** — see [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
 7. ~~**Shoulder axis orthogonalisation** (6 lines).~~ **DONE 2026-08-06**, same section. Note it was
@@ -6037,11 +6092,16 @@ arms must differ in the work that PRECEDES the mask.
 
 ### Newly opened by the cam_t measurement (2026-08-07)
 
-15. **Pass `camT` at `OfflineSessionRunner.swift:242`.** One argument. Until it lands,
-    `MHRRetarget.makeBodyFrame(jointCoords:camT:…)` is exercised only by `RootTranslationTests` and
-    `rootTranslationObservable` is false on every real frame. It also fixes things that have nothing
-    to do with dynamics: the ground-height estimator, GRF contact detection and the CoP all currently
-    run on a body whose pelvis sits at a model constant.
+15. **EXTERNAL EVIDENCE — activate offline root translation only through the typed admission.**
+    The former “one argument” instruction was unsafe and is superseded by the 2026-08-12 audit.
+    The internal fail-closed boundary for the current pinned path is implemented: raw `cam_t` is
+    structurally checked (finite values and positive depth), stored, and passed through a tested
+    projection transform; `BodyFrame` provenance is typed and preserved; and engine/store gates
+    refuse in contact -> camera -> gravity -> solve-class root order. This does not claim that a
+    temporal root source is calibrated or complete. Production remains pelvis-pinned until
+    synchronized gravity, calibrated camera/root-depth evidence, whole-window continuity rules and
+    physical ground truth exist; direct activation would otherwise double the overlay translation
+    and use camera-up as gravity-up.
 16. ~~**Surface `MotionVerdict` in the UI.**~~ **DONE 2026-08-07.** Commit
     `5e9b370` removed the parallel `hold`/`moving` taxonomy:
     `OfflineResultStore.MotionState` now carries the engine's exact
@@ -6058,8 +6118,11 @@ arms must differ in the work that PRECEDES the mask.
     fingerprint. Production calibration remains intentionally unavailable: representative
     native-rate fixtures, a contact-valid model and physical-device ground truth are external
     prerequisites, not constants to infer from the owner's three clips.
-18. **Decide (a) refuse vs (b) declare-depth-constant** — see the owner decision in the cam_t
-    section. This is what gates whether a dynamic branch exists at all.
+18. ~~**Decide (a) refuse vs (b) declare-depth-constant.**~~ **DECIDED 2026-08-07: pursue (b), but
+    the precondition is not implemented or validated.** The historical decision is recorded in the
+    cam_t section. The current typed boundary remains closed; no depth-freezing behavior exists, and
+    the proposal does not waive gravity, stationary-camera, contact-capability, root-noise, or
+    whole-window continuity evidence.
 19. ~~**Drop Vision-fallback frames out of any derivative.**~~ **DONE 2026-08-10.** The 22/309
     frames remain visible as reviewable poses, but video fallback now branches before scale/Nimble/
     gait and splits both solve passes. Photo fallback remains analysable; raw decoder slots and
@@ -6073,10 +6136,6 @@ arms must differ in the work that PRECEDES the mask.
 
 ### Owner decisions still open
 
-- **Dynamic muscle output: refuse, or declare depth constant?** See
-  [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
-  Option (b) is the only one under which dynamics ships at all, and it puts a modelling assumption
-  ("you are not moving toward or away from the camera") inside a number the product sells.
 - **How to resolve the arm licence**: negotiate MoBL-ARMS commercially, or adopt/convert the
   Holzbaur package under its BSD-3-plus-citation terms (SIMM → `.osim` conversion needed). The
   step-1 audit explicitly ruled out relying on numerical similarity alone: six pectoral entries and

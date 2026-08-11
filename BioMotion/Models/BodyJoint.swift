@@ -1,11 +1,13 @@
 import simd
 import ARKit
 
-/// A single tracked joint with its 3D position in world space.
+/// A single tracked joint with its 3D position in the owning frame's space.
 struct TrackedJoint: Identifiable {
     let id: String          // ARSkeleton.JointName rawValue
     let name: String        // Human-readable name
-    let worldPosition: SIMD3<Float>  // Meters, world space (Y-up)
+    /// Metres, Y-up. `BodyFrame.dynamicsReference` states whether this is an
+    /// inertial world, camera-relative, root-relative, or unmeasured space.
+    let worldPosition: SIMD3<Float>
     let isTracked: Bool
 
     /// Source-specific OpenSim marker semantics. Live ARKit joints leave this
@@ -28,13 +30,113 @@ struct TrackedJoint: Identifiable {
 
 /// A complete body frame — all joints at one instant.
 struct BodyFrame {
+    /// The two independent spatial facts required before marker kinematics can
+    /// support an inverse-dynamics claim. A camera-relative metric position is
+    /// useful for IK and overlays, but it is not an inertial trajectory: image
+    /// up need not equal gravity up, and monocular depth is not qualified for a
+    /// second derivative. Keeping those facts typed prevents a valid-looking
+    /// `SIMD3` from silently becoming a world-space dynamics measurement.
+    struct DynamicsReference: Equatable, Sendable {
+        enum Gravity: Equatable, Sendable {
+            /// No synchronized camera-to-gravity transform accompanies this
+            /// frame. Upright pixels and a stationary tripod do not establish
+            /// this transform.
+            case unmeasured
+            /// The marker axes are expressed in a frame whose -Y direction is
+            /// the physical gravity direction used by Nimble/OpenSim.
+            case gravityAligned
+        }
+
+        enum RootTrajectory: Equatable, Sendable {
+            /// The source did not state how global root translation was handled.
+            case unmeasured
+            /// Marker geometry is metric but remains pinned to the pose model's
+            /// root constant. Relative pose is usable; global translation is not.
+            case rootRelative
+            /// `cam_t` has been composed, so position is available in the camera
+            /// frame. Its depth/noise/camera-motion evidence is insufficient for
+            /// temporal inverse dynamics.
+            case cameraRelativePositionOnly
+            /// Global position is present in a gravity-aligned world frame, but
+            /// tracking continuity and root derivative noise have not been
+            /// measured against the temporal-dynamics budget.
+            case worldPositionOnly
+            /// A synchronized inertial frame and a calibrated root-noise/depth
+            /// policy established that this trajectory may be differentiated.
+            case dynamicsQualified
+        }
+
+        let gravity: Gravity
+        let rootTrajectory: RootTrajectory
+
+        /// Fail-closed default for legacy/adversarial constructors.
+        static let unmeasured = Self(
+            gravity: .unmeasured,
+            rootTrajectory: .unmeasured
+        )
+
+        /// ARKit world tracking uses gravity alignment and supplies global body
+        /// translation. Source class alone does not establish that tracking
+        /// continuity and second-derivative noise meet the dynamics budget.
+        static let liveARKit = Self(
+            gravity: .gravityAligned,
+            rootTrajectory: .worldPositionOnly
+        )
+
+        /// Explicit authorization seam for a future source/run whose inertial
+        /// alignment, continuity and root derivative noise have all passed
+        /// their measured policy. Tests use it to exercise gates beyond root.
+        static let dynamicsQualifiedWorld = Self(
+            gravity: .gravityAligned,
+            rootTrajectory: .dynamicsQualified
+        )
+
+        /// Current offline MHR solver input: metric relative anatomy with the
+        /// model's root pinned and no synchronized gravity reference.
+        static let mhrRootRelative = Self(
+            gravity: .unmeasured,
+            rootTrajectory: .rootRelative
+        )
+
+        /// A body with raw MHR `cam_t` composed. This is a camera-relative
+        /// position product, never a dynamics authorization by itself.
+        static let mhrCameraRelativePosition = Self(
+            gravity: .unmeasured,
+            rootTrajectory: .cameraRelativePositionOnly
+        )
+
+        /// Static equilibrium needs a physical gravity direction but does not
+        /// differentiate root translation. Temporal dynamics needs both.
+        func permits(_ solveClass: NimbleEngine.DynamicsSolveClass) -> Bool {
+            guard gravity == .gravityAligned else { return false }
+            switch solveClass {
+            case .staticEquilibrium:
+                return true
+            case .temporal:
+                return rootTrajectory == .dynamicsQualified
+            }
+        }
+    }
+
     let timestamp: TimeInterval
     let frameNumber: Int
     let joints: [TrackedJoint]
+    let dynamicsReference: DynamicsReference
 
-    /// The pose source's root position in world space. Its anatomical meaning
-    /// is carried separately by the joint's marker override: live uses
-    /// PELVIS, while MHR keeps raw joint 1 and labels it MHR_ROOT.
+    init(timestamp: TimeInterval,
+         frameNumber: Int,
+         joints: [TrackedJoint],
+         dynamicsReference: DynamicsReference = .unmeasured) {
+        self.timestamp = timestamp
+        self.frameNumber = frameNumber
+        self.joints = joints
+        self.dynamicsReference = dynamicsReference
+    }
+
+    /// The pose source's root position in this frame's declared coordinate
+    /// space. Its anatomical meaning is carried separately by the joint's
+    /// marker override: live uses PELVIS, while MHR keeps raw joint 1 and
+    /// labels it MHR_ROOT.
     var rootPosition: SIMD3<Float>? {
         joints.first(where: { $0.id == "hips_joint" })?.worldPosition
     }

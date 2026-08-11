@@ -37,10 +37,11 @@ photo or video through a Core ML SAM 3D Body model.
                  └→ validated foot-support capability gate             [FIRST]
                        ├→ bundled models: ABSENT → pose/anatomy/timing only
                        └→ future validated model → camera solve authorization
-                              ├→ photo/single frame: static equilibrium only
-                              ├→ calibrated static clip: temporal dynamics allowed
-                              ├→ other states: stop before solveIDGRF, pose-only
-                              └→ floor trust → ID → moment arms → QP
+                              ├→ denied state: stop before solveIDGRF, pose-only
+                              └→ permitted state → gravity-aligned axes
+                                   ├→ static equilibrium: no root derivative needed
+                                   └→ temporal: whole window has qualified root trajectory
+                                        └→ floor trust → ID → moment arms → QP
                               ↓
         ┌─────────────────────┴─────────────────────┐
    3-D muscle ANATOMY overlay            posture findings layer
@@ -186,15 +187,25 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   and adapter revision into calibration. Jumps, slow drift, zoom,
   periodic aliasing, parallax, weak coverage, timestamp gaps, and inconsistent fits must become
   explicit moving/ambiguous/indeterminate states, never zero motion.
-- **Camera permission depends on solve class and comes after contact capability.** A photo or explicit
+- **Dynamics spatial admission is contact -> camera -> gravity -> root.** A photo or explicit
   single frame is `.notRequiredForSingleFrame`: it can authorize only future static-equilibrium
   dynamics, never temporal/gait dynamics. A multi-frame clip authorizes temporal dynamics only as
   `.staticWithinBudget`; unmeasured, moving, between-band, calibration-required,
   calibration-unavailable, and indeterminate
-  states authorize neither. `OfflineSessionRunner` starts denied, maps the finalized state to
-  `CameraDynamicsAuthorization`, and `processFrame` snapshots it before crossing to `solverQueue`.
-  Contact support is checked first, then camera permission refuses upstream of `solveIDGRF`;
-  `OfflineResultStore` repeats contact-then-camera projection to
+  states authorize neither. Camera authorization still does **not** establish gravity or an
+  inertial root trajectory. `BodyFrame.DynamicsReference` is fail-closed by default: live ARKit
+  construction explicitly uses `.liveARKit`, which records gravity-aligned global position but is
+  still position-only for temporal dynamics; only the separately explicit
+  `.dynamicsQualifiedWorld` authority admits a calibrated temporal root. Current MHR production
+  frames use `.mhrRootRelative`; a raw-composed MHR frame is only
+  `.mhrCameraRelativePosition`.
+  `OfflineSessionRunner` starts camera-denied, maps the finalized state to
+  `CameraDynamicsAuthorization`, and `processFrame` snapshots it plus the frame reference before
+  crossing to `solverQueue`. A temporal derivative window must carry one unanimous qualified
+  reference; a newer frame cannot authorize older differently-labelled samples. Contact support is
+  checked first, then camera, gravity and (for a temporal solve) dynamics-qualified root provenance
+  refuse upstream of `solveIDGRF`;
+  `OfflineResultStore` repeats the same projection order to
   strip stale ID/muscle while preserving pose. Store authorization/results are ordinary stored
   state committed before one explicit notification; static-ID provenance does not depend on an
   optional muscle solve. Local run ownership, a pre-fence lifecycle invocation epoch and an
@@ -209,6 +220,15 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   raster, cadence/window and memory domain passes versioned tripod/static calibration and disjoint
   moving-camera fixtures; production therefore returns calibration-unavailable without opening the
   reader. Device Vision behaviour, peak memory/runtime, and cancellation latency remain external.
+- **Never wire raw `estimate.camT` into the production MHR BodyFrame as a one-line change.**
+  `(x, -y, -z)` is a valid metric camera-relative position, not a gravity-aligned world trajectory.
+  The current photo overlay already projects pinned markers with raw `camT`; composing it in the
+  runner without changing that convention applies translation twice. Activation must atomically
+  provide synchronized camera-to-gravity evidence, calibrated root/depth and whole-window continuity
+  policy, switch projection semantics, and reset solver temporal/ground state. Non-finite or
+  structurally out-of-domain `joint_coords`, wrong-rank/non-finite/non-positive/out-of-domain
+  `cam_t`, non-finite projection results, and marker arithmetic that overflows after retargeting
+  are rejected before IK/display; those are numeric safety checks, not physical validation.
 - **Offline frame completion is an exact receipt, never `objectWillChange`.** An accepted receipt is
   `(generation, submissionID)` and completion is `.published/.failed/.superseded` for that identity.
   Publication authorization and physical solver occupancy are separate: timeout/cancel revokes the
@@ -241,10 +261,11 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   frame. `.available` additionally requires a same-generation ID; muscle has its own same-generation
   timestamp gate. A stale ID clears ID/muscle but preserves valid IK and the report-neutral motion
   verdict; a stale muscle clears only muscle. Missing pose provenance clears the solve envelope.
-  Session gates can still downgrade an otherwise valid ID: contact capability first, then the
-  clip camera permission for the solve's static-equilibrium or temporal class. This repeats the
-  engine's pre-`solveIDGRF` authorization as a stale-payload backstop. Image/decoder/model provenance
-  and `FrameStatus` stay fixed. Absence is never a measured zero.
+  Session gates can still downgrade an otherwise valid ID in the engine's exact order: contact
+  capability, clip camera permission, gravity alignment, then solve-class root provenance (required
+  for temporal dynamics). This repeats the engine's pre-`solveIDGRF` authorization as a stale-payload
+  backstop. Image/decoder/model provenance and `FrameStatus` stay fixed. Absence is never a measured
+  zero.
   Before a gait replacement pass, invalidate all pass-one dynamics to
   `.analysisPassIncomplete`; only same-generation pass-two solves may repopulate them.
 - **Validated foot support is the first hard dynamics boundary; camera authorization and ground

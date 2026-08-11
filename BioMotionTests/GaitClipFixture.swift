@@ -248,7 +248,12 @@ enum GaitClipFixture {
                                            opensimMarkerNameOverride:
                                                sourceMarkerByJointID[jointId]))
             }
-            frames.append(BodyFrame(timestamp: timestamp, frameNumber: slot, joints: joints))
+            frames.append(BodyFrame(
+                timestamp: timestamp,
+                frameNumber: slot,
+                joints: joints,
+                dynamicsReference: .mhrRootRelative
+            ))
         }
 
         guard headersSeen == headerKeys.count else {

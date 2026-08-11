@@ -527,9 +527,15 @@ final class OfflineResultStore: ObservableObject {
         // inputs fail closed instead of being reinterpreted as temporal output.
         let isConsistentStaticHold = input.isStaticHoldEstimate
             && input.motionState.isHold
+        let solveClass: NimbleEngine.DynamicsSolveClass = isConsistentStaticHold
+            ? .staticEquilibrium
+            : .temporal
         let cameraPermitsThisSolve = input.isStaticHoldEstimate
             ? isConsistentStaticHold && camera.permitsStaticEquilibrium
             : camera.permitsTemporalDynamics
+        let dynamicsReference = input.bodyFrame?.dynamicsReference ?? .unmeasured
+        let hasGravityReference = dynamicsReference.gravity == .gravityAligned
+        let referencePermitsThisSolve = dynamicsReference.permits(solveClass)
         let timestampTolerance: TimeInterval = 0.001
         func timestampsMatch(_ lhs: TimeInterval, _ rhs: TimeInterval) -> Bool {
             lhs.isFinite && rhs.isFinite && abs(lhs - rhs) <= timestampTolerance
@@ -567,6 +573,10 @@ final class OfflineResultStore: ObservableObject {
                     mappedAvailability = .contactSupportUnavailable
                 } else if !cameraPermitsThisSolve {
                     mappedAvailability = .cameraReferenceUnavailable
+                } else if !hasGravityReference {
+                    mappedAvailability = .gravityReferenceUnavailable
+                } else if !referencePermitsThisSolve {
+                    mappedAvailability = .rootTrajectoryUnavailable
                 } else {
                     mappedAvailability = .productFacing(
                         current: input.dynamicsAvailability,
@@ -586,6 +596,8 @@ final class OfflineResultStore: ObservableObject {
         let retainsID = hasPoseProvenance
             && capability == true
             && cameraPermitsThisSolve
+            && hasGravityReference
+            && referencePermitsThisSolve
             && mappedAvailability.hasInverseDynamics
             && hasSameGenerationID
         let retainsMuscle = retainsID && hasSameGenerationMuscle

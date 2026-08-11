@@ -32,6 +32,7 @@ final class BodyTrackingSession: NSObject, ObservableObject {
         }
 
         let config = ARBodyTrackingConfiguration()
+        config.worldAlignment = .gravity
         config.automaticSkeletonScaleEstimationEnabled = true
         config.frameSemantics.insert(.bodyDetection)
         lastBodyAnchorUpdateTime = nil
@@ -93,7 +94,8 @@ extension BodyTrackingSession: ARSessionDelegate {
         let rawFrame = BodyFrame(
             timestamp: CACurrentMediaTime(),
             frameNumber: frameCount,
-            joints: joints
+            joints: joints,
+            dynamicsReference: .liveARKit
         )
 
         // Apply 1-euro filter to smooth joint positions

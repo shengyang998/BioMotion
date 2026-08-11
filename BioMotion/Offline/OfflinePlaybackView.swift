@@ -243,10 +243,12 @@ struct OfflinePlaybackView: View {
         switch frame.status {
         case .success:
             switch frame.dynamicsAvailability {
-            case .waitingForMotionWindow, .groundPlaneUntrusted,
+            case .waitingForMotionWindow, .referenceTransitionWarmup,
+                 .groundPlaneUntrusted,
                  .inverseDynamicsFailed, .missingRootVerticalDOF,
                  .contactSupportUnavailable,
                  .cameraReferenceUnavailable,
+                 .gravityReferenceUnavailable, .rootTrajectoryUnavailable,
                  .analysisPassIncomplete:
                 return frame.dynamicsAvailability.title
             case .withheld, .available:
@@ -330,9 +332,10 @@ struct OfflinePlaybackView: View {
             switch frame.dynamicsAvailability {
             case .inverseDynamicsFailed, .missingRootVerticalDOF,
                  .contactSupportUnavailable, .cameraReferenceUnavailable,
+                 .gravityReferenceUnavailable, .rootTrajectoryUnavailable,
                  .analysisPassIncomplete: return .red
             case .groundPlaneUntrusted: return .orange
-            case .waitingForMotionWindow: return .white
+            case .waitingForMotionWindow, .referenceTransitionWarmup: return .white
             case .withheld, .available: break
             }
             if frame.isPoseOnlyBecauseNotStill { return .orange }
@@ -349,10 +352,12 @@ struct OfflinePlaybackView: View {
             return exclusion.badgeDetail
         }
         switch frame.dynamicsAvailability {
-        case .waitingForMotionWindow, .groundPlaneUntrusted,
+        case .waitingForMotionWindow, .referenceTransitionWarmup,
+             .groundPlaneUntrusted,
              .inverseDynamicsFailed, .missingRootVerticalDOF,
              .contactSupportUnavailable,
              .cameraReferenceUnavailable,
+             .gravityReferenceUnavailable, .rootTrajectoryUnavailable,
              .analysisPassIncomplete:
             return frame.dynamicsAvailability.detail
         case .withheld, .available:
