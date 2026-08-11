@@ -322,7 +322,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 526 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 532 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -4581,6 +4581,37 @@ Whole-app no-signing builds passed for the dedicated arm64 simulator and generic
 destinations. This closes the XML helper dependency and its locale ambiguity. It does not yet make
 the older dirty iOS CMake/source-manifest port fresh-clone reproducible; that migration remains a
 separate tracked item.
+
+
+## OpenSim geometry now fails closed on the no-Assimp iOS build (2026-08-11)
+
+The iOS archive cannot load Assimp meshes, but both `OpenSimParser::parseOsim` overloads still
+defaulted `ignoreGeometry` to false. The URI path could touch the retriever and collapse an
+exception into a null skeleton; the document path inspected XML first; and the older MeshShape
+stub could make a requested geometry load look successful while returning no mesh shapes.
+
+Nested commit `3829f1682b772cee7812e59767dae1cb067f3541`
+(`fix(ios): reject unavailable OpenSim geometry`) puts the same exact `std::runtime_error` at the
+start of both overloads, before retriever creation, URI I/O, or XML inspection. It is published on
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05),
+and `git ls-remote` resolved the branch to that SHA. BioMotion and the existing parser tests now
+pass `ignoreGeometry=true` explicitly. Desktop behavior is unchanged.
+
+The tracked `nimble-patches/ios-opensim-geometry-boundary.patch` is byte-identical to the nested
+commit diff, reverse-checks at the branch head, is 76 lines, and has SHA-256
+`38b76a5d4a7464ca494bd0574c8d97dd89bd53e4cc7d8da44b8a77f1a91ebf7e`.
+Both simulator and device archives rebuilt. A normal dead-stripped link extracted
+`OpenSimParser.cpp.o` for each SDK with no unresolved DART symbols; the simulator executable called
+both overloads and reached `OPENSIM_GEOMETRY_IOS_BOUNDARY_PASS` and
+`OPENSIM_GEOMETRY_IOS_ARCHIVES_PASS`, with both instrumented retrievers still at zero accesses.
+An unsigned arm64 simulator `build-for-testing` compiled and linked the whole app and all six new
+XCTest methods. The test-gate harness passed **49/49**, and the reviewed fast count is now **532**.
+
+The standard post-change XCTest receipt is deliberately not claimed. Xcode 26.4's local
+testmanager stopped launching even a one-method `MotionRecorder` smoke test across reset/fresh
+simulators, while the standalone iOS executable still ran normally. Missing xcresult evidence is a
+gate failure, not a pass. The focused six methods and then `tools/run_tests.sh all` remain required
+on a fresh runner before release.
 
 
 ## The iOS C3D header surface now matches the absent ezc3d backend (2026-08-11)

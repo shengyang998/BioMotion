@@ -396,6 +396,87 @@ git -C nimblephysics apply --reverse --check \
   ../nimble-patches/xml-helpers-no-boost.patch
 ```
 
+## `ios-opensim-geometry-boundary.patch`
+
+**Applies to**: `nimblephysics/dart/biomechanics/OpenSimParser.cpp` and
+`OpenSimParser.hpp`
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commit** on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05):
+`3829f1682b772cee7812e59767dae1cb067f3541` — reject geometry requests that
+the no-Assimp iOS archive cannot satisfy.
+
+**Patch receipt**: 76 lines; SHA-256
+`38b76a5d4a7464ca494bd0574c8d97dd89bd53e4cc7d8da44b8a77f1a91ebf7e`.
+
+### Problem
+
+The iOS archive does not link Assimp, but `parseOsim` still defaulted
+`ignoreGeometry` to false. The URI overload first constructed and accessed a
+retriever, then caught parser exceptions and returned a null skeleton. The
+document overload inspected XML before reaching mesh loading. With the older
+silent `MeshShape` stub, a valid model could instead return a skeleton without
+the requested geometry. All three outcomes made an unsupported capability look
+like a bad file or a successful geometry load.
+
+### Fix and verification
+
+Both public overloads now reject `ignoreGeometry=false` with the same exact
+`std::runtime_error`, before retriever construction, URI I/O, or XML inspection.
+Desktop behavior is unchanged. BioMotion and its existing parser tests pass
+`ignoreGeometry=true` explicitly, making the supported path a visible caller
+decision rather than an accidental default.
+
+Regression evidence is layered:
+
+- the causal six-method XCTest contract made both overloads fail RED against
+  the old archive and also corrected two initially misstated fixture census
+  expectations; it pins FullBody/Rajagopal no-geometry parsing and bridge-marker
+  identity in addition to the two refusal paths;
+- both simulator and device `nimble_ios` archives rebuilt successfully;
+- `opensim_geometry_ios_boundary_probe.sh` compiles and ordinary-links both SDK
+  variants without force-loading, requires `OpenSimParser.cpp.o` in each link
+  receipt, rejects unresolved DART symbols, and ran the simulator executable to
+  `OPENSIM_GEOMETRY_IOS_BOUNDARY_PASS` plus
+  `OPENSIM_GEOMETRY_IOS_ARCHIVES_PASS`; both overloads produced the reviewed
+  exception while both instrumented retrievers remained at zero accesses;
+- an unsigned arm64 simulator `build-for-testing` compiled and linked the whole
+  app and the six new XCTest methods; and
+- the fail-closed gate harness passed **49/49** after moving the reviewed fast
+  count from 526 to **532**.
+
+No post-change full XCTest-lane receipt is claimed here: the local Xcode 26.4
+testmanager channel stopped launching even a one-method `MotionRecorder` smoke
+test, while the independently linked simulator executable continued to run.
+The gate treats that missing xcresult as failure. A fresh runner must execute
+the focused six methods and then `tools/run_tests.sh all` before release.
+
+### Apply and verify
+
+```sh
+cd labs/BioMotion/nimblephysics
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/ios-opensim-geometry-boundary.patch
+# Install/apply the current iOS source manifest before these two builds.
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
+
+cd ..
+bash tools/tests/opensim_geometry_ios_boundary_probe.sh
+tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/OpenSimGeometryBoundaryTests
+```
+
+On the reviewed branch head, provenance must reverse-check:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/ios-opensim-geometry-boundary.patch
+```
+
 ## `simmspline-linear-extrapolation.patch`
 
 **Applies to**: `nimblephysics/dart/math/SimmSpline.cpp` and its upstream unit

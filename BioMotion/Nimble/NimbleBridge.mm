@@ -573,7 +573,8 @@ static double modelMHRTrunkReferenceLength(
         NSLog(@"NimbleBridge: Loading model from %@", path);
 
         // Parse the .osim file
-        biomechanics::OpenSimFile osimFile = biomechanics::OpenSimParser::parseOsim(pathStr);
+        biomechanics::OpenSimFile osimFile =
+            biomechanics::OpenSimParser::parseOsim(pathStr, "", true);
 
         if (!osimFile.skeleton) {
             NSLog(@"NimbleBridge: Failed to parse skeleton from %@", path);

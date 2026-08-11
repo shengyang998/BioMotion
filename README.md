@@ -110,6 +110,7 @@ Then apply the reviewed behaviour patches recorded by this repository:
 
 ```bash
 git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
+git -C nimblephysics apply ../nimble-patches/ios-opensim-geometry-boundary.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
 git -C nimblephysics apply ../nimble-patches/ios-collision-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/ios-c3d-boundary.patch
@@ -124,7 +125,7 @@ remaining port diff has also been exported.
 The reviewed nested commits are published on the maintained
 [`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
 branch. At the latest 2026-08-11 receipt that branch resolved to
-`78b292e19af13ad77501c9b22f49c1fa06146501`; the fork's remote symbolic `HEAD`
+`3829f1682b772cee7812e59767dae1cb067f3541`; the fork's remote symbolic `HEAD`
 remained `refs/heads/master` at the pinned upstream baseline
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
@@ -155,6 +156,14 @@ Homebrew include path. Their standard-library replacement pins the classic
 locale for XML decimal dots, preserves the reviewed `std::bad_cast`, `errno`,
 formatting, tokenization, and unsigned-conversion behavior, and is checked in
 both simulator and device archives for zero Boost symbols.
+
+OpenSim mesh geometry is also an explicit unavailable capability on iOS. Both
+`parseOsim` overloads reject `ignoreGeometry=false` with one reviewed
+`std::runtime_error` before reading a URI, inspecting XML, or consulting a
+retriever. BioMotion passes `ignoreGeometry=true` explicitly at every supported
+model-loading call site. The archive probe ordinary-links both SDK variants and
+runs both refusal paths in an iOS simulator; the XCTest contract separately
+pins FullBody/Rajagopal parsing and bridge-marker counts with geometry ignored.
 
 Here “linear extrapolation” means continuation along an endpoint tangent only:
 SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses
@@ -211,7 +220,7 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 # Tests on simulator — always via the script, never a hand-typed xcodebuild line.
 # It provisions a private simulator (naming one shared with another xcodebuild
 # process is what made this suite untrustworthy) and emits an xcresult receipt.
-tools/run_tests.sh fast    # exactly 526; 0 failed/skipped/restarted
+tools/run_tests.sh fast    # exactly 532; 0 failed/skipped/restarted
 tools/run_tests.sh slow    # only testE1RunAll; exactly 1; 0 failed/skipped
 tools/run_tests.sh all     # commit gate: fast, then slow
 

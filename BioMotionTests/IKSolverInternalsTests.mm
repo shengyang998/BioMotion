@@ -121,7 +121,7 @@ static double weightFor(const std::string& n) {
     // (-0.085, 0.435, 0.0017) on torso, not the virtual (0, 0.38, 0)), so a
     // hand-built virtual-only table does NOT reproduce the bridge's objective.
     biomechanics::OpenSimFile osim = biomechanics::OpenSimParser::parseOsim(
-        std::string([path UTF8String]));
+        std::string([path UTF8String]), "", true);
     XCTAssertTrue(osim.skeleton != nullptr);
 
     struct VM { const char* marker; const char* body; double ox, oy, oz; };
@@ -525,8 +525,8 @@ static double weightFor(const std::string& n) {
         {"LEJC","ulna_l",0,0,0},     {"REJC","ulna_r",0,0,0},
         {"LWJC","hand_l",0,0,0},     {"RWJC","hand_r",0,0,0},
     };
-    biomechanics::OpenSimFile osim =
-        biomechanics::OpenSimParser::parseOsim(std::string([p UTF8String]));
+    biomechanics::OpenSimFile osim = biomechanics::OpenSimParser::parseOsim(
+        std::string([p UTF8String]), "", true);
 
     // A plausible ARKit standing pose for every marker the model can host.
     struct T { const char* n; double x, y, z; };
@@ -665,7 +665,7 @@ static double weightFor(const std::string& n) {
     if (!didWrite) return;
 
     biomechanics::OpenSimFile parsed = biomechanics::OpenSimParser::parseOsim(
-        std::string(tempPath.UTF8String));
+        std::string(tempPath.UTF8String), "", true);
     [[NSFileManager defaultManager] removeItemAtPath:tempPath error:nil];
     XCTAssertTrue(parsed.skeleton != nullptr);
     if (parsed.skeleton == nullptr) return;
@@ -718,7 +718,7 @@ static double weightFor(const std::string& n) {
 
     biomechanics::OpenSimFile reflectedFile
         = biomechanics::OpenSimParser::parseOsim(
-            std::string(reflectedPath.UTF8String));
+            std::string(reflectedPath.UTF8String), "", true);
     [[NSFileManager defaultManager] removeItemAtPath:reflectedPath error:nil];
     XCTAssertTrue(reflectedFile.skeleton != nullptr);
     if (reflectedFile.skeleton == nullptr) return;
@@ -753,7 +753,7 @@ static double weightFor(const std::string& n) {
 
     biomechanics::OpenSimFile remappedFile
         = biomechanics::OpenSimParser::parseOsim(
-            std::string(remappedPath.UTF8String));
+            std::string(remappedPath.UTF8String), "", true);
     [[NSFileManager defaultManager] removeItemAtPath:remappedPath error:nil];
     XCTAssertTrue(remappedFile.skeleton != nullptr);
     if (remappedFile.skeleton == nullptr) return;

@@ -1,0 +1,76 @@
+diff --git a/dart/biomechanics/OpenSimParser.cpp b/dart/biomechanics/OpenSimParser.cpp
+index 32ef5b5..a61c956 100644
+--- a/dart/biomechanics/OpenSimParser.cpp
++++ b/dart/biomechanics/OpenSimParser.cpp
+@@ -8,6 +8,7 @@
+ #include <limits>
+ #include <memory>
+ #include <sstream>
++#include <stdexcept>
+ #include <string>
+ #include <unordered_map>
+ #include <utility>
+@@ -304,6 +305,15 @@ OpenSimFile OpenSimParser::parseOsim(
+     bool ignoreGeometry,
+     const common::ResourceRetrieverPtr& nullOrRetriever)
+ {
++#ifdef DART_IOS_BUILD
++  if (!ignoreGeometry)
++  {
++    throw std::runtime_error(
++        "OpenSim geometry loading is unavailable in this iOS build because "
++        "Assimp mesh support is not linked; pass ignoreGeometry=true.");
++  }
++#endif
++
+   const common::ResourceRetrieverPtr retriever
+       = ensureRetriever(nullOrRetriever);
+ 
+@@ -342,6 +352,15 @@ OpenSimFile OpenSimParser::parseOsim(
+     bool ignoreGeometry,
+     const common::ResourceRetrieverPtr& nullOrGeometryRetriever)
+ {
++#ifdef DART_IOS_BUILD
++  if (!ignoreGeometry)
++  {
++    throw std::runtime_error(
++        "OpenSim geometry loading is unavailable in this iOS build because "
++        "Assimp mesh support is not linked; pass ignoreGeometry=true.");
++  }
++#endif
++
+   const common::ResourceRetrieverPtr geometryRetriever
+       = ensureRetriever(nullOrGeometryRetriever);
+ 
+diff --git a/dart/biomechanics/OpenSimParser.hpp b/dart/biomechanics/OpenSimParser.hpp
+index 5cdb754..f6a9f70 100644
+--- a/dart/biomechanics/OpenSimParser.hpp
++++ b/dart/biomechanics/OpenSimParser.hpp
+@@ -101,14 +101,18 @@ struct OpenSimMocoTrajectory
+ class OpenSimParser
+ {
+ public:
+-  /// Read Skeleton from *.osim file
++  /// Read Skeleton from *.osim file. iOS builds do not link Assimp and require
++  /// ignoreGeometry=true; requesting geometry throws std::runtime_error before
++  /// resource access.
+   static OpenSimFile parseOsim(
+       const common::Uri& uri,
+       const std::string geometryFolder = "",
+       bool ignoreGeometry = false,
+       const common::ResourceRetrieverPtr& retriever = nullptr);
+ 
+-  /// Read Skeleton from *.osim file
++  /// Read Skeleton from an already-loaded *.osim document. iOS builds do not
++  /// link Assimp and require ignoreGeometry=true; requesting geometry throws
++  /// std::runtime_error before inspecting the document or retriever.
+   static OpenSimFile parseOsim(
+       tinyxml2::XMLDocument& osimFile,
+       const std::string fileNameForErrorDisplay = "",
+@@ -411,4 +415,4 @@ protected:
+ } // namespace biomechanics
+ } // namespace dart
+ 
+-#endif
+\ No newline at end of file
++#endif
