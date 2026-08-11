@@ -200,7 +200,11 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   optional muscle solve. Local run ownership, a pre-fence lifecycle invocation epoch and an
   engine-global conditional lease prevent a cancelled/second Runner from weakening its successor or
   admitting live work into an offline result. Segment resets and offline scaling must present the
-  captured lease and recheck it after any synchronous reset notification. Production's typed
+  captured lease and recheck it after any synchronous reset notification. That lease also owns the
+  imported subject's temporary geometry: offline scaling never updates the solver-queue live recipe,
+  and exact release enqueues recipe/default restoration plus bridge/QP/filter/ground cleanup before
+  notifying observers, so a reentrant successor's solver work is FIFO after the whole block. A stale
+  release restores nothing. Production's typed
   profile/fingerprint stays nil until the exact algorithm,
   raster, cadence/window and memory domain passes versioned tripod/static calibration and disjoint
   moving-camera fixtures; production therefore returns calibration-unavailable without opening the
@@ -273,8 +277,13 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   bilateral-HJC-mid→shoulder-mid. `scaleModelWithHeight:` applies
   `cachedDefault × clamp(measured/cachedReference)`. Recomputing references after a prior scale
   compounds; writing a uniform ratio discards native anisotropy; failing to replace all caches on
-  reload leaks Rajagopal proportions into FullBody. `ModelScalingTests` pins identity, idempotence,
-  source-specific MHR scaling, and cross-model reload.
+  reload leaks Rajagopal proportions into FullBody. The live calibration recipe is value-only and
+  solver-queue-owned; only a successful live native scale replaces it, offline scaling cannot, and a
+  successful reload invalidates it. `restoreLoadedModelBodyScales` restores only the loaded body-scale
+  baseline and must not be folded into ordinary tracking/session resets, which preserve the current
+  live subject. `ModelScalingTests` pins identity, idempotence, source-specific MHR scaling,
+  cross-model reload, the full scale vector, and neutral pelvis/femur/talus/humerus/hand transforms
+  across live → offline → live/default restoration.
 
 ## Readings that lie — each has already cost a wrong conclusion
 

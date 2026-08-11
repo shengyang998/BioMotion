@@ -1092,6 +1092,51 @@ static double modelMHRTrunkReferenceLength(
     return YES;
 }
 
+- (BOOL)restoreLoadedModelBodyScales {
+    if (!_modelLoaded || !_skeleton) {
+        return NO;
+    }
+
+    const size_t numBodies = _skeleton->getNumBodyNodes();
+    const Eigen::Index expectedComponentCount
+        = static_cast<Eigen::Index>(numBodies * 3);
+    if (numBodies == 0
+        || _loadedDefaultBodyScales.size() != expectedComponentCount
+        || !_loadedDefaultBodyScales.allFinite()) {
+        NSLog(@"NimbleBridge: Refusing body-scale restore without a valid loaded-model baseline");
+        return NO;
+    }
+
+    try {
+        _skeleton->setBodyScales(_loadedDefaultBodyScales);
+
+        const Eigen::VectorXs restoredBodyScales = _skeleton->getBodyScales();
+        if (restoredBodyScales.size() != expectedComponentCount
+            || !restoredBodyScales.allFinite()) {
+            NSLog(@"NimbleBridge: Loaded-model body-scale restore produced an invalid readback");
+            return NO;
+        }
+
+        const double worstDifference =
+            (restoredBodyScales - _loadedDefaultBodyScales)
+                .cwiseAbs()
+                .maxCoeff();
+        if (!std::isfinite(worstDifference) || worstDifference > 1e-12) {
+            NSLog(@"NimbleBridge: Loaded-model body-scale restore failed verification (max difference %.12g)",
+                  worstDifference);
+            return NO;
+        }
+        return YES;
+    } catch (const std::exception& e) {
+        NSLog(@"NimbleBridge: C++ exception restoring loaded-model body scales: %s",
+              e.what());
+        return NO;
+    } catch (...) {
+        NSLog(@"NimbleBridge: Unknown exception restoring loaded-model body scales");
+        return NO;
+    }
+}
+
 // MARK: - Runtime DOF mask
 
 - (NSInteger)applyDOFMaskWithNames:(NSArray<NSString *> *)dofNamesToMask {

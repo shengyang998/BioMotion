@@ -68,6 +68,9 @@ OfflineImportView (PhotosPicker: photo or video)
               apply load-only refusal gates and build the private gait plan
               nimble.resetAnalysisPassStatePreservingGround()
               re-submit the same clip
+       -> release exact OfflinePolicyLease on every terminal path
+            -> enqueue before notification: replay LIVE recipe/defaults
+            -> then clear bridge/QP/filter/ground state in that FIFO block
   -> OfflinePlaybackView (RealityKit .nonAR ARView + MuscleOverlay + scrubber)
 ```
 
@@ -246,7 +249,12 @@ newer Run or Cancel wins instead of being overwritten by the older call as its
 stack unwinds. Segment reset and model scaling also present the captured engine
 lease and stop if reset notification transfers ownership. An observer-started
 successor therefore cannot lose its lease, phase, cancellation handle or local
-segment state. Head/tail padding returns
+segment state. Offline subject geometry is owned by that same lease. Only a
+successful live native scale updates the value-only live recipe; exact release
+enqueues recipe/default restoration followed by bridge, QP, filter and ground
+cleanup before it notifies observers. A stale release is a complete no-op, and
+any reentrant successor's scale/solve is therefore FIFO after the entire block.
+Head/tail padding returns
 failure to its caller and never increments the push count for an unpublished
 receipt. A real timeout, native IK failure, admission refusal, exhausted busy
 retry, and an externally superseded session remain different frame statuses and
@@ -392,7 +400,10 @@ pose-invariant chain-sum derivations per that file's own extensive doc
 comments), then feeds that same frame through `processFrame` normally. This
 makes offline import self-sufficient — it doesn't depend on the app having
 gone through live calibration first, and works even if the imported subject is
-a different person.
+a different person. That imported scale lives only for the exact offline lease:
+normal completion, Cancel and Close restore the last successful live recipe, or
+the loaded defaults when live calibration was skipped. It never becomes the
+next live subject's geometry.
 
 MHR scaling emits `MHR_ROOT` and measures trunk length from the bilateral HJC
 midpoint to the shoulder midpoint. The bridge caches a matching model

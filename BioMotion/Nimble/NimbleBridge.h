@@ -143,6 +143,12 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
              markerPositions:(NSArray<NSNumber *> *)markerPositions
                  markerNames:(NSArray<NSString *> *)markerNames;
 
+/// Restore the body scales cached from the model's most recent successful
+/// load. This changes only body geometry: it does not reset the current pose,
+/// IK warm start, ground samples, or any other session state.
+/// @return YES when the loaded baseline was restored and verified.
+- (BOOL)restoreLoadedModelBodyScales;
+
 /// Run inverse kinematics: given 3D marker positions, solve for joint angles.
 /// @param markerPositions Flat array of marker 3D positions [x0,y0,z0, x1,y1,z1, ...] in meters.
 /// @param markerNames Names of the markers corresponding to positions.

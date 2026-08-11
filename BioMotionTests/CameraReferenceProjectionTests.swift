@@ -659,6 +659,55 @@ final class CameraReferenceProjectionTests: XCTestCase {
         let scale = engine[scaleStart.lowerBound..<processStart.lowerBound]
         XCTAssertTrue(scale.contains("offlinePolicyLease: OfflinePolicyLease? = nil"))
         XCTAssertTrue(scale.contains("permitsOfflinePolicyMutation(offlinePolicyLease)"))
+        XCTAssertTrue(engine.contains("struct ModelScaleRecipe: Equatable, Sendable"),
+                      "live calibration must be retained as value-only Swift state")
+        XCTAssertTrue(scale.contains("let recipe = ModelScaleRecipe("))
+        let scaleQueue = try XCTUnwrap(scale.range(of: "solverQueue.async"))
+        let nativeScale = try XCTUnwrap(scale.range(
+            of: "let succeeded = self.bridge.scaleModel(",
+            range: scaleQueue.upperBound..<scale.endIndex))
+        let usability = try XCTUnwrap(scale.range(
+            of: "self.modelScaleIsUsable = succeeded",
+            range: nativeScale.upperBound..<scale.endIndex))
+        let nativeSuccess = try XCTUnwrap(scale.range(
+            of: "if succeeded",
+            range: usability.upperBound..<scale.endIndex))
+        let liveOnly = try XCTUnwrap(scale.range(
+            of: "if offlinePolicyLease == nil",
+            range: nativeSuccess.upperBound..<scale.endIndex))
+        let retainRecipe = try XCTUnwrap(scale.range(
+            of: "self.liveScaleRecipe = recipe",
+            range: liveOnly.upperBound..<scale.endIndex))
+        let scaleQueueEnd = try XCTUnwrap(scale.range(
+            of: "\n        }\n        return true",
+            range: retainRecipe.upperBound..<scale.endIndex))
+        XCTAssertLessThan(scaleQueue.lowerBound, nativeScale.lowerBound,
+                          "native geometry mutation must stay solver-queue confined")
+        XCTAssertLessThan(nativeScale.lowerBound, usability.lowerBound)
+        XCTAssertLessThan(usability.lowerBound, nativeSuccess.lowerBound,
+                          "a failed native scale must fail the next queued frame closed")
+        XCTAssertLessThan(nativeSuccess.lowerBound, liveOnly.lowerBound)
+        XCTAssertLessThan(liveOnly.lowerBound, retainRecipe.lowerBound,
+                          "only a successful live scale may replace the live recipe")
+        XCTAssertLessThan(retainRecipe.lowerBound, scaleQueueEnd.lowerBound,
+                          "recipe/usable state must stay inside the native queue block")
+
+        let loadStart = try XCTUnwrap(engine.range(of: "    func loadBundledModel()"))
+        let load = engine[loadStart.lowerBound..<scaleStart.lowerBound]
+        let loadQueue = try XCTUnwrap(load.range(of: "solverQueue.async"))
+        let loadSuccess = try XCTUnwrap(load.range(
+            of: "if success {",
+            range: loadQueue.upperBound..<load.endIndex))
+        let invalidate = try XCTUnwrap(load.range(
+            of: "self.liveScaleRecipe = nil",
+            range: loadSuccess.upperBound..<load.endIndex))
+        let mainPublish = try XCTUnwrap(load.range(
+            of: "DispatchQueue.main.async",
+            range: invalidate.upperBound..<load.endIndex))
+        XCTAssertLessThan(loadQueue.lowerBound, loadSuccess.lowerBound)
+        XCTAssertLessThan(loadSuccess.lowerBound, invalidate.lowerBound)
+        XCTAssertLessThan(invalidate.lowerBound, mainPublish.lowerBound,
+                          "only a successful replacement model invalidates its recipe")
     }
 
     func testEnginePublishesAndResetsResultStateAsOneNonreentrantBatch() throws {
@@ -699,6 +748,32 @@ final class CameraReferenceProjectionTests: XCTestCase {
             range: resetStart.upperBound..<source.endIndex))
         let reset = source[resetStart.lowerBound..<sessionStart.lowerBound]
         XCTAssertTrue(reset.contains("resetsGroundHeight: Bool"))
+        XCTAssertTrue(reset.contains(
+            "restoresLiveModelScale: Bool = false"))
+        let resetQueue = try XCTUnwrap(reset.range(of: "solverQueue.async"))
+        let scaleRestore = try XCTUnwrap(reset.range(
+            of: "if restoresLiveModelScale",
+            range: resetQueue.upperBound..<reset.endIndex))
+        XCTAssertTrue(reset.contains(
+            "if restoresLiveModelScale, self.bridge.isModelLoaded"),
+            "cancel before model load has no geometry to restore")
+        let filterReset = try XCTUnwrap(reset.range(
+            of: "self.dofFilters.removeAll",
+            range: scaleRestore.upperBound..<reset.endIndex))
+        let resetQueueEnd = try XCTUnwrap(reset.range(
+            of: "\n        }\n\n        lastDisplayMuscleTimestamp",
+            range: filterReset.upperBound..<reset.endIndex))
+        XCTAssertLessThan(resetQueue.lowerBound, scaleRestore.lowerBound,
+                          "geometry restoration must stay solver-queue confined")
+        XCTAssertLessThan(scaleRestore.lowerBound, filterReset.lowerBound,
+                          "the FIFO block must restore geometry before solver histories")
+        XCTAssertLessThan(filterReset.lowerBound, resetQueueEnd.lowerBound)
+        XCTAssertTrue(reset.contains("if let recipe = self.liveScaleRecipe"))
+        XCTAssertTrue(reset.contains("bridge.restoreLoadedModelBodyScales()"))
+        XCTAssertTrue(reset.contains("bridge.scaleModel("))
+        XCTAssertTrue(reset.contains("self.liveScaleRecipe = nil"),
+                      "a failed recipe must be discarded before default fallback")
+        XCTAssertTrue(reset.contains("self.modelScaleIsUsable = restored"))
         let resetNotify = try XCTUnwrap(reset.range(of: "objectWillChange.send()"))
         let resetLastWrite = try XCTUnwrap(reset.range(of: "rootResidualPerKg = 0"))
         XCTAssertLessThan(resetLastWrite.lowerBound, resetNotify.lowerBound)
@@ -708,6 +783,8 @@ final class CameraReferenceProjectionTests: XCTestCase {
             range: sessionStart.upperBound..<source.endIndex))
         let session = source[sessionStart.lowerBound..<sessionEnd.lowerBound]
         XCTAssertTrue(session.contains("resetsGroundHeight: true"))
+        XCTAssertFalse(session.contains("restoresLiveModelScale: true"),
+                       "ordinary session boundaries preserve the live subject scale")
         XCTAssertFalse(session.contains("groundHeightY = 0"),
                        "ground reset before the batch would synchronously reenter mid-transaction")
     }
@@ -747,13 +824,17 @@ final class CameraReferenceProjectionTests: XCTestCase {
         XCTAssertTrue(leaseCode.contains(
             "guard activeOfflinePolicyLease == lease else { return false }"))
         let releaseCode = engine[release.lowerBound..<process.lowerBound]
-        let restore = try XCTUnwrap(releaseCode.range(
+        let restorePolicy = try XCTUnwrap(releaseCode.range(
             of: "cameraDynamicsAuthorization = .unrestricted"))
         let notifyReset = try XCTUnwrap(releaseCode.range(
-            of: "resetRealtimeState()",
-            range: restore.upperBound..<releaseCode.endIndex))
-        XCTAssertLessThan(restore.lowerBound, notifyReset.lowerBound,
+            of: "resetRealtimeState(",
+            range: restorePolicy.upperBound..<releaseCode.endIndex))
+        XCTAssertLessThan(restorePolicy.lowerBound, notifyReset.lowerBound,
                           "a reentrant successor cannot be overwritten after reset notification")
+        XCTAssertTrue(releaseCode.contains("restoresLiveModelScale: true"))
+        XCTAssertTrue(releaseCode.contains("resetsBridgeSession: true"))
+        XCTAssertTrue(releaseCode.contains("resetsMuscleSession: true"))
+        XCTAssertTrue(releaseCode.contains("resetsGroundHeight: true"))
 
         let resetStart = try XCTUnwrap(engine.range(
             of: "    func resetRealtimeState(",
@@ -763,6 +844,8 @@ final class CameraReferenceProjectionTests: XCTestCase {
             "switch (activeOfflinePolicyLease, offlinePolicyLease)"))
         XCTAssertTrue(admission.contains("where active == supplied"))
         XCTAssertTrue(admission.contains("return .rejected"))
+        XCTAssertTrue(admission.contains("guard self.modelScaleIsUsable else"),
+                      "an invariant-level restore failure must fail frame solving closed")
 
         let runner = try Self.source("BioMotion/Offline/OfflineSessionRunner.swift")
         XCTAssertTrue(runner.contains(

@@ -3,6 +3,8 @@
 #import "NimbleBridge.h"
 #import "NimbleBridge+Internal.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -96,6 +98,99 @@ static void assertScalesEqual(
                                actual(worstIndex), expected(worstIndex));
 }
 
+static constexpr std::array<const char *, 9> kScaleGeometryBodyNames = {
+    "pelvis",
+    "femur_l", "femur_r",
+    "talus_l", "talus_r",
+    "humerus_l", "humerus_r",
+    "hand_l", "hand_r",
+};
+
+using BodyTransformSnapshot = std::array<Eigen::Matrix4s, 9>;
+
+static BodyTransformSnapshot bodyTransformsAtPose(
+    const std::shared_ptr<dynamics::Skeleton>& skeleton,
+    const Eigen::VectorXs& pose) {
+    skeleton->setPositions(pose);
+    BodyTransformSnapshot result;
+    for (size_t index = 0; index < kScaleGeometryBodyNames.size(); ++index) {
+        const char *bodyName = kScaleGeometryBodyNames[index];
+        dynamics::BodyNode *body = skeleton->getBodyNode(std::string(bodyName));
+        XCTAssertTrue(body != nullptr, @"missing body %s", bodyName);
+        if (body == nullptr) {
+            result[index].setIdentity();
+        } else {
+            result[index] = body->getWorldTransform().matrix();
+        }
+    }
+    return result;
+}
+
+static void assertTransformsEqual(
+    const BodyTransformSnapshot& actual,
+    const BodyTransformSnapshot& expected,
+    NSString *context) {
+    for (size_t index = 0; index < kScaleGeometryBodyNames.size(); ++index) {
+        const double worstDifference =
+            (actual[index] - expected[index]).cwiseAbs().maxCoeff();
+        XCTAssertEqualWithAccuracy(
+            worstDifference,
+            0.0,
+            1e-10,
+            @"%@ body %s transform",
+            context,
+            kScaleGeometryBodyNames[index]
+        );
+    }
+}
+
+static double maximumTransformDifference(
+    const BodyTransformSnapshot& lhs,
+    const BodyTransformSnapshot& rhs) {
+    double result = 0.0;
+    for (size_t index = 0; index < kScaleGeometryBodyNames.size(); ++index) {
+        result = std::max(
+            result,
+            (lhs[index] - rhs[index]).cwiseAbs().maxCoeff()
+        );
+    }
+    return result;
+}
+
+static Eigen::VectorXs neutralPoseForSkeleton(
+    const std::shared_ptr<dynamics::Skeleton>& skeleton) {
+    const Eigen::VectorXs savedPose = skeleton->getPositions();
+    skeleton->setPositions(Eigen::VectorXs::Zero(skeleton->getNumDofs()));
+    skeleton->clampPositionsToLimits();
+    const Eigen::VectorXs neutralPose = skeleton->getPositions();
+    skeleton->setPositions(savedPose);
+    return neutralPose;
+}
+
+static Eigen::VectorXs distinctValidPose(
+    const std::shared_ptr<dynamics::Skeleton>& skeleton,
+    const Eigen::VectorXs& baseline) {
+    Eigen::VectorXs result = baseline;
+    const Eigen::VectorXs lowerLimits = skeleton->getPositionLowerLimits();
+    const Eigen::VectorXs upperLimits = skeleton->getPositionUpperLimits();
+    for (Eigen::Index index = 0; index < result.size(); ++index) {
+        const double candidates[] = {
+            baseline(index) + 0.05,
+            baseline(index) - 0.05,
+        };
+        for (double candidate : candidates) {
+            if (std::isfinite(candidate)
+                && candidate >= lowerLimits(index)
+                && candidate <= upperLimits(index)) {
+                result(index) = candidate;
+                return result;
+            }
+        }
+    }
+    XCTFail(@"loaded model must expose at least one movable coordinate");
+    return result;
+}
+
 } // namespace
 
 @interface ModelScalingTests : XCTestCase
@@ -162,11 +257,20 @@ static void assertScalesEqual(
     if (skeleton == nullptr) return;
 
     const double markerRatio = 1.12;
+    const double offlineMarkerRatio = 0.86;
     const Eigen::VectorXs loadedDefaults = skeleton->getBodyScales();
     const Eigen::VectorXs expected = loadedDefaults * markerRatio;
+    const Eigen::VectorXs neutralPose = neutralPoseForSkeleton(skeleton);
+    const BodyTransformSnapshot loadedDefaultTransforms =
+        bodyTransformsAtPose(skeleton, neutralPose);
     ScaleMarkers markers = markersFromLoadedModel(
         skeleton,
         markerRatio,
+        ScaleRootMarker::MHRRoot
+    );
+    ScaleMarkers offlineMarkers = markersFromLoadedModel(
+        skeleton,
+        offlineMarkerRatio,
         ScaleRootMarker::MHRRoot
     );
     XCTAssertEqualObjects(markers.names.firstObject, @"MHR_ROOT");
@@ -179,12 +283,58 @@ static void assertScalesEqual(
     const Eigen::VectorXs first = skeleton->getBodyScales();
     assertScalesEqual(first, expected,
                       @"MHR_ROOT measurements must use the HJC-midpoint reference");
+    const BodyTransformSnapshot liveTransforms =
+        bodyTransformsAtPose(skeleton, neutralPose);
 
+    // An offline subject may temporarily replace the shared skeleton's body
+    // geometry. Its scales and neutral transforms must actually differ so the
+    // two restoration assertions below cannot pass vacuously.
+    XCTAssertTrue([bridge scaleModelWithHeight:1.8
+                               markerPositions:offlineMarkers.positions
+                                   markerNames:offlineMarkers.names]);
+    assertScalesEqual(skeleton->getBodyScales(),
+                      loadedDefaults * offlineMarkerRatio,
+                      @"offline subject must use its own body geometry");
+    const BodyTransformSnapshot offlineTransforms =
+        bodyTransformsAtPose(skeleton, neutralPose);
+    XCTAssertGreaterThan(maximumTransformDifference(offlineTransforms, liveTransforms),
+                         1e-6,
+                         @"offline geometry must differ from live geometry");
+
+    // Replaying the value-only live recipe must reconstruct both all body
+    // scales and representative bilateral neutral geometry exactly.
     XCTAssertTrue([bridge scaleModelWithHeight:1.8
                                markerPositions:markers.positions
                                    markerNames:markers.names]);
     assertScalesEqual(skeleton->getBodyScales(), first,
-                      @"MHR_ROOT repeat must remain idempotent");
+                      @"live recipe replay must restore every body scale");
+    assertTransformsEqual(bodyTransformsAtPose(skeleton, neutralPose),
+                          liveTransforms,
+                          @"live recipe replay");
+
+    // With no live recipe, the engine falls back to the exact baseline cached
+    // at model load. The bridge restore itself must preserve pose and remain
+    // idempotent while restoring the full neutral geometry.
+    XCTAssertTrue([bridge scaleModelWithHeight:1.8
+                               markerPositions:offlineMarkers.positions
+                                   markerNames:offlineMarkers.names]);
+    skeleton->setPositions(distinctValidPose(skeleton, neutralPose));
+    const Eigen::VectorXs poseBeforeRestore = skeleton->getPositions();
+    XCTAssertTrue([bridge restoreLoadedModelBodyScales]);
+    assertScalesEqual(skeleton->getPositions(), poseBeforeRestore,
+                      @"loaded-default restore must not reset pose");
+    assertScalesEqual(skeleton->getBodyScales(), loadedDefaults,
+                      @"loaded-default restore must restore every body scale");
+    assertTransformsEqual(bodyTransformsAtPose(skeleton, neutralPose),
+                          loadedDefaultTransforms,
+                          @"loaded-default restore");
+
+    XCTAssertTrue([bridge restoreLoadedModelBodyScales]);
+    assertScalesEqual(skeleton->getBodyScales(), loadedDefaults,
+                      @"loaded-default restore must be idempotent");
+    assertTransformsEqual(bodyTransformsAtPose(skeleton, neutralPose),
+                          loadedDefaultTransforms,
+                          @"idempotent loaded-default restore");
 }
 
 - (void)testReloadingAnotherModelRefreshesEveryScalingBaseline {

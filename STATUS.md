@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-11.
+Last updated: 2026-08-12.
 
 ---
 
@@ -41,6 +41,13 @@ biggest links were **not** where the effort had been going.
   Accepted batch frames use exact receipts, conditional engine ownership and timeout/cancel fences;
   a late or failed solve cannot enter another frame or leave a solver backlog. See
   [offline camera-reference authorization](#offline-camera-reference-authorization-and-exact-batch-receipts-2026-08-11).
+- **Offline model scaling is lease-scoped** (2026-08-12). An imported subject may temporarily use
+  the process-wide skeleton, but exact lease release now enqueues restoration of the last successful
+  live calibration recipe—or the loaded model defaults—plus bridge/QP/filter/ground cleanup before
+  notifying observers. A reentrant successor's solver work is FIFO after that block. Offline scaling
+  cannot overwrite the live recipe, and the shared `MomentArmComputer` no longer remains on another
+  person's geometry. See
+  [offline model scale](#offline-model-scale-is-lease-scoped-2026-08-12).
 - **The gait-cycle route still supports KINEMATIC CONTACT TIMING; its load route is CLOSED on the
   bundled models** (updated 2026-08-10). The historical reasoning treated root acceleration and
   stance impulse as a possible load model. The evidence did NOT validate foot support: the probe that produced
@@ -5443,6 +5450,51 @@ representative native-rate clips and physical-device ground truth remain prerequ
 enabling temporal dynamics.
 
 
+## Offline model scale is lease-scoped (2026-08-12)
+
+`ContentView` deliberately shares one `NimbleEngine` between live ARKit and offline import, and
+`MomentArmComputer` deliberately adopts the bridge's same native skeleton. The old lease reset
+cleared filters, ground, IK warm start and muscle QP state but not body scales. Consequently the
+first eligible imported pose changed both kinematics and moment-arm geometry process-wide, and
+normal completion/Cancel/Close left the next live subject on those proportions until reload or app
+restart.
+
+`NimbleEngine` now keeps a solver-queue-only, value-only `ModelScaleRecipe` containing height,
+marker positions and marker names. It records the recipe only after a native scale succeeds with no
+offline lease; an offline scale can use the shared skeleton for its own batch but cannot replace the
+live recipe. A successful model reload clears the old-model recipe, while a failed transactional
+reload preserves it with the still-usable old skeleton.
+
+Exact lease release enqueues one FIFO reset before its synchronous result notification. At the
+front of that queued block it replays the live recipe, or calls
+`restoreLoadedModelBodyScales()` when live calibration has not succeeded. A failed recipe is
+discarded and falls back to the loaded baseline; failure of both paths marks geometry unusable so a
+queued frame fails before IK. If the restore block executes with no loaded native model, there is no
+skeleton to restore and it safely performs only the remaining cleanup. Geometry restoration precedes bridge
+session, muscle-QP and filter clearing; stale lease release is still a complete no-op. Ordinary
+tracking, session and analysis-pass resets intentionally preserve the current live subject scale.
+
+The native regression strengthens the existing four-method `ModelScalingTests` suite without
+changing the gate count. It drives FullBody through live `1.12×` → offline `0.86×` → live recipe,
+then offline → loaded defaults → repeated default restore. It compares the complete body-scale
+vector and the neutral-pose 4×4 transforms of pelvis plus bilateral femur, talus, humerus and hand,
+requires the intermediate geometry to differ, and verifies default restoration does not change a
+separate valid non-neutral pose.
+
+TDD receipt: the source lifecycle contract first failed with rc **1** because the recipe, release
+restore and native baseline restore call were absent; the pre-model cancellation follow-up likewise failed
+with rc **1** until restoration was gated on a loaded native model. Both contracts are now green,
+all edited Swift parses, and `git diff --check` passes. Fresh Debug `build-for-testing` passes with
+rc **0** for both generic arm64 Simulator and generic arm64 device; logs are
+`/tmp/biomotion-scale-sim-build-final.log` and
+`/tmp/biomotion-scale-device-build-final.log`. A focused runtime attempt reached only Xcode's
+`waiting for workers to materialize` state: no test-case start/pass/fail event appeared in about 58
+seconds, and the run was interrupted with rc 75. Therefore this receipt claims test-target
+build/link success and the RED/GREEN source contracts, **not an XCTest runtime pass or product-test
+failure**. The pure fail-closed gate harness passes **49/49**; fast/slow lane sizes remain exactly
+**642 + 1**.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -6012,18 +6064,12 @@ arms must differ in the work that PRECEDES the mask.
     frames remain visible as reviewable poses, but video fallback now branches before scale/Nimble/
     gait and splits both solve passes. Photo fallback remains analysable; raw decoder slots and
     requested endpoints prevent gap compression or false edge padding.
-20. **Restore live subject scale when an offline policy lease ends.** **P1 opened 2026-08-11.**
-    `ContentView` shares one `NimbleEngine` between live calibration/tracking and offline import.
-    The first trusted imported pose replaces that skeleton's body scales, but lease release and
-    `resetSessionState()` clear filters, ground and warm starts only; closing the sheet therefore
-    leaves live ARKit using the imported subject's geometry until a reload or app restart.
-    `MomentArmComputer` shares the same skeleton, so this is cross-person, order-dependent model
-    state, not a display-only leak. Handle it as the next independent item: retain a value-only live
-    calibration recipe, keep offline scaling lease-scoped, and FIFO-restore the live recipe (or
-    loaded defaults when calibration was skipped) in the lease-release reset block before any
-    synchronous notification can admit a successor. Ordinary tracking/session resets must continue
-    to preserve the current live subject scale. Native RED must compare both body scale vectors and
-    neutral-pose pelvis/femur/talus/humerus/hand transforms across live → offline → restore.
+20. ~~**Restore live subject scale when an offline policy lease ends.**~~ **DONE 2026-08-12.**
+    Only a successful native live calibration updates the solver-queue value recipe. Exact lease
+    release FIFO-replays it—or restores the loaded defaults—before clearing bridge/QP/filter/ground
+    state and notifying observers; stale release remains a no-op and ordinary resets preserve live
+    scale. Native coverage pins every body scale plus representative bilateral neutral transforms.
+    See [offline model scale](#offline-model-scale-is-lease-scoped-2026-08-12).
 
 ### Owner decisions still open
 

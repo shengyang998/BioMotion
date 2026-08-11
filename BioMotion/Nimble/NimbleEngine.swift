@@ -214,6 +214,18 @@ final class NimbleEngine: ObservableObject {
         fileprivate let id: UInt64
     }
 
+    /// Value-only description of the most recent successful live calibration.
+    /// The native skeleton is solver-queue confined, so retaining a pointer or
+    /// snapshotting its current scales at lease acquisition would be both racy
+    /// and wrong when one offline owner supersedes another. Replaying this
+    /// recipe is idempotent because NimbleBridge always scales from the exact
+    /// model baseline captured at load time.
+    private struct ModelScaleRecipe: Equatable, Sendable {
+        let height: Double
+        let markerPositions: [Double]
+        let markerNames: [String]
+    }
+
     private var nextOfflinePolicyLeaseID: UInt64 = 0
     private var activeOfflinePolicyLease: OfflinePolicyLease?
 
@@ -264,8 +276,16 @@ final class NimbleEngine: ObservableObject {
         gaitPlan = nil
         staticHoldGating = false
         cameraDynamicsAuthorization = .unrestricted
-        // Keep this last for the same reentrancy reason as acquisition.
-        resetRealtimeState()
+        // Enqueue restoration before the reset's synchronous notification.
+        // A reentrant live calibration or successor lease is therefore FIFO
+        // after the old owner's geometry has been removed.
+        resetRealtimeState(
+            resetsBridgeSession: true,
+            resetsBridgeIKWarmStart: false,
+            resetsMuscleSession: true,
+            resetsGroundHeight: true,
+            restoresLiveModelScale: true
+        )
         return true
     }
 
@@ -922,6 +942,12 @@ final class NimbleEngine: ObservableObject {
     private let momentArmComputer = MomentArmComputer()
     private let solverQueue = DispatchQueue(label: "com.biomotion.nimble", qos: .userInteractive)
 
+    // SolverQueue-only geometry state. Offline recipes never overwrite the
+    // live recipe; exact lease release replays it, or restores the loaded
+    // model's native defaults when no live calibration has succeeded yet.
+    private var liveScaleRecipe: ModelScaleRecipe?
+    private var modelScaleIsUsable = false
+
     // Per-DOF Savitzky–Golay filters for smoothed q / dq / ddq.
     //
     // The window is now CHOSEN PER CLIP rather than fixed at 9 taps, because a
@@ -1088,6 +1114,8 @@ final class NimbleEngine: ObservableObject {
             guard let self else { return }
             let success = self.bridge.loadModel(fromPath: path)
             if success {
+                self.liveScaleRecipe = nil
+                self.modelScaleIsUsable = true
                 self.muscleSolver.loadMuscles(fromOsimPath: path)
                 // MomentArmComputer adopts the bridge's skeleton instead of
                 // parsing a second copy — so per-segment scaling propagates
@@ -1144,11 +1172,28 @@ final class NimbleEngine: ObservableObject {
     ) -> Bool {
         guard permitsOfflinePolicyMutation(offlinePolicyLease),
               isModelLoaded else { return false }
-        let positions = markerPositions.map { NSNumber(value: Double($0)) }
+        let recipe = ModelScaleRecipe(
+            height: height,
+            markerPositions: markerPositions.map(Double.init),
+            markerNames: markerNames
+        )
         solverQueue.async { [weak self] in
-            self?.bridge.scaleModel(withHeight: height,
-                                    markerPositions: positions,
-                                    markerNames: markerNames)
+            guard let self else { return }
+            let positions = recipe.markerPositions.map { NSNumber(value: $0) }
+            let succeeded = self.bridge.scaleModel(
+                withHeight: recipe.height,
+                markerPositions: positions,
+                markerNames: recipe.markerNames
+            )
+            // Admission is synchronous but native scaling is FIFO-async. A
+            // rejected scale must make the immediately following queued frame
+            // fail before IK instead of reusing the previous subject geometry.
+            self.modelScaleIsUsable = succeeded
+            if succeeded {
+                if offlinePolicyLease == nil {
+                    self.liveScaleRecipe = recipe
+                }
+            }
         }
         return true
     }
@@ -1218,6 +1263,14 @@ final class NimbleEngine: ObservableObject {
 
         solverQueue.async { [weak self] in
             guard let self else { return }
+
+            // A failed geometry restoration is an invariant violation, but it
+            // must also fail closed in Release: no queued frame may solve on
+            // the previous offline subject's skeleton.
+            guard self.modelScaleIsUsable else {
+                self.completeFrame(receipt: receipt, status: .failed)
+                return
+            }
 
             // --- IK (runs on every frame, on 1€-filtered markers) ---
             let ikStart = CACurrentMediaTime()
@@ -1931,7 +1984,8 @@ final class NimbleEngine: ObservableObject {
         resetsBridgeSession: Bool,
         resetsBridgeIKWarmStart: Bool,
         resetsMuscleSession: Bool,
-        resetsGroundHeight: Bool = false
+        resetsGroundHeight: Bool = false,
+        restoresLiveModelScale: Bool = false
     ) {
         // Bump first so any in-flight frame's publish will be discarded.
         _ = bumpGeneration()
@@ -1946,6 +2000,38 @@ final class NimbleEngine: ObservableObject {
 
         solverQueue.async { [weak self] in
             guard let self else { return }
+            // A runner acquires its lease before the asynchronous native model
+            // load is guaranteed to finish. Early cancel/failure therefore has
+            // no skeleton to restore; a later successful load establishes its
+            // own clean baseline and marks geometry usable.
+            if restoresLiveModelScale, self.bridge.isModelLoaded {
+                let restored: Bool
+                if let recipe = self.liveScaleRecipe {
+                    let positions = recipe.markerPositions.map { NSNumber(value: $0) }
+                    let replayed = self.bridge.scaleModel(
+                        withHeight: recipe.height,
+                        markerPositions: positions,
+                        markerNames: recipe.markerNames
+                    )
+                    if replayed {
+                        restored = true
+                    } else {
+                        // A stale/corrupt recipe must not strand live mode on
+                        // offline geometry. Drop it and recover the loaded
+                        // model baseline instead.
+                        self.liveScaleRecipe = nil
+                        restored = self.bridge.restoreLoadedModelBodyScales()
+                    }
+                } else {
+                    restored = self.bridge.restoreLoadedModelBodyScales()
+                }
+                self.modelScaleIsUsable = restored
+                if !restored {
+                    assertionFailure(
+                        "NimbleEngine could not restore live/default model geometry"
+                    )
+                }
+            }
             self.dofFilters.removeAll(keepingCapacity: false)
             self.dofFilterTaps = WindowedDerivativeFilter.maximumTaps
             // Must be cleared with the SG filters, not separately: the two are
