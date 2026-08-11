@@ -313,10 +313,17 @@ xcodegen generate
 # Bump CURRENT_PROJECT_VERSION in project.yml
 xcodebuild archive -project BioMotion.xcodeproj -scheme BioMotion \
   -destination 'generic/platform=iOS' -archivePath build/BioMotion.xcarchive
+/bin/bash tools/tests/privacy_manifest_probe.sh \
+  build/BioMotion.xcarchive/Products/Applications/BioMotion.app
 xcodebuild -exportArchive -archivePath build/BioMotion.xcarchive \
   -exportOptionsPlist build/ExportOptions.plist -exportPath build/export \
   -allowProvisioningUpdates
 ```
+
+Do not export or upload when the privacy gate does not print
+`PRIVACY_MANIFEST_PROBE_PASS`. The gate validates the target-scoped project
+membership, App Store-valid manifest shape, archive bundle contents, every
+embedded Mach-O image, dynamic dependencies, and code signatures.
 
 ## Architecture & gotchas
 

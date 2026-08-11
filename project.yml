@@ -26,6 +26,11 @@ targets:
           - "AssetPack/Downloader"
           - "AssetPack/Support/**"
           - "AssetPack/Support"
+          # Assigned explicitly below so XcodeGen cannot infer two resource
+          # memberships from the broad source root.
+          - "PrivacyInfo.xcprivacy"
+      - path: BioMotion/PrivacyInfo.xcprivacy
+        buildPhase: resources
       # Developer-only escape hatch. Absent by default (hence `optional`), so a
       # normal build/archive carries no model. Populate it from the canonical,
       # receipt-verified AAR to get a bundled precompiled

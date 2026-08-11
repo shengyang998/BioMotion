@@ -4768,8 +4768,57 @@ model. Existing Nimble/OSQP simulator archives are arm64-only, so a universal
 x86_64 simulator link is not claimed. The mode-0700 transaction is a normal
 local-account boundary, not a sandbox against malicious code already running as
 the same UID. Removing the source-mtime cache also removes BioMotion's only File
-Timestamp required-reason API use; privacy-manifest wiring is the next separate
-gate.
+Timestamp required-reason API use; the following privacy-manifest gate records
+that resulting contract.
+
+
+## Privacy manifest is source-evidenced and bundled exactly once (2026-08-11)
+
+The draft privacy manifest previously declared File Timestamp reason `C617.1`
+for a model-cache mtime read that no longer exists, and System Boot Time reason
+`35F9.1` for `CACurrentMediaTime()`. Apple's Required Reason API list names
+`systemUptime` and `mach_absolute_time()` for System Boot Time; it does not name
+`CACurrentMediaTime()` or `clock_gettime()`. Declaring those stale/speculative
+categories would therefore make the manifest less accurate, not safer.
+
+`PrivacyInfo.xcprivacy` now sets only `NSPrivacyTracking = false`. It omits
+tracking domains, collected-data types, and required-reason API types because
+those reviewed inventories are empty. That omission is required rather than
+cosmetic: Apple TN3181 identifies an empty `NSPrivacyAccessedAPITypes` array as
+invalid and instructs developers to remove the key. A source gate requires the
+actual Apple-listed System Boot Time, File Timestamp, disk-space, UserDefaults,
+and active-keyboard inventories to remain empty. The patterns cover every API
+spelling in Apple's current five categories, including `getattrlistat`, all file
+date keys, and all four disk-capacity keys, plus the NSUserDefaults,
+CFPreferences, and AppStorage language-layer aliases. The gate separately pins
+all 13 reviewed `CACurrentMediaTime()` calls by file and requires
+`clock_gettime()` to remain absent, so elapsed-clock changes cannot bypass
+review or be mistaken for a required-reason category. Network, analytics,
+advertising, and tracking SDK tokens remain prohibited by the same source gate.
+
+XcodeGen assigns the manifest explicitly to the app resource phase and excludes
+it from broad source inference. The generated project must contain exactly one
+file reference and one build-file membership in BioMotion's own Resources
+phase—not the extension or test target. The built-app gate additionally
+requires one byte-identical root manifest, recursively scans every embedded
+Mach-O for undeclared required-reason APIs, rejects unreviewed dynamic
+dependencies, and verifies the complete code signature. The main TestFlight
+flow runs this gate on the archive before export. The archive Privacy Report and
+current Apple documentation remain human-reviewed release artifacts; the
+static gate does not claim to replace either one.
+
+The source/shape/target suite passes **38/38** cases. An arm64 Simulator
+Debug build also passed after project regeneration. Its app root contains one
+byte-identical manifest, the app and extension signatures verify, and all six
+Mach-O images—the two thin launch executables, two exact Debug dylibs, and two
+preview dylibs—pass the symbol/string and dependency audit. Separate copied-app
+negatives added an unreferenced dylib carrying `_getattrlistat`, one carrying
+`volumeTotalCapacityKey`, and one with an unknown `@rpath`; recursive discovery
+rejected each for the intended reason before the deliberately invalidated
+signature. An earlier `mach_absolute_time()` negative also exposed and fixed an
+`nm -u` format assumption: on this host undefined symbols have no leading
+whitespace. Existing Swift concurrency/deprecation and Nimble/Eigen
+documentation warnings remain, but the build has no new compile or link error.
 
 
 ## XML conversion no longer depends on a machine-specific Boost install (2026-08-11)
