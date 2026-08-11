@@ -260,9 +260,6 @@ static Eigen::VectorXs distinctValidPose(
     const double offlineMarkerRatio = 0.86;
     const Eigen::VectorXs loadedDefaults = skeleton->getBodyScales();
     const Eigen::VectorXs expected = loadedDefaults * markerRatio;
-    const Eigen::VectorXs neutralPose = neutralPoseForSkeleton(skeleton);
-    const BodyTransformSnapshot loadedDefaultTransforms =
-        bodyTransformsAtPose(skeleton, neutralPose);
     ScaleMarkers markers = markersFromLoadedModel(
         skeleton,
         markerRatio,
@@ -273,6 +270,9 @@ static Eigen::VectorXs distinctValidPose(
         offlineMarkerRatio,
         ScaleRootMarker::MHRRoot
     );
+    const Eigen::VectorXs neutralPose = neutralPoseForSkeleton(skeleton);
+    const BodyTransformSnapshot loadedDefaultTransforms =
+        bodyTransformsAtPose(skeleton, neutralPose);
     XCTAssertEqualObjects(markers.names.firstObject, @"MHR_ROOT");
 
     // Height deliberately says 1.0x. If the bridge loses the MHR_ROOT alias,

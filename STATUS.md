@@ -338,7 +338,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 642 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 643 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -5500,7 +5500,7 @@ raw luma-to-box-to-peak registration, translation sign, exact receipt routing, t
 dual leases, close/reset ordering and distinct failure presentation. Periodic fixtures now derive
 their shifted target from an analytic motif instead of wrapping a non-divisible finite raster, and
 normalized rectangle assertions compare all four edges with a `1e-12` tolerance. The reviewed fast
-lane remains exactly **642** tests and its fail-closed gate harness passes **49/49**. On the current
+lane contains exactly **643** tests and its fail-closed gate harness passes **49/49**. On the current
 tree, the camera reducer suite passes **45/45** and the camera-reference plus registration-geometry
 suites pass **64/64** on Simulator; these selected **109/109** results are not represented as a new
 full-fast-lane receipt. All changed Swift sources parse, `git diff --check` passes, and unsigned
@@ -5533,8 +5533,8 @@ skeleton to restore and it safely performs only the remaining cleanup. Geometry 
 session, muscle-QP and filter clearing; stale lease release is still a complete no-op. Ordinary
 tracking, session and analysis-pass resets intentionally preserve the current live subject scale.
 
-The native regression strengthens the existing four-method `ModelScalingTests` suite without
-changing the gate count. It drives FullBody through live `1.12×` → offline `0.86×` → live recipe,
+The native regression strengthens the existing four-method `ModelScalingTests` suite. It drives
+FullBody through live `1.12×` → offline `0.86×` → live recipe,
 then offline → loaded defaults → repeated default restore. It compares the complete body-scale
 vector and the neutral-pose 4×4 transforms of pelvis plus bilateral femur, talus, humerus and hand,
 requires the intermediate geometry to differ, and verifies default restoration does not change a
@@ -5550,8 +5550,16 @@ rc **0** for both generic arm64 Simulator and generic arm64 device; logs are
 `waiting for workers to materialize` state: no test-case start/pass/fail event appeared in about 58
 seconds, and the run was interrupted with rc 75. Therefore this receipt claims test-target
 build/link success and the RED/GREEN source contracts, **not an XCTest runtime pass or product-test
-failure**. The pure fail-closed gate harness passes **49/49**; fast/slow lane sizes remain exactly
-**642 + 1**.
+failure**. The pure fail-closed gate harness passes **49/49**. A later complete fast run collected
+643 ordinary tests, exposing a stale 642 count: commit `8299caf` had added the finite-input marker
+overflow regression after that count was recorded. The same run exposed a test-fixture ordering
+defect: the restoration regression captured neutral-pose transforms before constructing its ideal
+markers, leaving the skeleton at a different pose from the one used to cache the model references.
+That numerator/denominator mismatch produced a deterministic `1.77e-7` error. Constructing both
+marker sets first restores the same-pose comparison and keeps the original `1e-10` assertion for
+measurement, recipe replay and default restoration alike. The complete model-scaling class passes
+**4/4**, the fail-closed gate harness passes **49/49**, and fast/slow lane sizes are exactly
+**643 + 1**.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
