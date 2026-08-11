@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 #
 # Fail-closed XCTest runner. Every lane owns its selection and produces a
 # structured xcresult receipt; a green xcodebuild line alone is never a pass.
@@ -23,17 +23,89 @@
 # runner-owned project/scheme/destination/result paths. Do not add a skip or
 # retry to make a lane green.
 
-# shellcheck source-path=SCRIPTDIR
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "$-" in
+    *p*) ;;
+    *)
+      printf '%s\n' \
+        'GATE FAIL: execute tools/run_tests.sh directly or with /bin/bash -p' >&2
+      exit 78
+      ;;
+  esac
+fi
+
+RUN_TESTS_PATH='/usr/bin:/bin:/usr/sbin:/sbin'
+PATH="$RUN_TESTS_PATH"
+export PATH
+unset \
+  BASH_ENV CDPATH DEVELOPER_DIR DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH \
+  ENV GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GREP_OPTIONS PERL5LIB PERL5OPT \
+  PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP PYTHONWARNINGS SDKROOT \
+  TOOLCHAINS XCODE_XCCONFIG_FILE
+
+RUN_TESTS_BASH='/bin/bash'
+RUN_TESTS_DATE='/bin/date'
+RUN_TESTS_ENV='/usr/bin/env'
+RUN_TESTS_HEAD='/usr/bin/head'
+RUN_TESTS_MKDIR='/bin/mkdir'
+RUN_TESTS_MKTEMP='/usr/bin/mktemp'
+RUN_TESTS_PYTHON='/usr/bin/python3'
+RUN_TESTS_RMDIR='/bin/rmdir'
+RUN_TESTS_XCODEBUILD='/usr/bin/xcodebuild'
+RUN_TESTS_XCRUN='/usr/bin/xcrun'
+RUN_TESTS_HERMETIC_HOME='/var/empty'
+
+RUN_TESTS_TRUSTED_USER="$(
+  "$RUN_TESTS_ENV" -i PATH="$RUN_TESTS_PATH" LANG=C LC_ALL=C \
+    "$RUN_TESTS_PYTHON" -I -c \
+    'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_name)'
+)"
+RUN_TESTS_TRUSTED_HOME="$(
+  "$RUN_TESTS_ENV" -i PATH="$RUN_TESTS_PATH" LANG=C LC_ALL=C \
+    "$RUN_TESTS_PYTHON" -I -c \
+    'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)'
+)"
+if [ -z "$RUN_TESTS_TRUSTED_USER" ] || \
+  [ "${RUN_TESTS_TRUSTED_HOME#/}" = "$RUN_TESTS_TRUSTED_HOME" ] || \
+  [ -L "$RUN_TESTS_TRUSTED_HOME" ] || \
+  [ ! -d "$RUN_TESTS_TRUSTED_HOME" ] || \
+  [ -L "$RUN_TESTS_HERMETIC_HOME" ] || \
+  [ ! -d "$RUN_TESTS_HERMETIC_HOME" ]; then
+  printf '%s\n' 'GATE FAIL: could not establish safe test-runner homes' >&2
+  exit 1
+fi
+
+run_tests_hermetic_tool() {
+  "$RUN_TESTS_ENV" -i \
+    PATH="$RUN_TESTS_PATH" \
+    HOME="$RUN_TESTS_HERMETIC_HOME" \
+    USER="$RUN_TESTS_TRUSTED_USER" \
+    LOGNAME="$RUN_TESTS_TRUSTED_USER" \
+    LANG=C \
+    LC_ALL=C \
+    "$@"
+}
+
+run_tests_trusted_user_tool() {
+  "$RUN_TESTS_ENV" -i \
+    PATH="$RUN_TESTS_PATH" \
+    HOME="$RUN_TESTS_TRUSTED_HOME" \
+    USER="$RUN_TESTS_TRUSTED_USER" \
+    LOGNAME="$RUN_TESTS_TRUSTED_USER" \
+    LANG=C \
+    LC_ALL=C \
+    "$@"
+}
 
 set -u
 
 RUN_TESTS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=test_gate.sh
+# shellcheck source=tools/test_gate.sh
 source "$RUN_TESTS_SCRIPT_DIR/test_gate.sh"
 
 DEVICE_NAME='BioMotion-CI'
 DEVICE_TYPE='iPhone 17'
-LOCK_DIR="${TMPDIR:-/tmp}/biomotion-run-tests.lock"
+LOCK_DIR='/tmp/biomotion-run-tests.lock'
 REPO_ROOT="$(cd "$RUN_TESTS_SCRIPT_DIR/.." && pwd)"
 TEST_DEVICE_UDID=''
 RUN_OUTPUT_DIR=''
@@ -54,11 +126,11 @@ EOF
 }
 
 run_tests_release_lock() {
-  rmdir "$LOCK_DIR" 2>/dev/null || true
+  "$RUN_TESTS_RMDIR" "$LOCK_DIR" 2>/dev/null || true
 }
 
 run_tests_acquire_lock() {
-  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  if ! "$RUN_TESTS_MKDIR" "$LOCK_DIR" 2>/dev/null; then
     printf 'REFUSING: %s exists, so another run is using %s.\n' "$LOCK_DIR" "$DEVICE_NAME"
     printf '%s\n' 'Two xcodebuild test processes on one simulator can evict each other'
     printf '%s\n' 'and report an incomplete suite. Wait, or remove the lock only after'
@@ -71,12 +143,15 @@ run_tests_acquire_lock() {
 
 run_tests_resolve_device() {
   local devices_json
-  if ! devices_json=$(xcrun simctl list devices -j); then
+  if ! devices_json=$(
+    run_tests_trusted_user_tool "$RUN_TESTS_XCRUN" simctl list devices -j
+  ); then
     printf 'GATE FAIL: could not enumerate simulators\n' >&2
     return 1
   fi
 
-  TEST_DEVICE_UDID=$(printf '%s' "$devices_json" | python3 -c "
+  TEST_DEVICE_UDID=$(printf '%s' "$devices_json" | \
+    run_tests_hermetic_tool "$RUN_TESTS_PYTHON" -I -c "
 import json,sys
 d = json.load(sys.stdin)['devices']
 for runtime, devices in d.items():
@@ -91,10 +166,15 @@ for runtime, devices in d.items():
 
   if [ -z "$TEST_DEVICE_UDID" ]; then
     printf "Creating dedicated simulator '%s' (%s)...\n" "$DEVICE_NAME" "$DEVICE_TYPE"
-    TEST_DEVICE_UDID=$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE") || return 1
+    TEST_DEVICE_UDID=$(
+      run_tests_trusted_user_tool \
+        "$RUN_TESTS_XCRUN" simctl create "$DEVICE_NAME" "$DEVICE_TYPE"
+    ) || return 1
   fi
 
-  if ! xcrun simctl bootstatus "$TEST_DEVICE_UDID" -b >/dev/null 2>&1; then
+  if ! run_tests_trusted_user_tool \
+    "$RUN_TESTS_XCRUN" simctl bootstatus "$TEST_DEVICE_UDID" -b \
+    >/dev/null 2>&1; then
     printf 'GATE FAIL: could not boot dedicated simulator %s (%s)\n' \
       "$DEVICE_NAME" "$TEST_DEVICE_UDID" >&2
     return 1
@@ -106,7 +186,8 @@ for runtime, devices in d.items():
 run_tests_print_failures() {
   local log_path=$1
   printf '\nFailures and skips (first 40):\n'
-  grep -E 'error:|XCTAssert.* failed|Test Case .* skipped' "$log_path" | head -40
+  /usr/bin/grep -E 'error:|XCTAssert.* failed|Test Case .* skipped' \
+    "$log_path" | "$RUN_TESTS_HEAD" -40
 }
 
 # Build the invocation in an array that is non-empty from its first expansion.
@@ -126,13 +207,15 @@ run_tests_invoke_xcodebuild() {
     -project BioMotion.xcodeproj
     -scheme BioMotion
     -destination "platform=iOS Simulator,id=${TEST_DEVICE_UDID}"
+    -derivedDataPath "$RUN_OUTPUT_DIR/DerivedData"
     -resultBundlePath "$result_path"
   )
   if [ -n "$selector" ]; then
     xcodebuild_args+=("$selector")
   fi
   xcodebuild_args+=("$@" test)
-  xcodebuild "${xcodebuild_args[@]}"
+  run_tests_trusted_user_tool "$RUN_TESTS_XCODEBUILD" \
+    "${xcodebuild_args[@]}"
 }
 
 run_tests_one_lane() {
@@ -149,7 +232,7 @@ run_tests_one_lane() {
   local result_path="$lane_dir/result.xcresult"
   local summary_path="$lane_dir/summary.json"
   local summary_error_path="$lane_dir/summary.stderr"
-  mkdir -p "$lane_dir" || return 1
+  "$RUN_TESTS_MKDIR" -p "$lane_dir" || return 1
 
   printf '\nRunning %s lane (expected tests: %s)...\n' "$lane" "$expected"
   printf 'log:      %s\n' "$log_path"
@@ -158,15 +241,16 @@ run_tests_one_lane() {
   local start
   local wall
   local xcodebuild_rc
-  start=$(date +%s)
+  start=$("$RUN_TESTS_DATE" +%s)
   run_tests_invoke_xcodebuild "$selector" "$result_path" "$@" \
     >"$log_path" 2>&1
   xcodebuild_rc=$?
-  wall=$(( $(date +%s) - start ))
+  wall=$(( $("$RUN_TESTS_DATE" +%s) - start ))
 
   local summary_rc=1
   if [ -d "$result_path" ]; then
-    xcrun xcresulttool get test-results summary \
+    run_tests_trusted_user_tool \
+      "$RUN_TESTS_XCRUN" xcresulttool get test-results summary \
       --path "$result_path" --compact \
       >"$summary_path" 2>"$summary_error_path"
     summary_rc=$?
@@ -184,7 +268,7 @@ run_tests_one_lane() {
 
   if [ "$summary_rc" -ne 0 ]; then
     printf '\nxcresult summary error:\n'
-    head -30 "$summary_error_path"
+    "$RUN_TESTS_HEAD" -30 "$summary_error_path"
   fi
   if [ "$gate_rc" -ne 0 ]; then
     run_tests_print_failures "$log_path"
@@ -221,19 +305,29 @@ run_tests_main() {
   fi
 
   local required_command
-  for required_command in xcrun xcodebuild python3; do
-    if ! command -v "$required_command" >/dev/null 2>&1; then
-      printf 'GATE FAIL: required command is unavailable: %s\n' "$required_command" >&2
+  for required_command in \
+    "$RUN_TESTS_XCRUN" "$RUN_TESTS_XCODEBUILD" "$RUN_TESTS_PYTHON"
+  do
+    if [ -L "$required_command" ] || [ ! -f "$required_command" ] || \
+      [ ! -x "$required_command" ]; then
+      printf 'GATE FAIL: required command is unavailable: %s\n' \
+        "$required_command" >&2
       return 1
     fi
   done
 
   cd "$REPO_ROOT" || return 1
+  run_tests_hermetic_tool \
+    "$RUN_TESTS_BASH" -p \
+    "$RUN_TESTS_SCRIPT_DIR/tests/dependency_boundary_probe.sh" || return 1
   test_gate_assert_no_xctskip "$REPO_ROOT/BioMotionTests" || return 1
   run_tests_acquire_lock || return $?
   run_tests_resolve_device || return 1
 
-  RUN_OUTPUT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/biomotion-tests.XXXXXX") || return 1
+  RUN_OUTPUT_DIR=$(
+    run_tests_hermetic_tool \
+      "$RUN_TESTS_MKTEMP" -d '/tmp/biomotion-tests.XXXXXX'
+  ) || return 1
   printf 'artifacts: %s\n' "$RUN_OUTPUT_DIR"
 
   if [ "$lane" = all ]; then

@@ -4701,8 +4701,9 @@ open. No upload or other external mutation was performed by this contract slice.
 
 ## The SAM package and receipt are now fail-closed and atomically published (2026-08-11)
 
-`tools/assetpack/package.sh` is now the only approved local package entry point. It fixes `/bin/bash`,
-`/usr/bin/python3`, `/usr/bin/xcrun`, and a trusted system PATH; snapshots Manifest/lock/license into
+`tools/assetpack/package.sh` is now the only approved local package entry point. The documented
+command starts it with `/bin/bash -p`; the entry point fixes `/usr/bin/python3`, `/usr/bin/xcrun`,
+and a trusted system PATH; snapshots Manifest/lock/license into
 a private mode-0700 transaction first; and then validates the frozen repository contract and exact
 Xcode 26.4 / build 17E192 / Core ML 3520.5.1 / `ba-package` 1.2 toolchain back-to-back. It verifies
 the exact source package, compiles privately, verifies the exact compiled tree and complete interface,
@@ -4817,8 +4818,9 @@ through upload and version listing and is removed through a prefix-checked EXIT 
 the public release after verification cannot change the bytes consumed by `altool`; a replacement
 between the two source copies produces a mismatched AAR/receipt generation and fails the verifier.
 
-The entry point pins `/bin/bash`, resets PATH to `/usr/bin:/bin:/usr/sbin:/sbin`, invokes the verifier
-with isolated Python mode (`/usr/bin/python3 -I`), and fixes `/usr/bin/xcrun`. It removes ambient
+The documented command starts the entry point with `/bin/bash -p`; the entry point resets PATH to
+`/usr/bin:/bin:/usr/sbin:/sbin`, invokes the verifier with isolated Python mode
+(`/usr/bin/python3 -I`), and fixes `/usr/bin/xcrun`. It removes ambient
 `DEVELOPER_DIR`, `TOOLCHAINS`, and `SDKROOT` before either local archive verification or `altool`
 selection. Custom candidates are deliberately narrow: `--aar` and `--receipt` must appear together,
 must retain the exact canonical filenames, and must resolve to the same physical directory.
@@ -4960,7 +4962,7 @@ flow runs this gate on the archive before export. The archive Privacy Report and
 current Apple documentation remain human-reviewed release artifacts; the
 static gate does not claim to replace either one.
 
-The source/shape/target suite passes **38/38** cases. An arm64 Simulator
+The source/shape/target suite passes **41/41** cases. An arm64 Simulator
 Debug build also passed after project regeneration. Its app root contains one
 byte-identical manifest, the app and extension signatures verify, and all six
 Mach-O images—the two thin launch executables, two exact Debug dylibs, and two
@@ -5024,9 +5026,11 @@ occurred after XcodeGen, the export plist lived only under ignored `build/`, and
 and directly upload an IPA after only the pre-export archive had been checked. The order is now
 `project.yml` bump, XcodeGen, source gate, archive. The exact manual TestFlight export plist is
 tracked with `destination=export` and the generic `Apple Distribution` selector. A fail-fast
-`tools/release/testflight_release.sh` validates source/archive/privacy, exports locally, validates
-the final IPA and its SHA-256, and remains network-free by default; only `--validate` or `--upload`
-can contact App Store Connect, and upload uses the same private byte-pinned snapshot it validates.
+`tools/release/testflight_release.sh` validates source/archive/privacy, exports locally, and validates
+the final IPA and its SHA-256. In default mode it issues no explicit App Store Connect
+validate/upload request; only `--validate` or `--upload` authorizes those operations, and upload uses
+the same private byte-pinned snapshot it validates. The real `xcodebuild -exportArchive` subprocess
+is not network-sandboxed, so this does not claim universal network isolation.
 
 The same review invalidated an apparent provisioning-profile proof: `security cms -D` decodes CMS
 but accepted an equal-length mutation of the signed XML. Profiles now pass OpenSSL content-signature
@@ -5038,7 +5042,7 @@ retain at least 30 days of validity. Because this project does not enable Keycha
 `keychain-access-groups` entitlement is now unreviewed and rejected instead of receiving wildcard
 subset treatment.
 
-The strengthened resource suite passes **40/40** source, PBX, arm64 Simulator-app, test-bundle,
+The strengthened resource suite passes **42/42** source, PBX, arm64 Simulator-app, test-bundle,
 archive-provenance, stale-version, export-option, and unsafe-IPA cases. The IPA negatives include
 a raw ZIP name whose NUL suffix Python would otherwise truncate, an 8 MiB DEFLATE stream whose
 local and central metadata falsely claim one byte, and an app executable with its execute bits
@@ -5046,7 +5050,7 @@ removed. The gate independently checks raw central/local headers, actual inflate
 data descriptors, rejects semantic ASi Unix metadata and ZIP comments, then binds Unix execute
 permissions back to the archive. The developer-model guard
 suite passes **16/16**, the CMS mutation suite **2/2**, and the fail-fast TestFlight wrapper suite
-**9/9**. A fresh arm64 Debug Simulator `build-for-testing` succeeded and its actual `.xctest` passed
+**15/15**. A fresh arm64 Debug Simulator `build-for-testing` succeeded and its actual `.xctest` passed
 the exact bundle smoke gate. A separate clean app-only product—so no embedded test plugin could be
 mistaken for shipping content—passed both the exact Simulator app gate and the recursive privacy
 gate after an ad-hoc local re-seal. A separate clean arm64 Release Simulator build also succeeded,
@@ -5693,6 +5697,162 @@ finding. Before RMSE / maximum absolute error are **4.793 / 8.051 cm** and after
 **0.5509 / 1.3108 cm**. `regression.py` passes, both Python files compile, the JSON parses, and
 repeated generator runs leave the artifact byte-identical. No product or test code changed in this
 cleanup.
+
+
+## Native dependency checkouts and archives are fail-closed (2026-08-12)
+
+Fresh setup previously had two provenance holes. Nimble was documented at an exact fork commit but
+nothing stopped a dirty or different nested checkout, and the transfer instructions themselves
+deleted 6,601 tracked Nimble paths. OSQP was cloned from a moving branch, its README build sequence
+started from the wrong working directory, and its already-created CMake caches were not reproducible
+instructions. A non-empty `.a` at the expected path was enough to reach Xcode.
+
+`tools/dependencies.lock.json` is now the reviewed native source/build receipt. It pins the maintained
+Nimble fork at `0ecf26a1557ee738146511cd81fbe99f2bc94d38` and OSQP at
+`1572ae068e9ce9ca723cf8223548ade1ff7acc29`. On 2026-08-12, independent `git ls-remote` calls resolved
+the published Nimble branch and OSQP `master` to those exact SHAs. The probe accepts any configured
+remote name only when one of its URLs canonicalizes to the locked repository; this supports the
+current local `fork` + upstream `origin` arrangement without accepting upstream as the maintained
+fork. The inspector does not trust porcelain alone. For Nimble, OSQP and each SDK-local QDLDL
+checkout it resolves the physical worktree root, requires `.git` to be a real directory local to
+that checkout, disables and rejects replace refs, rejects assume-unchanged/skip-worktree index
+flags, requires the index to equal `HEAD`, and hashes every physical tracked file as a Git blob
+against the `HEAD` tree. A separate physical walk rejects directory symlinks and every ignored or
+untracked file outside the explicit build roots. This closes index hiding, external git-dir,
+subdirectory, replace-ref and ignored-file bypasses while still allowing the reviewed generated
+artifacts beneath `build_ios`, `build_sim`, and Nimble's unused `build_xcframework` root.
+
+The same boundary verifies both device and Simulator CMake caches: Release, arm64, iOS 17.0, Ninja,
+`CMAKE_SYSTEM_NAME=iOS`, the matching SDK sysroot and the real source directory. Every archive
+member must carry the corresponding iPhoneOS or Simulator `LC_BUILD_VERSION` platform and a 17.0
+minimum; an arm64 macOS archive renamed to the expected path is rejected. Nimble host-probe mode
+must be off. Its two fresh-clone-reproducible archives are byte-pinned at
+`77b483af8f555ca5d2a2ab6344d183b0945245a8fc6b62084d7e648d739105e3` (device) and
+`483f77cff99518b7832290690c6086994c9c78e0c9196a39d549e51731348b34` (Simulator). OSQP is pinned to
+double precision, 32-bit integers, static-only, builtin algebra, with its exact optimization and
+feature flags. Its fetched QDLDL source is independently pinned to v0.1.8 commit
+`138fdac58b9cd1c4137ff1b99152c8108a6cff5b` and must be clean at the official repository in both
+build trees. Both generated `osqp_configure.h` files and both generated Nimble `dart/config.hpp`
+files are content-pinned so the headers consumed by Xcode cannot silently disagree with the
+archives. The Xcode order is deliberately tracked-first: Nimble source, vendored Eigen/tinyxml2,
+and OSQP public/private source headers precede the ignored generated roots. A recursive
+header-like inventory permits only the one locked `dart/config.hpp` or `osqp_configure.h` beneath
+each active build include surface, so an ignored shadow header cannot silently win later in the
+search.
+
+Darwin `ar` rewrites a nondeterministic symbol table, so raw OSQP `.a` bytes are deliberately not
+presented as reproducible evidence. Both builds instead use source- and QDLDL-prefix maps, require
+exactly 29 uniquely named Mach-O members, and hash the ordered member names and bytes while excluding
+only that container symbol table. The resulting normalized digests are
+`032307d988e7479d1d665b35bef8f71e40a2f8ddec5fa3c9b5f9a495ef747b83` (device) and
+`c7acf81d275e28e5f1ed55dbb5fed98deb27680b0d0dcd0bb60afe0790495a94` (Simulator). Rebuilding the
+device archive beneath a second temporary repository-shaped absolute path reproduced all 29 member
+bytes exactly. Both variants must export `osqp_setup`, `osqp_solve`, `osqp_cleanup` and
+`osqp_warm_start`. The gate derives the active device/Simulator `.a` paths from the lock rather
+than maintaining a second path authority. It pins Xcode 26.4 build `17E192` and iPhoneOS SDK 26.4
+build `23E237`, then parses `project.yml` and the generated project as a complete graph. The root
+PBXProject and exactly three native targets—BioMotion, BioMotionTests and
+AssetPackDownloader—must match the reviewed Debug/Release configuration-list ownership, exact build
+setting surfaces, dependency edges, ordered build phases and referenced build files. No unattached
+or repeated configuration/phase/build-file/dependency object may exist. Framework phases,
+packages, linkable file references outside the pinned linker settings, per-file flags, base
+xcconfigs, compiler/linker/tool overrides and extra targets are forbidden. The project container
+may contain only `project.pbxproj` and the byte-pinned self workspace; shared or user schemes,
+`xcuserdata` and arbitrary sidecars fail closed. Both model-rejection shell phases must embed the
+exact reviewed `tools/release/reject_dev_model.sh`, whose SHA-256 is pinned as
+`a83bd4b5fbafb6442358ce6dd06627c574514a97c2fa7c28bf8750c8a29223d6`.
+The gate also pins the ordered SDK-conditioned header paths and Release/Debug consumer ABI macros.
+Name-based Nimble/OSQP `-l` lookup and competing library/header/compiler settings are forbidden;
+comments, duplicate tokens, an unattached decoy configuration, or a correct path on the wrong
+target cannot satisfy it. Unsafe lock paths,
+symlinks, malformed/duplicate/extra lock fields, dirty or wrong repositories, wrong cache settings,
+non-Mach-O members, wrong headers/content and linkage drift all fail closed.
+
+TDD grew the adversarial shell suite through staged RED/GREEN boundaries: missing inspector; wrong
+commit/dirty checkout; wrong repository/sysroot/missing archive; duplicate and extra JSON keys;
+path traversal/project drift/forbidden demo; wrong architecture/missing symbol; runner integration;
+the initially OSQP-only implementation rejecting the new Nimble receipt; then platform/minimum-OS,
+structured project linkage, normalized archive content, QDLDL and generated-header mutations;
+later cases cover header-order/ABI-definition drift, an unattached PBX decoy, and a competing
+same-name dylib that cannot redirect an explicit archive path. The final expansion additionally
+covers physical checkout/index/ref bypasses, ignored shadow headers, complete PBX graph/container
+drift, toolchain drift and guard-script substitution. The final dependency suite passes
+**79/79**. The real-tree wrapper prints
+`DEPENDENCY_BOUNDARY_PASS` with both exact SHAs. It is called by `tools/run_tests.sh` after changing
+to the repository root but before the simulator lock or boot, so a dependency failure cannot consume
+a test device. It also gives each invocation a fresh private DerivedData instead of reusing a shared
+cache. The runner's pure gate harness passes **53/53**. After archive-receipt integration, XcodeGen
+regeneration, the real dependency gate and a fresh unsigned generic-device Release build all passed;
+the link command selected both locked device archives by their exact paths and ended
+`BUILD SUCCEEDED`.
+
+The complete pre-change fast lane also passed **633/633**, zero failures/skips/restarts, in 1,370 s.
+That receipt is a product baseline, not evidence for this new preflight because it started before the
+dependency files changed. After changing to the tracked-first header order, a fresh private-DerivedData
+diagnostic subset passed **1/1** in 38 s. The final complete fast receipt then passed **633/633** in
+1,365 s, with zero failures, skips, expected failures, or test-host restarts; that is the commit-gate
+evidence for this provenance slice. The app still targets iOS 26.0; iOS 17.0 here is only the independent
+minimum deployment target of the native static archives. Model recompilation remains separately locked to Xcode 26.4
+build `17E192`, `coremlcompiler` 3520.5.1 and `ba-package` 1.2.
+
+
+## Release archives carry an observed-dependency receipt (2026-08-12)
+
+The lock alone did not prove which checkout and built artifacts were present when a signed archive
+was created, and the old TestFlight wrapper accepted any separately-created `.xcarchive`. The native
+inspector now has a second, machine-readable interface:
+`dependency_boundary.py snapshot REPO_ROOT`. It performs the same fail-closed inspection as the
+human sentinel, then emits one canonical JSON line containing the raw lock SHA-256; actual
+Nimble/OSQP and both fetched QDLDL repository/HEAD identities; both SDKs' library digest or normalized
+member digest, member count, generated-header hash and normalized CMake settings; and raw plus
+normalized `project.yml`/pbx linkage hashes. Repository-root paths are removed. Moving an otherwise
+identical fixture to a different root produces byte-identical JSON.
+
+`tools/release/archive_release.sh` is now the only documented signed-archive entry point. It must be
+executed directly through its protected shebang or with `/bin/bash -p`; an unprotected
+`bash tools/release/archive_release.sh` is unsupported and is not evidence because inherited
+`BASH_ENV` content can run before the script reaches its own guard or sanitization. It creates
+mode-0700 staging beside the requested new archive, captures the complete observed dependency
+snapshot, runs the reviewed source gate, creates a fresh mode-0700 DerivedData inside that private
+transaction, invokes signed Release `xcodebuild archive` without provisioning-update authorization,
+and captures the complete snapshot again. Any drift discards the staged archive. The private
+DerivedData is identity-checked and removed before publication. It then seals
+`tools/release/dependency_archive_receipt.py`'s adjacent mode-0600
+receipt by passing the exact initial snapshot explicitly on stdin together with its lock digest;
+the sealer cannot replace it with a new ambient observation. All local dependency/source/resource/
+privacy/receipt work uses `env -i` and `HOME=/var/empty`; only the real `xcodebuild` receives the
+current account's passwd-derived HOME. The wrapper runs archive resource/privacy gates, verifies the
+staged pair, publishes both paths with
+exclusive renames, and verifies the published pair again. The receipt hashes the complete archive
+tree (rejecting symlinks and special files), archive/app Info.plists, complete app tree and executable,
+and embeds the actual observed dependency snapshot. Existing destinations are never overwritten;
+identity-checked rollback prevents a failed two-object publication from deleting an unrelated path.
+
+`tools/release/testflight_release.sh` now requires that adjacent receipt before export, rechecks the
+current native boundary and verifies the archive/receipt both before local gates and after IPA export.
+Local dependency/resource/privacy/receipt work runs under `env -i` with `/var/empty` as HOME. Only
+`xcodebuild -exportArchive` and the explicitly authorized final `xcrun altool` calls receive the
+current account's passwd-derived HOME, still under a fixed environment; App Store Connect identifiers
+are not forwarded as environment variables. In default mode the wrapper makes no explicit App Store
+Connect validate/upload request; the real `xcodebuild -exportArchive` process is not placed in a
+network sandbox, so this is not a claim of general network isolation. Validate/upload still operate
+on one private byte-pinned IPA snapshot, validate precedes upload, and post-export receipt failure
+prevents even the IPA SHA receipt from being published.
+
+Adversarial coverage is green: dependency boundary **79/79**, dependency/archive receipt **38/38**,
+controlled archive wrapper **14/14**, and TestFlight wrapper **15/15**. The real dependency sentinel
+and canonical single-line JSON snapshot pass against the current clean nested trees with no
+repository-root path; stdout is the JSON payload followed by its terminating newline, not a stable
+documented byte count. The runner's independent anti-bypass suite is also green **53/53**, and the
+unsigned Release product links both locked device archives. No real signed archive, App Store
+validation or upload was performed: signing credentials,
+build-number choice and explicit external publication authorization remain release-time boundaries.
+The wrappers assume a trusted, quiescent same-user build machine. This receipt proves that every
+tracked blob in the four nested Git checkouts matched the recorded `HEAD` at both observations and
+combines those bytes with the exact inspected build artifacts, project linkage and resulting archive
+bytes. It is not a signature or a link-map/dependency-closure proof that every inspected source,
+header or static-archive member was selected by the compiler/linker, and it does not claim protection
+against a malicious same-UID process that swaps files during inspection.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

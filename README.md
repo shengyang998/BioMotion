@@ -23,7 +23,8 @@ labs/BioMotion/
 ├── BioMotionTests/
 ├── project.yml             # XcodeGen project definition
 ├── nimblephysics/          # third-party — clone the maintained fork at the pinned receipt
-├── osqp/                   # third-party — clone separately
+├── osqp/                   # third-party — clone at the locked receipt
+├── tools/dependencies.lock.json # native source/build receipt
 ├── CLAUDE.md               # architecture + gotchas (LLM context)
 └── README.md               # this file — setup + build
 ```
@@ -47,31 +48,30 @@ The compiled `.ipa` is only ~3.5MB. The repo on disk can balloon to 1.2GB if you
 | Path | Size | Required for build? |
 |------|------|---------------------|
 | `BioMotion/`, `BioMotion.xcodeproj/`, `BioMotionTests/`, `project.yml` | ~1.3MB | yes |
-| `nimblephysics/` source + iOS patches | ~50MB after pruning | yes (to rebuild the static archives) |
+| `nimblephysics/` clean pinned checkout | upstream checkout size | yes (to rebuild the static archives) |
 | `nimblephysics/build_ios/libnimble_ios.a`, `build_sim/libnimble_ios.a` | ~47MB | yes (or rebuild from source) |
 | `nimblephysics/build_xcframework/NimbleIOS.xcframework` | 47MB | **no** — legacy output, not linked |
 | `osqp/` source | ~14MB | yes |
+| `osqp/build_ios/out/libosqpstatic.a`, `build_sim/out/libosqpstatic.a` | generated | yes (or rebuild from source) |
 | `nimblephysics/data/` (osim/grf/c3d datasets) | 674MB | **no** — research fixtures |
 | `nimblephysics/javascript/`, `python/` | ~80MB | **no** — language bindings |
 | `nimblephysics/unittests/`, `www/`, `wiki_resources/` | ~14MB | **no** |
 | `build/` (Xcode DerivedData spillover) | ~15MB | **no** |
 
-Safe to delete before zipping the project for transfer:
-
-```bash
-rm -rf nimblephysics/data nimblephysics/javascript nimblephysics/python \
-       nimblephysics/www nimblephysics/wiki_resources nimblephysics/unittests \
-       build
-```
-
-That removes the bulky optional datasets while retaining the linked archives
-and the source required to rebuild them.
+Do **not** delete tracked directories from `nimblephysics/` to make a transfer
+smaller. Those datasets and language bindings are not linked into the app, but
+they are tracked by the pinned fork; deleting them creates thousands of local
+changes and invalidates the clean-checkout receipt. For a new machine, transfer
+the outer project without `nimblephysics/` and clone the pinned fork there.
+Generated outer `build/` output is also unnecessary for transfer.
 
 ## Fresh setup on a new Mac
 
 ### 1. Toolchain
 
-- Xcode 16+ (with iOS 17 SDK and a simulator installed)
+- Xcode 26.4 (build `17E192`) with iPhoneOS SDK 26.4 (build `23E237`) and an arm64 iOS 26
+  Simulator installed. The app target is iOS 26.0. The native static archives
+  intentionally retain an independent iOS 17.0 minimum deployment target.
 - Command line tools: `xcode-select --install`
 - CMake 3.24 or newer, Ninja, and XcodeGen:
   ```bash
@@ -81,6 +81,14 @@ and the source required to rebuild them.
 Homebrew supplies build tools only. Nimble's Eigen and tinyxml2 sources are
 vendored at pinned revisions in its fork; the iOS target does not discover
 Boost or dependency headers from Homebrew.
+
+The frozen SAM artifact was also compiled with Xcode 26.4,
+`coremlcompiler` 3520.5.1 and `ba-package` 1.2. Verify that separate toolchain
+receipt before rebuilding or packaging the model:
+
+```bash
+/usr/bin/python3 tools/assetpack/verify_model_lock.py toolchain
+```
 
 ### 2. Clone the project
 
@@ -188,36 +196,42 @@ Here “linear extrapolation” means continuation along an endpoint tangent onl
 SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses
 that same evaluator for exact MovingPathPoint locations.
 
-### 4. Clone osqp
+### 4. Clone the pinned OSQP checkout
 
 ```bash
-git clone --recursive https://github.com/osqp/osqp.git
+git clone https://github.com/osqp/osqp.git osqp
+git -C osqp checkout --detach \
+  1572ae068e9ce9ca723cf8223548ade1ff7acc29
 ```
+
+At the 2026-08-12 receipt, `git ls-remote` resolved OSQP `master` to that
+exact SHA. The checkout is pinned by commit, not by the moving branch name.
 
 ### 5. Build Nimble for iOS
 
 ```bash
 # iOS device (arm64 iphoneos)
-cd nimblephysics
-cmake --fresh -S ios -B build_ios -G Ninja \
+cmake --fresh -S nimblephysics/ios -B nimblephysics/build_ios -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
   -DCMAKE_OSX_SYSROOT=iphoneos
-cmake --build build_ios --target nimble_ios --parallel
+cmake --build nimblephysics/build_ios --target nimble_ios --parallel
 
 # iOS simulator (arm64 iphonesimulator)
-cmake --fresh -S ios -B build_sim -G Ninja \
+cmake --fresh -S nimblephysics/ios -B nimblephysics/build_sim -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
   -DCMAKE_OSX_SYSROOT=iphonesimulator
-cmake --build build_sim --target nimble_ios --parallel
+cmake --build nimblephysics/build_sim --target nimble_ios --parallel
 ```
 
 The standalone target is intentionally arm64-only for both device and
 Simulator. Each configure generates its own `dart/config.hpp` beneath the
 matching build directory. A source-tree `nimblephysics/dart/config.hpp` is
-forbidden, and every consumer must search `build_ios` or `build_sim` before the
-source root. The target publicly exports `DART_IOS_BUILD=1`,
+forbidden. Xcode searches the tracked Nimble, vendored Eigen/tinyxml2 and OSQP
+source roots before either ignored build root; the build roots may contribute
+only the locked `dart/config.hpp` and `osqp_configure.h` for the active SDK.
+The target publicly exports `DART_IOS_BUILD=1`,
 `DART_USE_IDENTITY_JACOBIAN=1`, `EIGEN_DONT_PARALLELIZE=1`, and
 `EIGEN_MPL2_ONLY=1`.
 
@@ -232,17 +246,67 @@ The generated Xcode project links `build_ios/libnimble_ios.a` and
 ### 6. Build OSQP
 
 ```bash
-cd osqp/build_ios && ninja osqpstatic   # device
-cd ../build_sim   && ninja osqpstatic   # simulator
+# Keep local checkout paths out of the object bytes. Run from the BioMotion
+# repository root; the dependency gate requires these exact prefix maps.
+BIOMOTION_REPO_ROOT="$(pwd -P)"
+
+# iOS device (arm64 iphoneos)
+cmake --fresh -S osqp -B osqp/build_ios -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+  -DCMAKE_OSX_SYSROOT=iphoneos \
+  "-DCMAKE_C_FLAGS=-ffile-prefix-map=${BIOMOTION_REPO_ROOT}/osqp=osqp -ffile-prefix-map=${BIOMOTION_REPO_ROOT}/osqp/build_ios/_deps/qdldl-src=qdldl" \
+  "-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" \
+  -DOSQP_BUILD_SHARED_LIB=OFF -DOSQP_BUILD_STATIC_LIB=ON \
+  -DOSQP_BUILD_DEMO_EXE=OFF -DOSQP_BUILD_UNITTESTS=OFF \
+  -DOSQP_USE_FLOAT=OFF -DOSQP_USE_LONG=OFF \
+  -DOSQP_ALGEBRA_BACKEND=builtin -DOSQP_ASAN=OFF \
+  -DOSQP_CODEGEN=ON -DOSQP_ENABLE_DERIVATIVES=ON \
+  -DOSQP_ENABLE_INTERRUPT=ON -DOSQP_ENABLE_PRINTING=ON \
+  -DOSQP_ENABLE_PROFILING=ON -DOSQP_PACK_SETTINGS=OFF \
+  -DOSQP_PROFILER_ANNOTATIONS=OFF \
+  -DQDLDL_BUILD_SHARED_LIB=OFF -DQDLDL_BUILD_STATIC_LIB=OFF \
+  -DQDLDL_DEV_ANALYSIS=OFF -DQDLDL_DEV_ASAN=OFF \
+  -DQDLDL_DEV_COVERAGE=OFF -DQDLDL_FLOAT=OFF -DQDLDL_LONG=OFF
+cmake --build osqp/build_ios --target osqpstatic --parallel
+
+# iOS simulator (arm64 iphonesimulator)
+cmake --fresh -S osqp -B osqp/build_sim -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+  -DCMAKE_OSX_SYSROOT=iphonesimulator \
+  "-DCMAKE_C_FLAGS=-ffile-prefix-map=${BIOMOTION_REPO_ROOT}/osqp=osqp -ffile-prefix-map=${BIOMOTION_REPO_ROOT}/osqp/build_sim/_deps/qdldl-src=qdldl" \
+  "-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" \
+  -DOSQP_BUILD_SHARED_LIB=OFF -DOSQP_BUILD_STATIC_LIB=ON \
+  -DOSQP_BUILD_DEMO_EXE=OFF -DOSQP_BUILD_UNITTESTS=OFF \
+  -DOSQP_USE_FLOAT=OFF -DOSQP_USE_LONG=OFF \
+  -DOSQP_ALGEBRA_BACKEND=builtin -DOSQP_ASAN=OFF \
+  -DOSQP_CODEGEN=ON -DOSQP_ENABLE_DERIVATIVES=ON \
+  -DOSQP_ENABLE_INTERRUPT=ON -DOSQP_ENABLE_PRINTING=ON \
+  -DOSQP_ENABLE_PROFILING=ON -DOSQP_PACK_SETTINGS=OFF \
+  -DOSQP_PROFILER_ANNOTATIONS=OFF \
+  -DQDLDL_BUILD_SHARED_LIB=OFF -DQDLDL_BUILD_STATIC_LIB=OFF \
+  -DQDLDL_DEV_ANALYSIS=OFF -DQDLDL_DEV_ASAN=OFF \
+  -DQDLDL_DEV_COVERAGE=OFF -DQDLDL_FLOAT=OFF -DQDLDL_LONG=OFF
+cmake --build osqp/build_sim --target osqpstatic --parallel
 ```
 
-(Initialize each `build_*` directory with the same `cmake` invocation pattern as Nimble — same `CMAKE_SYSTEM_NAME=iOS` + `CMAKE_OSX_SYSROOT` flags.)
+These options pin OSQP's C ABI to double precision plus 32-bit integers and
+exclude demo, shared-library and unit-test targets from the product build.
+OSQP fetches QDLDL v0.1.8 at
+`138fdac58b9cd1c4137ff1b99152c8108a6cff5b`; the dependency gate verifies both
+fetched checkouts as clean exact repositories. The prefix maps make the 29
+named object members reproducible across checkout directories. Darwin's archive
+symbol table itself is not deterministic, so the lock binds those normalized
+member bytes rather than claiming a stable raw OSQP `.a` hash.
 
 ### 7. Generate the Xcode project and build
 
 ```bash
-cd labs/BioMotion
+# Regeneration must happen first: the probe checks both project.yml and the
+# generated pbxproj, so a stale or drifted generated project cannot reach Xcode.
 xcodegen generate
+/bin/bash -p tools/tests/dependency_boundary_probe.sh
 
 # Compile check (no signing)
 xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
@@ -260,6 +324,17 @@ tools/run_tests.sh all     # commit gate: fast, then slow
 tools/run_tests.sh subset \
   -only-testing:BioMotionTests/SomeTests
 ```
+
+Protected shell gates must be executed directly (using their `#!/bin/bash -p`
+shebang) or with `/bin/bash -p` as shown. An unprotected `bash script.sh`
+invocation is unsupported and is not evidence: an inherited `BASH_ENV` can run
+before the script starts, so the script may never reach its own rejection or
+sanitization. The dependency boundary suite is green **79/79**, and the runner's
+independent gate-policy harness is green **53/53**. Before this provenance slice,
+the complete fast lane passed **633/633** in 1,370 s. After the tracked-first
+header order landed, a fresh diagnostic subset passed **1/1** in 38 s. The final
+complete fast receipt then passed **633/633** in 1,365 s, with zero failures,
+skips, expected failures, or test-host restarts.
 
 `fast`, `slow`, and `all` accept no caller arguments; their fixed invocation is
 part of the reviewed receipt. `subset` is the diagnostic escape hatch, but it
@@ -330,25 +405,85 @@ with less than 30 days of remaining validity.
 # Bump CURRENT_PROJECT_VERSION in project.yml
 # Regenerate only after the bump; the source gate rejects a stale pbxproj.
 xcodegen generate
-/bin/bash tools/tests/app_resource_boundary_probe.sh
-xcodebuild archive -project BioMotion.xcodeproj -scheme BioMotion \
-  -destination 'generic/platform=iOS' -archivePath build/BioMotion.xcarchive
 
-# Local-only default: archive/resource/privacy gates, tracked export options,
-# local re-sign/export, and a final IPA-vs-archive gate. The export directory
-# must be new or empty.
-/bin/bash tools/release/testflight_release.sh \
+# The controlled entry point compares the complete observed dependency
+# snapshot before and after xcodebuild, checks the signed archive, and writes
+# the required adjacent receipt. It also gives this archive a fresh private
+# DerivedData. Neither output path may already exist.
+/usr/bin/install -d -m 0700 build
+/bin/bash -p tools/release/archive_release.sh \
+  --archive build/BioMotion.xcarchive
+
+# Default mode makes no explicit App Store Connect validate/upload request:
+# reverify the dependency receipt plus current dependency,
+# archive/resource/privacy gates, tracked export options, local re-sign/export,
+# and a final IPA-vs-archive gate. The export directory must be new or empty.
+/bin/bash -p tools/release/testflight_release.sh \
   --archive build/BioMotion.xcarchive \
   --export-dir build/testflight-30
 ```
 
 The tracked `tools/release/ExportOptions-TestFlight.plist` uses manual signing,
 the two named profiles, the generic `Apple Distribution` certificate selector,
-and `destination=export`; export never uploads implicitly. To authorize an
-App Store Connect validation without upload, add `--validate`. To authorize the
-complete validate-then-upload transaction for the same private byte-pinned IPA,
-add `--upload` and provide `ASC_API_KEY_ID` and `ASC_API_ISSUER`. Do not invoke
-raw `xcodebuild destination=upload` or `altool` around the wrapper.
+and `destination=export`; export never requests an upload implicitly. The real
+`xcodebuild -exportArchive` process is not network-sandboxed, so default mode is
+not a claim of universal network isolation. To authorize an App Store Connect
+validation without upload, add `--validate`. To authorize the complete
+validate-then-upload transaction for the same private byte-pinned IPA, add
+`--upload` and provide `ASC_API_KEY_ID` and `ASC_API_ISSUER`. The wrapper passes
+the current user's exact
+`~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8` path to `altool`; both key
+directories must be physical, current-user-owned and owner-only (0700 is the
+normal mode), and the key must be a current-user mode-0600 regular file. Do not invoke
+raw `xcodebuild archive`, `xcodebuild destination=upload`, or `altool` around
+the wrappers. `BioMotion.xcarchive.dependency-receipt.json` is part of the
+archive handoff; copying or renaming an archive without its adjacent receipt is
+fail-closed.
+
+The observed snapshot contains the actual checkout identities, both SDKs'
+artifacts, generated headers, CMake settings and exact project linkage; it is
+not merely a copy of the lock file. For Nimble, OSQP and both SDK-local QDLDL
+repositories, inspection resolves the physical Git root, requires a local real
+`.git` directory, rejects replace refs and index assume-unchanged/skip-worktree
+flags, and hashes every tracked working-tree blob against `HEAD`. A physical
+walk also rejects ignored or untracked material outside the reviewed build
+roots. Its standard output is one canonical JSON payload followed by a newline,
+so consumers must parse that record instead of depending on a historical byte
+count.
+
+Project validation pins Xcode 26.4 build `17E192` and iPhoneOS SDK 26.4 build
+`23E237`, then checks the PBXProject and exactly three native targets
+(`BioMotion`, `BioMotionTests`, `AssetPackDownloader`). It owns every
+configuration list, Debug/Release setting surface, target dependency, ordered
+phase and referenced build file. Extra targets, frameworks/packages, per-file
+flags, base xcconfigs, tool overrides and unattached graph objects fail closed.
+The `.xcodeproj` container may contain only `project.pbxproj` and the canonical
+self workspace—shared/user schemes, `xcuserdata` and sidecars are rejected—and
+the two developer-model phases must contain the SHA-256-pinned guard script
+(`a83bd4b5fbafb6442358ce6dd06627c574514a97c2fa7c28bf8750c8a29223d6`).
+The active SDK's direct `.a` paths are derived from the lock; tracked source,
+Eigen/tinyxml2 and OSQP headers precede the generated roots, whose inventory is
+limited to the locked configuration headers. Name-based Nimble/OSQP `-l`
+lookup is forbidden, so a same-name dylib cannot redirect the link, and an
+unattached decoy build configuration cannot satisfy the gate.
+
+The test runner and archive wrapper each pass a fresh private DerivedData path
+to Xcode, so a reviewed run does not reuse an ambient shared build cache. These
+archive-local dependency, source, resource, privacy and receipt gates run with
+`HOME=/var/empty`; only the real `xcodebuild` receives the current account's
+passwd-derived HOME. After the post-build snapshot matches, the wrapper passes
+the exact initial snapshot to the receipt sealer explicitly on standard input,
+so sealing cannot silently substitute a fresh ambient observation. The
+dependency-receipt suite is green **38/38**, the archive-wrapper suite
+**14/14**, and the TestFlight-wrapper suite **15/15**. These
+controls assume a trusted, quiescent same-user build machine. They make ordinary
+dependency drift and inherited shell/Xcode/Python environment pollution fail
+closed, but they are not a defence against malicious code already executing as
+the same macOS user. The receipt proves that every tracked blob in all four
+nested checkouts matched its recorded `HEAD` at both observations and binds the
+separately inspected build artifacts to the resulting archive bytes. It is not
+a signature or a link-map/dependency-closure proof that every inspected source,
+header or static-archive member contributed to the executable.
 
 Do not export, validate, or upload unless the resource gate prints
 `APP_RESOURCE_BOUNDARY_PROBE_PASS source-project` and

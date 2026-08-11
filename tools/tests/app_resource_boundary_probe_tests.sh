@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 set -euo pipefail
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
@@ -69,7 +69,7 @@ total_count=0
 
 run_probe() {
   (cd "$FIXTURE_ROOT" \
-    && /bin/bash tools/tests/app_resource_boundary_probe.sh "$@")
+    && /bin/bash -p tools/tests/app_resource_boundary_probe.sh "$@")
 }
 
 expect_pass() {
@@ -189,7 +189,106 @@ expect_extractor_failure() {
   esac
 }
 
+expect_protected_nested_privacy_pass() {
+  local nested_root="$TEST_ROOT/nested-privacy"
+  local nested_app="$nested_root/exported/BioMotion.app"
+  local nested_archive="$nested_root/BioMotion.xcarchive"
+  local nested_ipa="$nested_root/BioMotion.ipa"
+  mkdir -p \
+    "$nested_root/tools/tests" \
+    "$nested_app" \
+    "$nested_archive/Products/Applications/BioMotion.app"
+  cat > "$nested_root/tools/tests/privacy_manifest_probe.sh" <<'EOF'
+#!/bin/bash -p
+case "$-" in
+  *p*) ;;
+  *)
+    printf '%s\n' 'nested privacy probe was not launched in protected mode' >&2
+    exit 78
+    ;;
+esac
+if [[ "$#" -ne 1 || "$1" != */exported/BioMotion.app ]]; then
+  printf '%s\n' 'nested privacy probe received the wrong app path' >&2
+  exit 64
+fi
+printf '%s\n' 'PRIVACY_MANIFEST_PROBE_PASS'
+EOF
+  chmod 0755 "$nested_root/tools/tests/privacy_manifest_probe.sh"
+  printf '%s\n' 'stable IPA bytes' > "$nested_ipa"
+
+  total_count=$((total_count + 1))
+  set +e
+  output="$(/usr/bin/python3 -I - \
+    "$FIXTURE_ROOT/tools/release/resource_boundary.py" \
+    "$nested_root" "$nested_ipa" "$nested_archive" "$nested_app" \
+    2>&1 <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+
+module_path = Path(sys.argv[1])
+repo = Path(sys.argv[2])
+ipa = Path(sys.argv[3])
+archive = Path(sys.argv[4])
+exported_app = Path(sys.argv[5])
+spec = importlib.util.spec_from_file_location("nested_resource_boundary", module_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("resource-boundary module could not be loaded")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.extract_release_ipa = lambda _ipa, _root: exported_app
+module.resolve_release_archive = lambda _archive: (exported_app, {})
+module.inspect_app = lambda *_args, **_kwargs: None
+module.compare_archive_and_export = lambda *_args, **_kwargs: None
+module.inspect_release_ipa(repo, ipa, archive)
+print("PROTECTED_NESTED_PRIVACY_PASS")
+PY
+  )"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ] || \
+    [[ "$output" != *PROTECTED_NESTED_PRIVACY_PASS* ]]; then
+    printf 'protected nested privacy probe failed: %s\n' "$output" >&2
+    exit 1
+  fi
+  pass_count=$((pass_count + 1))
+}
+
+expect_hostile_standalone_environment_pass() {
+  local attack_root="$TEST_ROOT/standalone-entry-attack"
+  mkdir -p "$attack_root"
+  cat > "$attack_root/bash-env" <<EOF
+printf '%s\n' sourced > "$attack_root/bash-env-ran"
+exit 0
+EOF
+  total_count=$((total_count + 1))
+  set +e
+  output="$(
+    cd "$FIXTURE_ROOT" && \
+    /usr/bin/env \
+      PATH="$attack_root" \
+      BASH_ENV="$attack_root/bash-env" \
+      DEVELOPER_DIR="$attack_root/untrusted-developer" \
+      PYTHONHOME="$attack_root/untrusted-python-home" \
+      PYTHONPATH="$attack_root/untrusted-python-path" \
+      SDKROOT="$attack_root/untrusted-sdk" \
+      TOOLCHAINS=untrusted-toolchain \
+      tools/tests/app_resource_boundary_probe.sh 2>&1
+  )"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ] || \
+    [[ "$output" != *APP_RESOURCE_BOUNDARY_PROBE_PASS* ]] || \
+    [ -e "$attack_root/bash-env-ran" ]; then
+    printf 'hostile standalone resource environment was not contained: %s\n' \
+      "$output" >&2
+    exit 1
+  fi
+  pass_count=$((pass_count + 1))
+}
+
 expect_pass source_baseline
+expect_hostile_standalone_environment_pass
 
 /usr/bin/plutil -replace destination -string upload \
   "$FIXTURE_ROOT/tools/release/ExportOptions-TestFlight.plist"
@@ -791,8 +890,9 @@ expect_extractor_failure release_ipa_entry_comment \
 expect_extractor_failure release_ipa_archive_comment \
   'release IPA contains an unreviewed ZIP archive comment' \
   "$TEST_ROOT/archive-comment.ipa"
+expect_protected_nested_privacy_pass
 
-if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 40 ]; then
+if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 42 ]; then
   printf 'app-resource boundary suite count mismatch: %s/%s\n' \
     "$pass_count" "$total_count" >&2
   exit 1

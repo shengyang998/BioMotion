@@ -1,16 +1,82 @@
-#!/bin/bash
+#!/bin/bash -p
+case "$-" in
+  *p*) ;;
+  *)
+    printf '%s\n' \
+      'PRIVACY_MANIFEST_PROBE_FAIL: execute the probe directly or with /bin/bash -p' >&2
+    exit 78
+    ;;
+esac
 set -euo pipefail
-PATH=/usr/bin:/bin:/usr/sbin:/sbin
-export PATH
+PRIVACY_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+PATH="$PRIVACY_PATH"
+LANG=C
+LC_ALL=C
+export PATH LANG LC_ALL
+unset \
+  BASH_ENV CDPATH DEVELOPER_DIR DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH \
+  ENV GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GREP_OPTIONS PERL5LIB PERL5OPT \
+  PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP PYTHONWARNINGS SDKROOT \
+  TOOLCHAINS XCODE_XCCONFIG_FILE TMPDIR
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PRIVACY_AWK=/usr/bin/awk
+PRIVACY_CODESIGN=/usr/bin/codesign
+PRIVACY_CMP=/usr/bin/cmp
+PRIVACY_CXXFILT=/usr/bin/c++filt
+PRIVACY_DIRNAME=/usr/bin/dirname
+PRIVACY_FILE=/usr/bin/file
+PRIVACY_FIND=/usr/bin/find
+PRIVACY_GREP=/usr/bin/grep
+PRIVACY_MKTEMP=/usr/bin/mktemp
+PRIVACY_NM=/usr/bin/nm
+PRIVACY_OTOOL=/usr/bin/otool
+PRIVACY_PLUTIL=/usr/bin/plutil
+PRIVACY_PYTHON=/usr/bin/python3
+PRIVACY_RM=/bin/rm
+PRIVACY_SORT=/usr/bin/sort
+PRIVACY_STRINGS=/usr/bin/strings
+PRIVACY_TAIL=/usr/bin/tail
+PRIVACY_TMP_ROOT=/tmp
+TMPDIR="$PRIVACY_TMP_ROOT"
+export TMPDIR
+
+SCRIPT_DIR="$(cd "$("$PRIVACY_DIRNAME" "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 MANIFEST="$REPO_ROOT/BioMotion/PrivacyInfo.xcprivacy"
 PROJECT_FILE="$REPO_ROOT/BioMotion.xcodeproj/project.pbxproj"
 PROJECT_SPEC="$REPO_ROOT/project.yml"
 APP_BUNDLE=${1:-}
-PROBE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/biomotion-privacy.XXXXXX")"
-trap 'rm -r "$PROBE_TMP" 2>/dev/null || true' EXIT
+umask 077
+PROBE_TMP="$("$PRIVACY_MKTEMP" -d \
+  "$PRIVACY_TMP_ROOT/biomotion-privacy.XXXXXX")"
+case "$PROBE_TMP" in
+  "$PRIVACY_TMP_ROOT"/biomotion-privacy.*|/private/tmp/biomotion-privacy.*) ;;
+  *)
+    printf 'mktemp returned an unsafe privacy probe path: %s\n' \
+      "$PROBE_TMP" >&2
+    exit 1
+    ;;
+esac
+
+privacy_cleanup() {
+  local status=$?
+  trap - EXIT
+  case "$PROBE_TMP" in
+    "$PRIVACY_TMP_ROOT"/biomotion-privacy.*|/private/tmp/biomotion-privacy.*)
+      if ! "$PRIVACY_RM" -r "$PROBE_TMP" 2>/dev/null && \
+        [ "$status" -eq 0 ]; then
+        status=1
+      fi
+      ;;
+    *)
+      printf 'refusing unsafe privacy probe cleanup path: %s\n' \
+        "$PROBE_TMP" >&2
+      status=1
+      ;;
+  esac
+  exit "$status"
+}
+trap privacy_cleanup EXIT
 
 for required_file in "$MANIFEST" "$PROJECT_FILE" "$PROJECT_SPEC"; do
   if [ ! -f "$required_file" ]; then
@@ -19,8 +85,8 @@ for required_file in "$MANIFEST" "$PROJECT_FILE" "$PROJECT_SPEC"; do
   fi
 done
 
-plutil -lint "$MANIFEST" >/dev/null
-python3 - "$MANIFEST" <<'PY'
+"$PRIVACY_PLUTIL" -lint "$MANIFEST" >/dev/null
+"$PRIVACY_PYTHON" -I - "$MANIFEST" <<'PY'
 import plistlib
 import sys
 
@@ -34,7 +100,7 @@ if manifest["NSPrivacyTracking"] is not False:
     raise SystemExit("privacy tracking must remain false")
 PY
 
-python3 - "$REPO_ROOT" <<'PY'
+"$PRIVACY_PYTHON" -I - "$REPO_ROOT" <<'PY'
 from collections import Counter
 from pathlib import Path
 import re
@@ -141,7 +207,7 @@ if unexpected_network:
     )
 PY
 
-python3 - "$PROJECT_SPEC" "$PROJECT_FILE" <<'PY'
+"$PRIVACY_PYTHON" -I - "$PROJECT_SPEC" "$PROJECT_FILE" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -276,7 +342,7 @@ if [ -n "$APP_BUNDLE" ]; then
     exit 6
   fi
   BUNDLE_IDENTIFIER="$(
-    plutil -extract CFBundleIdentifier raw -o - "$APP_INFO"
+    "$PRIVACY_PLUTIL" -extract CFBundleIdentifier raw -o - "$APP_INFO"
   )"
   if [ "$BUNDLE_IDENTIFIER" != 'com.soleil.BioMotion' ]; then
     printf 'unexpected app bundle identifier: %s\n' "$BUNDLE_IDENTIFIER" >&2
@@ -288,8 +354,9 @@ if [ -n "$APP_BUNDLE" ]; then
     exit 6
   fi
   ROOT_MANIFEST_COUNT="$(
-    find "$APP_BUNDLE" -maxdepth 1 -type f \
-      -name 'PrivacyInfo.xcprivacy' | awk 'END { print NR + 0 }'
+    "$PRIVACY_FIND" "$APP_BUNDLE" -maxdepth 1 -type f \
+      -name 'PrivacyInfo.xcprivacy' | \
+      "$PRIVACY_AWK" 'END { print NR + 0 }'
   )"
   if [ "$ROOT_MANIFEST_COUNT" -ne 1 ]; then
     printf 'built app must have one root privacy manifest; found %s\n' \
@@ -297,15 +364,16 @@ if [ -n "$APP_BUNDLE" ]; then
     exit 6
   fi
   ALL_MANIFEST_COUNT="$(
-    find "$APP_BUNDLE" -type f -name 'PrivacyInfo.xcprivacy' \
-      | awk 'END { print NR + 0 }'
+    "$PRIVACY_FIND" "$APP_BUNDLE" -type f \
+      -name 'PrivacyInfo.xcprivacy' | \
+      "$PRIVACY_AWK" 'END { print NR + 0 }'
   )"
   if [ "$ALL_MANIFEST_COUNT" -ne 1 ]; then
     printf 'built app must have one total privacy manifest; found %s\n' \
       "$ALL_MANIFEST_COUNT" >&2
     exit 6
   fi
-  if ! cmp -s "$MANIFEST" "$BUNDLED_MANIFEST"; then
+  if ! "$PRIVACY_CMP" -s "$MANIFEST" "$BUNDLED_MANIFEST"; then
     printf '%s\n' 'built privacy manifest differs from reviewed source' >&2
     exit 6
   fi
@@ -316,18 +384,21 @@ if [ -n "$APP_BUNDLE" ]; then
         "$embedded_manifest" >&2
       exit 6
     fi
-    plutil -lint "$embedded_manifest" >/dev/null
-  done < <(find "$APP_BUNDLE" -name 'PrivacyInfo.xcprivacy' -print | sort)
+    "$PRIVACY_PLUTIL" -lint "$embedded_manifest" >/dev/null
+  done < <(
+    "$PRIVACY_FIND" "$APP_BUNDLE" -name 'PrivacyInfo.xcprivacy' -print | \
+      "$PRIVACY_SORT"
+  )
 
   APP_EXECUTABLE_NAME="$(
-    plutil -extract CFBundleExecutable raw -o - "$APP_INFO"
+    "$PRIVACY_PLUTIL" -extract CFBundleExecutable raw -o - "$APP_INFO"
   )"
   APP_EXECUTABLE="$APP_BUNDLE/$APP_EXECUTABLE_NAME"
   if [ ! -f "$APP_EXECUTABLE" ] || [ -L "$APP_EXECUTABLE" ]; then
     printf 'built app executable is missing: %s\n' "$APP_EXECUTABLE" >&2
     exit 6
   fi
-  case "$(file -b "$APP_EXECUTABLE")" in
+  case "$("$PRIVACY_FILE" -b "$APP_EXECUTABLE")" in
     Mach-O*) ;;
     *)
       printf 'built app executable is not Mach-O: %s\n' "$APP_EXECUTABLE" >&2
@@ -344,7 +415,7 @@ if [ -n "$APP_BUNDLE" ]; then
         "$APP_DEBUG_DYLIB" >&2
       exit 6
     fi
-    case "$(file -b "$APP_DEBUG_DYLIB")" in
+    case "$("$PRIVACY_FILE" -b "$APP_DEBUG_DYLIB")" in
       Mach-O*) ;;
       *)
         printf 'app debug dylib is not Mach-O: %s\n' "$APP_DEBUG_DYLIB" >&2
@@ -363,7 +434,8 @@ if [ -n "$APP_BUNDLE" ]; then
       exit 6
     fi
     EXTENSION_EXECUTABLE_NAME="$(
-      plutil -extract CFBundleExecutable raw -o - "$EXTENSION_INFO"
+      "$PRIVACY_PLUTIL" -extract CFBundleExecutable raw -o - \
+        "$EXTENSION_INFO"
     )"
     EXTENSION_EXECUTABLE="$extension_bundle/$EXTENSION_EXECUTABLE_NAME"
     if [ ! -f "$EXTENSION_EXECUTABLE" ] \
@@ -372,7 +444,7 @@ if [ -n "$APP_BUNDLE" ]; then
         "$EXTENSION_EXECUTABLE" >&2
       exit 6
     fi
-    case "$(file -b "$EXTENSION_EXECUTABLE")" in
+    case "$("$PRIVACY_FILE" -b "$EXTENSION_EXECUTABLE")" in
       Mach-O*) ;;
       *)
         printf 'extension executable is not Mach-O: %s\n' \
@@ -388,7 +460,7 @@ if [ -n "$APP_BUNDLE" ]; then
           "$EXTENSION_DEBUG_DYLIB" >&2
         exit 6
       fi
-      case "$(file -b "$EXTENSION_DEBUG_DYLIB")" in
+      case "$("$PRIVACY_FILE" -b "$EXTENSION_DEBUG_DYLIB")" in
         Mach-O*) ;;
         *)
           printf 'extension debug dylib is not Mach-O: %s\n' \
@@ -399,32 +471,36 @@ if [ -n "$APP_BUNDLE" ]; then
       printf '@rpath/%s.debug.dylib\n' "$EXTENSION_EXECUTABLE_NAME" \
         >> "$ALLOWED_INTERNAL_DEPENDENCIES"
     fi
-  done < <(find "$APP_BUNDLE" -type d -name '*.appex' -print | sort)
+  done < <(
+    "$PRIVACY_FIND" "$APP_BUNDLE" -type d -name '*.appex' -print | \
+      "$PRIVACY_SORT"
+  )
 
   while IFS= read -r -d '' symlink_candidate; do
-    case "$(file -b -L "$symlink_candidate" 2>/dev/null || true)" in
+    case "$("$PRIVACY_FILE" -b -L "$symlink_candidate" \
+      2>/dev/null || true)" in
       Mach-O*)
         printf 'code image must not be hidden behind a symlink: %s\n' \
           "$symlink_candidate" >&2
         exit 6
         ;;
     esac
-  done < <(find "$APP_BUNDLE" -type l -print0)
+  done < <("$PRIVACY_FIND" "$APP_BUNDLE" -type l -print0)
 
   CODE_IMAGE_COUNT=0
   while IFS= read -r -d '' code_image; do
-    case "$(file -b "$code_image")" in
+    case "$("$PRIVACY_FILE" -b "$code_image")" in
       Mach-O*) ;;
       *) continue ;;
     esac
     CODE_IMAGE_COUNT=$((CODE_IMAGE_COUNT + 1))
-    nm -u "$code_image" 2>/dev/null | c++filt \
+    "$PRIVACY_NM" -u "$code_image" 2>/dev/null | "$PRIVACY_CXXFILT" \
       > "$PROBE_TMP/code-image.undefined"
-    strings "$code_image" > "$PROBE_TMP/code-image.strings"
-    if grep -Eiq \
+    "$PRIVACY_STRINGS" "$code_image" > "$PROBE_TMP/code-image.strings"
+    if "$PRIVACY_GREP" -Eiq \
         '(^|[[:space:]])_?(mach_absolute_time|getattrlist|getattrlistbulk|fgetattrlist|getattrlistat|stat|fstat|fstatat|lstat|statfs|statvfs|fstatfs|fstatvfs)$' \
         "$PROBE_TMP/code-image.undefined" \
-        || grep -Eiq \
+        || "$PRIVACY_GREP" -Eiq \
         'systemUptime|creationDate|modificationDate|fileModificationDate|contentModificationDateKey|creationDateKey|volumeAvailableCapacity|volumeTotalCapacityKey|systemFreeSize|systemSize|activeInputModes|UserDefaults|NSUserDefaults|CFPreferences|AppStorage|ATTrackingManager|ASIdentifierManager|AdSupport' \
         "$PROBE_TMP/code-image.strings"; then
       printf 'code image contains an undeclared privacy/tracking API: %s\n' \
@@ -437,21 +513,27 @@ if [ -n "$APP_BUNDLE" ]; then
         /System/Library/Frameworks/*|/usr/lib/*)
           ;;
         *)
-          if ! grep -Fqx "$dependency" "$ALLOWED_INTERNAL_DEPENDENCIES"; then
+          if ! "$PRIVACY_GREP" -Fqx \
+            "$dependency" "$ALLOWED_INTERNAL_DEPENDENCIES"; then
             printf 'code image has an unreviewed dynamic dependency: %s: %s\n' \
               "$code_image" "$dependency" >&2
             exit 6
           fi
           ;;
       esac
-    done < <(otool -L "$code_image" | tail -n +2 | awk '{ print $1 }')
-  done < <(find "$APP_BUNDLE" -type f -print0)
+    done < <(
+      # The awk field expression is intentionally literal Bash input.
+      # shellcheck disable=SC2016
+      "$PRIVACY_OTOOL" -L "$code_image" | \
+        "$PRIVACY_TAIL" -n +2 | "$PRIVACY_AWK" '{ print $1 }'
+    )
+  done < <("$PRIVACY_FIND" "$APP_BUNDLE" -type f -print0)
   if [ "$CODE_IMAGE_COUNT" -eq 0 ]; then
     printf '%s\n' 'built app contains no Mach-O code image' >&2
     exit 6
   fi
 
-  codesign --verify --deep --strict "$APP_BUNDLE"
+  "$PRIVACY_CODESIGN" --verify --deep --strict "$APP_BUNDLE"
 fi
 
 printf '%s\n' 'PRIVACY_MANIFEST_PROBE_PASS'

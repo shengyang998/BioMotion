@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 
 # Pure policy and receipt evaluation for tools/run_tests.sh.
 #
@@ -11,8 +11,23 @@
 # SUMMARY_JSON is the output of:
 #   xcrun xcresulttool get test-results summary --compact --path RESULT.xcresult
 
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "$-" in
+    *p*) ;;
+    *)
+      printf '%s\n' \
+        'GATE FAIL: execute tools/test_gate.sh directly or with /bin/bash -p' >&2
+      exit 78
+      ;;
+  esac
+fi
+
 TEST_GATE_E1_CLASS='BioMotionTests/E1MarkerSetComparisonTests'
 TEST_GATE_E1_TEST="${TEST_GATE_E1_CLASS}/testE1RunAll"
+TEST_GATE_PYTHON='/usr/bin/python3'
+TEST_GATE_GREP='/usr/bin/grep'
+TEST_GATE_TAIL='/usr/bin/tail'
+TEST_GATE_TR='/usr/bin/tr'
 
 test_gate_assert_no_xctskip() {
   if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
@@ -20,7 +35,7 @@ test_gate_assert_no_xctskip() {
     return 2
   fi
 
-  python3 - "$1" <<'PY'
+  "$TEST_GATE_PYTHON" -I - "$1" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -161,6 +176,7 @@ test_gate_validate_lane_args() {
       -workspace|-workspace=*|-workspace:*|\
       -scheme|-scheme=*|-scheme:*|\
       -destination|-destination=*|-destination:*|\
+      -derivedDataPath|-derivedDataPath=*|-derivedDataPath:*|\
       -resultBundlePath|-resultBundlePath=*|-resultBundlePath:*|\
       -xctestrun|-xctestrun=*|-xctestrun:*|\
       -testProductsPath|-testProductsPath=*|-testProductsPath:*|\
@@ -236,7 +252,7 @@ test_gate_evaluate() {
   fi
 
   local summary_fields
-  summary_fields=$(python3 - "$summary_path" <<'PY'
+  summary_fields=$("$TEST_GATE_PYTHON" -I - "$summary_path" <<'PY'
 import json
 import sys
 
@@ -285,8 +301,9 @@ EOF
 
   local restarts
   local verdict
-  restarts=$(grep -c 'Restarting after unexpected exit' "$log_path")
-  verdict=$(grep -E '^\*\* TEST (SUCCEEDED|FAILED) \*\*$' "$log_path" | tail -1)
+  restarts=$("$TEST_GATE_GREP" -c 'Restarting after unexpected exit' "$log_path")
+  verdict=$("$TEST_GATE_GREP" -E '^\*\* TEST (SUCCEEDED|FAILED) \*\*$' \
+    "$log_path" | "$TEST_GATE_TAIL" -1)
 
   printf 'lane:              %s\n' "$lane"
   printf 'xcodebuild rc:     %s\n' "$xcodebuild_rc"
@@ -355,7 +372,8 @@ EOF
   if [ "$lane" = subset ]; then
     printf 'SUBSET PASS -- debugging evidence only, not a commit gate\n'
   else
-    printf '%s GATE PASS\n' "$(printf '%s' "$lane" | tr '[:lower:]' '[:upper:]')"
+    printf '%s GATE PASS\n' \
+      "$(printf '%s' "$lane" | "$TEST_GATE_TR" '[:lower:]' '[:upper:]')"
   fi
   return 0
 }

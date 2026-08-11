@@ -1903,7 +1903,7 @@ def inspect_release_ipa(repo: Path, ipa: Path, archive: Path) -> str:
         privacy_probe = repo / "tools/tests/privacy_manifest_probe.sh"
         regular_file(privacy_probe, "privacy manifest probe")
         privacy = subprocess.run(
-            ["/bin/bash", str(privacy_probe), str(exported_app)],
+            ["/bin/bash", "-p", str(privacy_probe), str(exported_app)],
             check=False,
             capture_output=True,
             text=True,

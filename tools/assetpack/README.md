@@ -34,7 +34,7 @@ checked-in contract and license without the large artifact:
 /usr/bin/python3 tools/assetpack/verify_model_lock.py repository
 /usr/bin/python3 tools/assetpack/verify_model_lock.py toolchain
 /usr/bin/python3 tools/tests/assetpack_supply_chain_tests.py
-/bin/bash tools/tests/assetpack_package_receipt_tests.sh
+/bin/bash -p tools/tests/assetpack_package_receipt_tests.sh
 ```
 
 When the artifacts are present, verify every regular file, size, SHA-256, and
@@ -52,9 +52,14 @@ missing/extra/non-regular files, byte or license drift, unapproved archive
 metadata, archive-size drift, and interface type, dtype, shape, optionality, or
 flexibility drift. It uses absolute `/usr/bin/xcrun`, `/usr/bin/xcodebuild`, and
 `/usr/bin/what` paths and requires the lock's exact Xcode, Core ML compiler, and
-`ba-package` versions. The package driver itself uses `/bin/bash`, resets PATH
-to `/usr/bin:/bin:/usr/sbin:/sbin`, and invokes `/usr/bin/python3`, so an
+`ba-package` versions. The approved command starts the package driver with
+`/bin/bash -p`; the driver resets PATH to `/usr/bin:/bin:/usr/sbin:/sbin` and
+invokes `/usr/bin/python3`, so an
 untrusted caller PATH cannot substitute its verifier or basic system tools.
+Every protected shell command in this document must be run exactly as shown or
+directly through its `#!/bin/bash -p` shebang. An unprotected `bash script.sh`
+invocation is unsupported and is not evidence: inherited `BASH_ENV` content can
+execute before the script starts, before its own guard or sanitizer can run.
 
 **Integration status:** repository, source, compile, package, extraction,
 receipt, local upload preflight, developer bundling, and compiled-only runtime
@@ -62,7 +67,9 @@ enforcement are complete. The existing App Store Connect version 1 still lacks
 the lock and license and is not a compliant shipping artifact; no replacement
 was uploaded by these local gates. `--upload` remains an explicit release
 operation and must not be used without release approval and closure of the
-remaining privacy/resource and real-device delivery gates.
+documented legal/owner and real-device delivery gates. The local privacy and
+resource contracts themselves are implemented and are mandatory inputs to the
+controlled archive/export flow below.
 
 ---
 
@@ -71,7 +78,7 @@ remaining privacy/resource and real-device delivery gates.
 Run the only approved local package entry point:
 
 ```bash
-/bin/bash tools/assetpack/package.sh \
+/bin/bash -p tools/assetpack/package.sh \
   ../sam-3d-body/export/coreml/SAM3DBodyPose.mlpackage
 ```
 
@@ -154,8 +161,8 @@ arguments, or with `--verify-only`, the script performs only the complete local
 receipt/archive gate over the atomic published pair:
 
 ```bash
-/bin/bash tools/assetpack/upload.sh
-/bin/bash tools/assetpack/upload.sh --verify-only
+/bin/bash -p tools/assetpack/upload.sh
+/bin/bash -p tools/assetpack/upload.sh --verify-only
 ```
 
 These modes do not inspect App Store Connect credential variables or the API
@@ -169,7 +176,7 @@ subsequent version-list request:
 ```bash
 ASC_API_KEY_ID=YOUR_KEY_ID \
 ASC_API_ISSUER=YOUR_ISSUER_UUID \
-  /bin/bash tools/assetpack/upload.sh --upload
+  /bin/bash -p tools/assetpack/upload.sh --upload
 ```
 
 The target Apple ID is fixed to BioMotion's `6761994383`. Only after the full
@@ -194,13 +201,14 @@ both must use the canonical filenames below in the same physical directory.
 There is no AAR-only or positional bypass:
 
 ```bash
-/bin/bash tools/assetpack/upload.sh --verify-only \
+/bin/bash -p tools/assetpack/upload.sh --verify-only \
   --aar /private/candidate/sam3d-body-pose.aar \
   --receipt /private/candidate/sam3d-body-pose.aar.receipt.json
 ```
 
-The driver fixes `/bin/bash`, a trusted system PATH, `/usr/bin/python3 -I`, and
-`/usr/bin/xcrun`; it removes ambient `DEVELOPER_DIR`, `TOOLCHAINS`, and
+The approved command starts the driver with `/bin/bash -p`; the driver fixes a
+trusted system PATH, `/usr/bin/python3 -I`, and `/usr/bin/xcrun`; it removes
+ambient `DEVELOPER_DIR`, `TOOLCHAINS`, and
 `SDKROOT` selection before verification. The remaining boundary is the same
 host/account-integrity boundary as packaging: a malicious process already
 running as the same macOS UID is not contained, and the active system
@@ -209,15 +217,30 @@ this gate with a raw `altool` command.
 
 ## Ship the app
 
-Nothing about archiving changes, except that the archive is now 7 MiB.
+The archive is about 7 MiB, and signed archives must now be created through the
+controlled provenance wrapper with a fresh private DerivedData and adjacent
+dependency receipt. That preflight pins Xcode 26.4 build `17E192` and iPhoneOS
+SDK 26.4 build `23E237`; derives the active SDK's direct static-library paths
+from the dependency lock; and verifies every tracked blob in Nimble, OSQP and
+both QDLDL checkouts. Tracked Nimble, Eigen/tinyxml2 and OSQP headers must
+precede ignored generated roots, whose header inventory is restricted to the
+locked configuration headers.
+
+It also owns the generated PBX root and the exact three-target graph: all
+Debug/Release settings and configuration lists, dependencies, ordered phases
+and referenced build files are exact. Extra targets, framework/package
+linkage, per-file flags, base xcconfigs, tool overrides, schemes, `xcuserdata`
+and project sidecars fail closed. Both developer-model phases must carry the
+reviewed guard script at SHA-256
+`a83bd4b5fbafb6442358ce6dd06627c574514a97c2fa7c28bf8750c8a29223d6`.
 
 ```bash
 # Bump CURRENT_PROJECT_VERSION in project.yml before generation.
 xcodegen generate
-/bin/bash tools/tests/app_resource_boundary_probe.sh
-xcodebuild archive -project BioMotion.xcodeproj -scheme BioMotion -configuration Release \
-  -destination 'generic/platform=iOS' -archivePath build/BioMotion.xcarchive
-/bin/bash tools/release/testflight_release.sh \
+/bin/bash -p tools/tests/app_resource_boundary_probe.sh
+/bin/bash -p tools/release/archive_release.sh \
+  --archive build/BioMotion.xcarchive
+/bin/bash -p tools/release/testflight_release.sh \
   --archive build/BioMotion.xcarchive \
   --export-dir build/testflight-30
 ```
@@ -237,9 +260,19 @@ The tracked `tools/release/ExportOptions-TestFlight.plist` uses
 selector. The wrapper cryptographically checks the archive, exports locally,
 then verifies the final IPA's raw ZIP streams, CRCs, real expansion sizes, and
 execute bits before rechecking the re-signed app against that archive.
-Its default is local-only; `--validate` authorizes App Store Connect validation,
-and only `--upload` authorizes validation followed by upload of the same
-byte-pinned private snapshot. Do not bypass it with raw `xcodebuild` or `altool`.
+In default mode it makes no explicit App Store Connect validate/upload request;
+`--validate` authorizes validation, and only `--upload` authorizes validation
+followed by upload of the same byte-pinned private snapshot. The real
+`xcodebuild -exportArchive` subprocess is not network-sandboxed, so local export
+is not documented as universal network isolation. Do not bypass the wrappers
+with raw `xcodebuild` or `altool`.
+
+The adjacent receipt proves that all tracked blobs in those four nested Git
+checkouts matched their recorded `HEAD` at both archive observations and binds
+that inspection to the archive tree. It is not a signature or a
+link-map/dependency-closure proof that every inspected source, header or static
+archive member contributed to the executable. The boundary assumes a trusted,
+quiescent same-user build host.
 
 ---
 
@@ -270,10 +303,10 @@ App Store / TestFlight installs on a real device. Install a developer copy from
 the canonical atomic AAR/receipt pair:
 
 ```bash
-/bin/bash tools/assetpack/dev_bundle_model.sh on
+/bin/bash -p tools/assetpack/dev_bundle_model.sh on
 xcodegen generate
 # ... build/run ...
-/bin/bash tools/assetpack/dev_bundle_model.sh off
+/bin/bash -p tools/assetpack/dev_bundle_model.sh off
 xcodegen generate
 ```
 
@@ -284,7 +317,7 @@ model entries, and atomically publishes only
 filenames:
 
 ```bash
-/bin/bash tools/assetpack/dev_bundle_model.sh on \
+/bin/bash -p tools/assetpack/dev_bundle_model.sh on \
   /path/to/sam3d-body-pose.aar \
   /path/to/sam3d-body-pose.aar.receipt.json
 ```
@@ -292,8 +325,8 @@ filenames:
 Run the compiled-only runtime and developer transaction contracts with:
 
 ```bash
-/bin/bash tools/tests/assetpack_runtime_precompiled_probe.sh
-/bin/bash tools/tests/assetpack_dev_bundle_receipt_tests.sh
+/bin/bash -p tools/tests/assetpack_runtime_precompiled_probe.sh
+/bin/bash -p tools/tests/assetpack_dev_bundle_receipt_tests.sh
 ```
 
 `build/DevBundledModel` is an `optional:` source path in `project.yml`, so it
@@ -308,7 +341,7 @@ the full 1.31 GiB. Run `off` and regenerate the project before any device, Relea
 archive, or distribution build. The final signed `.xcarchive` must additionally pass:
 
 ```bash
-/bin/bash tools/tests/app_resource_boundary_probe.sh \
+/bin/bash -p tools/tests/app_resource_boundary_probe.sh \
   --release-archive build/BioMotion.xcarchive
 ```
 

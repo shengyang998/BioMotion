@@ -45,27 +45,34 @@ empty collected-data and tracking declarations.
 Run the source/project contract with:
 
 ```sh
-/bin/bash tools/tests/privacy_manifest_probe.sh
-/bin/bash tools/tests/privacy_manifest_probe_tests.sh
+/bin/bash -p tools/tests/privacy_manifest_probe.sh
+/bin/bash -p tools/tests/privacy_manifest_probe_tests.sh
 ```
 
 Pass a built `.app` path to additionally require a byte-identical bundled
 manifest and a strict code-signature verification:
 
 ```sh
-/bin/bash tools/tests/privacy_manifest_probe.sh /path/to/BioMotion.app
+/bin/bash -p tools/tests/privacy_manifest_probe.sh /path/to/BioMotion.app
 ```
 
 The expected sentinel is `PRIVACY_MANIFEST_PROBE_PASS`. The gate requires
 `NSPrivacyTracking = false`, rejects every other top-level key while the
 reviewed inventories remain empty, and pins the exact 13-call non-required
-elapsed-clock inventory. The **38/38** suite includes negative injections for
+elapsed-clock inventory. The **41/41** suite includes negative injections for
 every spelling in Apple's current five-category API list, three language-layer
 UserDefaults aliases, both reviewed elapsed clocks, an invalid empty API array,
 and wrong-target/misdirected/duplicated project assignments. XcodeGen must copy
 the manifest exactly once into BioMotion's own resources phase; the Background
 Download extension does not currently use a required-reason API and does not
 carry a separate manifest.
+
+The probe is a protected shell entry point: execute it directly through its
+`#!/bin/bash -p` shebang or with `/bin/bash -p`. An unprotected
+`bash tools/tests/privacy_manifest_probe.sh` invocation is unsupported and is
+not evidence: inherited `BASH_ENV` content can execute before the script starts,
+so it may pre-empt the script's own guard and sanitization. The protected suite
+also covers hostile PATH, Python, SDK and developer-directory variables.
 
 The release gate must pass a real archive app path. It then checks the bundle
 identifier, root-manifest identity, every embedded manifest, every recursively

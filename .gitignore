@@ -2,6 +2,7 @@
 build/
 DerivedData/
 *.xcarchive
+*.xcarchive.dependency-receipt.json
 
 # Vendored C++ dependencies — cloned/built separately, not committed
 nimblephysics/

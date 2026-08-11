@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 
 # Fast, simulator-free regression tests for the commit-gate policy. These use
 # synthetic xcresult summaries and xcodebuild logs so every fail-closed branch
@@ -239,17 +239,80 @@ expect_status 'runner-owned project cannot be overridden with colon form' 2 \
   test_gate_validate_lane_args slow -project:Other.xcodeproj
 expect_status 'runner-owned result path cannot be overridden' 2 \
   test_gate_validate_lane_args all -resultBundlePath:Other.xcresult
+expect_status 'runner-owned DerivedData cannot be overridden' 2 \
+  test_gate_validate_lane_args subset \
+    -only-testing:BioMotionTests/SomeTests -derivedDataPath /tmp/shared-cache
 expect_status 'runner requires an explicit lane before touching the simulator' 2 \
   run_tests_main
 expect_status 'runner rejects selector conflict before touching the simulator' 2 \
   run_tests_main fast -only-testing:BioMotionTests/SomeTests
+
+ENTRY_ATTACK_ROOT="$TEST_TMP/entry-attack"
+mkdir -p "$ENTRY_ATTACK_ROOT/fake-path"
+cat > "$ENTRY_ATTACK_ROOT/bash-env" <<EOF
+printf '%s\n' sourced > "$ENTRY_ATTACK_ROOT/bash-env-ran"
+exit 0
+EOF
+for fake_tool in xcrun xcodebuild python3; do
+  cat > "$ENTRY_ATTACK_ROOT/fake-path/$fake_tool" <<EOF
+#!/bin/sh
+printf '%s\n' "$fake_tool" >> "$ENTRY_ATTACK_ROOT/fake-tool-ran"
+exit 0
+EOF
+  chmod 0755 "$ENTRY_ATTACK_ROOT/fake-path/$fake_tool"
+done
+protected_entry_rejects_environment_injection() {
+  /usr/bin/env \
+    PATH="$ENTRY_ATTACK_ROOT/fake-path" \
+    BASH_ENV="$ENTRY_ATTACK_ROOT/bash-env" \
+    SHELLOPTS=errexit:pipefail \
+    'BASH_FUNC_xcodebuild%%=() { return 0; }' \
+    "$REPO_ROOT/tools/run_tests.sh" invalid
+  local status=$?
+  if [ -e "$ENTRY_ATTACK_ROOT/bash-env-ran" ] || \
+    [ -e "$ENTRY_ATTACK_ROOT/fake-tool-ran" ]; then
+    return 99
+  fi
+  return "$status"
+}
+expect_status 'runner entry ignores BASH_ENV, SHELLOPTS, functions, and PATH tools' 2 \
+  protected_entry_rejects_environment_injection
+
+protected_test_gate_entry_rejects_environment_injection() {
+  /usr/bin/env \
+    BASH_ENV="$ENTRY_ATTACK_ROOT/bash-env" \
+    'BASH_FUNC_test_gate_evaluate%%=() { return 0; }' \
+    "$REPO_ROOT/tools/test_gate.sh"
+  local status=$?
+  if [ -e "$ENTRY_ATTACK_ROOT/bash-env-ran" ]; then
+    return 99
+  fi
+  return "$status"
+}
+expect_status 'test gate direct entry ignores BASH_ENV and functions' 2 \
+  protected_test_gate_entry_rejects_environment_injection
+expect_status 'test gate rejects an explicit unprotected Bash entry' 78 \
+  /bin/bash "$REPO_ROOT/tools/test_gate.sh"
 
 # Real macOS `/bin/bash` is 3.2. Under `set -u`, expanding an empty array is an
 # error; subset is the lane whose runner-owned selector is empty. Capture the
 # helper's argv through a fake xcodebuild so this regression stays simulator-free.
 capture_subset_xcodebuild_invocation() {
   TEST_DEVICE_UDID='TEST-UDID'
-  xcodebuild() { printf '%s\n' "$@"; }
+  local RUN_OUTPUT_DIR="$TEST_TMP/runner-output"
+  local fake_xcodebuild="$TEST_TMP/fake-xcodebuild"
+  cat > "$fake_xcodebuild" <<'EOF'
+#!/bin/bash -p
+if [[ "$PATH" != /usr/bin:/bin:/usr/sbin:/sbin || \
+  -n "${BASH_ENV+x}" || -n "${ENV+x}" || \
+  -n "${DEVELOPER_DIR+x}" || -n "${XCODE_XCCONFIG_FILE+x}" || \
+  -n "${PYTHONPATH+x}" || -n "${DYLD_INSERT_LIBRARIES+x}" ]]; then
+  exit 97
+fi
+printf '%s\n' "$@"
+EOF
+  chmod 0755 "$fake_xcodebuild"
+  local RUN_TESTS_XCODEBUILD="$fake_xcodebuild"
   run_tests_invoke_xcodebuild '' "$TEST_TMP/subset-result.xcresult" \
     -only-testing:BioMotionTests/SomeTests
 }
@@ -257,6 +320,7 @@ SUBSET_INVOCATION=$(printf '%s\n' \
   -project BioMotion.xcodeproj \
   -scheme BioMotion \
   -destination 'platform=iOS Simulator,id=TEST-UDID' \
+  -derivedDataPath "$TEST_TMP/runner-output/DerivedData" \
   -resultBundlePath "$TEST_TMP/subset-result.xcresult" \
   -only-testing:BioMotionTests/SomeTests \
   test)

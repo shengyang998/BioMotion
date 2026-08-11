@@ -70,6 +70,7 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | File | Purpose |
 |------|---------|
 | `project.yml` | XcodeGen project definition (team, signing, lib paths, build settings) |
+| `tools/dependencies.lock.json` | Exact Nimble/OSQP repositories, commits, dual-SDK CMake settings and reviewed archive receipts; enforced before any test simulator starts |
 | `BioMotion/Resources/FullBody.osim` | **Production** model — 169 coordinates, 520 muscles, full spine + ribcage + upper limb |
 | `BioMotion/Resources/Rajagopal2016.osim` | Fallback only (lower extremity: 80 muscles, 39 DOFs, 66 markers). Loaded when FullBody.osim is missing from the bundle. |
 | `BioMotion/ARKit/BodyTrackingSession.swift` | ARKit body tracking + 1-euro filter |
@@ -88,6 +89,7 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `tools/osim_fixes/` | The FullBody.osim edit (patella weld + shoulder axis unit-snap), its measurement harness and revert instructions |
 | `tools/opensim_ref/` | The OpenSim 4.6 reference generators (`uv` venv, PyPI `opensim` wheel), all read-only against the shipped `.osim`. `dump_reference.py` → CSV, `analyse.py --write-fixture` → `BioMotionTests/Fixtures/opensim_moment_arms.txt`; `dump_finite_difference.py` → `opensim_moment_arms_fd.txt`, OpenSim's own central difference of its own length (the column a `-dL/dq` implementation is comparable with); `fd_check.py` → analytic vs central for one pose/muscle; `inspect_wrap.py` → the wrapped path point by point, with the solver's raw inputs; `pose_coverage.py` → what the pose grid covers |
 | `tools/assetpack/` | Pack build + upload; `dev_bundle_model.sh on\|off` receipt-verifies and bundles the precompiled model locally so the Simulator needs no download |
+| `tools/release/archive_release.sh`, `testflight_release.sh` | Controlled signed-archive creation plus local export/explicit validate/upload; the adjacent receipt binds the complete xcarchive bytes to the dependency state actually observed at archive time and is mandatory at export |
 
 ### Nimble iOS fork boundary
 
@@ -115,13 +117,77 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
 ## Gotchas
 
 - **Nimble build boundary**: use CMake 3.24+ with Ninja and configure with
-  `cmake --fresh -S ios -B build_ios` / `build_sim`. Each build tree owns its
-  generated `dart/config.hpp` and must precede the source root in header search
-  paths. The target exports `DART_IOS_BUILD=1`,
+  root-relative `cmake --fresh -S nimblephysics/ios -B
+  nimblephysics/build_ios` / `build_sim`. Each build tree owns its generated
+  `dart/config.hpp`, but the tracked Nimble, vendored Eigen/tinyxml2 and OSQP
+  source roots must precede ignored build roots in Xcode's header search paths.
+  The generated-header inventory permits only the locked `dart/config.hpp` and
+  `osqp_configure.h` for the active SDK. The target exports `DART_IOS_BUILD=1`,
   `DART_USE_IDENTITY_JACOBIAN=1`, `EIGEN_DONT_PARALLELIZE=1`, and
   `EIGEN_MPL2_ONLY=1`. Both device and Simulator archives are arm64-only.
   Host-native fault/leak probes require the explicit
   `-DNIMBLE_IOS_HOST_PROBE=ON` option.
+- **Native dependency receipt**: `tools/dependencies.lock.json` pins the
+  maintained Nimble fork at `0ecf26a1557ee738146511cd81fbe99f2bc94d38`
+  and OSQP at `1572ae068e9ce9ca723cf8223548ade1ff7acc29`.
+  `/bin/bash -p tools/tests/dependency_boundary_probe.sh` requires Nimble, OSQP
+  and both fetched QDLDL checkouts to have physical roots and local real `.git`
+  directories, no replace refs or index assume-unchanged/skip-worktree flags,
+  and every tracked working-tree blob byte-identical to `HEAD`. It also rejects
+  ignored/untracked material outside the reviewed build roots, requires a
+  configured remote matching each locked repository,
+  verifies the exact device/Simulator CMake ABI settings, generated headers and
+  per-member iOS platform receipts, byte-pins both reproducible Nimble archives,
+  binds OSQP's normalized object-member content and fetched QDLDL checkout, and
+  pins Xcode 26.4 build `17E192` plus iPhoneOS SDK 26.4 build `23E237`.
+  Generated-project inspection owns the PBXProject and exactly the three native
+  targets, every Debug/Release configuration list and setting surface, target
+  dependency, ordered build phase and referenced build file. Extra targets,
+  framework/package linkage, per-file flags, base xcconfigs, tool overrides,
+  unattached graph objects, shared/user schemes, `xcuserdata` and project
+  sidecars fail closed. The two developer-model phases must also embed the
+  reviewed guard at SHA-256
+  `a83bd4b5fbafb6442358ce6dd06627c574514a97c2fa7c28bf8750c8a29223d6`.
+  It derives the SDK-conditioned direct `.a` inputs from the lock and pins the
+  tracked-first header order and consumer ABI macros; name-based Nimble/OSQP
+  lookup, competing header/flag settings, same-name dylib redirection, and
+  unattached decoy configurations fail closed. The main test runner executes
+  this probe before taking a simulator lock or booting
+  a device. `dependency_boundary_probe.sh --snapshot` emits the same inspection
+  as one canonical JSON line for release tooling; it includes the raw lock hash,
+  actual checkout identities, dual-SDK artifact/header/CMake observations and
+  project-linkage hashes without embedding the checkout root. Generate the
+  pbxproj before running the probe. Its snapshot output is one canonical JSON
+  payload plus its terminating newline; do not bind documentation or callers to
+  a historical byte count. Never delete tracked files from either
+  pinned checkout to reduce its transfer size. Run every protected shell gate
+  directly through its `#!/bin/bash -p` shebang or explicitly with
+  `/bin/bash -p`. `bash script.sh` is unsupported and is not evidence because
+  hostile `BASH_ENV` content can execute before the script reaches its own
+  guard or sanitizer. The adversarial dependency suite passes **79/79**. The
+  pre-slice full-fast baseline is **633/633** in 1,370 s; after the tracked-first
+  header change a fresh diagnostic subset passed **1/1** in 38 s. The final
+  full-fast receipt then passed **633/633** in 1,365 s, with zero failures,
+  skips, expected failures, or test-host restarts.
+- **Release archive provenance**: never hand-run `xcodebuild archive`. After
+  XcodeGen, execute `tools/release/archive_release.sh` directly or with
+  `/bin/bash -p`; it compares the full observed dependency snapshot before and
+  after the signed build, gives Xcode a fresh mode-0700 DerivedData, runs
+  resource/privacy gates in private staging, and publishes the `.xcarchive` only
+  with an adjacent mode-0600 receipt. Its local gates use `HOME=/var/empty`; only
+  `xcodebuild` receives the passwd-derived account HOME. After the snapshots
+  match, the initial observation is passed explicitly on stdin to the receipt
+  sealer. `testflight_release.sh` reverifies the current dependency
+  tree, receipt, complete archive tree and executable before and after local
+  export. Both wrappers launch their child gates with fixed environments;
+  TestFlight credentials reach only the final trusted-user `xcrun` calls after
+  every local gate and a byte-pinned private IPA snapshot. The test runner also
+  owns a fresh private DerivedData for every invocation. These gates assume a
+  trusted, quiescent same-user build machine. The receipt proves all tracked
+  blobs in the four nested checkouts matched their recorded `HEAD` at both
+  observations, but it is not a signature or a link-map/dependency-closure
+  proof that every inspected source, header or archive member reached the
+  executable.
 - **Eigen version**: Nimble requires Eigen 3.x. Eigen 5.x (Homebrew default) has breaking API changes. Use vendored `third_party/eigen` (3.4.0).
 - **Marker names**: ARKit joints map to virtual markers at body node origins, NOT to the model's surface markers (RASI, LASI etc). See `NimbleBridge.mm` virtual marker registration.
 - **Stable joint id is not marker anatomy.** Live `hips_joint` resolves to `PELVIS`; MHR keeps the
@@ -316,7 +382,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 642 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 633 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

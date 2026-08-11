@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 set -euo pipefail
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
@@ -52,7 +52,7 @@ expect_pass() {
   label=$1
   total_count=$((total_count + 1))
   output="$(cd "$FIXTURE_ROOT" \
-    && /bin/bash tools/tests/privacy_manifest_probe.sh 2>&1)"
+    && /bin/bash -p tools/tests/privacy_manifest_probe.sh 2>&1)"
   case "$output" in
     *PRIVACY_MANIFEST_PROBE_PASS*)
       pass_count=$((pass_count + 1))
@@ -71,7 +71,7 @@ expect_failure() {
   total_count=$((total_count + 1))
   set +e
   output="$(cd "$FIXTURE_ROOT" \
-    && /bin/bash tools/tests/privacy_manifest_probe.sh 2>&1)"
+    && /bin/bash -p tools/tests/privacy_manifest_probe.sh 2>&1)"
   status=$?
   set -e
   if [ "$status" -eq 0 ]; then
@@ -89,7 +89,67 @@ expect_failure() {
   esac
 }
 
+expect_environment_pass() {
+  label=$1
+  forbidden_path=$2
+  shift 2
+  total_count=$((total_count + 1))
+  set +e
+  output="$(cd "$FIXTURE_ROOT" \
+    && /usr/bin/env "$@" \
+      /bin/bash -p tools/tests/privacy_manifest_probe.sh 2>&1)"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    printf '%s failed under a hostile environment: %s\n' \
+      "$label" "$output" >&2
+    exit 1
+  fi
+  case "$output" in
+    *PRIVACY_MANIFEST_PROBE_PASS*) ;;
+    *)
+      printf '%s omitted the pass sentinel: %s\n' "$label" "$output" >&2
+      exit 1
+      ;;
+  esac
+  if [ -n "$forbidden_path" ] && [ -e "$forbidden_path" ]; then
+    printf '%s executed injected Python startup code\n' "$label" >&2
+    exit 1
+  fi
+  pass_count=$((pass_count + 1))
+}
+
 expect_pass baseline
+
+expect_environment_pass hostile_python_and_xcode_environment '' \
+  PYTHONHOME="$TEST_ROOT/untrusted-python-home" \
+  PYTHONINSPECT=1 \
+  PYTHONSTARTUP="$TEST_ROOT/untrusted-python-startup" \
+  PYTHONWARNINGS=error \
+  DEVELOPER_DIR="$TEST_ROOT/untrusted-developer" \
+  SDKROOT="$TEST_ROOT/untrusted-sdk" \
+  TOOLCHAINS=untrusted-toolchain \
+  XCODE_XCCONFIG_FILE="$TEST_ROOT/untrusted.xcconfig"
+
+PYTHON_INJECTION_ROOT="$TEST_ROOT/python-injection"
+PYTHON_INJECTION_MARKER="$TEST_ROOT/python-injection-ran"
+mkdir -p "$PYTHON_INJECTION_ROOT"
+cat > "$PYTHON_INJECTION_ROOT/sitecustomize.py" <<'PY'
+import os
+from pathlib import Path
+Path(os.environ["BIOMOTION_PYTHON_INJECTION_MARKER"]).write_text(
+    "injected\n", encoding="utf-8"
+)
+PY
+expect_environment_pass hostile_pythonpath_sitecustomize \
+  "$PYTHON_INJECTION_MARKER" \
+  BIOMOTION_PYTHON_INJECTION_MARKER="$PYTHON_INJECTION_MARKER" \
+  PYTHONPATH="$PYTHON_INJECTION_ROOT"
+
+UNTRUSTED_TMPDIR="$TEST_ROOT/untrusted-tmpdir"
+: > "$UNTRUSTED_TMPDIR"
+expect_environment_pass hostile_tmpdir_is_ignored '' \
+  TMPDIR="$UNTRUSTED_TMPDIR"
 
 SOURCE_CASES=(
   'systemUptime|let value = ProcessInfo.processInfo.systemUptime'
