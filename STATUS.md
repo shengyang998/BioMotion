@@ -5470,7 +5470,11 @@ with the local peak and every remote matched-domain alias lowers uniqueness. Pea
 are rejected before Vision, sampled background coverage is recomputed, and all quality-valid tiles
 are fitted once — no iterative outlier deletion can manufacture a static answer. Geometry, memory,
 local/global correlation, both Vision revisions and calibration constants are bound into revision-3
-fingerprints and revalidated by the reducer.
+fingerprints and revalidated by the reducer. That boundary now keeps failure classes distinct: a
+structurally valid but different fingerprint returns calibration-required, while malformed or
+non-positive resource/alias counts remain invalid measurements. Cadence-domain membership uses
+only a `1e-12 s` numeric tolerance so 120/240 fps PTS arithmetic does not reject its own exact-rate
+calibration; tests require a larger mismatch to remain calibration-required.
 
 The solve path now has an exact accepted-frame receipt and five terminal causes: timeout, solve
 failure, admission rejection, busy and superseded. Publication ownership is separate from physical

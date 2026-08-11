@@ -1208,7 +1208,7 @@ final class CameraMotionReducerTests: XCTestCase {
         )
     }
 
-    func testReducerRequiresTypedProfileAndExactRuntimeWindowCadenceDomain() {
+    func testReducerRequiresTypedProfileAndBoundedRuntimeWindowCadenceDomain() {
         let measurements = observations(
             windowTranslations: Array(repeating: SIMD2(0.001, 0), count: 5)
         )
@@ -1219,6 +1219,14 @@ final class CameraMotionReducerTests: XCTestCase {
             ),
             reducerConfiguration(
                 nativeFrameIntervalDomainSeconds: 0.01...0.02
+            ),
+            reducerConfiguration(
+                derivativeWindowDomainSeconds:
+                    (0.25 + 2e-12)...(0.25 + 2e-12)
+            ),
+            reducerConfiguration(
+                nativeFrameIntervalDomainSeconds:
+                    (0.05 + 2e-12)...(0.05 + 2e-12)
             ),
             reducerConfiguration(fingerprintStaticTranslation: 0.009),
         ] {
@@ -1231,6 +1239,21 @@ final class CameraMotionReducerTests: XCTestCase {
                 )
             }
         }
+
+        let representationNoise = reducerConfiguration(
+            derivativeWindowDomainSeconds:
+                (0.25 + 0.5e-12)...(0.25 + 0.5e-12),
+            nativeFrameIntervalDomainSeconds:
+                (0.05 + 0.5e-12)...(0.05 + 0.5e-12)
+        )
+        guard case .staticWithinBudget = CameraMotionReducer.reduce(
+            observations: measurements,
+            configuration: representationNoise
+        ) else {
+            return XCTFail(
+                "sub-tolerance time representation noise must remain calibrated"
+            )
+        }
     }
 
     func testReducerSecondBoundaryRejectsEveryResourceAndPeakFingerprintDrift() {
@@ -1238,54 +1261,83 @@ final class CameraMotionReducerTests: XCTestCase {
             windowTranslations: Array(repeating: SIMD2(0.001, 0), count: 5)
         )
         let refused = [
-            reducerConfiguration(
+            ("maximum analysis dimension", reducerConfiguration(
                 fingerprintMaximumAnalysisDimensionPixels: 4_094
-            ),
-            reducerConfiguration(
+            )),
+            ("maximum analysis aspect ratio", reducerConfiguration(
                 fingerprintMaximumAnalysisAspectRatio: 3.5
-            ),
-            reducerConfiguration(
+            )),
+            ("retained byte budget", reducerConfiguration(
                 fingerprintMaximumRetainedPixelBufferBytes:
                     63 * 1_024 * 1_024
-            ),
-            reducerConfiguration(
+            )),
+            ("retained buffer count", reducerConfiguration(
                 fingerprintMaximumRetainedPixelBufferCount:
                     CameraAnalysisBufferBudget.maximumRetainedBufferCount - 1
-            ),
-            reducerConfiguration(
+            )),
+            ("box average size", reducerConfiguration(
                 fingerprintAppearanceBoxAverageSizePixels: 4
-            ),
-            reducerConfiguration(
+            )),
+            ("box average spacing", reducerConfiguration(
                 fingerprintAppearanceBoxAverageSpacingPixels: 16
-            ),
-            reducerConfiguration(
+            )),
+            ("correlation sample spacing", reducerConfiguration(
                 fingerprintRegistrationCorrelationSampleSpacingPixels: 24
-            ),
-            reducerConfiguration(
+            )),
+            ("peak search radius", reducerConfiguration(
                 fingerprintRegistrationPeakSearchRadiusPixels: 40
-            ),
-            reducerConfiguration(
+            )),
+            ("peak separation", reducerConfiguration(
                 fingerprintRegistrationPeakMinimumSeparationPixels: 24
-            ),
-            reducerConfiguration(
+            )),
+            ("minimum peak correlation", reducerConfiguration(
                 fingerprintMinimumRegistrationPeakCorrelation: 0.55
-            ),
-            reducerConfiguration(
+            )),
+            ("correlation pair cap", reducerConfiguration(
                 fingerprintMaximumRegistrationCorrelationPairCountPerTile:
                     CameraRegistrationPeakAnalyzer
                         .maximumCorrelationPairCountPerTile - 1
-            ),
+            )),
         ]
 
-        for configuration in refused {
+        for (field, configuration) in refused {
             guard case .calibrationRequired = CameraMotionReducer.reduce(
                 observations: measurements,
                 configuration: configuration
             ) else {
-                return XCTFail(
-                    "the reducer must independently bind every C/A fingerprint field"
+                XCTFail(
+                    "the reducer must independently bind \(field)"
                 )
+                continue
             }
+        }
+
+        let malformed = [
+            ("retained buffer count", reducerConfiguration(
+                fingerprintMaximumRetainedPixelBufferCount: 0
+            )),
+            ("minimum alias overlap", reducerConfiguration(
+                fingerprintRegistrationAliasMinimumOverlapPairCount: 0
+            )),
+            ("shared alias domain", reducerConfiguration(
+                fingerprintRegistrationAliasSharedDomainSideSamples: 0
+            )),
+            ("tail alias pairs", reducerConfiguration(
+                fingerprintRegistrationAliasTailPairCount: 0
+            )),
+            ("correlation pair cap", reducerConfiguration(
+                fingerprintMaximumRegistrationCorrelationPairCountPerTile: 0
+            )),
+        ]
+        for (field, configuration) in malformed {
+            XCTAssertEqual(
+                CameraMotionReducer.reduce(
+                    observations: measurements,
+                    configuration: configuration
+                ),
+                .indeterminate(.invalidMeasurement),
+                "non-positive \(field) must remain structurally invalid"
+            )
         }
     }
 

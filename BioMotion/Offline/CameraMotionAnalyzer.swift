@@ -2831,8 +2831,10 @@ enum CameraMotionReducer {
                 == configuration.minimumBackgroundFraction,
               validCalibrationDomain(profile.derivativeWindowDomainSeconds),
               validCalibrationDomain(profile.nativeFrameIntervalDomainSeconds),
-              profile.derivativeWindowDomainSeconds
-                .contains(configuration.derivativeWindowSeconds),
+              calibrationDomain(
+                profile.derivativeWindowDomainSeconds,
+                contains: configuration.derivativeWindowSeconds
+              ),
               profile.personBoxInflationFraction.isFinite,
               (0..<0.5).contains(profile.personBoxInflationFraction),
               profile.minimumTileAreaFraction.isFinite,
@@ -2859,13 +2861,16 @@ enum CameraMotionReducer {
                 jitterAllowanceSeconds:
                     profile.nativeFrameJitterAllowanceSeconds
               ),
-              profile.nativeFrameIntervalDomainSeconds.contains(
-                cadence.robustNativeFrameIntervalSeconds
+              calibrationDomain(
+                profile.nativeFrameIntervalDomainSeconds,
+                contains: cadence.robustNativeFrameIntervalSeconds
               ),
               abs(cadence.robustNativeFrameIntervalSeconds
-                    - configuration.robustNativeFrameIntervalSeconds) <= 1e-12,
+                    - configuration.robustNativeFrameIntervalSeconds)
+                <= calibrationTimeToleranceSeconds,
               abs(cadence.allowedNativeFrameGapSeconds
-                    - configuration.allowedNativeFrameGapSeconds) <= 1e-12
+                    - configuration.allowedNativeFrameGapSeconds)
+                <= calibrationTimeToleranceSeconds
         else { return false }
         return true
     }
@@ -2877,6 +2882,20 @@ enum CameraMotionReducer {
             && domain.upperBound.isFinite
             && domain.lowerBound > 0
             && domain.upperBound >= domain.lowerBound
+    }
+
+    /// Native PTS subtraction can differ from a profile's decimal cadence by
+    /// one or two ULPs. Keep that representation noise distinct from a real
+    /// calibration-domain mismatch.
+    private static let calibrationTimeToleranceSeconds: TimeInterval = 1e-12
+
+    private static func calibrationDomain(
+        _ domain: ClosedRange<TimeInterval>,
+        contains value: TimeInterval
+    ) -> Bool {
+        value.isFinite
+            && value >= domain.lowerBound - calibrationTimeToleranceSeconds
+            && value <= domain.upperBound + calibrationTimeToleranceSeconds
     }
 
     private static func valid(_ configuration: Configuration) -> Bool {
@@ -2973,8 +2992,7 @@ enum CameraMotionReducer {
                     && $0.maximumAnalysisAspectRatio.isFinite
                     && $0.maximumAnalysisAspectRatio >= 1
                     && $0.maximumRetainedPixelBufferBytes > 0
-                    && $0.maximumRetainedPixelBufferCount
-                        == CameraAnalysisBufferBudget.maximumRetainedBufferCount
+                    && $0.maximumRetainedPixelBufferCount > 0
                     && $0.appearanceBoxAverageSizePixels > 0
                     && $0.appearanceBoxAverageSpacingPixels
                         >= $0.appearanceBoxAverageSizePixels
@@ -2996,17 +3014,10 @@ enum CameraMotionReducer {
                         <= $0.registrationPeakSearchRadiusPixels
                     && $0.registrationPeakMinimumSeparationPixels
                         .isMultiple(of: $0.appearanceBoxAverageSpacingPixels)
-                    && $0.registrationAliasMinimumOverlapPairCount
-                        == CameraRegistrationPeakAnalyzer
-                            .aliasMinimumOverlapPairCount
-                    && $0.registrationAliasSharedDomainSideSamples
-                        == CameraRegistrationPeakAnalyzer
-                            .aliasSharedDomainSideSamples
-                    && $0.registrationAliasTailPairCount
-                        == CameraRegistrationPeakAnalyzer.aliasTailPairCount
-                    && $0.maximumRegistrationCorrelationPairCountPerTile
-                        == CameraRegistrationPeakAnalyzer
-                            .maximumCorrelationPairCountPerTile
+                    && $0.registrationAliasMinimumOverlapPairCount > 0
+                    && $0.registrationAliasSharedDomainSideSamples > 0
+                    && $0.registrationAliasTailPairCount > 0
+                    && $0.maximumRegistrationCorrelationPairCountPerTile > 0
             } ?? true)
     }
 }

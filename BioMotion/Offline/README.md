@@ -182,7 +182,13 @@ The calibration fingerprint binds the adapter revision, analysis dimensions,
 motion bands, cadence/window domains, person/tile policy and fit thresholds;
 changing any of them invalidates readiness. Both the runner and analyzer /
 reducer boundary check the typed profile, so a direct caller cannot turn a
-non-empty string into calibration authority.
+non-empty string into calibration authority. At the reducer boundary, a
+structurally valid fingerprint that differs from the running adapter is
+reported as `.calibrationRequired`; non-positive resource and alias-count
+fields are structurally invalid measurements. Cadence-domain comparisons
+allow only a `1e-12 s` representation tolerance, enough for native-PTS
+subtraction at 120/240 fps without materially widening the calibrated time
+domain; a larger mismatch still requires calibration.
 
 Permissions differ by solve class:
 
