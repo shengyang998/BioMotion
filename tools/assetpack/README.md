@@ -31,40 +31,117 @@ The stable asset-pack identifier is exactly `sam3d-body-pose`. Verify the
 checked-in contract and license without the large artifact:
 
 ```bash
-python3 tools/assetpack/verify_model_lock.py repository
-python3 tools/tests/assetpack_supply_chain_tests.py
+/usr/bin/python3 tools/assetpack/verify_model_lock.py repository
+/usr/bin/python3 tools/assetpack/verify_model_lock.py toolchain
+/usr/bin/python3 tools/tests/assetpack_supply_chain_tests.py
+/bin/bash tools/tests/assetpack_package_receipt_tests.sh
 ```
 
 When the artifacts are present, verify every regular file, size, SHA-256, and
 the complete Core ML interface:
 
 ```bash
-python3 tools/assetpack/verify_model_lock.py source \
-  BioMotion/CoreML/SAM3DBodyPose.mlpackage
-python3 tools/assetpack/verify_model_lock.py compiled \
-  build/assetpack/stage/SAM3DBodyPose.mlmodelc
+/usr/bin/python3 tools/assetpack/verify_model_lock.py source \
+  ../sam-3d-body/export/coreml/SAM3DBodyPose.mlpackage
+/usr/bin/python3 tools/assetpack/verify_model_lock.py compiled \
+  path/to/SAM3DBodyPose.mlmodelc
 ```
 
 The verifier rejects unknown or duplicate JSON keys, unsafe paths, symlinks,
-missing/extra/non-regular files, byte drift, license drift, and interface type,
-dtype, shape, optionality, or flexibility drift.
+missing/extra/non-regular files, byte or license drift, unapproved archive
+metadata, archive-size drift, and interface type, dtype, shape, optionality, or
+flexibility drift. It uses absolute `/usr/bin/xcrun`, `/usr/bin/xcodebuild`, and
+`/usr/bin/what` paths and requires the lock's exact Xcode, Core ML compiler, and
+`ba-package` versions. The package driver itself uses `/bin/bash`, resets PATH
+to `/usr/bin:/bin:/usr/sbin:/sbin`, and invokes `/usr/bin/python3`, so an
+untrusted caller PATH cannot substitute its verifier or basic system tools.
 
-**Integration status:** the lock/verifier is the completed foundation. The
-current `package.sh`, `upload.sh`, developer bundle, and runtime loader predate
-it and are not yet release-approved. Do not package or upload until the next
-integration commits make the lock mandatory at every entry point and emit a
-verifiable receipt. The existing App Store Connect version 1 lacks the lock and
-license and must not be treated as a compliant shipping artifact.
+**Integration status:** repository, source, compile, package, extraction, and
+receipt enforcement are complete. `upload.sh`, developer bundling, and runtime
+loading remain separate release gates. Do not upload yet: the existing App
+Store Connect version 1 lacks the lock and license, and the old upload script
+still defaults to the obsolete `build/assetpack/sam3d-body-pose.aar` path and
+reads credentials before it proves the complete release pair.
 
 ---
 
 ## Package
 
-`package.sh` currently compiles `SAM3DBodyPose.mlpackage` with
-`xcrun coremlcompiler`, then archives it with `xcrun ba-package`. That older
-path does not yet enforce the checked-in lock or re-extract its AAR, so it is
-documented for migration context only and must not be used for a release.
-Direct `coremlcompiler` / `ba-package` commands are also not an approved bypass.
+Run the only approved local package entry point:
+
+```bash
+/bin/bash tools/assetpack/package.sh \
+  ../sam-3d-body/export/coreml/SAM3DBodyPose.mlpackage
+```
+
+The script first freezes private copies of Manifest/lock/license, then verifies
+the frozen repository authority and locked Apple toolchain back-to-back. It
+verifies the source package, compiles in a mode-0700 transaction directory,
+verifies the compiled tree/interface, and stages exactly these selectors:
+
+- `SAM3DBodyPose.mlmodelc`
+- `SAM3DBodyPose.lock.json`
+- `SAM-LICENSE.txt`
+
+It writes a temporary AAR, uses `aa list` to reject paths/types/sizes before
+extraction, extracts it privately, byte-compares all three authority files, and
+re-verifies the compiled tree/interface. A strict JSON receipt binds schema,
+pack/revision/model identity, AAR name/size/SHA-256, and all three authority
+SHA-256 values. `seal` first copies the AAR, Manifest, lock, and license through
+opened regular-file descriptors into one random mode-0700 sibling snapshot;
+archive verification, receipt construction, and receipt bindings read only that
+snapshot. It then proves the live inputs still equal the verified snapshot and
+installs the complete receipt with an atomic no-clobber hard link. An ABA change
+cannot switch generations under the receipt, and a partial receipt is never
+visible at the final pathname. The publish gate repeats the full archive
+verification against the current repository before making the pair visible.
+This release boundary assumes host/account integrity: the random mode-0700
+snapshot isolates other users and ordinary concurrent changes, but it is not a
+sandbox against a malicious process already executing as the same macOS UID.
+
+`coremlcompiler` emits the 503-byte root `coremldata.bin` with its four protobuf
+metadata-map entries in random order. The private compiler output is normalized
+only by permuting those entries, and only when one permutation reconstructs the
+complete raw SHA-256 already pinned by the lock. Any value or other-byte drift
+still fails closed; the packaged compiled tree remains byte-exact.
+
+The final pair is:
+
+```text
+build/assetpack/release/sam3d-body-pose.aar
+build/assetpack/release/sam3d-body-pose.aar.receipt.json
+```
+
+Any pre-migration files directly under `build/assetpack/` are historical local
+artifacts; only the pair inside `release/` is a publication candidate.
+
+The `release/` directory is the atomic publication unit: the first publication
+uses one directory rename; replacements use Darwin
+`renameatx_np(RENAME_SWAP)`. Before either namespace operation, the verified
+candidate AAR, receipt, and candidate directory are fsynced; the affected parent
+directories are fsynced after it. If a post-namespace fsync fails, the verifier
+immediately performs the inverse rename/swap and fsyncs both parents again. A
+durably completed rollback returns ordinary failure and restores the previous
+namespace. If the rollback namespace or its fsync cannot be proven, the verifier
+returns status 2 (`MODEL_LOCK_RECOVERY_REQUIRED`). Unexpected Python exceptions
+inside the final publisher are converted to that same recovery status.
+`package.sh` enters preservation mode *before* invoking the publisher and clears
+it only after success or status 1, which is reserved for a caught, safely
+classified `VerificationError` (including a durably completed rollback). A
+signal or any other unclassified exit therefore retains the full transaction
+and package lock and prints the candidate/destination recovery paths. Do not
+remove that lock or rerun packaging until those paths are inspected and
+reconciled. A crash cannot expose an AAR with a receipt from a different
+generation while silently deleting the displaced release. Verify the published
+pair (including another list and extraction) with:
+
+```bash
+/usr/bin/python3 tools/assetpack/verify_model_lock.py receipt \
+  build/assetpack/release/sam3d-body-pose.aar \
+  build/assetpack/release/sam3d-body-pose.aar.receipt.json
+```
+
+Direct `coremlcompiler` / `ba-package` commands are not an approved bypass.
 
 `ba-package` resolves the manifest's relative `fileSelectors` against the **current
 working directory**, which is why the stage directory is the CWD.
@@ -72,11 +149,13 @@ working directory**, which is why the stage directory is the CWD.
 ## Upload
 
 The pack is uploaded on a **separate channel** from the app binary. The current
-script reads credentials before it proves the AAR and has no receipt or
-verification-only mode, so neither it nor a raw `altool` call is an approved
-release path. The next integration slice must verify the repository contract,
-receipt, re-extracted AAR, and compiled model before it is even allowed to read
-App Store Connect credentials; upload must then require an explicit flag.
+script still defaults to the obsolete top-level
+`build/assetpack/sam3d-body-pose.aar`, reads credentials before artifact
+validation, and does not consume the atomic `release/` pair. **Do not run
+`upload.sh` or a raw `altool` upload yet.** The upload slice must run the same
+full receipt/archive gate before it is allowed to read App Store Connect
+credentials, provide `--verify-only`, and require an explicit flag for external
+mutation.
 
 Check state (both read-only):
 
@@ -182,15 +261,34 @@ self-hosting key (`BAManifestURL`, …) invalidates the configuration.
 
 ## Verified / not verified
 
-Verified on this machine (2026-08-07):
+Verified on this machine (2026-08-07 through 2026-08-11):
 
 * Release device archive builds and signs, extension embedded at
   `BioMotion.app/Extensions/AssetPackDownloader.appex`, app group present in both
   binaries' entitlements. App bundle 1.3151 → 0.0069 GiB.
 * `sam3d-body-pose.aar` builds (1.0210 GiB) and lists
-  `Contents/SAM3DBodyPose.mlmodelc/{analytics/coremldata.bin,coremldata.bin,metadata.json,model.mil,weights/weight.bin}`
-  — the directory selector preserves the `.mlmodelc` directory rather than
-  flattening it.
+  `Contents/SAM3DBodyPose.mlmodelc/{analytics/coremldata.bin,coremldata.bin,metadata.json,model.mil,weights/weight.bin}`,
+  `Contents/SAM3DBodyPose.lock.json`, `Contents/SAM-LICENSE.txt`, and the root
+  `Manifest.json` — no other archive entry is accepted.
+* On 2026-08-11, the final real package/receipt chain passed four times. The
+  latest run exercised the private seal snapshot, atomic no-clobber receipt
+  install, frozen-authority validation, trusted system tools, pre-publication
+  fsync, and replacement of an existing release via the real atomic swap. Its
+  published AAR is 1,096,258,817 bytes at SHA-256
+  `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`;
+  its 722-byte receipt passes a fresh full list/extract verification. AAR bytes
+  can change between builds because Apple Archive records filesystem metadata;
+  each receipt binds its exact generation.
+* The self-contained verifier suite passes **60/60** under `/usr/bin/python3`
+  and the package transaction suite passes **16/16**. Failure injection covers
+  compiler/package errors, extra/missing/unsafe/symlink/hash entries, authority
+  and AAR mutation during sealing, ABA generation swaps, partial receipt writes,
+  public receipt rejection of a text AAR, receipt drift, root symlink writes,
+  end-to-end atomic-swap failure, fstat/fsync/close errors, first-publication and
+  replacement post-fsync rollback, rollback namespace/fsync failure, restoration
+  of the previous release when provable, and preservation of the complete
+  recovery transaction and lock when it is not, including unexpected publisher
+  exceptions and signal termination after the namespace swap.
 * Dev-bundled toggle produces `BioMotion.app/SAM3DBodyPose.mlmodelc` exactly where
   `Bundle.main.url(forResource:withExtension:)` looks.
 * Simulator build + launch, and the existing test suite still builds and passes.

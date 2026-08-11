@@ -4528,10 +4528,11 @@ or symlinked artifacts, license mismatch, and interface/schema drift. Repository
 the real local source `.mlpackage` and staged compiled `.mlmodelc` both pass their respective
 full-tree/interface modes. The external dirty SAM export worktree was read-only throughout.
 
-This is deliberately the first supply-chain slice, not a claim that delivery is finished. Audit of
-the existing paths found release blockers that remain explicit:
+This was deliberately the first supply-chain slice, not a claim that delivery was finished. At
+that receipt, audit of the existing paths found these release blockers:
 
-- `package.sh` does not yet invoke the verifier or re-extract and verify its AAR;
+- `package.sh` did not invoke the verifier or re-extract and verify its AAR (closed by the next
+  slice below);
 - `upload.sh` reads credentials before artifact validation and lacks a receipt and `--verify-only`;
 - the historical App Store Connect version 1 AAR omits both the lock and full license and is not a
   compliant shipping artifact;
@@ -4541,6 +4542,98 @@ the existing paths found release blockers that remain explicit:
 
 The asset-pack README no longer recommends raw packaging or upload bypasses while those gates are
 open. No upload or other external mutation was performed by this contract slice.
+
+
+## The SAM package and receipt are now fail-closed and atomically published (2026-08-11)
+
+`tools/assetpack/package.sh` is now the only approved local package entry point. It fixes `/bin/bash`,
+`/usr/bin/python3`, `/usr/bin/xcrun`, and a trusted system PATH; snapshots Manifest/lock/license into
+a private mode-0700 transaction first; and then validates the frozen repository contract and exact
+Xcode 26.4 / build 17E192 / Core ML 3520.5.1 / `ba-package` 1.2 toolchain back-to-back. It verifies
+the exact source package, compiles privately, verifies the exact compiled tree and complete interface,
+and stages only these three Manifest selectors:
+
+- `SAM3DBodyPose.mlmodelc`;
+- `SAM3DBodyPose.lock.json`; and
+- `SAM-LICENSE.txt`.
+
+The temporary AAR is inspected with `/usr/bin/xcrun aa list` before extraction. Its allowlist fixes
+all 13 directory/file entries, exact entry types, and every regular-file `DAT` size; unsafe paths,
+links, unsupported archive metadata, missing/extra entries, and expansion-size drift fail before
+`aa extract`. The privately extracted Manifest, lock, and license must be byte-identical to the
+authority snapshot, and the extracted compiled model must again pass its exact tree and interface
+contract. Hashing before/after list and extraction rejects an AAR that changes during the gate.
+
+The real compiler exposed a reproducibility edge that the gate correctly caught: consecutive
+compiles produced different SHA-256 values for only the 503-byte root `coremldata.bin`, while the
+other four compiled files were byte-identical. The difference was solely the order of four protobuf
+map entries containing coremltools metadata. Normalization is therefore deliberately narrower than
+semantic reserialization: it enumerates only those map-entry permutations and writes one only when
+the resulting *complete raw file* reconstructs the SHA-256 already pinned by the lock. Any changed
+metadata value, topology, other file, or other byte remains a hard failure. Root/file/parent symlink
+and containment checks run before the private compiler output is changed.
+
+The strict 722-byte JSON receipt binds schema version, asset-pack ID, artifact revision, model base
+name, AAR filename/size/SHA-256, and Manifest/lock/license filenames and SHA-256 values. `seal` copies
+the AAR and all three authority files through opened regular-file descriptors into one random
+mode-0700 sibling snapshot. Archive verification, receipt construction, and bindings read only that
+snapshot; live inputs must then equal it before the complete receipt is atomically installed with a
+same-filesystem no-clobber hard link. This closes pathname ABA and guarantees that a failed/partial
+receipt write never touches the public final pathname. Both the standalone `receipt` gate and final
+`publish` gate repeat the full archive extraction rather than trusting hashes alone. The AAR and
+receipt become visible only as one `build/assetpack/release/` directory operation: first publication
+uses one rename and replacement uses Darwin
+`renameatx_np(RENAME_SWAP)`, eliminating the former two-rename crash window. The verified candidate
+AAR, receipt, and candidate directory are fsynced before that namespace operation, and the affected
+parent directories are fsynced afterward. A post-namespace fsync failure triggers the exact inverse
+rename/swap and a second fsync of both parents. If that rollback is durably proven, the command returns
+ordinary failure with the previous namespace restored and normal cleanup is safe. If rollback namespace
+or rollback fsync cannot be proven, the verifier returns dedicated status 2
+(`MODEL_LOCK_RECOVERY_REQUIRED`); `package.sh` preserves the complete transaction and package lock,
+prints candidate/destination recovery paths, and deliberately blocks another package run until manual
+reconciliation. Unexpected exceptions inside the final publisher are also mapped to recovery status 2.
+The package driver enters preservation mode before launching that publisher and clears it only for
+success or the verifier's explicitly safe status 1; signal exits and every other unclassified status
+therefore retain the displaced release, transaction, and lock instead of deleting recovery evidence.
+
+TDD receipts are **60/60** self-contained verifier tests and **16/16** transaction tests with explicit
+fake Apple tools in copied fixture repositories. They cover toolchain/identity/policy drift,
+duplicate JSON, extra/missing/unsafe/symlink/size/hash archive entries, authority and receipt drift,
+authority/AAR mutation during every seal phase, ABA generation swaps, partial receipt writes, public
+rejection of a text AAR, compiler/package failure, root and parent symlink write attempts,
+fstat/fsync/close errors, an end-to-end replacement/swap failure, first-publication and replacement
+post-fsync rollback, rollback namespace/fsync failure, proven restoration of the old release, and
+retention of both recovery material and package lock when restoration cannot be proven. End-to-end
+fixtures also inject rollback-fsync failure, an unexpected post-swap Python exception, and SIGTERM,
+proving that abnormal publisher exits retain the displaced release and lock. Shell syntax,
+ShellCheck, JSON parsing, and `git diff --check` pass under the pinned system interpreter. An independent
+adversarial review found and drove closure of the initial root-symlink write, non-atomic two-file publish,
+receipt TOCTOU, PATH-tool substitution, unchecked archive-size, seal ABA, unsafe final-path cleanup, and
+post-publication fsync cleanup issues.
+
+The seal threat boundary assumes host/account integrity. Its random mode-0700 snapshot prevents other
+users and ordinary concurrent live-input drift; it is not intended to contain a malicious process
+that already has arbitrary code execution as the same macOS UID. The final adversarial review found
+no blocker under the normal local-release threat model and records same-UID compromise as conditional
+future hardening rather than a claim this tool can provide privilege isolation.
+
+The real local source was then packaged four times without editing the external dirty SAM worktree.
+All full chains passed; the latest exercised the private seal snapshot, atomic no-clobber receipt
+install, frozen-authority order, trusted system tools, pre-publication fsync, and replacement of an
+existing release with the real atomic swap. The final AAR is 1,096,258,817 bytes at SHA-256
+`910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`; its 722-byte receipt passes a
+fresh standalone list/extract verification and binds Manifest `8dd36bea…`, lock `20970430…`, and
+license `b3a5a0e2…`. Apple Archive filesystem metadata makes the AAR hash generation-specific, which is
+why the receipt records the exact published instance rather than claiming reproducible AAR container
+bytes.
+
+This closes local package/receipt enforcement, not delivery. `upload.sh` still defaults to the obsolete
+top-level `build/assetpack/sam3d-body-pose.aar` and must not be run; it must gain a credential-free full
+verification mode, validate the atomic `release/` pair before reading App Store Connect credentials,
+and require explicit upload authorization. Developer bundling, runtime model
+loading, NOTICE/app-resource wiring, a replacement App Store Connect pack version, and real-device
+TestFlight download/load remain open. No credential was read and no upload or other external mutation
+was performed in this slice.
 
 
 ## XML conversion no longer depends on a machine-specific Boost install (2026-08-11)

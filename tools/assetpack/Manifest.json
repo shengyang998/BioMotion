@@ -6,7 +6,9 @@
 		}
 	},
 	"fileSelectors": [
-		{ "directory": "SAM3DBodyPose.mlmodelc" }
+		{ "directory": "SAM3DBodyPose.mlmodelc" },
+		{ "file": "SAM3DBodyPose.lock.json" },
+		{ "file": "SAM-LICENSE.txt" }
 	],
 	"platforms": ["iOS"]
 }
