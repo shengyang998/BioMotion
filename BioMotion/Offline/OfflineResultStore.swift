@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import UIKit
 
 /// Accumulates per-frame results from one offline (photo/video import) run so
@@ -11,7 +12,46 @@ import UIKit
 @MainActor
 final class OfflineResultStore: ObservableObject {
 
+    /// Store fields form one product-facing authorization snapshot. Individual
+    /// `@Published` wrappers notify from `willSet`, which exposed stale loads
+    /// beside a new camera/contact denial and let a synchronous subscriber's
+    /// newer mutation be overwritten when the older setter resumed. Every
+    /// mutation below commits all fields first, then sends exactly once.
+    nonisolated let objectWillChange = ObservableObjectPublisher()
+
     enum FrameStatus: Equatable {
+        enum SolverFailure: Error, Equatable {
+            /// An accepted solve exceeded the explicit per-frame liveness
+            /// budget and its exact receipt was superseded.
+            case timedOut
+            /// The native IK bridge returned no solution for this frame.
+            case solveFailed
+            /// The engine rejected admission (for example because the caller
+            /// no longer owned the active offline policy lease).
+            case admissionRejected
+            /// Every bounded retry found the physical solver still occupied.
+            case busy
+            /// A reset superseded the exact receipt while the run itself was
+            /// still current. This is distinct from a timeout and from IK
+            /// failure so diagnostics never prescribe the wrong remedy.
+            case superseded
+
+            var userFacingDescription: String {
+                switch self {
+                case .timedOut:
+                    return "Solver timed out on this frame"
+                case .solveFailed:
+                    return "The skeleton solver could not fit this frame"
+                case .admissionRejected:
+                    return "The solver could not accept this frame"
+                case .busy:
+                    return "The solver was still busy with an earlier frame"
+                case .superseded:
+                    return "The solver session changed before this frame completed"
+                }
+            }
+        }
+
         case success
         case poseEstimationFailed(String)
         /// The pose model returned a full skeleton, but one whose BODY SIZE is
@@ -20,13 +60,11 @@ final class OfflineResultStore: ObservableObject {
         /// number rather than dropped, because a frame that vanishes without a
         /// reason is indistinguishable from a crash.
         case implausibleBody(reason: String, hipWidthMeters: Double, statureMeters: Double)
-        /// `NimbleEngine` never published a result within the wait budget. This
-        /// covers two indistinguishable-from-the-outside cases: the solve is
-        /// still slow/running, and the solve silently failed (`solveIK` returned
-        /// nil, which never calls `publishResults` at all — see
-        /// `OfflineSessionRunner`'s waiter doc comment). Either way, the frame
-        /// has no usable result.
-        case nimbleTimeout
+        /// The pose existed but the musculoskeletal solve did not publish.
+        /// Preserve the exact terminal cause so a deterministic IK failure,
+        /// admission refusal, busy engine, reset and real timeout never collapse
+        /// into the same user-facing diagnosis.
+        case nimbleFailure(SolverFailure)
 
         /// The sentence shown for `.implausibleBody`, nil for every other case.
         ///
@@ -172,9 +210,10 @@ final class OfflineResultStore: ObservableObject {
         /// permitted only for `.available`; every other case is pose-only with
         /// a named reason rather than a zero sentinel.
         let dynamicsAvailability: NimbleEngine.DynamicsAvailability
-        /// True iff this frame's ID and muscle results were solved as a STATIC
-        /// EQUILIBRIUM problem (q̇ = q̈ = 0) on a detected hold — i.e. the
-        /// muscle numbers are a posture estimate, not a measurement of dynamics.
+        /// True iff this frame's ID solve (and its muscle solve, when present)
+        /// used a STATIC EQUILIBRIUM problem (q̇ = q̈ = 0) on a detected
+        /// hold — i.e. any muscle numbers are a posture estimate, not a
+        /// measurement of dynamics.
         ///
         /// It used to mean "the end-of-clip padding replayed this pose", which
         /// was true of the last four frames of every clip regardless of whether
@@ -350,16 +389,20 @@ final class OfflineResultStore: ObservableObject {
         }
     }
 
-    @Published private(set) var frames: [FrameResult] = []
-    @Published var selectedIndex: Int = 0
+    private(set) var frames: [FrameResult] = []
+    private(set) var selectedIndex: Int = 0
     /// What the gait pass concluded about the clip as a whole, or why it never
     /// ran. Nil until the batch finishes.
-    @Published private(set) var gait: GaitOutcome?
+    private(set) var gait: GaitOutcome?
     /// Model/session capability, independent of any individual frame verdict.
     /// `nil` means the model has not finished loading for this session. `false`
     /// is permanent for both bundled models and must remain visible beside
     /// moving/flight/outside verdicts, none of which can unlock load mechanics.
-    @Published private(set) var hasValidatedFootContactSupport: Bool?
+    private(set) var hasValidatedFootContactSupport: Bool?
+    /// Clip/session-level camera evidence. It is separate from `MotionState`,
+    /// which describes the subject. The default is explicit and fail-closed;
+    /// the runner finalizes it before appending the first frame.
+    private(set) var cameraReferenceState: CameraReferenceState = .unmeasured
 
     /// What `GaitAnalysis` concluded about this clip.
     enum GaitOutcome {
@@ -409,22 +452,36 @@ final class OfflineResultStore: ObservableObject {
         }
     }
 
-    func setGait(_ outcome: GaitOutcome) { gait = outcome }
+    func setGait(_ outcome: GaitOutcome) {
+        gait = outcome
+        objectWillChange.send()
+    }
 
     func setValidatedFootContactSupport(_ isValidated: Bool) {
-        // Clear existing payloads before publishing a downgrade so an observer
-        // can never see `capability == false` beside stale load values.
-        frames = frames.map {
+        let projectedFrames = frames.map {
             productProjectedFrame($0, contactSupportCapability: isValidated)
         }
+        frames = projectedFrames
         hasValidatedFootContactSupport = isValidated
+        objectWillChange.send()
+    }
+
+    func setCameraReferenceState(_ state: CameraReferenceState) {
+        let projectedFrames = frames.map {
+            productProjectedFrame($0, cameraReference: state)
+        }
+        frames = projectedFrames
+        cameraReferenceState = state
+        objectWillChange.send()
     }
 
     func reset() {
-        frames.removeAll()
+        frames = []
         selectedIndex = 0
         gait = nil
         hasValidatedFootContactSupport = nil
+        cameraReferenceState = .unmeasured
+        objectWillChange.send()
     }
 
     /// Appends a new frame result and pins the scrubber to it — while a run is
@@ -433,6 +490,16 @@ final class OfflineResultStore: ObservableObject {
     func append(_ result: FrameResult) {
         frames.append(productProjectedFrame(result))
         selectedIndex = frames.count - 1
+        objectWillChange.send()
+    }
+
+    /// User-driven scrubber selection follows the same post-commit publication
+    /// rule as batch mutations. Ignore stale indices from a view update that
+    /// raced a reset instead of manufacturing an out-of-range selection.
+    func selectFrame(at index: Int) {
+        guard frames.indices.contains(index), selectedIndex != index else { return }
+        selectedIndex = index
+        objectWillChange.send()
     }
 
     /// The single product publication seam used by append, replacement, and a
@@ -447,11 +514,22 @@ final class OfflineResultStore: ObservableObject {
     /// cannot erase a valid pose or its report-neutral motion verdict.
     private func productProjectedFrame(
         _ input: FrameResult,
-        contactSupportCapability: Bool? = nil
+        contactSupportCapability: Bool? = nil,
+        cameraReference: CameraReferenceState? = nil
     ) -> FrameResult {
         let capability: Bool? = contactSupportCapability != nil
             ? contactSupportCapability
             : hasValidatedFootContactSupport
+        let camera = cameraReference ?? cameraReferenceState
+        // A caller-provided static flag is not enough to obtain the single-image
+        // exception. It must agree with the same-generation motion verdict that
+        // actually classified the solve as a hold. Contradictory orchestration
+        // inputs fail closed instead of being reinterpreted as temporal output.
+        let isConsistentStaticHold = input.isStaticHoldEstimate
+            && input.motionState.isHold
+        let cameraPermitsThisSolve = input.isStaticHoldEstimate
+            ? isConsistentStaticHold && camera.permitsStaticEquilibrium
+            : camera.permitsTemporalDynamics
         let timestampTolerance: TimeInterval = 0.001
         func timestampsMatch(_ lhs: TimeInterval, _ rhs: TimeInterval) -> Bool {
             lhs.isFinite && rhs.isFinite && abs(lhs - rhs) <= timestampTolerance
@@ -485,10 +563,16 @@ final class OfflineResultStore: ObservableObject {
             if !hasPoseProvenance {
                 mappedAvailability = .withheld(.noMeasurement)
             } else if let capability {
-                mappedAvailability = .productFacing(
-                    current: input.dynamicsAvailability,
-                    hasValidatedFootContactSupport: capability,
-                    hasInverseDynamicsPayload: hasSameGenerationID)
+                if !capability {
+                    mappedAvailability = .contactSupportUnavailable
+                } else if !cameraPermitsThisSolve {
+                    mappedAvailability = .cameraReferenceUnavailable
+                } else {
+                    mappedAvailability = .productFacing(
+                        current: input.dynamicsAvailability,
+                        hasValidatedFootContactSupport: true,
+                        hasInverseDynamicsPayload: hasSameGenerationID)
+                }
             } else {
                 // Frames cannot precede model/capability establishment in the
                 // normal runner. If an adversarial caller does so, use the
@@ -501,6 +585,7 @@ final class OfflineResultStore: ObservableObject {
 
         let retainsID = hasPoseProvenance
             && capability == true
+            && cameraPermitsThisSolve
             && mappedAvailability.hasInverseDynamics
             && hasSameGenerationID
         let retainsMuscle = retainsID && hasSameGenerationMuscle
@@ -519,7 +604,7 @@ final class OfflineResultStore: ObservableObject {
             idResult: retainsID ? input.idResult : nil,
             muscleResult: retainsMuscle ? input.muscleResult : nil,
             dynamicsAvailability: mappedAvailability,
-            isStaticHoldEstimate: retainsMuscle && input.isStaticHoldEstimate,
+            isStaticHoldEstimate: retainsID && isConsistentStaticHold,
             motionState: hasPoseProvenance
                 ? input.motionState.withoutGaitLoadEvidence
                 : .undetermined)
@@ -558,6 +643,7 @@ final class OfflineResultStore: ObservableObject {
             motionState: payload.motionState
         )
         frames[index] = productProjectedFrame(candidate)
+        objectWillChange.send()
     }
 
     /// Begins a gait re-solve by invalidating every eligible pass-one dynamics
@@ -589,6 +675,7 @@ final class OfflineResultStore: ObservableObject {
                 motionState: existing.motionState.withoutGaitLoadEvidence
             )
         }
+        objectWillChange.send()
     }
 
     var selectedFrame: FrameResult? {

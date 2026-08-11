@@ -15,6 +15,14 @@ photo or video through a Core ML SAM 3D Body model.
               │ ARKit 91 joints → 1-euro filter                       │
               │                                                       │
               └─ OFFLINE (photo / video import) ──────────────────────┘
+                load SAM + Nimble models → CONTACT CAPABILITY [FIRST]
+                  → bundled models absent: skip camera pass, pose/timing only
+                  → future contact-valid model:
+                    typed camera calibration admission
+                      → absent profile: skip reader, calibration unavailable
+                      → admitted: ≤4 s / ≤1000 actual SOURCE-PTS samples
+                        → cadence/coverage + background registration
+                        → translation/rotation/scale clip state
                 video/photo → Vision person box → 512x512 warp
                   → SAM3DBodyPose.mlmodelc (Core ML, CPU+GPU)
                   → 127 MHR joints → MHRRetarget → BODY-SIZE GATE
@@ -26,9 +34,13 @@ photo or video through a Core ML SAM 3D Body model.
                  │             refineIK — see NimbleBridge.mm)
                  ├→ kinematics-only posture findings and gait contact timing
                  ├→ Savitzky-Golay, 9-tap CENTRED (dates results 4 samples back)
-                 └→ validated foot-support capability gate
+                 └→ validated foot-support capability gate             [FIRST]
                        ├→ bundled models: ABSENT → pose/anatomy/timing only
-                       └→ future validated model: floor trust → ID → moment arms → QP
+                       └→ future validated model → camera solve authorization
+                              ├→ photo/single frame: static equilibrium only
+                              ├→ calibrated static clip: temporal dynamics allowed
+                              ├→ other states: stop before solveIDGRF, pose-only
+                              └→ floor trust → ID → moment arms → QP
                               ↓
         ┌─────────────────────┴─────────────────────┐
    3-D muscle ANATOMY overlay            posture findings layer
@@ -61,8 +73,9 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `BioMotion/Resources/Rajagopal2016.osim` | Fallback only (lower extremity: 80 muscles, 39 DOFs, 66 markers). Loaded when FullBody.osim is missing from the bundle. |
 | `BioMotion/ARKit/BodyTrackingSession.swift` | ARKit body tracking + 1-euro filter |
 | `BioMotion/ARKit/MuscleOverlay.swift` | 3-D muscle **anatomy** capsules — fixed set, one colour, no activation input. Read its type doc before adding anything magnitude-shaped |
-| `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK and the fail-closed capability/policy gates on a background queue; owns `staticHoldGating`. The bundled-model path stops at `.contactSupportUnavailable` before ID |
-| `BioMotion/Offline/` | The photo/video path: `FrameSource` (decode), `SAM3DPoseEstimator` (Core ML), `MHRRetarget` (127 MHR joints → 20 markers + the body-size gate), `OfflineSessionRunner` (batch + SG edge padding), `OfflineResultStore`, `OfflinePlaybackView` / `PhotoOverlayView` |
+| `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK and fail-closed gates on a serial queue. `processFrame` returns an exact generation/submission receipt; publication authority, physical solver occupancy, and engine-global offline policy ownership are separate leases. Contact capability is checked before camera authorization and any unauthorized solve stops before `solveIDGRF` |
+| `BioMotion/Offline/CameraMotionAnalyzer.swift`, `CameraMotionVideoAnalyzer.swift` | Clip-level camera policy/adapter: contact-first admission, typed versioned calibration fingerprint, ≤4 s/≤1000 native samples, actual-PTS cadence/coverage, upright bounded raster, person-excluded background registration, and translation/rotation/scale reduction. Production has no profile and skips the pass fail-closed |
+| `BioMotion/Offline/` | Photo/video path: `FrameSource`, `SAM3DPoseEstimator`, `MHRRetarget`, `OfflineSessionRunner` (engine lease, exact receipt wait/routing, camera-state finalization, batch + SG padding), `OfflineResultStore` (second dynamics projection), and playback/overlay views |
 | `BioMotion/Findings/` | `PostureFindings` + `PostureFindingsPanel` — kinematics-only posture measurements with view gating. **No clinical thresholds, no verdicts.** |
 | `BioMotion/Gait/GaitAnalysis.swift` | Pure frames-in/report-out gait pass. Owns the product's ONE surviving left/right claim: `contactClaimFloorPercent` = `max(timing resolution, contact-duration sampling half-width)`. Never gate a claim on `GaitResolution` alone |
 | `BioMotion/Gait/MeanDifferenceUncertainty.swift` | The single Student-t half-width of a difference of two means, plus `StudentT`. Both the contact-time claim and the muscle path call it — a third claim must not reimplement it |
@@ -129,6 +142,83 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   601-frame cap covers about 2.5 s at 240 fps; it is not the same 120-call budget as sparse mode.
   Keep selector copy in `FrameSource.nativeWindowDisclosure` and truncation causes in
   `FrameBudgetNotice`, where `OfflineDisclosureTests` pins the exact-window boundary.
+- **Camera-reference sampling is a different native reader, not the pose sample list.** Require
+  exactly one video track and pass only it to the composition output; multi-track input is
+  indeterminate until the product owns a selection policy. Reject empty edits in-range, cropped
+  clean apertures, non-square pixel aspect ratio, and inconsistent encoded rasters: calibration is
+  defined over one full render-pixel domain. Contact capability and typed calibration
+  readiness are resolved first; current bundled models and production's absent profile skip this
+  reader. An admitted request is at most 4 s and 1000 actual native samples. Preserve the selected
+  track with `sourceTrackIDForFrameTiming`; robust returned PTS/duration cadence sets the gap and
+  one-way endpoint tolerance, while nominal FPS never widens permission. Accept `preferredTransform`
+  only when its finite 2x2 part is unit-orthogonal within 1e-4 (mirrors allowed; scale/shear/singular
+  metadata fail closed), zero the transformed origin, and scale the layer into
+  the profile-owned `renderSize`/maximum pixel count, and record the actual dimensions in evidence.
+  The actual even BGRA output must satisfy the 4096 px dimension, 4:1 aspect and 64 MiB retained
+  `bytesPerRow * height * 5` limits; estimated tight rows are not a memory receipt.
+  Merely shrinking `renderSize` crops, non-1
+  `renderScale` is for `AVPlayerItem`, and retaining full-resolution BGRA snapshots makes 4K memory
+  unbounded. At EOF require the exact `.completed` reader state plus first/last-sample coverage of
+  the requested range; one valid interior derivative window cannot represent an unread head or
+  tail. Pin `VNDetectHumanRectanglesRequest` to revision 2 and translational registration to revision
+  1; runtime support, both revision values and the typed revision-3 fingerprint must match. The
+  fingerprint also binds dimensions, classification knobs, cadence and derivative domains; Runner
+  and reducer both validate it, so a direct call cannot bypass admission.
+- **Camera registration is background evidence with a quality gate, not optical truth.** Exclude the
+  inflated union of both frames' person boxes, screen each tile for two-dimensional structure,
+  appearance/uniqueness and a finite translation-only Vision transform. Every planned tile must
+  register; every quality-valid tile enters one similarity fit, with no iterative deletion that can
+  manufacture stillness. Recompute coverage from the actual sampled-box union of the final usable,
+  spatially dispersed tiles. Box-average both frames on a fixed 8 px render lattice, sample
+  reference-target correlation every 32 px over the full +/-48 px two-dimensional residual surface,
+  using one common inward domain for every fine candidate. Then enumerate every 8 px offset with at
+  least 64 overlapping boxes: fixed 8x8 matched domains in the four sign quadrants and exact
+  48-sample matched domains in the narrow tails. Compare each remote candidate only with zero lag on
+  the identical samples. Count the `width*height` zero-product prefix and every shifted product;
+  local+global cost must be <=500,000 (the 48x48 reference grid is exactly 496,889). Carve larger
+  regular regions into deterministic, globally phase-aligned 48x45-box leaves; use bounded long-axis
+  recursion for smaller irregular regions. Limit either path to 16 leaves and never reduce candidate
+  stride or sample count to fit. Require the broad alias rectangle to contain the complete fine square,
+  not merely have a larger candidate count. Pre-screen feasibility before Vision, discard narrow strips, and recompute
+  sampled coverage. Require Vision's candidate to be the local global peak with provisional
+  normalized correlation >= 0.5, and penalize every distinct local or remote matched-domain alias.
+  Bind all box/grid/search/global-domain values, the cost cap, correlation floor, Vision revisions
+  and adapter revision into calibration. Jumps, slow drift, zoom,
+  periodic aliasing, parallax, weak coverage, timestamp gaps, and inconsistent fits must become
+  explicit moving/ambiguous/indeterminate states, never zero motion.
+- **Camera permission depends on solve class and comes after contact capability.** A photo or explicit
+  single frame is `.notRequiredForSingleFrame`: it can authorize only future static-equilibrium
+  dynamics, never temporal/gait dynamics. A multi-frame clip authorizes temporal dynamics only as
+  `.staticWithinBudget`; unmeasured, moving, between-band, calibration-required,
+  calibration-unavailable, and indeterminate
+  states authorize neither. `OfflineSessionRunner` starts denied, maps the finalized state to
+  `CameraDynamicsAuthorization`, and `processFrame` snapshots it before crossing to `solverQueue`.
+  Contact support is checked first, then camera permission refuses upstream of `solveIDGRF`;
+  `OfflineResultStore` repeats contact-then-camera projection to
+  strip stale ID/muscle while preserving pose. Store authorization/results are ordinary stored
+  state committed before one explicit notification; static-ID provenance does not depend on an
+  optional muscle solve. Local run ownership, a pre-fence lifecycle invocation epoch and an
+  engine-global conditional lease prevent a cancelled/second Runner from weakening its successor or
+  admitting live work into an offline result. Segment resets and offline scaling must present the
+  captured lease and recheck it after any synchronous reset notification. Production's typed
+  profile/fingerprint stays nil until the exact algorithm,
+  raster, cadence/window and memory domain passes versioned tripod/static calibration and disjoint
+  moving-camera fixtures; production therefore returns calibration-unavailable without opening the
+  reader. Device Vision behaviour, peak memory/runtime, and cancellation latency remain external.
+- **Offline frame completion is an exact receipt, never `objectWillChange`.** An accepted receipt is
+  `(generation, submissionID)` and completion is `.published/.failed/.superseded` for that identity.
+  Publication authorization and physical solver occupancy are separate: timeout/cancel revokes the
+  former before resuming, while the non-cancellable solver retains the latter so B/C cannot queue
+  behind a stuck A. `lastSolveReceipt` must match before store routing. The offline lease also owns
+  resets, so a queued live tracking-loss callback cannot supersede the batch. Padding propagates
+  failure and never increments a false push. Timeout, native IK failure, admission refusal,
+  exhausted busy retries and external supersession remain distinct frame statuses/user messages.
+  Result fields and full reset (including ground) commit as one ordinary-storage main-thread batch,
+  then send one explicit `objectWillChange`; no owner-sensitive write may follow that synchronous
+  notification. Runner acquire/release/defer must likewise recheck or retire the exact token,
+  invocation and lease before a callback can start a successor. Do not reintroduce per-field
+  `@Published` engine/store result writes, settle delays, ownerless resets, or global `lastSolve`
+  reads.
 - **Analysis FPS has one source:** the median interval of surviving frame timestamps, copied from
   the internal `GaitReport` into `GaitTimingReport.timing.framesPerSecond`. AVAsset's nominal rate
   is valid for native decoding and frame-budget notices only. Do not add a second rate to
@@ -147,16 +237,21 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   frame. `.available` additionally requires a same-generation ID; muscle has its own same-generation
   timestamp gate. A stale ID clears ID/muscle but preserves valid IK and the report-neutral motion
   verdict; a stale muscle clears only muscle. Missing pose provenance clears the solve envelope.
-  Session contact capability can still downgrade an otherwise valid ID. Image/decoder/model
-  provenance and `FrameStatus` stay fixed. Absence is never a measured zero.
+  Session gates can still downgrade an otherwise valid ID: contact capability first, then the
+  clip camera permission for the solve's static-equilibrium or temporal class. This repeats the
+  engine's pre-`solveIDGRF` authorization as a stale-payload backstop. Image/decoder/model provenance
+  and `FrameStatus` stay fixed. Absence is never a measured zero.
   Before a gait replacement pass, invalidate all pass-one dynamics to
   `.analysisPassIncomplete`; only same-generation pass-two solves may repopulate them.
-- **Validated foot support is the first hard dynamics boundary; ground trust is only a second,
-  necessary boundary.** Both bundled `.osim` files have an empty `ContactGeometrySet`, and the
+- **Validated foot support is the first hard dynamics boundary; camera authorization and ground
+  trust are later, separately necessary boundaries.** Both bundled `.osim` files have an empty
+  `ContactGeometrySet`, and the
   near-CoP routine supplies no support-polygon, unilateral-contact, or friction constraint. Thus
   `hasValidatedFootContactSupport == false`, `.contactSupportUnavailable` wins even with an explicit
   floor, and no bundled frame may publish ID/GRF/CoP/muscle/gait-load output. Refilming cannot change
-  a model capability. If a future model/solver pair passes that gate, `solveIDGRF` observes the feet
+  a model capability. If a future model/solver pair passes that gate, first require the clip camera
+  state to authorize this static or temporal solve before calling `solveIDGRF`. That call observes
+  the feet
   before solving, so inspect `groundHeightTrusted` after the call: observations 1–29 remain pose-only
   and observation 30 is the first same-call result eligible for the later gates. SG endpoint replay
   supplies filter context, not independent floor evidence. A second pass over the same continuous
@@ -191,7 +286,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 532 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 642 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

@@ -34,6 +34,13 @@ biggest links were **not** where the effort had been going.
   It is necessary and **not sufficient**: the depth channel carries 3.1 g of pure acceleration noise
   at 30 fps, and all three of the owner's clips are tracking shots with no inertial frame at all. See
   [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
+- **Offline camera reference is now a contact-first authorization boundary, not an after-the-fact
+  banner.** The bundled models fail contact capability and skip native camera analysis entirely;
+  production also has no typed calibration profile, so a future contact-valid multi-frame path
+  would stop at calibration-unavailable rather than interpreting provisional image thresholds.
+  Accepted batch frames use exact receipts, conditional engine ownership and timeout/cancel fences;
+  a late or failed solve cannot enter another frame or leave a solver backlog. See
+  [offline camera-reference authorization](#offline-camera-reference-authorization-and-exact-batch-receipts-2026-08-11).
 - **The gait-cycle route still supports KINEMATIC CONTACT TIMING; its load route is CLOSED on the
   bundled models** (updated 2026-08-10). The historical reasoning treated root acceleration and
   stance impulse as a possible load model. The evidence did NOT validate foot support: the probe that produced
@@ -322,7 +329,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 532 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 642 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -5364,6 +5371,78 @@ Store release remains blocked until the owner obtains written commercial
 permission or replaces/removes that material.
 
 
+## Offline camera-reference authorization and exact batch receipts (2026-08-11)
+
+Camera motion is now an admission boundary in front of temporal dynamics, not a warning attached
+after a result. Contact capability is checked first. Both bundled models have no validated contact
+geometry, so their video path records camera reference as unmeasured, skips AVFoundation/Vision
+analysis entirely and never constructs a dynamics pass. A future contact-valid path must also match
+a typed `CameraMotionCalibrationProfile`; production deliberately supplies no such profile yet, so
+it fails closed as calibration unavailable rather than treating provisional thresholds as a
+measurement. Pose review and contact-timing output remain available.
+
+The native adapter analyses no more than 4 seconds and 1000 actual source samples. Admission is
+based on presentation timestamps and decoded coverage, not nominal frame rate. It requires exactly
+one usable video track, source PTS order, a completed `AVAssetReader`, consistent pixel formats,
+square pixel aspect ratio and a full clean aperture. Upright renders are even-sized, no larger than
+4096 px on either axis or 4:1 in aspect, and the actual BGRA allocation is bounded by
+`bytesPerRow × height × 5 <= 64 MiB`. The calibrated render size is rechecked before reader/Vision
+work begins. `preferredTransform` must have a finite unit-orthogonal 2x2 part within 1e-4; mirrors
+are retained, while scale, shear and singular metadata fail closed. Human rectangles are pinned to
+Vision revision 2 and translational registration to revision 1. Readiness checks runtime support
+for both exact algorithms rather than accepting SDK/OS defaults.
+
+Registration uses fixed 8 px box averages on an 8 px grid, 32 px correlation sampling and the full
+two-dimensional ±48 px residual surface. Every candidate shares one inward correlation domain;
+each fine tile needs at least 64 overlapping samples, a distinct peak at least 16 px away and
+absolute best correlation at least 0.5. A second screen exhaustively visits every 8 px offset with
+at least 64 overlapping boxes, including all periods outside ±48 px and arbitrary scale remainders.
+Four sign quadrants use fixed matched 8x8 domains; narrow tails use exact 48-sample matched domains,
+so every remote correlation is compared only with zero lag on identical samples. The zero-product
+integral and every shifted product are counted: the 48x48-box reference grid costs exactly 496,889
+pairs under the 500,000 cap. Larger regular regions are carved into deterministic, globally
+phase-aligned 48x45-box leaves; smaller irregular regions use bounded long-axis recursion. Either
+path is capped at 16 leaves, and sampling quality is never reduced to fit. Narrow grids are rejected
+unless the broad alias rectangle contains the complete fine square; equal aggregate counts cannot
+substitute for that set relation. Vision's finite translation must agree
+with the local peak and every remote matched-domain alias lowers uniqueness. Peak-infeasible strips
+are rejected before Vision, sampled background coverage is recomputed, and all quality-valid tiles
+are fitted once — no iterative outlier deletion can manufacture a static answer. Geometry, memory,
+local/global correlation, both Vision revisions and calibration constants are bound into revision-3
+fingerprints and revalidated by the reducer.
+
+The solve path now has an exact accepted-frame receipt and five terminal causes: timeout, solve
+failure, admission rejection, busy and superseded. Publication ownership is separate from physical
+solver occupancy: timeout/cancel revokes the exact generation immediately, while the engine remains
+physically busy until its queued work actually exits, preventing both late-result attribution and a
+hidden backlog. A process-wide offline policy lease blocks live submissions/resets during a batch;
+runner-local ownership, conditional resets and re-entrancy checks fence close, interactive dismiss,
+observer callbacks and run replacement. Padding failure propagates instead of silently advancing a
+filter window, and every accepted result is routed by receipt to its owning frame. Result fields and
+full-session ground clearing now commit as one main-thread transaction followed by one explicit UI
+notification. The result store likewise commits frames, authorization, gait and selection before
+one notification, so no observer can see denied camera/contact state beside stale loads. Static ID
+keeps its solve-class provenance even if the optional muscle solve is absent. A pre-fence lifecycle
+invocation epoch makes the newest Run/Cancel win; acquire, phase publication, segment reset, scale,
+release and task cleanup either recheck or retire their exact token/lease before a synchronous
+subscriber can start a successor.
+
+TDD added 110 Swift test methods covering contact-first admission, profile/fingerprint drift,
+cadence/coverage, reader and format failures, raster/memory/correlation limits, periodic aliases,
+raw luma-to-box-to-peak registration, translation sign, exact receipt routing, timeout/cancel races,
+dual leases, close/reset ordering and distinct failure presentation. The reviewed fast lane is now
+exactly **642** tests; its fail-closed gate harness passes **49/49**. All Swift sources parse,
+`git diff --check`, the privacy-manifest probe and app-resource-boundary probe pass. Fresh unsigned
+Debug `build-for-testing` succeeds for both generic arm64 Simulator and generic arm64 device
+destinations. A focused three-suite run through `tools/run_tests.sh subset` then rebuilt, linked and
+signed on a freshly rebooted private `BioMotion-CI` simulator, but Xcode 26.4 launched no test host
+and emitted no `Test Suite` or `Test Case` in 193 seconds. The run was cancelled, and the gate
+correctly rejected its interrupted rc 73 / incomplete xcresult; **no XCTest pass or product-test
+failure is claimed**. Real-device camera footage, a contact-valid model, calibrated profile,
+representative native-rate clips and physical-device ground truth remain prerequisites before
+enabling temporal dynamics.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -5919,18 +5998,32 @@ arms must differ in the work that PRECEDES the mask.
     the speed instead of blaming the user; `.movingBeyondStaticBudget` retains
     the distinct hold-still remedy. The later **526/526** fast gate exercised
     the current verdict/store/UI target with zero failures or skips.
-17. **Build the camera-static check, upstream where the frames are.** Measured to separate the
-    owner's clips by 20-60× (§ cam_t). Two constraints from the measurement: it must run at the
-    video's NATIVE rate (at 10 fps sampling the estimator aliased a 13.5 °/s pan down to ~0), and it
-    detects rotation well but translation poorly. On iOS the natural tool is
-    `VNTranslationalImageRegistrationRequest` on the region outside the person box. It is cheap —
-    no pose model — so it can run densely even when the pose sampling is sparse.
+17. ~~**Build the camera-static check, upstream where the frames are.**~~ **DONE 2026-08-11 as a
+    fail-closed authorization boundary.** Contact capability is evaluated before any camera work;
+    current bundles therefore skip the native analyzer and cannot reach temporal dynamics. The
+    contact-valid branch uses actual source cadence, dense AVFoundation/Vision registration outside
+    the person boxes, strict media/raster/resource admission and a revisioned calibration
+    fingerprint. Production calibration remains intentionally unavailable: representative
+    native-rate fixtures, a contact-valid model and physical-device ground truth are external
+    prerequisites, not constants to infer from the owner's three clips.
 18. **Decide (a) refuse vs (b) declare-depth-constant** — see the owner decision in the cam_t
     section. This is what gates whether a dynamic branch exists at all.
 19. ~~**Drop Vision-fallback frames out of any derivative.**~~ **DONE 2026-08-10.** The 22/309
     frames remain visible as reviewable poses, but video fallback now branches before scale/Nimble/
     gait and splits both solve passes. Photo fallback remains analysable; raw decoder slots and
     requested endpoints prevent gap compression or false edge padding.
+20. **Restore live subject scale when an offline policy lease ends.** **P1 opened 2026-08-11.**
+    `ContentView` shares one `NimbleEngine` between live calibration/tracking and offline import.
+    The first trusted imported pose replaces that skeleton's body scales, but lease release and
+    `resetSessionState()` clear filters, ground and warm starts only; closing the sheet therefore
+    leaves live ARKit using the imported subject's geometry until a reload or app restart.
+    `MomentArmComputer` shares the same skeleton, so this is cross-person, order-dependent model
+    state, not a display-only leak. Handle it as the next independent item: retain a value-only live
+    calibration recipe, keep offline scaling lease-scoped, and FIFO-restore the live recipe (or
+    loaded defaults when calibration was skipped) in the lease-release reset block before any
+    synchronous notification can admit a successor. Ordinary tracking/session resets must continue
+    to preserve the current live subject scale. Native RED must compare both body scale vectors and
+    neutral-pose pelvis/femur/talus/humerus/hand transforms across live → offline → restore.
 
 ### Owner decisions still open
 

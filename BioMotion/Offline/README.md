@@ -10,9 +10,16 @@ validated support polygon, unilateral-contact, or friction constraint.
 Production therefore stops at `.contactSupportUnavailable`: ID,
 ground-reaction force, centre of pressure, muscle effort, and gait-load output
 remain nil even with an explicit or statistically trusted floor. Refilming
-cannot change that model/solver capability. The path is covered by the ordinary
-test gate; the remaining external boundary is real-device/UI validation called
-out below.
+cannot change that model/solver capability. A separate clip-level camera
+reference gate is already wired for a future capability-valid model, but its
+production calibration profile is intentionally nil. The runner resolves
+contact capability first: the bundled models skip the camera pass as
+`.unmeasured`, while a future contact-valid model without that exact profile
+would stop at `.calibrationUnavailable` without opening the native reader.
+Provisional image thresholds are never treated as evidence.
+The path is covered by the ordinary test gate; real camera fixtures, real-video
+adapter coverage, and device UI/performance/cancellation remain external
+boundaries called out below.
 
 ## Flow
 
@@ -21,13 +28,30 @@ OfflineImportView (PhotosPicker: photo or video)
   -> OfflineSessionRunner.run(source:samplingMode:)
        -> poseEstimator.loadModelIfNeeded()          [SAM3DPoseEstimator]
        -> wait for nimble.isModelLoaded               [poll, ≤10s]
+       -> snapshot contact capability
        -> nimble.resetSessionState()                  [new clip: clear IK/QP and ground provenance]
+       -> CameraReferenceAnalysisAdmission            [contact FIRST]
+          photo/single-frame -> .notRequiredForSingleFrame
+          contact unavailable -> .unmeasured          [skip native reader]
+          calibration unavailable -> .calibrationUnavailable [skip native reader]
+          only contact-valid + exact versioned profile:
+            CameraMotionVideoAnalyzer
+              require exactly one video track (multi-track is indeterminate)
+              require requested span <= 4s and <= 1000 actual native samples
+              decode upright bounded frames at actual SOURCE PTS
+              derive continuity/endpoint tolerance from actual cadence
+              exclude the person; register quality-screened background tiles
+              reduce translation/rotation/scale to ONE clip-level state
+       -> finalize OfflineResultStore.cameraReferenceState before any frame
+          and map it to NimbleEngine.cameraDynamicsAuthorization
        -> FrameSource.decodePhoto / VideoDecoder       [decode]
        -> for each frame:
             SAM3DPoseEstimator.estimate(uiImage:)      [Vision bbox -> warp -> CoreML predict]
             MHRRetarget.makeBodyFrame(jointCoords:)    [-> BodyFrame + source marker names]
             (first successful frame only) nimble.scaleModel(...)  [MHRRetarget.segmentScaleMarkers/estimatedStatureMeters]
-            nimble.processFrame(bodyFrame) + wait for NimbleEngine's next publish, or timeout
+            nimble.processFrame(bodyFrame, exact offline lease)
+              + await that exact receipt, or fail closed
+            [IK remains eligible; unauthorized dynamics stop before solveIDGRF]
             -> OfflineResultStore.append(...)
        -> edge-pad trusted requested endpoints so the centred Savitzky-Golay
           window can produce results for the first/last real frames
@@ -35,6 +59,7 @@ OfflineImportView (PhotosPicker: photo or video)
        -> if the clip has usable product timing:
             snapshot hasValidatedFootContactSupport
             future validated-contact branch only:
+              also require clip camera state to permit TEMPORAL dynamics
               resultStore.beginGaitReplacementPass() before analysed publication
             publish detached GaitTimingReport
             guard the capability snapshot
@@ -53,21 +78,183 @@ and the engine resolves it only after the stable-id whitelist succeeds.
 
 ## Design decisions and why
 
+### Camera reference is clip-level evidence, not subject motion
+
+`CameraReferenceState` answers whether an imported image sequence supplies a
+calibrated stationary image reference for the requested solve class. It does
+not describe the subject; per-frame `MotionState` / `MotionVerdict` still does
+that. The runner resolves the camera state before it appends the first
+`FrameResult`, publishes the state once for the whole clip, and carries the
+numeric evidence separately from the pose results. No later frame can silently
+upgrade an earlier unknown camera into dynamics.
+
+For multi-frame video, `CameraMotionVideoAnalyzer` has a deliberately separate
+reader from the sparsely sampled pose decoder. It requires exactly one video
+track; a multi-track asset is indeterminate rather than composited at a
+fabricated cadence. Empty edits inside the requested range, a cropped clean
+aperture, non-square pixels, or format descriptions with inconsistent encoded
+rasters are also refused: the calibration domain is one full encoded raster,
+not a best-effort presentation crop. The video
+composition names that track as `sourceTrackIDForFrameTiming`, so variable and
+native presentation timestamps survive. Its upright render transform also
+scales into a fixed, profile-owned maximum pixel budget. The track's
+`preferredTransform` must have a finite unit-orthogonal 2x2 linear part within
+1e-4 (a mirror is allowed); scale, shear and singular metadata are refused
+rather than normalized into the calibrated raster. Changing `renderSize` alone
+would crop rather than scale, while analysing full-resolution 4K BGRA buffers
+would make the rolling snapshot set an unbounded memory cost. The actual output
+must be an even BGRA raster no larger than 4096 px on either axis or 4:1 in
+aspect, and its real `bytesPerRow * height * 5` retained-buffer cost must fit the
+64 MiB adapter budget. Human rectangles are pinned to Vision revision 2 and
+translational registration to revision 1; a runtime that lacks either exact
+revision fails readiness before media is opened. The revisions, render size and
+all resource limits are recorded in the revision-3 calibration fingerprint.
+
+Each native frame first gets a human bounding box. The union of the reference
+and target boxes is inflated and excluded, leaving disjoint background tiles;
+the moving person is never deliberately used as a camera landmark. Tiles are
+admitted only after texture/structure, alignment appearance, and uniqueness
+checks. Coverage is recomputed from those FINAL usable tiles, not from the
+regions that were merely requested, and the accepted set must contain enough
+spatially dispersed tiles to fit a similarity field. Vision results must be a
+finite translation-only transform, and every planned tile must return a valid
+registration. Every quality-valid tile then participates in one fit; no
+iterative outlier deletion may manufacture a static answer from inconsistent
+motion. That fit exposes image translation, in-plane rotation, and scale
+(zoom/push-in); adjacent-frame fits catch jumps and short-lived anchors
+accumulate slow sub-pixel drift.
+
+Texture and ambiguity have fixed render-pixel semantics. Both frames are
+box-averaged on an 8 px lattice; normalized reference-to-target correlation is
+sampled every 32 px over the complete +/-48 px two-dimensional residual surface
+around Vision's candidate. Every candidate uses the same inward-cropped sample
+domain; a tile is screened for complete support before Vision runs, and sampled
+coverage is recomputed after narrow strips are removed or feasible side regions
+are split. A second exhaustive screen visits every 8 px lattice offset whose
+overlap contains at least 64 box samples, including periods outside the local
+window and offsets with arbitrary scale remainders. Four sign quadrants use
+fixed matched 8x8 domains; narrow tails use an exact 48-sample matched domain.
+Each remote correlation is compared only with zero lag on those identical
+samples. One zero-lag product integral costs `width * height` pairs, every
+shifted product is counted explicitly, and local plus global work must stay at
+or below 500,000 pairs. The 48x48-box reference case costs exactly 496,889.
+Larger regular regions are carved into deterministic, globally phase-aligned
+48x45-box leaves; smaller irregular regions use bounded long-axis recursion.
+Either path is limited to 16 leaves and never silently samples more coarsely.
+Planning also rejects any narrow grid whose broad alias rectangle does not
+wholly contain the fine +/-48 px candidate square; candidate counts are set
+differences, so matching totals alone are not sufficient.
+The candidate must be the
+local global peak, its absolute normalized correlation must meet the provisional
+0.5 floor, and either a local or remote matched-domain alias lowers uniqueness.
+Thus a texture with an 80 px period is refused even though its equal peak lies
+outside +/-48 px. The box/grid/search/separation, global overlap/domain values,
+cost cap, correlation floor, pinned Vision revisions and adapter revision are
+fingerprinted calibration inputs, not tile-area-dependent performance
+shortcuts. Weak, inconsistent, foreground-dominated, aliased, repetitive or
+over-budget evidence becomes `.indeterminate`, never zero motion.
+
+The reducer consumes the actual sample PTS. It requires every interval to be
+valid and continuous, positive bounded sample durations, the first and last
+native samples to cover the requested range endpoints, and at least one
+complete derivative window. Its gap/endpoint allowance comes from the robust
+actual PTS cadence and is capped by the versioned profile; nominal frame rate
+cannot widen it. EOF is accepted only when the reader itself reports
+`.completed`; failed, cancelled, still-reading, and unknown terminal states
+stay distinct and fail closed.
+Checking merely one good interior window is insufficient: an unread head or
+tail, decoder failure, timestamp gap, or cancellation cannot stand in for the
+whole requested clip. The resulting state is one of measured static, measured
+moving, between calibrated bands, calibration required, or an explicit
+indeterminate reason.
+
+Admission also bounds cost independently of pose sampling: the requested
+native span is at most 4 seconds and the adapter stops at 1000 actual samples.
+The calibration fingerprint binds the adapter revision, analysis dimensions,
+motion bands, cadence/window domains, person/tile policy and fit thresholds;
+changing any of them invalidates readiness. Both the runner and analyzer /
+reducer boundary check the typed profile, so a direct caller cannot turn a
+non-empty string into calibration authority.
+
+Permissions differ by solve class:
+
+- A photo or explicit single-frame import is
+  `.notRequiredForSingleFrame`. With a future contact-capable model it may
+  authorize an explicitly static-equilibrium solve, because there is no
+  temporal camera path to measure. It never authorizes gait/temporal dynamics.
+- Only `.staticWithinBudget` authorizes temporal dynamics. It may also
+  authorize static equilibrium.
+- `.unmeasured`, `.moving`, `.betweenCalibrationBands`,
+  `.calibrationRequired`, `.calibrationUnavailable`, and every
+  `.indeterminate` reason authorize neither.
+
+The order is intentional. Validated foot-contact support is tested first,
+because a camera cannot repair an absent support model; both bundled models
+therefore continue to report `.contactSupportUnavailable`. For a future model
+that passes contact capability, the runner maps the state to
+`CameraDynamicsAuthorization`. `NimbleEngine.processFrame` captures that value
+before crossing to `solverQueue`, and `dynamicsPreflightAvailability` refuses
+before `solveIDGRF`, avoiding computation of values the product cannot publish.
+`OfflineResultStore` independently applies the same
+contact-then-camera order when projecting a complete solve generation and
+purges ID/muscle on a downgrade. That second check is a stale-payload safety
+boundary, not the mechanism that makes an unauthorized solve acceptable. Its
+frames, capability, camera state, gait and selection are ordinary stored state:
+each method commits a complete snapshot and then sends one notification, so a
+synchronous observer cannot see denied authorization beside old loads or let an
+older setter overwrite a reentrant reset. Static-equilibrium provenance follows
+the retained ID solve even when the optional muscle solve is absent.
+
+`Configuration.production` has no typed calibration profile until the exact
+implementation, dimensions, cadence/window domain and fingerprint pass
+versioned tripod/static controls plus held-out moving-camera fixtures. The
+runner therefore does not run this expensive pass in production today: a
+future contact-valid multi-frame path would finalize
+`.calibrationUnavailable` with no numeric evidence. This is the intended safe
+state. Visible-background registration does not prove absolute physical camera
+translation, and uncalibrated thresholds do not become truth because a clip
+looks steady.
+
 ### Backpressure (constraint: never submit frame N+1 while N is in flight)
 
-`NimbleEngine.processFrame` drops a frame outright if a solve is in flight, and
-has no per-frame completion callback — every result lands via
-`DispatchQueue.main.async` inside `publishResults`, itself only called when
-`solveIK` succeeds. `OfflineSessionRunner`'s `NimbleFrameWaiter` calls
-`nimble.processFrame(_:)` then awaits the engine's next `objectWillChange`
-(Combine), with a fixed 6s timeout treated as a failed frame. See the doc
-comments on `NimbleFrameWaiter` and `OfflineSessionRunner` for the full
-reasoning, including why a 30ms settle delay after the first
-`objectWillChange` is added (it fires from inside a `@Published` property's
-`willSet`, before the engine finishes writing the ~12 fields `publishResults`
-sets). `OfflineOrchestrationTests` exercises the same waiter against the real
-engine, including a reset between two windows; device scheduling remains part
-of the external device verification boundary.
+`NimbleEngine.processFrame` synchronously returns `.accepted(FrameReceipt)`,
+`.dropped`, or `.rejected`. The receipt combines reset generation with an
+accepted-only monotonic submission id. A dedicated completion publisher sends
+`.published`, `.failed`, or `.superseded` for that exact receipt; ordinary
+`objectWillChange` is never interpreted as frame completion. A successful
+event is sent only after every published field is coherent, the physical
+solver occupancy is released, and `lastSolveReceipt` names the same snapshot.
+Those result fields are ordinary stored state committed as one main-thread
+transaction, followed by one explicit UI notification; a Combine subscriber
+cannot reset midway through fifteen independent `@Published` setters and then
+let the superseded closure write its remaining fields or recording history.
+Full-session ground clearing is inside the same reset transaction.
+
+Publication authority and physical solver occupancy are separate. Timeout or
+cancellation synchronously supersedes the exact publication and bumps its
+generation before resuming the waiter, but a non-cancellable GCD solve keeps
+the physical occupancy until it really returns. Later frames are dropped and
+retried rather than queued behind a stuck solve, so cancellation cannot leave a
+backlog delaying the live path. Engine-global `OfflinePolicyLease` also prevents
+a second Runner or live producer from inserting work, resetting the batch, or
+restoring policy over the current owner; queued AR tracking-loss callbacks are
+also ignored while the offline sheet is active. Runner acquisition, phase
+publication, release and task-defer cleanup recheck or retire their exact local
+token/lease before any synchronous engine notification. A lifecycle invocation
+epoch is registered before predecessor release, so a synchronously reentrant
+newer Run or Cancel wins instead of being overwritten by the older call as its
+stack unwinds. Segment reset and model scaling also present the captured engine
+lease and stop if reset notification transfers ownership. An observer-started
+successor therefore cannot lose its lease, phase, cancellation handle or local
+segment state. Head/tail padding returns
+failure to its caller and never increments the push count for an unpublished
+receipt. A real timeout, native IK failure, admission refusal, exhausted busy
+retry, and an externally superseded session remain different frame statuses and
+different user messages.
+
+`OfflineOrchestrationTests` exercises the same waiter against the real engine;
+the exact cancellation/timeout scheduling still needs a healthy Simulator and
+device receipt as called out below.
 
 ### 9-frame Savitzky-Golay warm-up is not ground calibration
 
@@ -118,26 +305,33 @@ poses as new observations of the floor. This means:
   and muscle while keeping valid IK/motion; a stale muscle clears only muscle.
   Missing pose provenance clears the solve envelope. A nil/stale value is never
   converted into a measured zero. Image/frame/model provenance and `FrameStatus`
-  are not owned by the solve and remain unchanged.
+  are not owned by the solve and remain unchanged. If a same-generation ID is
+  otherwise valid, the projector applies the session gates in the same order as
+  the engine: contact capability first, then the clip camera permission for
+  static-equilibrium or temporal dynamics. Either downgrade strips ID and
+  muscle while preserving pose and report-neutral motion evidence.
   Starting the gait replacement pass first clears every eligible pass-one ID,
   muscle, and static flag to `.analysisPassIncomplete`; each successful
   same-generation gait solve then replaces that marker. A timeout or missing
   centred publication therefore cannot leave static physics under a running
   result.
 
-### Contact support gates dynamics before ground-plane trust
+### Contact support gates dynamics before camera reference and ground trust
 
-The two requirements answer different questions. Ground provenance says where
-the floor is. Contact support says how a foot may transmit force through it.
-Both bundled models have empty `ContactGeometrySet`s, and the active solver does
-not impose a validated support domain itself, so knowing the floor is not
-enough. `hasValidatedFootContactSupport` is checked first and both bundled
-models remain pose-only. An explicit floor, 30 observations, a session reset,
-or a second pass cannot unlock a missing capability.
+The three requirements answer different questions. Contact support says how a
+foot may transmit force. Camera reference says whether image derivatives can be
+treated in one stationary reference frame. Ground provenance says where the
+floor is. Both bundled models have empty `ContactGeometrySet`s, and the active
+solver does not impose a validated support domain itself, so the permanent
+contact capability is checked first and both bundled models remain pose-only.
+An explicit floor, a calibrated camera, 30 observations, a session reset, or a
+second pass cannot unlock a missing capability.
 
-The rolling estimator remains as a necessary second gate for a future
-model/solver pair that does define validated support. An external caller may
-pin an explicit ground height; that source is trusted immediately and observed
+For a future model/solver pair that does define validated support, the requested
+solve class must next be authorized by the clip camera state before the engine
+may enter `solveIDGRF`. The rolling estimator then remains a necessary later
+gate. An external caller may pin an explicit ground height; that source is
+trusted immediately and observed
 foot heights cannot overwrite it during the session. Without one,
 `NimbleBridge` maintains a bounded rolling low-percentile estimate from the
 solved model's lowest heel height: the 10th percentile of the most recent 180
@@ -265,6 +459,14 @@ single boolean whose one sentence stated both causes wrongly on a short clip. Pr
 per-frame wall time (`perFrameDurations`), shown as "estimating time…" (not a
 fabricated number) until at least one frame has completed.
 
+Camera-reference cadence is intentionally independent of that pose budget.
+After model/contact and calibration admission, an eligible multi-frame video is
+read across the same requested time range at the selected source track's actual
+sample PTS. A 2 fps pose run therefore does not sample a pan at 2 fps, and a
+120/240 fps or variable-rate source is not relabelled with `nominalFrameRate`.
+Nominal rate helps choose the request/window only; robust actual PTS cadence,
+positive sample duration, continuity and endpoint coverage decide admission.
+
 The video's nominal track rate is used only where it is the relevant fact: native-rate sampling,
 decode-memory sizing, and the budget notice. Analysis cadence comes from the median interval of the
 surviving `BodyFrame` timestamps and is stored in `GaitReport.framesPerSecond`. `GaitOutcome.analysed`
@@ -280,6 +482,14 @@ models `hasValidatedFootContactSupport` is false; the runner publishes timing, t
 unreached plan and does not remove timestamp-derived timing.
 
 ### Model loading
+
+Every run begins in `.loadingModel`, because the model's validated contact
+capability is the higher-priority admission boundary. Only a contact-valid,
+versioned-calibration multi-frame source later enters
+`.checkingCameraReference`; bundled models and an absent calibration skip that
+phase entirely. Neither phase claims a percentage it cannot measure. Photos and
+explicit single-frame imports resolve their non-temporal policy without opening
+a video reader.
 
 `MLModelConfiguration.computeUnits = .cpuAndGPU` (not `.all`) per this task's
 explicit constraint. Loading happens on a dedicated background queue via a
@@ -340,6 +550,27 @@ this is the highest-value single thing to re-verify before shipping.
 
 ## External verification boundaries
 
+- **Camera-reference calibration is not installed.** Keep
+  the production typed profile/fingerprint nil until the exact reader, upright
+  analysis resolution, cadence/window domain, tile-quality policy, and reducer pass tripod
+  static controls plus held-out pan, tilt, roll, lateral translation,
+  push-in/pull-out, zoom, and slow sub-pixel drift fixtures. Calibration and
+  held-out clips must be disjoint, the profile must identify its allowed
+  lens/resolution/frame-rate domain, and the accepted false-static risk must be
+  recorded rather than inferred from three convenient videos.
+- **The real adapter still needs adversarial video coverage.** Run the complete
+  `AVAssetReader` + Vision path on the owner's clips and on 30/60/120/240 fps
+  plus VFR sources, different orientations/resolutions/lenses/lighting, head and
+  tail decode loss, low-texture walls, one-directional or repetitive patterns,
+  exposure/rolling shadows/reflections, multiple people, and independently
+  moving background objects. Pure reducer/geometry tests cannot characterize
+  Vision registration or prove source endpoint coverage on those media.
+- **Camera-pass device cost and cancellation remain unmeasured.** Verify peak
+  decoder/pixel-buffer memory stays within the profile-owned pixel/byte/shape
+  budget, that the 4-second/1000-native-sample caps hold on device, and that cancelling
+  during reader/Vision work promptly leaves no late clip-state or solve
+  authorization behind. Simulator pixel formats and scheduling are not a
+  substitute for this receipt.
 - **Pixel-level resampling fidelity.** The affine warp uses
   `CGContext.interpolationQuality = .high`, which is CoreGraphics' best
   available resampling but is not documented to be exactly bilinear; the
@@ -365,10 +596,12 @@ this is the highest-value single thing to re-verify before shipping.
   here.
 - The `RealityKit` `ARView(cameraMode: .nonAR, ...)` / `PerspectiveCamera` /
   camera auto-framing math — geometrically reasoned, not rendered.
-- The GCD serial-queue ordering argument for `scaleModel` → `processFrame` and
-  the `objectWillChange` + 30ms-settle waiter are exercised on the simulator
-  against the real engine. Their device scheduling/performance still needs the
-  device verification recorded in STATUS.
+- The GCD serial-queue ordering argument for `scaleModel` → `processFrame`,
+  exact receipt completion, timeout/cancellation supersession, physical
+  occupancy, and engine-global offline lease have compile/link and pure/source
+  contracts. Their real scheduling still needs the focused Simulator and
+  device verification recorded in STATUS; no `objectWillChange` or settle-delay
+  inference remains in the product runner.
 - Whether a single Core ML model instance loaded with `.cpuAndGPU` safely
   serves sequential (never concurrent) `prediction(from:)` calls from a
   background serial queue the way this file assumes — standard usage, not

@@ -15,6 +15,21 @@ import UIKit
 ///    the case it most often fires on.
 final class OfflineDisclosureTests: XCTestCase {
 
+    func testSolverFailureDescriptionsPreserveTheTerminalCause() {
+        let failures: [OfflineResultStore.FrameStatus.SolverFailure] = [
+            .timedOut, .solveFailed, .admissionRejected, .busy, .superseded
+        ]
+        let descriptions = failures.map(\.userFacingDescription)
+        XCTAssertEqual(Set(descriptions).count, failures.count,
+                       "different failure causes must not all tell the user the solver timed out")
+        XCTAssertEqual(failures[0].userFacingDescription,
+                       "Solver timed out on this frame")
+        XCTAssertTrue(failures[1].userFacingDescription.contains("could not fit"))
+        XCTAssertTrue(failures[2].userFacingDescription.contains("could not accept"))
+        XCTAssertTrue(failures[3].userFacingDescription.contains("still busy"))
+        XCTAssertTrue(failures[4].userFacingDescription.contains("session changed"))
+    }
+
     // MARK: - The per-frame gate on the overlay and the caption
 
     /// A frame whose derivative window crossed a contact edge does not enter the
@@ -151,6 +166,7 @@ final class OfflineDisclosureTests: XCTestCase {
                        + "calculations.")
 
         let store = OfflineResultStore()
+        store.setCameraReferenceState(.staticWithinBudget(Self.cameraEvidence))
         store.setValidatedFootContactSupport(true)
         store.append(OfflineResultStore.FrameResult(
             id: 0, sourceImage: UIImage(), timestamp: 0, status: .success,
@@ -231,6 +247,7 @@ final class OfflineDisclosureTests: XCTestCase {
         for (frameID, scenario) in scenarios.enumerated() {
             let ownerTimestamp = Double(frameID)
             let store = OfflineResultStore()
+            store.setCameraReferenceState(.staticWithinBudget(Self.cameraEvidence))
             store.setValidatedFootContactSupport(true)
             store.append(Self.emptyFrame(id: frameID))
             store.replaceBiomechanics(
@@ -289,6 +306,7 @@ final class OfflineDisclosureTests: XCTestCase {
     @MainActor
     func testGroundUntrustedReplacementErasesPhysicsAndCarriesItsReason() {
         let store = OfflineResultStore()
+        store.setCameraReferenceState(.staticWithinBudget(Self.cameraEvidence))
         store.setValidatedFootContactSupport(true)
         store.append(Self.emptyFrame(id: 0))
         store.replaceBiomechanics(
@@ -516,6 +534,8 @@ final class OfflineDisclosureTests: XCTestCase {
                         "unknown capability with valid pose provenance keeps pose")
 
         let validatedCapability = OfflineResultStore()
+        validatedCapability.setCameraReferenceState(
+            .staticWithinBudget(Self.cameraEvidence))
         validatedCapability.setValidatedFootContactSupport(true)
         validatedCapability.setGait(.analysed(report: timing))
         validatedCapability.append(gaitContradiction)
@@ -621,6 +641,7 @@ final class OfflineDisclosureTests: XCTestCase {
             }
 
             let store = OfflineResultStore()
+            store.setCameraReferenceState(.staticWithinBudget(Self.cameraEvidence))
             store.setValidatedFootContactSupport(true)
             store.append(OfflineResultStore.FrameResult(
                 id: 10 + scenario,
@@ -652,6 +673,8 @@ final class OfflineDisclosureTests: XCTestCase {
         // Replacement cannot manufacture provenance missing from the stored
         // owner frame, and it applies the same owner/IK timestamp tolerance.
         let missingBodyStore = OfflineResultStore()
+        missingBodyStore.setCameraReferenceState(
+            .staticWithinBudget(Self.cameraEvidence))
         missingBodyStore.setValidatedFootContactSupport(true)
         missingBodyStore.append(OfflineResultStore.FrameResult(
             id: 20, sourceImage: UIImage(), timestamp: 20, status: .success,
@@ -676,6 +699,7 @@ final class OfflineDisclosureTests: XCTestCase {
         XCTAssertEqual(missingBodyStore.frames[0].motionState, .undetermined)
 
         let staleIKStore = OfflineResultStore()
+        staleIKStore.setCameraReferenceState(.staticWithinBudget(Self.cameraEvidence))
         staleIKStore.setValidatedFootContactSupport(true)
         staleIKStore.append(Self.emptyFrame(id: 21))
         staleIKStore.replaceBiomechanics(
@@ -697,6 +721,8 @@ final class OfflineDisclosureTests: XCTestCase {
         // A late capability downgrade reprojects an already-valid generation:
         // pose/verdict/timing survive, every load-bearing value disappears.
         let downgradeStore = OfflineResultStore()
+        downgradeStore.setCameraReferenceState(
+            .staticWithinBudget(Self.cameraEvidence))
         downgradeStore.setValidatedFootContactSupport(true)
         downgradeStore.setGait(.analysed(report: timing))
         downgradeStore.append(OfflineResultStore.FrameResult(
@@ -774,6 +800,7 @@ final class OfflineDisclosureTests: XCTestCase {
     @MainActor
     func testGaitReplacementPassClearsOldPhysicsBeforeAnyNewSolve() throws {
         let store = OfflineResultStore()
+        store.setCameraReferenceState(.staticWithinBudget(Self.cameraEvidence))
         store.setValidatedFootContactSupport(true)
         store.append(Self.emptyFrame(id: 0))
         store.replaceBiomechanics(
@@ -825,12 +852,13 @@ final class OfflineDisclosureTests: XCTestCase {
         let image = UIImage()
         let body = BodyFrame(timestamp: 9, frameNumber: 99, joints: [])
         let store = OfflineResultStore()
+        store.setCameraReferenceState(.staticWithinBudget(Self.cameraEvidence))
         store.setValidatedFootContactSupport(true)
         store.append(OfflineResultStore.FrameResult(
             id: 7,
             sourceImage: image,
             timestamp: 8,
-            status: .nimbleTimeout,
+            status: .nimbleFailure(.timedOut),
             usedFallbackBBox: true,
             camT: SIMD3<Float>(1, 2, 3),
             modelChecksums: (input: 10, output: 11, source: 12, bbox: 13, warp: 14),
@@ -869,7 +897,7 @@ final class OfflineDisclosureTests: XCTestCase {
         XCTAssertEqual(frame.id, 7)
         XCTAssertTrue(frame.sourceImage === image)
         XCTAssertEqual(frame.timestamp, 8)
-        XCTAssertEqual(frame.status, .nimbleTimeout)
+        XCTAssertEqual(frame.status, .nimbleFailure(.timedOut))
         XCTAssertTrue(frame.usedFallbackBBox)
         XCTAssertNil(frame.temporalAnalysisExclusion)
         XCTAssertEqual(frame.camT, SIMD3<Float>(1, 2, 3))
@@ -1051,6 +1079,26 @@ final class OfflineDisclosureTests: XCTestCase {
             dynamicsAvailability: .waitingForMotionWindow,
             isStaticHoldEstimate: false, motionState: .undetermined)
     }
+
+    private static let cameraEvidence = CameraMotionEvidence(
+        analyzedDurationSeconds: 1,
+        derivativeWindowSeconds: 0.25,
+        peakNormalizedTranslation: 0,
+        translationStaticUpperBound: 0.01,
+        translationMovingLowerBound: 0.02,
+        peakRotationRadians: 0,
+        rotationStaticUpperBoundRadians: 0.01,
+        rotationMovingLowerBoundRadians: 0.02,
+        peakScaleFraction: 0,
+        scaleStaticUpperBound: 0.01,
+        scaleMovingLowerBound: 0.02,
+        calibrationProfileID: "existing-test-fixture-v1",
+        analysisFrameWidthPixels: 1280,
+        analysisFrameHeightPixels: 720,
+        maximumAnalysisPixelCount: 2_073_600,
+        measuredIntervals: 30,
+        sampledFrames: 31
+    )
 
     private static func source(at relativePath: String) throws -> String {
         let repositoryRoot = URL(fileURLWithPath: #filePath)

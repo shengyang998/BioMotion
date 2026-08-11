@@ -118,6 +118,14 @@ struct OfflinePlaybackView: View {
                 contactSupportCapabilityBanner
             }
 
+            // A camera/tripod change cannot unlock mechanics the model does not
+            // implement. Suppress that secondary advice while the permanent
+            // contact limit is active so the two banners cannot imply otherwise.
+            if resultStore.hasValidatedFootContactSupport != false,
+               resultStore.cameraReferenceState.bannerTitle != nil {
+                cameraReferenceBanner
+            }
+
             // On an ANALYSED running clip the gait panel replaces the posture
             // findings: the findings are single-pose measurements and a runner
             // has no single pose.
@@ -184,6 +192,23 @@ struct OfflinePlaybackView: View {
         .padding(.vertical, 8)
     }
 
+    private var cameraReferenceBanner: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let title = resultStore.cameraReferenceState.bannerTitle {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+            }
+            if let detail = resultStore.cameraReferenceState.bannerDetail {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
     @ViewBuilder
     private var statusBadge: some View {
         if let frame = resultStore.selectedFrame {
@@ -221,6 +246,7 @@ struct OfflinePlaybackView: View {
             case .waitingForMotionWindow, .groundPlaneUntrusted,
                  .inverseDynamicsFailed, .missingRootVerticalDOF,
                  .contactSupportUnavailable,
+                 .cameraReferenceUnavailable,
                  .analysisPassIncomplete:
                 return frame.dynamicsAvailability.title
             case .withheld, .available:
@@ -289,8 +315,8 @@ struct OfflinePlaybackView: View {
             // silent drop the user cannot act on. Built on the model side so it
             // is covered by `BodyPlausibilityTests`.
             return frame.status.implausibleBodyDescription ?? "Body size not measurable"
-        case .nimbleTimeout:
-            return "Solver timed out on this frame"
+        case .nimbleFailure(let reason):
+            return reason.userFacingDescription
         }
     }
 
@@ -303,14 +329,15 @@ struct OfflinePlaybackView: View {
                !frame.hasValidatedDynamicsPayload { return .red }
             switch frame.dynamicsAvailability {
             case .inverseDynamicsFailed, .missingRootVerticalDOF,
-                 .contactSupportUnavailable, .analysisPassIncomplete: return .red
+                 .contactSupportUnavailable, .cameraReferenceUnavailable,
+                 .analysisPassIncomplete: return .red
             case .groundPlaneUntrusted: return .orange
             case .waitingForMotionWindow: return .white
             case .withheld, .available: break
             }
             if frame.isPoseOnlyBecauseNotStill { return .orange }
             return .white
-        case .poseEstimationFailed, .nimbleTimeout, .implausibleBody:
+        case .poseEstimationFailed, .nimbleFailure, .implausibleBody:
             return .red
         }
     }
@@ -325,6 +352,7 @@ struct OfflinePlaybackView: View {
         case .waitingForMotionWindow, .groundPlaneUntrusted,
              .inverseDynamicsFailed, .missingRootVerticalDOF,
              .contactSupportUnavailable,
+             .cameraReferenceUnavailable,
              .analysisPassIncomplete:
             return frame.dynamicsAvailability.detail
         case .withheld, .available:
@@ -375,7 +403,7 @@ struct OfflinePlaybackView: View {
                 Slider(
                     value: Binding(
                         get: { Double(resultStore.selectedIndex) },
-                        set: { resultStore.selectedIndex = Int($0.rounded()) }
+                        set: { resultStore.selectFrame(at: Int($0.rounded())) }
                     ),
                     in: 0...Double(max(resultStore.frames.count - 1, 0)),
                     step: 1

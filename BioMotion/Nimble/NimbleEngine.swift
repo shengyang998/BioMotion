@@ -7,26 +7,66 @@ import os
 /// Manages the Nimble physics engine lifecycle and provides real-time IK/ID results.
 /// Runs Nimble on a background queue to avoid blocking the main thread.
 final class NimbleEngine: ObservableObject {
+    /// Exact identity of one accepted solver submission. A generation changes
+    /// at every reset; the submission id distinguishes frames accepted inside
+    /// that generation. Both are required because timestamps may repeat during
+    /// filter padding and a reset can leave old work queued behind a new run.
+    struct FrameReceipt: Hashable, Sendable {
+        let generation: UInt64
+        let submissionID: UInt64
+    }
+
+    /// Synchronous admission result from `processFrame`. Only an accepted frame
+    /// owns a receipt and can later produce a completion.
+    enum FrameSubmission: Equatable, Sendable {
+        case accepted(FrameReceipt)
+        case dropped
+        case rejected
+    }
+
+    /// Terminal event for exactly one accepted receipt. This is deliberately
+    /// separate from `objectWillChange`: observers must never infer frame
+    /// completion from one field of a multi-field publication.
+    struct FrameCompletion: Equatable, Sendable {
+        enum Status: Equatable, Sendable {
+            case published
+            case failed
+            case superseded
+        }
+
+        let receipt: FrameReceipt
+        let status: Status
+    }
+
+    private let frameCompletionSubject = PassthroughSubject<FrameCompletion, Never>()
+    var frameCompletionPublisher: AnyPublisher<FrameCompletion, Never> {
+        frameCompletionSubject.eraseToAnyPublisher()
+    }
+
     @Published private(set) var isModelLoaded = false
     /// Model+solver capability, separate from the per-frame reason dynamics
     /// were or were not attempted. This lets UI preserve a motion verdict while
     /// also naming a permanent model limitation.
     @Published private(set) var hasValidatedFootContactSupport = false
-    @Published private(set) var lastIKResult: IKOutput?
-    @Published private(set) var lastIDResult: IDOutput?
-    @Published private(set) var lastMuscleResult: MuscleOutput?
-    @Published private(set) var displayMuscleResult: MuscleOutput?
-    @Published private(set) var ikSolveTimeMs: Double = 0
-    @Published private(set) var idSolveTimeMs: Double = 0
-    @Published private(set) var muscleSolveTimeMs: Double = 0
+    // Result state is mutated as one main-thread transaction and followed by
+    // one explicit `objectWillChange` send. Individual `@Published` wrappers
+    // would synchronously re-enter reset/acquire between these fields and let
+    // a superseded receipt continue writing a half-old snapshot.
+    private(set) var lastIKResult: IKOutput?
+    private(set) var lastIDResult: IDOutput?
+    private(set) var lastMuscleResult: MuscleOutput?
+    private(set) var displayMuscleResult: MuscleOutput?
+    private(set) var ikSolveTimeMs: Double = 0
+    private(set) var idSolveTimeMs: Double = 0
+    private(set) var muscleSolveTimeMs: Double = 0
 
     // --- Accuracy metrics (for UI diagnostics) ---
     /// RMS marker residual from the most recent IK solve, in meters.
-    @Published private(set) var ikMarkerResidualMeters: Double = 0
+    private(set) var ikMarkerResidualMeters: Double = 0
     /// Max |joint torque| / total body mass from the most recent ID solve, in Nm/kg.
     /// Physiological range for walking/squat: ~1–3 Nm/kg. Values above 10 indicate
     /// broken pipeline (usually missing GRF or bad ddq).
-    @Published private(set) var maxTorquePerKg: Double = 0
+    private(set) var maxTorquePerKg: Double = 0
     /// Total mass of the loaded (possibly scaled) skeleton, in kg.
     @Published private(set) var totalMassKg: Double = 0
     /// Left/right foot vertical GRF as fractions of body weight (0-1.x typically).
@@ -49,8 +89,8 @@ final class NimbleEngine: ObservableObject {
     /// green/amber indicator keyed to the sum. A later repair narrowed that to
     /// the sum plus `footLoadSplitIsNotMeasuredNote`; the contact audit then
     /// made the entire branch unreachable for both bundled models.
-    @Published private(set) var leftFootLoadFraction: Double = 0
-    @Published private(set) var rightFootLoadFraction: Double = 0
+    private(set) var leftFootLoadFraction: Double = 0
+    private(set) var rightFootLoadFraction: Double = 0
 
     /// The caption that makes the GRF badge a diagnostic instead of a finding.
     ///
@@ -65,18 +105,22 @@ final class NimbleEngine: ObservableObject {
     /// ‖ΣF_contact + m·g − m·a_com‖ / m. A correct pipeline reports ~0 every
     /// frame — it is a consistency check on the contact-wrench readback, not a
     /// measure of how balanced the pose is. See `NimbleIDResult.rootResidualNorm`.
-    @Published private(set) var rootResidualPerKg: Double = 0
+    private(set) var rootResidualPerKg: Double = 0
     /// Current ground-plane height (ARKit world y), for display only.
-    @Published private(set) var groundHeightY: Double = 0
+    private(set) var groundHeightY: Double = 0
     /// The most recent complete solve, or nil while the Savitzky-Golay window
     /// is still filling. Prefer this over the individual fields above when you
     /// need IK, ID, muscle and the motion verdict to describe the SAME instant.
-    @Published private(set) var lastSolve: SolveRecord?
+    private(set) var lastSolve: SolveRecord?
+    /// Exact receipt that owns `lastSolve`. Warm-up publications leave the
+    /// previous solve intact, so routing must check this identity as well as
+    /// reading the atomic solve snapshot.
+    private(set) var lastSolveReceipt: FrameReceipt?
     /// Why the newest publication does or does not contain inverse dynamics.
     /// Numeric diagnostics are valid only for `.available`; zero remains a
     /// legitimate measured value (for example flight) and is never reused as
     /// an absence sentinel.
-    @Published private(set) var dynamicsAvailability: DynamicsAvailability = .waitingForMotionWindow
+    private(set) var dynamicsAvailability: DynamicsAvailability = .waitingForMotionWindow
 
     /// When true, a static verdict is required before contact-dependent
     /// dynamics may be attempted. A validated contact capability and every
@@ -123,6 +167,107 @@ final class NimbleEngine: ObservableObject {
     /// already a main-thread API (`isFrameInFlight`/`droppedFrameCount` are
     /// documented as main-only), so there is no cross-queue race.
     var staticHoldGating: Bool = false
+
+    /// The physical class of inverse-dynamics solve about to run. Static
+    /// equilibrium and temporal dynamics need different camera evidence: one
+    /// source image can support the former assumption, never a derivative.
+    enum DynamicsSolveClass: Equatable, Sendable {
+        case staticEquilibrium
+        case temporal
+    }
+
+    /// External camera-reference authorization captured with each submitted
+    /// frame. The default preserves the live ARKit path, whose world-space
+    /// reference is established outside the offline video analyzer. Offline
+    /// import replaces it with the exact permissions derived from the clip's
+    /// `CameraReferenceState` before submitting any frame.
+    struct CameraDynamicsAuthorization: Equatable, Sendable {
+        let permitsStaticEquilibrium: Bool
+        let permitsTemporalDynamics: Bool
+
+        static let unrestricted = Self(
+            permitsStaticEquilibrium: true,
+            permitsTemporalDynamics: true
+        )
+        static let denied = Self(
+            permitsStaticEquilibrium: false,
+            permitsTemporalDynamics: false
+        )
+
+        func permits(_ solveClass: DynamicsSolveClass) -> Bool {
+            switch solveClass {
+            case .staticEquilibrium: return permitsStaticEquilibrium
+            case .temporal: return permitsTemporalDynamics
+            }
+        }
+    }
+
+    /// Main-thread policy input, like `staticHoldGating`. It is copied before
+    /// work crosses onto `solverQueue`, so an entire solve sees one immutable
+    /// authorization even if a clip finishes while that solve is in flight.
+    var cameraDynamicsAuthorization: CameraDynamicsAuthorization = .unrestricted
+
+    /// Engine-global ownership of the offline policy. Local Runner tokens are
+    /// insufficient because two import views can hold the same NimbleEngine;
+    /// an older runner must not restore live defaults over a newer one.
+    struct OfflinePolicyLease: Hashable, Sendable {
+        fileprivate let id: UInt64
+    }
+
+    private var nextOfflinePolicyLeaseID: UInt64 = 0
+    private var activeOfflinePolicyLease: OfflinePolicyLease?
+
+    /// Acquires the shared offline policy and atomically supersedes any older
+    /// runner/solve. The returned lease is the only authority that may later
+    /// update or restore these global policy fields.
+    func acquireOfflinePolicyLease() -> OfflinePolicyLease {
+        nextOfflinePolicyLeaseID &+= 1
+        let lease = OfflinePolicyLease(id: nextOfflinePolicyLeaseID)
+        activeOfflinePolicyLease = lease
+        gaitPlan = nil
+        staticHoldGating = true
+        cameraDynamicsAuthorization = .denied
+        // No owner-specific writes follow the synchronous completion/reset
+        // notifications, so a subscriber that acquires a newer lease cannot be
+        // overwritten when this call unwinds.
+        _ = resetRealtimeState(offlinePolicyLease: lease)
+        return lease
+    }
+
+    func ownsOfflinePolicyLease(_ lease: OfflinePolicyLease) -> Bool {
+        activeOfflinePolicyLease == lease
+    }
+
+    /// Shared-engine mutations follow the same ownership rule as frame
+    /// admission. Live callers use nil only while no offline owner exists; an
+    /// offline runner must present its exact lease. This prevents a delayed AR
+    /// tracking-loss callback from superseding an unrelated batch receipt.
+    private func permitsOfflinePolicyMutation(
+        _ supplied: OfflinePolicyLease?
+    ) -> Bool {
+        switch (activeOfflinePolicyLease, supplied) {
+        case (nil, nil):
+            return true
+        case let (active?, supplied?) where active == supplied:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Conditional release used by normal defer, Cancel, Close and run-to-run
+    /// replacement. A stale runner is a no-op and cannot weaken a successor.
+    @discardableResult
+    func releaseOfflinePolicyLease(_ lease: OfflinePolicyLease) -> Bool {
+        guard activeOfflinePolicyLease == lease else { return false }
+        activeOfflinePolicyLease = nil
+        gaitPlan = nil
+        staticHoldGating = false
+        cameraDynamicsAuthorization = .unrestricted
+        // Keep this last for the same reentrancy reason as acquisition.
+        resetRealtimeState()
+        return true
+    }
 
     /// Processed IK output with named DOFs.
     struct IKOutput {
@@ -306,6 +451,10 @@ final class NimbleEngine: ObservableObject {
         /// the feet support the ground. A known-unconstrained contact wrench is
         /// absence, not a publishable estimate.
         case contactSupportUnavailable
+        /// The image sequence did not establish a calibrated, stationary
+        /// camera reference for this solve class. The clip-level evidence and
+        /// exact reason live in `OfflineResultStore.cameraReferenceState`.
+        case cameraReferenceUnavailable
         /// Contact capability exists, but the rolling floor estimate does not
         /// yet have the 30 observations required for trust.
         case groundPlaneUntrusted
@@ -373,6 +522,8 @@ final class NimbleEngine: ObservableObject {
                 return "Pose only — this model cannot solve running dynamics"
             case .contactSupportUnavailable:
                 return "Pose only — foot contact is not supported"
+            case .cameraReferenceUnavailable:
+                return "Pose only — camera reference is unavailable"
             case .groundPlaneUntrusted:
                 return "Pose only — establishing the ground plane"
             case .inverseDynamicsFailed:
@@ -394,6 +545,8 @@ final class NimbleEngine: ObservableObject {
                 return "The loaded musculoskeletal model has no supported world-vertical root coordinate."
             case .contactSupportUnavailable:
                 return "This model and solver do not provide validated foot-support mechanics, so joint torque, ground force, centre of pressure, muscle effort and gait-load values are withheld. Pose, anatomy and contact timing remain available; refilming cannot enable the missing outputs."
+            case .cameraReferenceUnavailable:
+                return "The clip did not establish a calibrated visible-background camera reference for this calculation. Pose, anatomy and contact timing remain available."
             case .groundPlaneUntrusted:
                 return "Ground reaction force, centre of pressure and muscle output require a trusted floor as well as validated foot-support mechanics; this rolling floor estimate does not yet have 30 observations."
             case .inverseDynamicsFailed:
@@ -412,6 +565,7 @@ final class NimbleEngine: ObservableObject {
         var invalidatesPreviousDynamics: Bool {
             switch self {
             case .missingRootVerticalDOF, .contactSupportUnavailable,
+                 .cameraReferenceUnavailable,
                  .groundPlaneUntrusted, .inverseDynamicsFailed,
                  .analysisPassIncomplete:
                 return true
@@ -419,6 +573,23 @@ final class NimbleEngine: ObservableObject {
                 return false
             }
         }
+    }
+
+    /// Central preflight for every path that can reach inverse dynamics.
+    /// Contact support is deliberately checked first: a camera/tripod change
+    /// cannot unlock mechanics the loaded model does not implement.
+    static func dynamicsPreflightAvailability(
+        hasValidatedFootContactSupport: Bool,
+        cameraAuthorization: CameraDynamicsAuthorization,
+        solveClass: DynamicsSolveClass
+    ) -> DynamicsAvailability? {
+        guard hasValidatedFootContactSupport else {
+            return .contactSupportUnavailable
+        }
+        guard cameraAuthorization.permits(solveClass) else {
+            return .cameraReferenceUnavailable
+        }
+        return nil
     }
 
     /// Historical research outcome for one capability-valid gait-dynamics
@@ -623,12 +794,11 @@ final class NimbleEngine: ObservableObject {
     /// Everything one warm solve produced, all dated at the SAME Savitzky-Golay
     /// centre timestamp.
     ///
-    /// The individual `@Published` fields below are updated independently, so a
-    /// consumer that reads `lastMuscleResult` and `lastIKResult` in the same
-    /// turn can pick up a muscle result from an OLDER solve alongside a fresh
-    /// IK result — which matters now that a moving frame publishes IK with no
-    /// muscle at all. This bundle is the consistent view: everything in it
-    /// belongs to `centerTimestamp` or is nil.
+    /// Result fields now commit in one non-reentrant main-thread transaction,
+    /// but this remains the canonical provenance bundle: a consumer can hold
+    /// one getter across a later publication and otherwise combine values from
+    /// different solves. Everything here belongs to `centerTimestamp` or is
+    /// nil, and `lastSolveReceipt` identifies the transaction that owns it.
     struct SolveRecord {
         let centerTimestamp: TimeInterval
         let motion: MotionClassification
@@ -847,6 +1017,15 @@ final class NimbleEngine: ObservableObject {
     // Backpressure: at most one frame in flight on solverQueue at a time.
     // Accessed only from main.
     private var isFrameInFlight = false
+    /// Physical ownership of the serial solver. This survives a generation
+    /// reset until the already-running block actually reaches a terminal path;
+    /// otherwise repeated timeouts could enqueue B/C/... behind a stuck A and
+    /// keep doing discarded work long after the offline run was cancelled.
+    private var solverOccupancyReceipt: FrameReceipt?
+    /// Permission to publish product state. A reset revokes this immediately,
+    /// independently of the physical occupancy above.
+    private var activeFrameReceipt: FrameReceipt?
+    private var nextSubmissionID: UInt64 = 0
     private(set) var droppedFrameCount: Int = 0
 
     // NO RUNTIME DOF MASK IS INSTALLED HERE, AND THAT IS A MEASURED DECISION.
@@ -923,7 +1102,11 @@ final class NimbleEngine: ObservableObject {
                     // smoothing, and published results all belonged to the
                     // previous model. The queued solver reset runs before any
                     // subsequently submitted frame on the serial queue.
-                    self.resetRealtimeState()
+                    self.resetRealtimeState(
+                        resetsBridgeSession: false,
+                        resetsBridgeIKWarmStart: false,
+                        resetsMuscleSession: false
+                    )
                     // Recording may remain armed across the asynchronous load,
                     // but an export must never mix model generations or retain
                     // torque rows after switching to an unsupported model.
@@ -952,26 +1135,53 @@ final class NimbleEngine: ObservableObject {
     }
 
     /// Scale the model for a specific user.
-    func scaleModel(height: Double, markerPositions: [Float], markerNames: [String]) {
-        guard isModelLoaded else { return }
+    @discardableResult
+    func scaleModel(
+        height: Double,
+        markerPositions: [Float],
+        markerNames: [String],
+        offlinePolicyLease: OfflinePolicyLease? = nil
+    ) -> Bool {
+        guard permitsOfflinePolicyMutation(offlinePolicyLease),
+              isModelLoaded else { return false }
         let positions = markerPositions.map { NSNumber(value: Double($0)) }
         solverQueue.async { [weak self] in
             self?.bridge.scaleModel(withHeight: height,
                                     markerPositions: positions,
                                     markerNames: markerNames)
         }
+        return true
     }
 
     /// Process a body frame: run IK (and optionally ID) on a background thread.
-    func processFrame(_ frame: BodyFrame) {
-        guard isModelLoaded else { return }
+    /// Admission is synchronous. An accepted receipt is the only identity the
+    /// completion publisher will later use; a dropped/rejected frame never
+    /// produces a terminal event.
+    @discardableResult
+    func processFrame(
+        _ frame: BodyFrame,
+        offlinePolicyLease: OfflinePolicyLease? = nil
+    ) -> FrameSubmission {
+        guard isModelLoaded else { return .rejected }
+
+        // While an offline runner owns global SG/camera/gait policy, live or
+        // stale runners without that exact engine-global lease must not slip a
+        // solve between an offline completion and its store-routing step.
+        switch (activeOfflinePolicyLease, offlinePolicyLease) {
+        case (nil, nil):
+            break
+        case let (active?, supplied?) where active == supplied:
+            break
+        default:
+            return .rejected
+        }
 
         // Backpressure: drop this frame if the solver is still busy with the
         // previous one. Keeps visualization on the newest pose rather than
         // draining a stale FIFO when OSQP transiently stalls.
         if isFrameInFlight {
             droppedFrameCount &+= 1
-            return
+            return .dropped
         }
 
         // Build marker arrays from the frame
@@ -989,29 +1199,35 @@ final class NimbleEngine: ObservableObject {
             }
         }
 
-        guard !names.isEmpty else { return }
+        guard !names.isEmpty else { return .rejected }
 
-        isFrameInFlight = true
         let frameGeneration = readGeneration()
+        nextSubmissionID &+= 1
+        let receipt = FrameReceipt(
+            generation: frameGeneration,
+            submissionID: nextSubmissionID
+        )
+        isFrameInFlight = true
+        solverOccupancyReceipt = receipt
+        activeFrameReceipt = receipt
         // Captured on main (see `staticHoldGating`) so the whole solve uses one
         // consistent policy even if the flag flips mid-clip.
         let gateOnHolds = staticHoldGating
+        let cameraAuthorization = cameraDynamicsAuthorization
         let plan = gaitPlan
 
         solverQueue.async { [weak self] in
             guard let self else { return }
-            defer {
-                DispatchQueue.main.async { [weak self] in
-                    self?.isFrameInFlight = false
-                }
-            }
 
             // --- IK (runs on every frame, on 1€-filtered markers) ---
             let ikStart = CACurrentMediaTime()
             guard let ikResult = self.bridge.solveIK(
                 withMarkerPositions: positions,
                 markerNames: names
-            ) else { return }
+            ) else {
+                self.completeFrame(receipt: receipt, status: .failed)
+                return
+            }
             let ikTime = (CACurrentMediaTime() - ikStart) * 1000.0
 
             // Record marker motion for the hold detector. Deliberately fed the
@@ -1102,7 +1318,7 @@ final class NimbleEngine: ObservableObject {
                                     ikTime: ikTime, idTime: 0, muscleTime: 0,
                                     ikResidual: ikResult.markerRMSMeters, maxTorqueNm: 0,
                                     groundY: self.bridge.groundHeightY,
-                                    generation: frameGeneration,
+                                    receipt: receipt,
                                     dynamicsAvailability: .waitingForMotionWindow)
                 return
             }
@@ -1147,7 +1363,7 @@ final class NimbleEngine: ObservableObject {
                                      motion: motion.replacingVerdict(.poseDidNotConverge),
                                      smoothedAngles: smoothedAngles,
                                      markerRMS: ikResult.markerRMSMeters,
-                                     ikTime: ikTime, generation: frameGeneration)
+                                     ikTime: ikTime, receipt: receipt)
                 return
             }
 
@@ -1175,7 +1391,7 @@ final class NimbleEngine: ObservableObject {
                                          motion: motion.replacingVerdict(.gaitOutsideAnalysis),
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
-                                         ikTime: ikTime, generation: frameGeneration)
+                                         ikTime: ikTime, receipt: receipt)
                     return
                 }
                 guard entry.contactSide != 0 else {
@@ -1186,7 +1402,7 @@ final class NimbleEngine: ObservableObject {
                                          motion: motion.replacingVerdict(.gaitFlight),
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
-                                         ikTime: ikTime, generation: frameGeneration)
+                                         ikTime: ikTime, receipt: receipt)
                     return
                 }
 
@@ -1194,13 +1410,18 @@ final class NimbleEngine: ObservableObject {
                 // mechanics, so retain its stance label before the capability
                 // gate. What stops here is only contact-dependent dynamics.
                 publishedMotion = motion.replacingVerdict(.gaitStance)
-                guard self.bridge.hasValidatedFootContactSupport else {
+                if let unavailable = Self.dynamicsPreflightAvailability(
+                    hasValidatedFootContactSupport:
+                        self.bridge.hasValidatedFootContactSupport,
+                    cameraAuthorization: cameraAuthorization,
+                    solveClass: .temporal
+                ) {
                     self.publishPoseOnly(ik: smoothedIkOutput,
                                          motion: publishedMotion,
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
-                                         ikTime: ikTime, generation: frameGeneration,
-                                         availability: .contactSupportUnavailable)
+                                         ikTime: ikTime, receipt: receipt,
+                                         availability: unavailable)
                     return
                 }
                 guard let rootTY = dofNames.firstIndex(of: Self.rootVerticalDOFName) else {
@@ -1212,7 +1433,7 @@ final class NimbleEngine: ObservableObject {
                                          motion: motion.replacingVerdict(.gaitRefused),
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
-                                         ikTime: ikTime, generation: frameGeneration,
+                                         ikTime: ikTime, receipt: receipt,
                                          availability: .missingRootVerticalDOF)
                     return
                 }
@@ -1257,19 +1478,30 @@ final class NimbleEngine: ObservableObject {
                     self.publishPoseOnly(ik: smoothedIkOutput, motion: motion,
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
-                                         ikTime: ikTime, generation: frameGeneration)
+                                         ikTime: ikTime, receipt: receipt)
                     return
                 }
 
+                solveAsStatics = gateOnHolds && motion.isHold
+                let solveClass: DynamicsSolveClass = solveAsStatics
+                    ? .staticEquilibrium
+                    : .temporal
+
                 // A hold answers only "should grounded dynamics be tried?".
-                // It cannot manufacture the missing model/solver capability.
-                guard self.bridge.hasValidatedFootContactSupport else {
+                // It cannot manufacture missing contact mechanics or camera
+                // evidence. The shared preflight keeps contact capability first.
+                if let unavailable = Self.dynamicsPreflightAvailability(
+                    hasValidatedFootContactSupport:
+                        self.bridge.hasValidatedFootContactSupport,
+                    cameraAuthorization: cameraAuthorization,
+                    solveClass: solveClass
+                ) {
                     self.publishPoseOnly(ik: smoothedIkOutput,
                                          motion: motion,
                                          smoothedAngles: smoothedAngles,
                                          markerRMS: ikResult.markerRMSMeters,
-                                         ikTime: ikTime, generation: frameGeneration,
-                                         availability: .contactSupportUnavailable)
+                                         ikTime: ikTime, receipt: receipt,
+                                         availability: unavailable)
                     return
                 }
 
@@ -1279,7 +1511,6 @@ final class NimbleEngine: ObservableObject {
                 // instead of feeding it derivatives of a motion we half-observed.
                 // It also zeroes the Hill force-velocity term downstream
                 // (`dL_MT/dt = −Rᵀ·q̇`), which is what "isometric" means.
-                solveAsStatics = gateOnHolds && motion.isHold
                 idDQ = solveAsStatics ? [Double](repeating: 0, count: numDOFs) : smoothedDQ
                 idDDQ = solveAsStatics ? [Double](repeating: 0, count: numDOFs) : smoothedDDQ
             }
@@ -1483,10 +1714,11 @@ final class NimbleEngine: ObservableObject {
                                 ikTime: ikTime, idTime: idTime, muscleTime: muscleTime,
                                 ikResidual: ikResult.markerRMSMeters, maxTorqueNm: maxTorqueNm,
                                 groundY: self.bridge.groundHeightY,
-                                generation: frameGeneration,
+                                receipt: receipt,
                                 dynamicsAvailability: dynamicsAvailability,
                                 gait: gaitOutcome)
         }
+        return .accepted(receipt)
     }
 
     /// The root's world-vertical translation coordinate. `FullBody.osim` and
@@ -1503,7 +1735,7 @@ final class NimbleEngine: ObservableObject {
                                  smoothedAngles: [String: Double],
                                  markerRMS: Double,
                                  ikTime: Double,
-                                 generation: UInt64,
+                                 receipt: FrameReceipt,
                                  availability: DynamicsAvailability? = nil) {
         let resolvedAvailability = availability ?? .withheld(motion.verdict)
         publishResults(ik: ik, id: nil, muscle: nil,
@@ -1511,7 +1743,7 @@ final class NimbleEngine: ObservableObject {
                        ikTime: ikTime, idTime: 0, muscleTime: 0,
                        ikResidual: markerRMS, maxTorqueNm: 0,
                        groundY: bridge.groundHeightY,
-                       generation: generation,
+                       receipt: receipt,
                        dynamicsAvailability: resolvedAvailability)
     }
 
@@ -1521,7 +1753,7 @@ final class NimbleEngine: ObservableObject {
                                 ikTime: Double, idTime: Double, muscleTime: Double,
                                 ikResidual: Double, maxTorqueNm: Double,
                                 groundY: Double,
-                                generation: UInt64,
+                                receipt: FrameReceipt,
                                 dynamicsAvailability: DynamicsAvailability,
                                 gait: GaitFrameOutcome? = nil) {
         precondition((id != nil) == dynamicsAvailability.hasInverseDynamics,
@@ -1545,11 +1777,23 @@ final class NimbleEngine: ObservableObject {
                         isStaticHoldEstimate: isStaticHoldEstimate,
                         gait: gait)
         }
+        let generation = receipt.generation
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             // Drop late publishes from a pre-reset generation so they don't
             // overwrite cleared state or enter a new recording session.
-            guard self.readGeneration() == generation else { return }
+            guard self.readGeneration() == generation else {
+                self.finishFrameOnMain(receipt: receipt, status: .superseded)
+                return
+            }
+            // A reset may have already released this receipt and admitted a
+            // successor only after its physical solver work ended. Never let
+            // the older main-queue block publish; still release the exact old
+            // physical occupancy so live/backpressure can resume.
+            guard self.activeFrameReceipt == receipt else {
+                self.finishFrameOnMain(receipt: receipt, status: .superseded)
+                return
+            }
             if self.isRecordingResults, motion != nil {
                 // `ik` is the SG-centred output on every recordable path, so
                 // MOT and STO rows stay temporally aligned. Warm-up publishes
@@ -1571,7 +1815,10 @@ final class NimbleEngine: ObservableObject {
             // Only overwritten by a warm solve. A warm-up publish leaves the
             // previous record in place rather than blanking it, matching how
             // `lastMuscleResult` behaves.
-            if let solve { self.lastSolve = solve }
+            if let solve {
+                self.lastSolve = solve
+                self.lastSolveReceipt = receipt
+            }
             if let displayMuscle {
                 self.displayMuscleResult = displayMuscle
                 self.lastDisplayMuscleTimestamp = displayMuscle.timestamp
@@ -1595,12 +1842,107 @@ final class NimbleEngine: ObservableObject {
             self.rightFootLoadFraction = rightLoad
             self.rootResidualPerKg = rootResPerKg
             self.groundHeightY = groundY
+            // Publication is complete only after every field is coherent and
+            // backpressure has been released for this exact receipt.
+            self.finishFrameOnMain(receipt: receipt, status: .published)
+            // Result fields deliberately are not individually `@Published`.
+            // Completion is the transaction's linearization point; notify UI
+            // only after it, with no stale-result mutation left to perform if
+            // a synchronous subscriber resets or acquires a successor lease.
+            self.objectWillChange.send()
         }
     }
 
-    func resetRealtimeState() {
+    /// Solver-queue failure handoff. Every mutation and completion send occurs
+    /// on main so admission, reset and terminal delivery have one total order.
+    private func completeFrame(
+        receipt: FrameReceipt,
+        status: FrameCompletion.Status
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            self?.finishFrameOnMain(receipt: receipt, status: status)
+        }
+    }
+
+    /// Main-thread terminal transition. The receipt equality guard makes this
+    /// idempotent and prevents an old solve's late callback from clearing a new
+    /// frame's `isFrameInFlight` bit.
+    private func finishFrameOnMain(
+        receipt: FrameReceipt,
+        status: FrameCompletion.Status
+    ) {
+        // Physical completion is independent from publication authorization.
+        // Reset revokes `activeFrameReceipt` immediately but deliberately keeps
+        // this occupancy until the non-cancellable GCD solve really ends.
+        guard solverOccupancyReceipt == receipt else { return }
+        solverOccupancyReceipt = nil
+        isFrameInFlight = false
+        guard activeFrameReceipt == receipt else { return }
+        activeFrameReceipt = nil
+        if status == .failed {
+            // A native IK failure may have mutated warm starts/filters before
+            // returning nil. Reset inside the engine, after clearing the exact
+            // receipt but before its completion is delivered, so the waiter
+            // does not need an ownerless broad reset.
+            resetRealtimeState(
+                resetsBridgeSession: false,
+                resetsBridgeIKWarmStart: false,
+                resetsMuscleSession: false
+            )
+        }
+        frameCompletionSubject.send(FrameCompletion(receipt: receipt, status: status))
+    }
+
+    /// Atomically revokes one exact accepted publication before a timeout
+    /// continuation resumes. Main-queue ordering then guarantees a solver
+    /// publish already queued behind this call sees the bumped generation and
+    /// cannot transiently write results the waiter has declared timed out.
+    @discardableResult
+    func supersedeFrame(_ receipt: FrameReceipt) -> Bool {
+        guard activeFrameReceipt == receipt else { return false }
+        resetRealtimeState(
+            resetsBridgeSession: false,
+            resetsBridgeIKWarmStart: false,
+            resetsMuscleSession: false
+        )
+        return true
+    }
+
+    @discardableResult
+    func resetRealtimeState(
+        offlinePolicyLease: OfflinePolicyLease? = nil
+    ) -> Bool {
+        guard permitsOfflinePolicyMutation(offlinePolicyLease) else {
+            return false
+        }
+        resetRealtimeState(
+            resetsBridgeSession: false,
+            resetsBridgeIKWarmStart: false,
+            resetsMuscleSession: false
+        )
+        return true
+    }
+
+    /// Enqueues the complete requested solver reset before publishing any
+    /// synchronous main-thread reset/completion notifications. A reentrant
+    /// subscriber therefore cannot place a solve between realtime clearing and
+    /// the stronger bridge/QP reset required by a clip or analysis boundary.
+    private func resetRealtimeState(
+        resetsBridgeSession: Bool,
+        resetsBridgeIKWarmStart: Bool,
+        resetsMuscleSession: Bool,
+        resetsGroundHeight: Bool = false
+    ) {
         // Bump first so any in-flight frame's publish will be discarded.
         _ = bumpGeneration()
+        let supersededReceipt = activeFrameReceipt
+        // Revoke publication synchronously, but DO NOT release physical solver
+        // occupancy. GCD work cannot be cancelled; accepting another receipt
+        // now would queue it behind the timed-out solve and allow a backlog of
+        // discarded B/C/... work to survive cancellation or delay live input.
+        // The old receipt alone releases occupancy in `finishFrameOnMain` when
+        // its solver block actually terminates.
+        activeFrameReceipt = nil
 
         solverQueue.async { [weak self] in
             guard let self else { return }
@@ -1616,6 +1958,14 @@ final class NimbleEngine: ObservableObject {
             // dictionary mutations; FIFO guarantees this clear follows an old
             // solve and precedes every newly submitted frame.
             self.activationFilters.removeAll(keepingCapacity: false)
+            if resetsBridgeSession {
+                self.bridge.resetSessionState()
+            } else if resetsBridgeIKWarmStart {
+                self.bridge.resetIKWarmStart()
+            }
+            if resetsMuscleSession {
+                self.muscleSolver.resetSessionState()
+            }
         }
 
         lastDisplayMuscleTimestamp = nil
@@ -1623,6 +1973,7 @@ final class NimbleEngine: ObservableObject {
         lastIDResult = nil
         lastMuscleResult = nil
         lastSolve = nil
+        lastSolveReceipt = nil
         dynamicsAvailability = .waitingForMotionWindow
         displayMuscleResult = nil
         ikSolveTimeMs = 0
@@ -1633,6 +1984,24 @@ final class NimbleEngine: ObservableObject {
         leftFootLoadFraction = 0
         rightFootLoadFraction = 0
         rootResidualPerKg = 0
+        if resetsGroundHeight {
+            groundHeightY = 0
+        }
+        // All exposed result fields are ordinary stored properties so this is
+        // the reset transaction's only synchronous UI notification. Nothing
+        // owner-sensitive is written after it: a subscriber may acquire a new
+        // lease without the old reset resuming and clobbering that successor.
+        objectWillChange.send()
+        // Reset is a terminal supersession, never a successful publication.
+        // Send after every exposed field is clear. Physical `isFrameInFlight`
+        // intentionally remains true until this receipt's non-cancellable
+        // solver block reaches `finishFrameOnMain`.
+        if let supersededReceipt {
+            frameCompletionSubject.send(FrameCompletion(
+                receipt: supersededReceipt,
+                status: .superseded
+            ))
+        }
     }
 
     /// Full session reset for a clip boundary. In addition to everything
@@ -1651,25 +2020,40 @@ final class NimbleEngine: ObservableObject {
     /// ships is a COMPARISON, so an answer that depends on what was analysed
     /// before it is not an answer. After this call two identical inputs produce
     /// identical output (`testTwoIdenticalRunsProduceIdenticalActivations`).
-    func resetSessionState() {
-        resetRealtimeState()
-        // `resetRealtimeState` deliberately preserves the floor across a gap
-        // in one continuous world frame. A full session reset does not.
-        groundHeightY = 0
-        solverQueue.async { [weak self] in
-            self?.bridge.resetSessionState()
-            self?.muscleSolver.resetSessionState()
+    @discardableResult
+    func resetSessionState(
+        offlinePolicyLease: OfflinePolicyLease? = nil
+    ) -> Bool {
+        guard permitsOfflinePolicyMutation(offlinePolicyLease) else {
+            return false
         }
+        // The ordinary realtime reset preserves the floor across a gap in one
+        // continuous world frame. A full session reset clears it inside the
+        // same non-reentrant result transaction as every other field.
+        resetRealtimeState(
+            resetsBridgeSession: true,
+            resetsBridgeIKWarmStart: false,
+            resetsMuscleSession: true,
+            resetsGroundHeight: true
+        )
+        return true
     }
 
     /// Resets solver state between two passes over the same continuous clip
     /// while preserving that clip's rolling ground estimate and provenance.
-    func resetAnalysisPassStatePreservingGround() {
-        resetRealtimeState()
-        solverQueue.async { [weak self] in
-            self?.bridge.resetIKWarmStart()
-            self?.muscleSolver.resetSessionState()
+    @discardableResult
+    func resetAnalysisPassStatePreservingGround(
+        offlinePolicyLease: OfflinePolicyLease? = nil
+    ) -> Bool {
+        guard permitsOfflinePolicyMutation(offlinePolicyLease) else {
+            return false
         }
+        resetRealtimeState(
+            resetsBridgeSession: false,
+            resetsBridgeIKWarmStart: true,
+            resetsMuscleSession: true
+        )
+        return true
     }
 
     /// Pins a ground plane supplied by a calibrated external source. The call

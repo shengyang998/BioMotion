@@ -129,6 +129,11 @@ struct ContentView: View {
         }
         .onChange(of: bodyTracking.isTracking) { _, isTracking in
             if !isTracking {
+                // A tracking-loss callback can already be queued when the
+                // offline sheet pauses ARKit. The engine lease also rejects
+                // this reset, but keep the UI seam explicit so live lifecycle
+                // noise never even attempts to supersede a batch receipt.
+                guard !showOfflineImport else { return }
                 // Tracking loss invalidates the AR world origin and therefore
                 // the floor expressed in it, not just the SG window.
                 nimble.resetSessionState()

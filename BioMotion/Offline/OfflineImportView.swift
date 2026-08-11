@@ -89,9 +89,10 @@ struct OfflineImportView: View {
             .navigationTitle("Import Clip")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", action: onDismiss)
+                    Button("Close", action: close)
                 }
             }
+            .interactiveDismissDisabled(isRunning)
             .onChange(of: pickerItem) { _, newItem in
                 guard let newItem else { return }
                 Task { await loadPicked(newItem) }
@@ -103,6 +104,12 @@ struct OfflineImportView: View {
             }
             .navigationDestination(isPresented: $showPlayback) {
                 OfflinePlaybackView(resultStore: runner.resultStore, onDone: onDismiss)
+            }
+            .onDisappear {
+                // Navigation to playback hides this form too; that transition
+                // owns the completed result store and must not trigger a reset.
+                guard !showPlayback else { return }
+                runner.cancel()
             }
         }
     }
@@ -187,6 +194,8 @@ struct OfflineImportView: View {
     @ViewBuilder
     private var runButtonLabel: some View {
         switch runner.phase {
+        case .checkingCameraReference:
+            HStack { ProgressView(); Text("Checking camera reference…") }
         case .loadingModel:
             HStack { ProgressView(); Text("Loading pose model…") }
         case .decodingFrames:
@@ -207,12 +216,20 @@ struct OfflineImportView: View {
 
     private var isRunning: Bool {
         switch runner.phase {
-        case .loadingModel, .decodingFrames, .running: return true
+        case .checkingCameraReference, .loadingModel, .decodingFrames, .running:
+            return true
         default: return false
         }
     }
 
     // MARK: - Actions
+
+    private func close() {
+        // Fence the shared Nimble engine synchronously before the containing
+        // sheet/view can disappear and a later runner acquires it.
+        runner.cancel()
+        onDismiss()
+    }
 
     private func startRun() {
         if let pickedPhoto {

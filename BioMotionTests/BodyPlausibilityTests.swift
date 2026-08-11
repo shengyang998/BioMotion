@@ -277,7 +277,7 @@ final class BodyPlausibilityTests: XCTestCase {
     @MainActor
     func testOnlyImplausibleBodyHasARejectionSentence() {
         XCTAssertNil(OfflineResultStore.FrameStatus.success.implausibleBodyDescription)
-        XCTAssertNil(OfflineResultStore.FrameStatus.nimbleTimeout.implausibleBodyDescription)
+        XCTAssertNil(OfflineResultStore.FrameStatus.nimbleFailure(.timedOut).implausibleBodyDescription)
         XCTAssertNil(OfflineResultStore.FrameStatus.poseEstimationFailed("x").implausibleBodyDescription)
     }
 

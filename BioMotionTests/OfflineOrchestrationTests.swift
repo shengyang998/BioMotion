@@ -59,7 +59,8 @@ final class OfflineOrchestrationTests: XCTestCase {
             engine.processFrame(frame)
         }) {
         case .published: return true
-        case .timedOut, .dropped: return false
+        case .failed, .timedOut, .superseded, .dropped, .rejected:
+            return false
         }
     }
 
@@ -121,9 +122,9 @@ final class OfflineOrchestrationTests: XCTestCase {
     /// otherwise timing-dependent race deterministic to review.
     func testResetOwnedBuffersAreQueueAndGenerationConfined() throws {
         let source = try nimbleEngineSource()
-        let resetStart = try XCTUnwrap(source.range(of: "    func resetRealtimeState()"))
+        let resetStart = try XCTUnwrap(source.range(of: "    func resetRealtimeState("))
         let resetEnd = try XCTUnwrap(
-            source.range(of: "    func resetSessionState()", range: resetStart.upperBound..<source.endIndex))
+            source.range(of: "    func resetSessionState(", range: resetStart.upperBound..<source.endIndex))
         let resetBody = String(source[resetStart.lowerBound..<resetEnd.lowerBound])
         let queuedResetEnd = try XCTUnwrap(
             resetBody.range(of: "\n        }\n\n        lastDisplayMuscleTimestamp"))
@@ -132,6 +133,14 @@ final class OfflineOrchestrationTests: XCTestCase {
             queuedReset.contains("activationFilters.removeAll(keepingCapacity: false)"),
             "display filters are solverQueue-owned and must be cleared on that same queue"
         )
+        XCTAssertTrue(queuedReset.contains("if resetsBridgeSession"))
+        XCTAssertTrue(queuedReset.contains("if resetsMuscleSession"),
+                      "clip/pass resets must be in the queued block before notifications")
+        let queuedBlock = try XCTUnwrap(resetBody.range(of: "solverQueue.async"))
+        let notification = try XCTUnwrap(resetBody.range(
+            of: "frameCompletionSubject.send(FrameCompletion("))
+        XCTAssertLessThan(queuedBlock.lowerBound, notification.lowerBound,
+                          "a synchronous subscriber cannot enqueue between reset scopes")
 
         XCTAssertEqual(
             source.components(separatedBy: "ikHistory.append").count - 1,
@@ -140,10 +149,10 @@ final class OfflineOrchestrationTests: XCTestCase {
         )
         let publishStart = try XCTUnwrap(source.range(of: "    private func publishResults("))
         let publishEnd = try XCTUnwrap(
-            source.range(of: "    func resetRealtimeState()", range: publishStart.upperBound..<source.endIndex))
+            source.range(of: "    func resetRealtimeState(", range: publishStart.upperBound..<source.endIndex))
         let publication = String(source[publishStart.lowerBound..<publishEnd.lowerBound])
         let guardIndex = try XCTUnwrap(
-            publication.range(of: "guard self.readGeneration() == generation else { return }"))
+            publication.range(of: "guard self.readGeneration() == generation else {"))
         let historyIndex = try XCTUnwrap(publication.range(of: "self.ikHistory.append"))
         XCTAssertLessThan(guardIndex.lowerBound, historyIndex.lowerBound,
                           "a discarded generation must not enter recording history")
