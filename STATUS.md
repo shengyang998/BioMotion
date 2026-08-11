@@ -5595,6 +5595,30 @@ arm64 device. The reviewed fast-lane count is now **646**; these focused receipt
 as a new full-fast-lane pass.
 
 
+## Moment-arm validation reuses one authoritative sweep (2026-08-12)
+
+The fast lane used to solve the same expensive moment-arm population twice. The shared cylinder /
+ellipsoid harness evaluated a 60-pose superset, then `StraightLinePathErrorTests` independently
+loaded the same model and repeated the complete `169 coordinates × 520 muscles` solve over its
+historical 36-pose subset. That second scan alone took **277.265 seconds**; it did not exercise a
+different production path.
+
+The straight-line suite now selects its exact 36 pose IDs from the shared samples. The snapshot is
+taken before the harness adds the extra arm sweeps, and the existing sample test pins the subset at
+36 unique poses so it cannot silently expand to the 60-pose threshold population. The fixture-to-
+model coordinate-set tripwire moved into the shared build, and wrapped/unwrapped classification
+still comes from the fixture declaration. No product code, reference data, assertion threshold or
+test method count changed.
+
+The combined cylinder, ellipsoid and straight-line receipt passes **25/25**, with zero failures,
+skips or restarts, in **568 seconds**. After the one 60-pose scan, the ellipsoid suite completes in
+0.072 s and the straight-line suite in **0.101 s** instead of 277.265 s. All four straight-line
+distributions are unchanged, including 12,384 reference rows and the same 0.008068 m / 0.146574 m
+maxima. The expected fast-lane saving is **277.164 seconds (about 4 min 37 s)** per run. The fast /
+slow lane sizes remain **646 + 1**; this focused receipt is not represented as a new full-fast-lane
+pass.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /

@@ -21,109 +21,17 @@ import XCTest
 /// asked differently.
 final class StraightLinePathErrorTests: XCTestCase {
 
-    /// Poses this suite evaluates. Every one costs a full 169-coordinate
-    /// central-difference sweep over all 520 muscles, so this is a subset of the
-    /// 173 in the fixture, chosen to include the named poses plus a stride
-    /// through the sweeps and the grid.
-    private static let namedPoses = ["neutral", "squat_deep", "spine_flexed"]
-    private static let poseStride = 6
-
-    private struct Sample {
-        let pose: String
-        let muscle: String
-        let coordinate: String
-        let ours: Double
-        let wrapOff: Double
-        let wrapOn: Double
-    }
-
-    private static var samples: [Sample] = []
-    /// Declared by the fixture generator, never inferred from the numbers.
-    private static var carriesPathWrap: Set<String> = []
-    private static var setupFailure: String?
-    private static var dofNameMismatch: (missing: [String], extra: [String])?
+    private typealias Sample = WrapValidationHarness.Sample
+    private static var samples: [Sample] { WrapValidationHarness.straightLineSamples }
 
     override func setUpWithError() throws {
-        try Self.build(bundle: Bundle(for: type(of: self)))
-        if let failure = Self.setupFailure { throw RequiredTestDependencyError(failure) }
-    }
-
-    private static func build(bundle: Bundle) throws {
-        guard samples.isEmpty, setupFailure == nil else { return }
-        guard let path = bundle.path(forResource: "FullBody", ofType: "osim") else {
-            setupFailure = "FullBody.osim is not reachable from the test bundle"
-            return
-        }
-        let table = try OpenSimReferenceFixture.load(bundle: bundle)
-
-        let bridge = NimbleBridge()
-        guard bridge.loadModel(fromPath: path) else {
-            setupFailure = "NimbleBridge could not load FullBody.osim"
-            return
-        }
-        let computer = MomentArmComputer()
-        guard computer.parseMusclePaths(fromOsimPath: path, from: bridge) else {
-            setupFailure = "MomentArmComputer could not parse FullBody.osim"
-            return
-        }
-
-        // Feeding a name the skeleton does not carry is silently ignored by
-        // `computeMomentArms`, so the pose would be partly the fixture's and
-        // partly whatever the skeleton was last left at. Check the two name
-        // sets agree before trusting a single number below.
-        let ourNames = Set(bridge.dofNames as [String])
-        let fixtureNames = Set(table.coordinateNames)
-        dofNameMismatch = (missing: fixtureNames.subtracting(ourNames).sorted(),
-                           extra: ourNames.subtracting(fixtureNames).sorted())
-
-        let muscleIndex = Dictionary(uniqueKeysWithValues:
-            (computer.muscleNames as [String]).enumerated().map { ($0.element, $0.offset) })
-        let coordinateColumn = Dictionary(uniqueKeysWithValues:
-            table.coordinateNames.enumerated().map { ($0.element, $0.offset) })
-
-        var poseIndices = Set<Int>()
-        for (index, pose) in table.poses.enumerated()
-        where namedPoses.contains(pose.id) || index % poseStride == 0 {
-            poseIndices.insert(index)
-        }
-        for (index, pose) in table.poses.enumerated() where pose.id.hasPrefix("run_") {
-            poseIndices.insert(index)
-        }
-
-        carriesPathWrap = Set(table.muscles.filter(\.carriesPathWrap).map(\.name))
-
-        let dofNames = table.coordinateNames
-        var collected: [Sample] = []
-        for poseIndex in poseIndices.sorted() {
-            let pose = table.poses[poseIndex]
-            let angles = pose.values.map { NSNumber(value: $0) }
-            guard let flat = computer.computeMomentArms(withJointAngles: angles,
-                                                        dofNames: dofNames) else {
-                setupFailure = "computeMomentArms returned nil at pose \(pose.id)"
-                return
-            }
-            let columns = dofNames.count
-            for (fixtureMuscle, muscle) in table.muscles.enumerated() {
-                guard let ourRow = muscleIndex[muscle.name],
-                      let row = table.row(pose: poseIndex, muscle: fixtureMuscle) else { continue }
-                for (slot, coordinate) in muscle.coordinates.enumerated() {
-                    guard let column = coordinateColumn[coordinate] else { continue }
-                    collected.append(Sample(pose: pose.id,
-                                            muscle: muscle.name,
-                                            coordinate: coordinate,
-                                            ours: flat[ourRow * columns + column].doubleValue,
-                                            wrapOff: row.momentArmsWrapOff[slot],
-                                            wrapOn: row.momentArmsWrapOn[slot]))
-                }
-            }
-        }
-        samples = collected
+        try WrapValidationHarness.requireBuild(bundle: Bundle(for: type(of: self)))
     }
 
     // MARK: - Question 0: are we even talking about the same coordinates
 
     func testNimbleAndOpenSimAgreeOnTheCoordinateSet() throws {
-        let mismatch = try XCTUnwrap(Self.dofNameMismatch)
+        let mismatch = try XCTUnwrap(WrapValidationHarness.dofNameMismatch)
         XCTAssertEqual(mismatch.missing, [],
                        "coordinates the fixture names that nimble's skeleton does not carry")
         XCTAssertEqual(mismatch.extra, [],
@@ -133,6 +41,8 @@ final class StraightLinePathErrorTests: XCTestCase {
     func testSamplesWereActuallyCollected() {
         XCTAssertGreaterThan(Self.samples.count, 1000,
                              "nothing was measured, so every number below is vacuous")
+        XCTAssertEqual(Set(Self.samples.map(\.pose)).count, 36,
+                       "the historical straight-line population must remain exactly 36 poses")
     }
 
     // MARK: - Question 1: is wrap-off a faithful stand-in for our code
@@ -153,8 +63,8 @@ final class StraightLinePathErrorTests: XCTestCase {
     /// and tripwire, not a runtime-generated inclusion threshold. FullBody's
     /// four MovingPathPoints are parsed and none is approximated.
     func testOurStraightLineTracksOpenSimOnMusclesWithNoWrapObject() {
-        let unwrapped = Self.samples.filter { !Self.carriesPathWrap.contains($0.muscle) }
-        let wrapped = Self.samples.filter { Self.carriesPathWrap.contains($0.muscle) }
+        let unwrapped = Self.samples.filter { $0.wrapClass == .none }
+        let wrapped = Self.samples.filter { $0.wrapClass != .none }
         let differences = unwrapped.map { abs($0.ours - $0.wrapOff) }
         print(Self.describe(differences, label: "NO-WRAP muscles: ours vs OpenSim wrap-OFF"))
         print(Self.describe(wrapped.map { abs($0.ours - $0.wrapOff) },

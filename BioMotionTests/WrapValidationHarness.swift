@@ -15,7 +15,7 @@ struct RequiredTestDependencyError: LocalizedError {
 /// with OpenSim 4.6's reference columns, shared by the cylinder and ellipsoid
 /// validation suites.
 ///
-/// It is a separate type for one reason: the sweep is 36 poses × 169
+/// It is a separate type for one reason: the sweep is 60 poses × 169
 /// coordinates × 520 muscles and costs minutes of Debug simulator time, and
 /// both suites have to read the SAME numbers. Two harnesses would be two
 /// measurements, and a disagreement between them would be unattributable.
@@ -113,6 +113,11 @@ enum WrapValidationHarness {
     }
 
     private(set) static var samples: [Sample] = []
+    private(set) static var dofNameMismatch: (missing: [String], extra: [String])?
+    private(set) static var straightLinePoseIDs: Set<String> = []
+    static var straightLineSamples: [Sample] {
+        samples.filter { straightLinePoseIDs.contains($0.pose) }
+    }
     private(set) static var lengthSamples: [LengthSample] = []
     private static var setupFailure: String?
     private(set) static var solvedMuscles: Set<String> = []
@@ -150,6 +155,17 @@ enum WrapValidationHarness {
             setupFailure = "NimbleBridge could not load FullBody.osim"
             return
         }
+
+        // Feeding a name the skeleton does not carry is silently ignored by
+        // `computeMomentArms`, so every sample below depends on these complete
+        // coordinate sets matching.
+        let ourNames = Set(bridge.dofNames as [String])
+        let fixtureNames = Set(table.coordinateNames)
+        dofNameMismatch = (
+            missing: fixtureNames.subtracting(ourNames).sorted(),
+            extra: ourNames.subtracting(fixtureNames).sorted()
+        )
+
         let computer = MomentArmComputer()
         guard computer.parseMusclePaths(fromOsimPath: path, from: bridge) else {
             setupFailure = "MomentArmComputer could not parse FullBody.osim"
@@ -198,6 +214,13 @@ enum WrapValidationHarness {
         for (index, pose) in table.poses.enumerated() where pose.id.hasPrefix("run_") {
             poseIndices.insert(index)
         }
+
+        // Preserve the historical 36-pose population before the ellipsoid
+        // suites add every arm sweep. StraightLinePathErrorTests reads this
+        // exact subset from the shared 60-pose measurement.
+        let straightLinePoseIndices = poseIndices
+        straightLinePoseIDs = Set(straightLinePoseIndices.map { table.poses[$0].id })
+
         for (index, pose) in table.poses.enumerated()
         where armPosePrefixes.contains(where: { pose.id.hasPrefix($0) }) {
             poseIndices.insert(index)
