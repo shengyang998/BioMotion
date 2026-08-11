@@ -25,7 +25,8 @@ import sys
 
 import numpy as np
 
-HERE = pathlib.Path(__file__).parent
+HERE = pathlib.Path(__file__).resolve().parent
+REPO_ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 from osim_kinematics import Model, rot_about  # noqa: E402
 
@@ -36,12 +37,18 @@ QUADS_R = ["recfem_r", "vasint_r", "vaslat140_r", "vasmed_r"]
 QUADS_L = ["recfem_l", "vasint_l", "vaslat140_l", "vasmed_l"]
 SHOULDER_12 = ["DELT1", "DELT2", "DELT3", "SUPSP", "INFSP", "SUBSC",
                "TMIN", "TMAJ", "PECM1", "PECM2", "PECM3", "CORB"]
+SHOULDER_24 = [name + suffix for name in SHOULDER_12 for suffix in ("", "_l")]
 KNEE_ANGLES_DEG = [0, 15, 30, 45, 60, 75, 90, 105, 120]
 SHOULDER_DOFS_R = ["shoulder_elv_r", "shoulder_rot_r", "elv_angle_r"]
 
 
 def sha(p):
     return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+
+
+def repo_path(p):
+    """Stable generated provenance, independent of checkout location."""
+    return pathlib.Path(p).resolve().relative_to(REPO_ROOT).as_posix()
 
 
 def neutral(M):
@@ -64,21 +71,42 @@ def main():
     ref = Model(ORIG, nimble_rules=False, couple_patella=True)
     free = Model(ORIG, nimble_rules=False, couple_patella=False)
 
+    measured_muscles = QUADS_R + QUADS_L + SHOULDER_24
+    for label, model in (("before", old), ("after", new),
+                         ("reference", ref), ("free", free)):
+        missing = sorted(set(measured_muscles) - set(model.muscles))
+        if missing:
+            raise RuntimeError(
+                f"{label} model is missing measured muscles: {missing}"
+            )
+        moving = sorted(
+            muscle_name
+            for muscle_name in measured_muscles
+            if any(point.moving_axes is not None
+                   for point in model.muscles[muscle_name].points)
+        )
+        if moving:
+            raise RuntimeError(
+                f"{label} measured muscles contain MovingPathPoints: {moving}"
+            )
+
     R = {}
     R["files"] = {
-        "before": {"path": str(ORIG), "sha256": sha(ORIG)},
-        "after": {"path": str(SHIPPED), "sha256": sha(SHIPPED)},
+        "before": {"path": repo_path(ORIG), "sha256": sha(ORIG)},
+        "after": {"path": repo_path(SHIPPED), "sha256": sha(SHIPPED)},
     }
     R["method"] = {
-        "engine": "tools/osim_fixes/osim_kinematics.py — Python re-implementation of "
-                  "nimblephysics OpenSimParser.cpp readOsim40() joint construction + "
-                  "BioMotion MomentArmComputer.mm length/moment-arm code",
+        "engine": "tools/osim_fixes/osim_kinematics.py — wrap-disabled Python "
+                  "diagnostic of the 2026-08-06 nimblephysics OpenSimParser.cpp "
+                  "joint construction + BioMotion MomentArmComputer.mm "
+                  "straight-line subset, with later-corrected SimmSpline "
+                  "endpoint semantics",
         "moment_arm": "r = -(L(q+eps) - L(q-eps)) / (2*eps), eps = 1e-4 rad, "
                       "ConditionalPathPoints latched at the unperturbed pose "
-                      "(identical to MomentArmComputer.mm)",
+                      "(identical to the historical pre-wrap subset)",
         "units": "moment arms in cm, lengths in m, angles in deg unless stated",
-        "not_run": "the iOS app was never built or executed; these are computed, "
-                   "not observed on device",
+        "not_run": "the iOS app was not built or executed in the 2026-08-06 "
+                   "workstream; these are computed, not observed on device",
     }
 
     # ---------------- structure ----------------
@@ -205,9 +233,10 @@ def main():
         "beta_clamped": False,
         "markers_on_patella": 0,
         "quad_knee_moment_arm_cm_at_knee60_vs_beta_deg": cf,
-        "verdict": "beta is unobservable (no marker on the kneecap) and unclamped, "
-                   "and moving it over a plausible range swings the quadriceps knee "
-                   "moment arm from -2.94 cm to +2.00 cm — a sign flip. Welding "
+        "verdict": "beta is unobservable (no marker on the kneecap) and unclamped; "
+                   f"moving it from -30 to 120 deg moves recfem_r from "
+                   f"{cf['-30']['recfem_r']:.2f} cm to "
+                   f"{cf['120']['recfem_r']:+.2f} cm — a sign flip. Welding "
                    "removes the DOF; the after-DOF count is unchanged at 163+6.",
     }
     d1["dofs_added_by_this_fix"] = 0
@@ -275,7 +304,7 @@ def main():
                    "plane convention is preserved (arguably cleaner).",
     }
 
-    sh_names = [n + s for n in SHOULDER_12 for s in ("", "_l")]
+    sh_names = SHOULDER_24
     d2["shoulder_muscles"] = sorted(sh_names)
     d2["pathwraps_on_shoulder_muscles"] = sum(new.muscles[n].n_wraps for n in sh_names)
     ld = [k for k in new.muscles if k.startswith("LD_")]
@@ -322,20 +351,20 @@ def main():
 
     # ---------------- limitations ----------------
     R["limitations"] = [
-        "The iOS app was not built or run (forbidden for this workstream). Every "
+        "The iOS app was not built or run in this 2026-08-06 workstream. Every "
         "number is computed by a Python re-implementation of the two decisive C++ "
         "files, not observed on device. The re-implementation independently "
         "reproduces four facts recorded in STATUS.md (163 DOFs, 520 muscles = 422 "
         "Thelen + 98 Millard, exactly 2 crash-guard welds, and the shoulder dot "
         "products 0.000004 / 0.054150 / 0.084746), which is the evidence that it "
         "models the same skeleton nimble builds.",
-        "PathWrap is not implemented anywhere in this pipeline (not in nimble's "
-        "parse, not in MomentArmComputer.mm, not here). Each quadriceps carries 1 "
-        "PathWrap, so all quadriceps absolute values carry that error in BOTH "
-        "columns; beyond ~90 deg knee flexion the straight-line path cuts through "
-        "the condyles and the magnitudes are unreliable in all three columns. The 24 "
-        "shoulder muscles carry 0 PathWraps, so the shoulder numbers do not have "
-        "this problem.",
+        "This historical Python diagnostic does not implement PathWrap. The "
+        "current iOS MomentArmComputer solves WrapCylinder and WrapEllipsoid "
+        "(76/76 FullBody references); this report does not. Each quadriceps here "
+        "carries 1 PathWrap, so all three computed columns retain straight-line "
+        "error; beyond ~90 deg knee flexion the diagnostic path cuts through the "
+        "condyles and its magnitudes are unreliable. The 24 shoulder muscles carry "
+        "0 PathWraps, so their values do not have this particular limitation.",
         "The 'reference' column applies the CoordinateCouplerConstraint, which "
         "nimble never enforces. It is the yardstick for how good the weld is; it is "
         "not something the shipped pipeline can compute.",

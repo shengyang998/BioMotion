@@ -2,11 +2,12 @@
 
 WHY THIS EXISTS
 ---------------
-The two structural defects being fixed (patella skipped, shoulders welded) live
-in how *nimblephysics* turns FullBody.osim into a Skeleton, and their effect is
-only visible in muscle moment arms.  Measuring them normally means running the
-iOS app, which this workstream is forbidden from building.  So this module
-re-implements, in Python, exactly the two pieces of C++ that decide the answer:
+The two structural defects fixed in the 2026-08-06 snapshot (patella skipped,
+shoulders welded) live in how *nimblephysics* turns FullBody.osim into a
+Skeleton, and their effect is visible in muscle moment arms. Measuring them
+normally meant running the iOS app, which that workstream was forbidden from
+building. So this module re-implements, in Python, the two pieces of C++ that
+decided the historical answer:
 
   1. `nimblephysics/dart/biomechanics/OpenSimParser.cpp :: readOsim40()`
      — which bodies/joints get built, and which joint class each XML joint
@@ -17,10 +18,13 @@ re-implements, in Python, exactly the two pieces of C++ that decide the answer:
        Ported in `Model.muscle_length` / `Model.moment_arm`, including the
        ConditionalPathPoint latching behaviour and eps = 1e-4 rad.
 
-It is therefore a *simulation of the shipped pipeline*, not an independent
-biomechanics implementation.  It shares the shipped pipeline's known
-approximations on purpose (see LIMITATIONS at the bottom of this docstring) so
-that before/after numbers are apples-to-apples with what the app would print.
+It is therefore a wrap-disabled structural diagnostic for the historical
+model edit, not an independent biomechanics implementation and not an exact
+snapshot of either the 2026-08-06 or current app. It keeps the old straight-line
+muscle paths so the before/after structural numbers remain apples-to-apples,
+while its SimmSpline evaluator includes the later endpoint-linear correction.
+The current iOS `MomentArmComputer` solves both wrapped surfaces; this
+diagnostic does not.
 
 CONVENTIONS VERIFIED AGAINST NIMBLE SOURCE (not assumed)
 --------------------------------------------------------
@@ -41,8 +45,8 @@ CONVENTIONS VERIFIED AGAINST NIMBLE SOURCE (not assumed)
 * PinJoint -> DART RevoluteJoint with default axis = +Z (OpenSimParser.cpp:5610
   never calls setAxis).  UniversalJoint -> DART defaults axis1=+X, axis2=+Y.
 
-LIMITATIONS (shared with the shipped app, and therefore NOT removed here)
-------------------------------------------------------------------------
+LIMITATIONS OF THIS HISTORICAL DIAGNOSTIC
+-----------------------------------------
 * PathWrap (WrapCylinder / WrapEllipsoid) is not implemented here. The app's
   MomentArmComputer now solves both surfaces. Each of the 8 quadriceps measured
   by this historical diagnostic carries exactly 1 PathWrap, so its absolute

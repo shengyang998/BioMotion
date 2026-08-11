@@ -506,14 +506,17 @@ verbatim (not reimplemented). A minimal joint/bone renderer (spheres + boxes,
 approach but is a fresh implementation, since that Coordinator is a private
 nested type inside the ARSession-bound view and isn't reusable.
 
-The camera auto-frames once (first frame with tracked joints; fixed for the
-rest of the scrub session) from the joint bounding box, rather than a
-hardcoded world position — `MHRRetarget.swift`'s own doc comments confirm
-`joint_coords` pins the raw MHR source root at a MODEL-CONSTANT `(0, 0.924, 0)` in every
-prediction, not a real-world camera distance, so a fixed camera position could
-easily show a blank screen. No orbit/manual camera control is implemented
-(out of scope for this pass — noted as a natural follow-up, not added to avoid
-scope creep).
+The playback camera derives its orbit centre and default radius once from the
+first displayed frame with tracked joints after the 3-D view is created; that
+baseline is not recomputed while scrubbing. One-finger drag orbits, pinch zooms
+over a bounded radius, and double-tap restores the auto-framed starting view.
+That initial view comes from the joint bounding box rather than a hardcoded
+playback position —
+`MHRRetarget.swift` documents that `joint_coords` pins the raw MHR source root
+at a model-constant `(0, 0.924, 0)` in every prediction, not at a real-world
+camera distance, so a hardcoded position could easily show a blank screen.
+These gestures move only the non-AR review viewpoint; they neither measure nor
+change the source recording camera and grant no dynamics authorization.
 
 ### Sampling and progress
 
@@ -674,8 +677,10 @@ derivation now agree; pixel-level resampling remains the separate boundary below
 - `VNDetectHumanRectanglesRequest` behavior on real photos (confidence
   ranking, bbox tightness) — Vision framework usage is standard but untested
   here.
-- The `RealityKit` `ARView(cameraMode: .nonAR, ...)` / `PerspectiveCamera` /
-  camera auto-framing math — geometrically reasoned, not rendered.
+- The `RealityKit` `ARView(cameraMode: .nonAR, ...)` / `PerspectiveCamera`
+  auto-framing plus orbit, pinch and double-tap interaction is implemented and
+  geometrically reasoned, but has not been rendered or interaction-tested on a
+  Simulator or device.
 - The GCD serial-queue ordering argument for `scaleModel` → `processFrame`,
   exact receipt completion, timeout/cancellation supersession, physical
   occupancy, and engine-global offline lease have compile/link and pure/source

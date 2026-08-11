@@ -1,19 +1,19 @@
 {
   "files": {
     "before": {
-      "path": "/Users/soleilyu/claude_playground/labs/BioMotion/tools/osim_fixes/FullBody.osim.orig",
+      "path": "tools/osim_fixes/FullBody.osim.orig",
       "sha256": "a55c64341680551fb5a41be254bdfdb3b2be0ac789336ea44902b22fc9a83913"
     },
     "after": {
-      "path": "/Users/soleilyu/claude_playground/labs/BioMotion/BioMotion/Resources/FullBody.osim",
+      "path": "BioMotion/Resources/FullBody.osim",
       "sha256": "0003473937af6883034df358194bd8f52853818e79e36fd23eb5ca2c8d741c09"
     }
   },
   "method": {
-    "engine": "tools/osim_fixes/osim_kinematics.py \u2014 Python re-implementation of nimblephysics OpenSimParser.cpp readOsim40() joint construction + BioMotion MomentArmComputer.mm length/moment-arm code",
-    "moment_arm": "r = -(L(q+eps) - L(q-eps)) / (2*eps), eps = 1e-4 rad, ConditionalPathPoints latched at the unperturbed pose (identical to MomentArmComputer.mm)",
+    "engine": "tools/osim_fixes/osim_kinematics.py \u2014 wrap-disabled Python diagnostic of the 2026-08-06 nimblephysics OpenSimParser.cpp joint construction + BioMotion MomentArmComputer.mm straight-line subset, with later-corrected SimmSpline endpoint semantics",
+    "moment_arm": "r = -(L(q+eps) - L(q-eps)) / (2*eps), eps = 1e-4 rad, ConditionalPathPoints latched at the unperturbed pose (identical to the historical pre-wrap subset)",
     "units": "moment arms in cm, lengths in m, angles in deg unless stated",
-    "not_run": "the iOS app was never built or executed; these are computed, not observed on device"
+    "not_run": "the iOS app was not built or executed in the 2026-08-06 workstream; these are computed, not observed on device"
   },
   "structure": {
     "dofs_before": 163,
@@ -74,7 +74,7 @@
     ],
     "moment_arm_cm_before": {
       "recfem_r": [
-        3.6324,
+        3.6325,
         1.8771,
         -0.1077,
         -2.1215,
@@ -131,7 +131,7 @@
         -0.7667
       ],
       "vasint_r": [
-        -4.9813,
+        -4.9814,
         -4.9157,
         -4.6385,
         -4.2331,
@@ -150,7 +150,7 @@
         -3.164,
         -2.4632,
         -1.6822,
-        -0.8356
+        -0.8357
       ],
       "vasmed_r": [
         -4.9767,
@@ -166,7 +166,7 @@
     },
     "moment_arm_cm_reference_coupled": {
       "recfem_r": [
-        -4.4184,
+        -4.4185,
         -4.6025,
         -4.6061,
         -4.3213,
@@ -174,10 +174,10 @@
         -3.2748,
         -2.3855,
         -1.5741,
-        -1.7385
+        -1.7383
       ],
       "vasint_r": [
-        -4.2776,
+        -4.2777,
         -4.2535,
         -4.1368,
         -3.8545,
@@ -185,10 +185,10 @@
         -2.9441,
         -2.1839,
         -1.5216,
-        -1.8193
+        -1.8192
       ],
       "vaslat140_r": [
-        -3.7277,
+        -3.7279,
         -4.3998,
         -4.3157,
         -3.8606,
@@ -196,7 +196,7 @@
         -2.6557,
         -1.799,
         -1.0762,
-        -1.3255
+        -1.3253
       ],
       "vasmed_r": [
         -4.0844,
@@ -207,12 +207,12 @@
         -2.6661,
         -1.9068,
         -1.2615,
-        -1.5516
+        -1.5515
       ]
     },
     "moment_arm_cm_before_left": {
       "recfem_l": [
-        3.6324,
+        3.6325,
         1.8771,
         -0.1077,
         -2.1215,
@@ -269,7 +269,7 @@
         -0.7667
       ],
       "vasint_l": [
-        -4.9813,
+        -4.9814,
         -4.9157,
         -4.6385,
         -4.2331,
@@ -288,7 +288,7 @@
         -3.164,
         -2.4632,
         -1.6822,
-        -0.8356
+        -0.8357
       ],
       "vasmed_l": [
         -4.9767,
@@ -304,9 +304,9 @@
     },
     "error_vs_reference_cm": {
       "before_rmse": 4.793,
-      "before_max_abs": 8.0508,
-      "after_rmse": 0.551,
-      "after_max_abs": 1.311
+      "before_max_abs": 8.051,
+      "after_rmse": 0.5509,
+      "after_max_abs": 1.3108
     },
     "sign_errors_before": {
       "definition": "knee_angle is flexion, so an extensor must have r < 0",
@@ -340,8 +340,8 @@
       "chosen_beta_star_deg": 0.0,
       "sweep": {
         "0": {
-          "rmse_0_120_cm": 0.551,
-          "max_abs_0_120_cm": 1.311,
+          "rmse_0_120_cm": 0.5509,
+          "max_abs_0_120_cm": 1.3108,
           "rmse_squat_60_110_cm": 0.3388
         },
         "15": {
@@ -361,7 +361,7 @@
         },
         "60": {
           "rmse_0_120_cm": 2.8674,
-          "max_abs_0_120_cm": 6.5558,
+          "max_abs_0_120_cm": 6.5559,
           "rmse_squat_60_110_cm": 1.7579
         },
         "75": {
@@ -371,7 +371,7 @@
         },
         "90": {
           "rmse_0_120_cm": 4.5373,
-          "max_abs_0_120_cm": 7.865,
+          "max_abs_0_120_cm": 7.8651,
           "rmse_squat_60_110_cm": 1.7625
         }
       },
@@ -388,16 +388,16 @@
       "markers_on_patella": 0,
       "quad_knee_moment_arm_cm_at_knee60_vs_beta_deg": {
         "-30": {
-          "recfem_r": -2.936,
-          "vasint_r": -2.942,
-          "vaslat140_r": -2.994,
-          "vasmed_r": -2.828
+          "recfem_r": -3.0,
+          "vasint_r": -3.006,
+          "vaslat140_r": -3.062,
+          "vasmed_r": -2.885
         },
         "-15": {
-          "recfem_r": -3.316,
-          "vasint_r": -3.321,
-          "vaslat140_r": -3.373,
-          "vasmed_r": -3.21
+          "recfem_r": -3.33,
+          "vasint_r": -3.336,
+          "vaslat140_r": -3.387,
+          "vasmed_r": -3.223
         },
         "0": {
           "recfem_r": -3.718,
@@ -442,7 +442,7 @@
           "vasmed_r": 2.02
         }
       },
-      "verdict": "beta is unobservable (no marker on the kneecap) and unclamped, and moving it over a plausible range swings the quadriceps knee moment arm from -2.94 cm to +2.00 cm \u2014 a sign flip. Welding removes the DOF; the after-DOF count is unchanged at 163+6."
+      "verdict": "beta is unobservable (no marker on the kneecap) and unclamped; moving it from -30 to 120 deg moves recfem_r from -3.00 cm to +2.00 cm \u2014 a sign flip. Welding removes the DOF; the after-DOF count is unchanged at 163+6."
     },
     "dofs_added_by_this_fix": 0
   },
@@ -1111,8 +1111,8 @@
     "dofs_added_by_this_fix": 6
   },
   "limitations": [
-    "The iOS app was not built or run (forbidden for this workstream). Every number is computed by a Python re-implementation of the two decisive C++ files, not observed on device. The re-implementation independently reproduces four facts recorded in STATUS.md (163 DOFs, 520 muscles = 422 Thelen + 98 Millard, exactly 2 crash-guard welds, and the shoulder dot products 0.000004 / 0.054150 / 0.084746), which is the evidence that it models the same skeleton nimble builds.",
-    "PathWrap is not implemented anywhere in this pipeline (not in nimble's parse, not in MomentArmComputer.mm, not here). Each quadriceps carries 1 PathWrap, so all quadriceps absolute values carry that error in BOTH columns; beyond ~90 deg knee flexion the straight-line path cuts through the condyles and the magnitudes are unreliable in all three columns. The 24 shoulder muscles carry 0 PathWraps, so the shoulder numbers do not have this problem.",
+    "The iOS app was not built or run in this 2026-08-06 workstream. Every number is computed by a Python re-implementation of the two decisive C++ files, not observed on device. The re-implementation independently reproduces four facts recorded in STATUS.md (163 DOFs, 520 muscles = 422 Thelen + 98 Millard, exactly 2 crash-guard welds, and the shoulder dot products 0.000004 / 0.054150 / 0.084746), which is the evidence that it models the same skeleton nimble builds.",
+    "This historical Python diagnostic does not implement PathWrap. The current iOS MomentArmComputer solves WrapCylinder and WrapEllipsoid (76/76 FullBody references); this report does not. Each quadriceps here carries 1 PathWrap, so all three computed columns retain straight-line error; beyond ~90 deg knee flexion the diagnostic path cuts through the condyles and its magnitudes are unreliable. The 24 shoulder muscles carry 0 PathWraps, so their values do not have this particular limitation.",
     "The 'reference' column applies the CoordinateCouplerConstraint, which nimble never enforces. It is the yardstick for how good the weld is; it is not something the shipped pipeline can compute.",
     "Moment arms are geometry. They are a necessary condition for a sane muscle solution, not a sufficient one: whether the OSQP stage now produces sensible quadriceps activation during a squat depends additionally on force-length state, inverse-dynamics torque quality and the ARKit input, none of which this measurement touches.",
     "Body scaling was not exercised: all numbers are at the model's unscaled size. The groupScale() patch is verified by reading, not by measurement."

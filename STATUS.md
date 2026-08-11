@@ -796,10 +796,13 @@ was necessary, not merely convenient.
 
 ### What this does NOT establish
 
-- **PathWrap is still unimplemented pipeline-wide.** Each quadriceps carries exactly 1 PathWrap, so
-  quadriceps *absolute* values carry that error in every column, and past ~90° knee flexion the
-  straight-line path cuts through the condyles. Differences between columns are meaningful; absolute
-  deep-flexion values are not. The 24 shoulder muscles carry 0 PathWraps and are free of this.
+- **At this 2026-08-06 receipt, PathWrap was unimplemented in both the app and this diagnostic.**
+  Each quadriceps therefore carries straight-line error in every historical report column, and
+  past ~90° knee flexion that path cuts through the condyles. Differences between columns remain
+  meaningful; their absolute deep-flexion values do not. The current iOS app now solves
+  `WrapCylinder` and `WrapEllipsoid` (**76/76** FullBody references); only this historical Python
+  report retains the straight-line approximation. Its 24 shoulder muscles carry zero PathWraps and
+  are free of this particular limitation.
 - Moment arms are geometry — necessary but not sufficient. Whether OSQP now reports loaded
   quadriceps in a real squat also depends on force-length state and inverse-dynamics torque quality.
 - `shoulder_rot_{r,l}` (humeral axial rotation) is **not observable** from one point per shoulder
@@ -1364,6 +1367,14 @@ built**.~~ **Built 2026-08-07** — see [Body-size gate](#body-size-gate-2026-08
 
 ### cam_t recovers the root translation; its depth cannot be differentiated twice (2026-08-07)
 
+**Historical measurement receipt.** The OpenCV probe and three owner clips below measured a
+candidate separation in the 2026-08-07 pipeline only. Its PASS result and inferred static-camera
+candidate subset do not calibrate the current Vision adapter or authorize product dynamics. Current
+production uses contact-first, solve-class camera authorization: a single-frame static solve may use
+`.notRequiredForSingleFrame`, whereas temporal dynamics requires calibrated `.staticWithinBudget`
+evidence. Every authorized solve also requires gravity, and temporal dynamics additionally requires
+a dynamics-qualified root trajectory.
+
 Owner objection that started this: *"why muscle loads need a still pose? dynamic pose also needs the
 muscle."* Correct, and the gate was standing on a false premise. Gates were pre-registered before any
 result existed (`/tmp/camt/PREREGISTRATION.md`, reproduced below), harness
@@ -1450,9 +1461,10 @@ slowly stretched the 9-tap window's stillness requirement to **four seconds**.
 upstream of the sampling rate.** All three clips are tracking shots — the subject's range stays at
 4.34 ± 0.66 m over 10 s while a runner would traverse ~50 m — so the camera translates with the
 subject and `video_012` additionally rotates at 13.5 °/s. No filter, rate or budget recovers an
-inertial frame from that. The largest honest subset is: **static camera + in-plane motion + a rate
-that resolves it**, which is squat / lunge / sit-to-stand filmed side-on from a stand, not running
-filmed from a moving camera.
+inertial frame from that. At that stage, the largest candidate subset appeared to be **a static
+camera, in-plane motion and a rate that resolves it**: squat / lunge / sit-to-stand filmed side-on
+from a stand, not running filmed from a moving camera. The 2026-08-12 correction below explains why
+that candidate still does not authorize the current product path.
 
 #### What shipped, and what is blocked
 
@@ -2342,10 +2354,10 @@ to report anything at the scatter we have.
   IK needs. The scatter is swept over four levels rather than assumed at one, and the conclusion does
   not turn on the choice: above the level where the sampling term binds, a calibrated t-interval
   admits α of the family whatever the scatter is.
-* **The LIVE ARKit path's muscle overlay is unchanged.** `MuscleOverlay` still picks its strongest 24
-  by an uncalibrated cross-muscle number; only the offline running path is gated. The live path is a
-  different surface with its own static-hold gating, and changing the shared renderer was not this
-  stage's to do.
+* **At this fifth-round receipt, the LIVE ARKit path's muscle overlay was unchanged.**
+  `MuscleOverlay` still picked its strongest 24 by an uncalibrated cross-muscle number; only the
+  offline running path was gated. The following sixth round closed both surfaces by removing muscle
+  solves from the renderer entirely.
 * **Minors deferred, recorded here rather than fixed:**
   1. ~~Pass-1 static-hold muscle output survives on frames the gait pass excluded.~~
      **CLOSED 2026-08-10:** one `BiomechanicsPayload` now replaces IK, ID, muscle, the static flag,
@@ -5442,6 +5454,10 @@ a typed `CameraMotionCalibrationProfile`; production deliberately supplies no su
 it fails closed as calibration unavailable rather than treating provisional thresholds as a
 measurement. Pose review and contact-timing output remain available.
 
+`OfflinePlaybackView`'s one-finger orbit, pinch zoom and double-tap reset affect only its non-AR
+review camera. They do not change `CameraReferenceState`, re-interpret the source recording camera,
+or supply any dynamics evidence.
+
 The native adapter analyses no more than 4 seconds and 1000 actual source samples. Admission is
 based on presentation timestamps and decoded coverage, not nominal frame rate. It requires exactly
 one usable video track, source PTS order, a completed `AVAssetReader`, consistent pixel formats,
@@ -5645,6 +5661,40 @@ parser method; the 3D fixture lives inside an existing test method. The slow lan
 is focused evidence, not a new full-fast-lane receipt.
 
 
+## Historical camera and wrap evidence is labeled and reproducible (2026-08-12)
+
+Two current descriptions had drifted away from the code. First,
+`OfflinePlaybackView` was documented as a fixed camera with no manual control even though it already
+supports one-finger orbit, bounded pinch zoom and double-tap reset. Those controls move only the
+non-AR review viewpoint: they do not recover the source recording camera, alter
+`CameraReferenceState` or authorize dynamics. The 2026-08-07 OpenCV / three-clip `cam_t` experiment
+is now labeled as a historical candidate measurement rather than calibration evidence for the
+current Vision adapter. Production remains contact-first with solve-class camera authorization:
+single-frame static may use `.notRequiredForSingleFrame`, while temporal dynamics requires
+calibrated `.staticWithinBudget` evidence. Every authorized solve also needs gravity, and temporal
+dynamics additionally needs a dynamics-qualified root trajectory.
+
+Second, the 2026-08-06 Python muscle report still said PathWrap was absent from the shipped path.
+That is true only of the historical diagnostic. The current iOS `MomentArmComputer` solves
+`WrapCylinder` and `WrapEllipsoid`, including **76/76** FullBody references; the Python report keeps
+its straight-line approximation solely to compare the before/after structural model edits. Its
+README, generator metadata, module docstring and generated limitations now state that boundary
+explicitly.
+
+Regenerating `tools/osim_fixes/measurements.json` exposed a separate provenance defect: commit
+`bca72ad` corrected SimmSpline endpoint-tangent extrapolation in `osim_kinematics.py`, the Python
+diagnostic engine invoked by the generator, on 2026-08-10 but did not refresh the derived JSON.
+The generator now records repository-relative input paths. Three consecutive regenerations,
+including two under a different temporary repository-shaped root, produced the same SHA-256,
+`3bd096e3ff0d3ac4325cc0f517f4c21a668655f38d36e7ae86b9de5e2ef84043`. The regenerated values do not
+alter the report's conclusion: the headline metrics move only at their last reported digits, while
+eight β-counterfactual cells move by at most 0.068 cm (2.27%) without changing the sign-flip
+finding. Before RMSE / maximum absolute error are **4.793 / 8.051 cm** and after are
+**0.5509 / 1.3108 cm**. `regression.py` passes, both Python files compile, the JSON parses, and
+repeated generator runs leave the artifact byte-identical. No product or test code changed in this
+cleanup.
+
+
 ## IK convergence: the solver is now a fixed point (2026-08-07)
 
 App-side only. `NimbleBridge.mm` no longer calls `Skeleton::fitMarkersToWorldPositions` /
@@ -5738,12 +5788,13 @@ the user can check against their photo" — is exercised only by synthetic subje
 biggest untested gap in this layer.** The panel has also never been seen in a running app; what was
 verified is an off-screen `ImageRenderer` pass proving it lays out and draws.
 
-⚠️ **A real defect in a file this layer does not own:** `MuscleOverlay.computeBodyFrame`'s `forward`
+⚠️ **A real defect at this layer's 2026-08-07 receipt:** `MuscleOverlay.computeBodyFrame`'s `forward`
 is `pelvisRight × up`, which by the right-hand rule is POSTERIOR. The muscle defs clearly intend
 +z = anterior (rectus femoris "FRONT of thigh" at z = +0.04, semimembranosus "BACK" at z = −0.04,
 erector spinae at z = −0.06), so every anterior/posterior capsule offset in `MuscleOverlay` is drawn
 on the wrong side of the limb. The findings layer derives its own sign and pins it with two tests.
-`MuscleOverlay.swift` is untouched — **this is still open.**
+`MuscleOverlay.swift` was untouched in that receipt; it was fixed later the same day and is closed
+in next-step 11 below.
 
 ---
 

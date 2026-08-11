@@ -3,6 +3,13 @@
 Fixes the two structural defects that made BioMotion's muscle output unusable for
 its two headline postures, and measures the fix. Everything here is re-runnable.
 
+This report revisits the historical 2026-08-06 structural edit with the later
+corrected OpenSim SimmSpline endpoint semantics; it is not an exact snapshot of
+that day's engine or a model of the current complete muscle path. Its Python
+engine deliberately retains the old straight-line path approximation, while
+the current iOS `MomentArmComputer` solves all 76 FullBody `PathWrap` references
+over cylinders and ellipsoids.
+
 ```
 tools/osim_fixes/
   FullBody.osim.orig    pristine pre-change model  (sha256 a55c6434...a83913)
@@ -83,7 +90,8 @@ the moment arm. Musculotendon length at 60° knee flexion:
 Before the fix every quadriceps sat 2–3.4× past the far end of its force–length
 curve, where active force is ≈ 0 — so it *could not* generate force and the
 optimiser left it at the activation lower bound. After the fix it is within 1.6%
-of the reference.
+on three muscles and 1.9% on the fourth (1.3% mean relative difference) of the
+reference.
 
 ### Muscles affected (8, named)
 
@@ -125,18 +133,18 @@ away from where the coupled joint puts it. The joint transform at β\* is theref
 
 | β\* | RMSE 0–120° | RMSE squat band 60–110° |
 |---|---|---|
-| **0°** | **0.535 cm** | **0.336 cm** |
-| 30° | 0.911 cm | 1.283 cm |
-| 60° | 3.150 cm | 1.802 cm |
-| 90° | 5.006 cm | 1.737 cm |
+| **0°** | **0.5509 cm** | **0.3388 cm** |
+| 30° | 0.9617 cm | 1.2791 cm |
+| 60° | 2.8674 cm | 1.7579 cm |
+| 90° | 4.5373 cm | 1.7625 cm |
 
 The alternative — rename but leave it a `CustomJoint` — was measured too. It adds
 `knee_angle_r_beta` as a real DOF with `<range>±99999.9</range>`,
 `<clamped>false</clamped>`, and **zero markers on the kneecap** (the `MarkerSet`
 has 57 markers, none on the patella), so IK is free to park it anywhere. Sweeping
-β at a fixed 60° knee swings the quadriceps moment arm from **−2.94 cm to +2.00 cm
-— a sign flip**. There is also no way for nimble to enforce the coupler even in
-principle: `CustomJoint::mFunctionDrivenByDof` indexes that joint's *own*
+β from −30° to 120° at a fixed 60° knee moves `recfem_r` from **−3.00 cm to
++2.00 cm — a sign flip**. There is also no way for nimble to enforce the coupler
+even in principle: `CustomJoint::mFunctionDrivenByDof` indexes that joint's *own*
 coordinate list (`OpenSimParser.cpp:4443-4470`), so a function driven by
 `knee_angle_r` (a different joint's coordinate) is not expressible. Weld is right.
 
@@ -297,9 +305,10 @@ slips (48 total, matching STATUS.md's count) have length deltas of exactly 0.
 
 ## How it was measured, and what that does not prove
 
-The iOS app was **not built or run** — that is forbidden for this workstream, and
-no number here was observed on device. Instead `osim_kinematics.py` re-implements,
-in Python, the two pieces of C++ that decide the answer:
+The iOS app was **not built or run in this 2026-08-06 workstream** — that was
+forbidden for the measurement, and no number in this report was observed on
+device. Instead `osim_kinematics.py` re-implements, in Python, the two pieces of
+C++ that decided the historical answer:
 
 1. `OpenSimParser.cpp::readOsim40()` — which bodies/joints get built and which
    joint class each becomes, including the patella skip, the `first3Linear`
@@ -307,8 +316,9 @@ in Python, the two pieces of C++ that decide the answer:
    line-by-line port of BioMotion's patched `dart/math/SimmSpline.cpp`, including
    OpenSim's endpoint-tangent linear extrapolation; the Euler conventions were
    read out of `dart/math/Geometry.cpp` rather than assumed.
-2. `MomentArmComputer.mm` — polyline length, the unresolved-body fallback to raw
-   local offsets, ConditionalPathPoint latching, and `r = −ΔL/2ε` with ε = 1e-4 rad.
+2. The 2026-08-06 `MomentArmComputer.mm` snapshot — straight-line polyline
+   length, the unresolved-body fallback to raw local offsets,
+   ConditionalPathPoint latching, and `r = −ΔL/2ε` with ε = 1e-4 rad.
 
 Evidence that it models the same skeleton nimble builds: without being told any of
 them, it independently reproduces **163 DOFs**, **520 muscles = 422 Thelen + 98
@@ -323,14 +333,16 @@ published band for the quadriceps/patellar-tendon knee moment arm.
 
 * **Computed, not observed.** A build-and-run on device is still required before
   any of this is claimed as shipped behaviour.
-* **PathWrap is not implemented anywhere in this pipeline** — not in nimble's
-  parse, not in `MomentArmComputer.mm`, not here. Each quadriceps carries exactly
-  1 PathWrap, so the quadriceps absolute values carry that error in *all three*
-  columns; past ~90° knee flexion the straight-line path cuts through the condyles
-  and magnitudes are unreliable everywhere (visible as the reference itself turning
-  back up between 105° and 120°). Differences between columns are meaningful;
-  absolute deep-flexion values are not. The shoulder numbers are free of this —
-  0 wraps.
+* **This historical Python diagnostic does not implement PathWrap.** The current
+  iOS app solves both `WrapCylinder` and `WrapEllipsoid` (76/76 FullBody
+  references); this report does not. Each quadriceps here carries exactly one
+  PathWrap, so its absolute values retain the straight-line error in all three
+  report columns. Past ~90° knee flexion the diagnostic path cuts through the
+  condyles and its magnitudes are unreliable (visible as the reference itself
+  turning back up between 105° and 120°). Differences between columns remain
+  useful for isolating the historical structural edit; these absolute values do
+  not describe the current wrapped app. The shoulder numbers are free of this
+  particular limitation because those 24 muscles carry zero wraps.
 * **The "reference" column is a yardstick, not a deliverable.** It applies the
   `CoordinateCouplerConstraint`, which nimble never enforces and now cannot,
   because the coordinate is gone.
