@@ -479,7 +479,7 @@ license"*. A repo-level MIT badge cannot sublicense an NC upstream.
 
 | Model | Licence | Commercial | Notes |
 |---|---|---|---|
-| **Stanford-VA Upper Limb (Holzbaur, Murray & Delp 2005)** — [group_id=324](https://simtk.org/frs/?group_id=324) | **BSD 3-Clause** | ✅ **yes** | No NC clause (confirmed by extracting the `data-content` popover from raw HTML — WebFetch's markdown conversion strips it, which is why earlier passes only saw the label "Custom Use Agreement"). Clause 3 forbids using "Stanford"/"VA Palo Alto"/author names in marketing. Distributed as **SIMM** format (2008) — conversion needed. |
+| **Stanford-VA Upper Limb (Holzbaur, Murray & Delp 2005)** — [group_id=324](https://simtk.org/frs/?group_id=324) | **BSD 3-Clause plus an explicit citation acceptance term** | ✅ **yes, subject to both texts** | No NC clause. The raw `data-content` popover says use must be acknowledged in publications, presentations, or documents by citing Holzbaur 2005, then gives BSD-3. Do not shorten this to “plain BSD-3”: preserve the complete downloaded terms for counsel. Clause 3 also forbids promotional use of the copyright holder/contributor names. Distributed as **SIMM** format (2008) — conversion needed. |
 | MoBL-ARMS (Saul 2015) — [group_id=657](https://simtk.org/frs/?group_id=657) | CC ANC | ❌ no | The *successor* to Holzbaur 2005. Same lab, same template, NC sentence added. |
 | Thoracoscapular Shoulder (Seth 2019) | CC BY 4.0 | ⚠️ **do not use** | Package grant is real, but its scapulothoracic joint comes from **Seth et al. 2016, which is CC BY-NC 3.0** — same permissive-wrapper-over-NC structure as the current blocker. **And** `OpenSim::ScapulothoracicJoint` is a 4-DOF class shipped **only as a binary plugin** (.dylib/.dll); nimble cannot construct it at all. |
 | `arm26.osim` | CC BY 3.0 (verbatim in-file `<credits>`) | ✅ yes | Only 2 DOF / 6 muscles. Useless alone, but proves the Holzbaur upstream can carry a permissive grant. |
@@ -497,6 +497,53 @@ always trace the provenance chain of composite models.**
 24 shoulder (DELT1-3, SUPSP, INFSP, SUBSC, TMIN, TMAJ, PECM1-3, CORB ×2) + 18 elbow.
 The **48 trapezius/serratus muscles come from the Bruno/Allaire spine+ribcage model, which is
 verified stock MIT** and is not affected.
+
+### Holzbaur shoulder lineage audit (2026-08-11)
+
+The requested numerical diff is complete, but it does **not** turn the current composite model into
+a BSD-licensed artifact. The official SimTK [release 399 notes](https://simtk.org/frs/shownotes.php?release_id=399)
+and [file 1131](https://simtk.org/frs/download_confirm.php/file/1131/UpperExtremityModel.zip?group_id=324)
+identify `UpperExtremityModel.zip`, dated 2008-07-25, and describe joint, muscle and bone files.
+Anonymous download returns a JavaScript redirect to SimTK login. Therefore this pass used
+two independent public preflight sources and records their hashes, while leaving the authenticated
+official-ZIP hash as an explicit external receipt:
+
+- third-party mirror SIMM `.msl` SHA-256
+  `348c1e0986ccdacbd476fdabb9fc7e829dba292884c0278ce0226f74b35746c5`;
+- a paper's [published Holzbaur `.osim` supplement](https://static-content.springer.com/esm/art%3A10.1186%2Fs12938-016-0291-x/MediaObjects/12938_2016_291_MOESM1_ESM.osim)
+  SHA-256
+  `46a48b264ee4433e966fb142ede595a63b2fbf0573a300a0cb755f9f9100d8a3`;
+- shipped `FullBody.osim` SHA-256
+  `0003473937af6883034df358194bd8f52853818e79e36fd23eb5ca2c8d741c09`.
+
+`tools/opensim_ref/audit_holzbaur_shoulder.py` first requires the SIMM scalar/path data to equal
+the independent published conversion at `1e-12`, then compares both sides of the shipped model.
+The result is strong but mixed lineage:
+
+- **18/24 bilateral muscles** (9/12 source compartments) have exactly the Holzbaur `Fmax` and
+  optimal fibre length: DELT1-3, SUPSP, INFSP, SUBSC, TMIN, TMAJ and CORB.
+- The six PECM1-3 entries changed. Right-side `Fmax` changed by **+97.678% / -63.095% / +32.788%**;
+  optimal fibre length changed by **-0.139% / -0.361% / -0.361%**. The left values differ slightly
+  from the right as well.
+- Only **14/24 bilateral paths** (DELT3, SUPSP, INFSP, SUBSC, TMIN, TMAJ and CORB) have every fixed
+  point equal under the safe humerus/scapula/clavicle mapping and left-z mirror.
+- DELT1 changes a scapular point to the clavicle; DELT2 and PECM1-3 replace SIMM moving
+  pseudo-segment points with fixed humerus/clavicle points; PECM paths also change thorax/sternum
+  topology. Raw `thorax -> sternum` coordinates are deliberately not declared equivalent.
+
+The second receipt, `tools/opensim_ref/evaluate_holzbaur_moving_points.py`, evaluates the source
+moving point and shipped fixed point in their respective humerus frames. Across 0/30/60/90/115°
+elevation, maximum separation is **72.116 mm for DELT2**, **16.545 mm for PECM1/2**, and
+**20.134 mm for PECM3**. This is not rounding; the path function changed.
+
+Consequently the audit establishes Holzbaur ancestry, not licence inheritance for modified
+PECM/DELT paths and not a grant for the distributed composite XML. Before any commercial reliance,
+log in to SimTK, preserve the official ZIP and full acceptance text, record its SHA-256 and file
+list, parse both `.msl` and `.jnt`, and evaluate the moving pseudo-segments on a shared angle grid.
+OpenSim's [own import documentation](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim33/pages/53674346/Importing%2Band%2BExporting%2BSIMM%2BModels)
+further warns that its SIMM 4.0.1 importer maps joints to
+`CustomJoint`, muscles to `Thelen2003Muscle`, drops unsupported objects, and should not be assumed
+to reproduce SIMM results exactly. This remains a legal-counsel boundary, not a code inference.
 
 ### Trapezius / serratus geometry audit (2026-08-11)
 
@@ -5522,10 +5569,15 @@ arms must differ in the work that PRECEDES the mask.
 
 ### Immediate — unblocked, no licence exposure
 
-1. **Numerically diff the 24 shoulder muscle parameters** (F_max, optimal fibre length, attachment
-   coordinates) in `FullBody.osim` against the **BSD-3 Holzbaur 2005** model. If they are the 2005
-   values, the provenance is BSD-3 and the licence question changes character entirely. Hours of
-   scripting, and it converts a legal inference into a fact. **Do this first.**
+1. ~~**Numerically diff the 24 shoulder muscle parameters** (F_max, optimal fibre length,
+   attachment coordinates) against Holzbaur 2005.~~ **PREFLIGHT AUDIT DONE 2026-08-11; official
+   byte receipt still needs SimTK login.** The result does not support the original shortcut:
+   18/24 scalar pairs and 14/24 complete fixed paths match, while PECM1-3 parameters and
+   DELT/PECM path functions changed materially. This proves ancestry, not that the modified
+   composite inherits a BSD grant. See
+   [Holzbaur shoulder lineage audit](#holzbaur-shoulder-lineage-audit-2026-08-11). The remaining
+   action is external and exact: download file 1131 while logged in, preserve the terms/hash/list,
+   then rerun the committed receipts against those official bytes and the converted `.jnt` motion.
 2. ~~**Measure whether trapezius / serratus moment arms are non-zero** about the free thoracic
    DOFs.~~ **GEOMETRY AUDIT DONE 2026-08-11; the proposed product inference is rejected.** All
    852/852 structural rotational pairs were non-zero at neutral and `spine_flexed`, and analytic
@@ -5886,10 +5938,11 @@ arms must differ in the work that PRECEDES the mask.
   [cam_t recovers the root translation](#cam_t-recovers-the-root-translation-its-depth-cannot-be-differentiated-twice-2026-08-07).
   Option (b) is the only one under which dynamics ships at all, and it puts a modelling assumption
   ("you are not moving toward or away from the camera") inside a number the product sells.
-- **How to resolve the arm licence**: negotiate MoBL-ARMS commercially, adopt/convert the BSD-3
-  Holzbaur model (SIMM → .osim conversion needed), or rely on step 1 showing the data is already
-  BSD-3 lineage. **Needs actual legal counsel** — the verbatim quotes and URLs above are assembled
-  so a lawyer can be briefed directly.
+- **How to resolve the arm licence**: negotiate MoBL-ARMS commercially, or adopt/convert the
+  Holzbaur package under its BSD-3-plus-citation terms (SIMM → `.osim` conversion needed). The
+  step-1 audit explicitly ruled out relying on numerical similarity alone: six pectoral entries and
+  multiple path functions changed. **Needs actual legal counsel** — the verbatim terms, URLs,
+  hashes and diff receipts above are assembled so a lawyer can be briefed directly.
 - **Does the upper limb need muscles, or only posture?** If the value is "rounded shoulders /
   forward head", that is pure geometry and the licence question does not block the product at all.
 - **Whether to keep `FullBody.osim` at all.** Rajagopal2016 is ruled out (no upper limb). Every
