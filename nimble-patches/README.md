@@ -218,6 +218,104 @@ git -C nimblephysics apply --reverse --check \
   ../nimble-patches/ios-collision-fail-closed.patch
 ```
 
+## `ios-c3d-boundary.patch`
+
+**Applies to**:
+
+- `nimblephysics/dart/biomechanics/C3DLoader.hpp`
+- `nimblephysics/dart/biomechanics/C3DLoader.cpp`
+- `nimblephysics/dart/biomechanics/C3DForcePlatforms.hpp`
+- `nimblephysics/dart/biomechanics/C3DForcePlatforms.cpp`
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commit** on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05):
+`03fa30ca524376747f7e0e884c8c8c14c4d5526f` — hide C3D loading APIs whose
+ezc3d implementation is not linked into the iOS archive.
+
+**Patch receipt**: 116 lines; SHA-256
+`63b5bc8ad9206738eedabf89100a1fee84ce856f3cba6895dc63bb5fc50ea6a7`.
+
+### Problem
+
+The iOS source manifest deliberately omits `C3DLoader.cpp` and
+`C3DForcePlatforms.cpp`, because ezc3d is not present. The public headers did
+not match that binary boundary: `C3DLoader`, its weighted force-convention
+heuristic, and all ezc3d force-platform adapters remained declared. Some iOS
+callers therefore compiled and failed only at link time, while directly
+including `C3DForcePlatforms.hpp` failed immediately on a missing ezc3d header.
+
+### Fix and verification
+
+The pure `C3D` value struct and its `ForcePlate` vector remain public. The
+OpenSim consumer
+`OpenSimParser::loadMotAtLowestMarkerRMSERotation(..., C3D&, ...)` also remains
+defined in both archives; it uses only `dataRotation` and `markerTimesteps` and
+does not call ezc3d. iOS now hides the loader-only weighted method, the entire
+`C3DLoader` class, and the `ForcePlatform` / `ForcePlatforms` adapter surface.
+Both implementation files always include their own header first, then compile
+their ezc3d dependencies and bodies only outside `DART_IOS_BUILD`.
+
+Regression evidence is layered:
+
+- The causal surface probe was RED with **8 contract failures**: both production
+  translation units and the adapter header leaked missing ezc3d dependencies;
+  `C3DLoader` and the weighted method unexpectedly compiled; and the three
+  adapter negatives failed for the missing include instead of the reviewed
+  absent-API diagnostic.
+- Both arm64 simulator and device archives rebuilt. Two focused XCTest receipts
+  each passed **1/1** in 12 s and 7 s, with zero failures, skips, expected
+  failures, or runner restarts. They pin the value surface and the retained
+  OpenSim consumer independently.
+- `c3d_ios_boundary_probe.sh` positive-compiles the supported headers and both
+  production sources, negative-compiles all five unavailable surfaces with
+  same-line diagnostic classes. It checks every archive object's
+  `LC_BUILD_VERSION` (simulator platform 7, device platform 2), requires exactly
+  one OpenSimParser/ForcePlate member and definition in each archive, and scans
+  both defined and undefined symbols for the complete forbidden surface. Its
+  ordinary simulator and device links use dead-stripping without `-all_load` or
+  `-force_load`, require `OpenSimParser.cpp.o` and `ForcePlate.cpp.o`, and reject
+  ezc3d/loader extraction or unresolved symbols. The simulator binary runs to
+  `C3D_IOS_ARCHIVE_PROBE_PASS` / `C3D_IOS_BOUNDARY_PROBE_PASS`.
+- Independent review found no blocker, high, medium, or low issue in the nested
+  four-file diff.
+- The enclosing `tools/run_tests.sh all` gate passed: the fast lane completed
+  **526/526** tests in 1696 s and the slow lane completed **1/1** in 6274 s.
+  Both `xcodebuild` and `xcresulttool` returned 0 for both lanes; each xcresult
+  was `Passed`, with zero failures, skips, expected failures, or test-host
+  restarts. The runner emitted `ALL GATE PASS`.
+
+Every iOS consumer must define `DART_IOS_BUILD=1`; the current CMake target,
+app, tests, and probes do. This patch aligns the header contract with an absent
+backend. It does not add C3D file loading.
+
+### Apply and verify
+
+```sh
+cd labs/BioMotion/nimblephysics
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/ios-c3d-boundary.patch
+# Install/apply the current iOS source manifest before these two builds.
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
+
+cd ..
+tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/C3DIOSBoundaryTests/testC3DAndForcePlateRemainUsableValueTypes
+tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/C3DIOSBoundaryTests/testOpenSimC3DConsumerRemainsLinked
+bash tools/tests/c3d_ios_boundary_probe.sh
+```
+
+On the reviewed branch head, provenance must reverse-check:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/ios-c3d-boundary.patch
+```
+
 ## `simmspline-linear-extrapolation.patch`
 
 **Applies to**: `nimblephysics/dart/math/SimmSpline.cpp` and its upstream unit

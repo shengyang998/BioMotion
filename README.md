@@ -89,7 +89,9 @@ Then apply the iOS-specific patches. Search the existing tree for `DART_IOS_BUIL
 - `OpenSimParser.cpp` — guarded MarkerFitter, GUIRecording, SdfParser, MJCFExporter includes
 - `MarkerAspect.hpp` / `Marker.hpp` — enum `NO` → `CONSTRAINT_NONE` (ObjC macro conflict)
 - `AssimpInputResourceAdaptor.hpp`, `SoftMeshShape.hpp` — Assimp guards
-- `C3DLoader.hpp`, `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` — GUIWebsocketServer guards
+- `C3DLoader.*` / `C3DForcePlatforms.*` — preserve the C3D value type while hiding unavailable
+  ezc3d loading and adapter APIs from iOS consumers
+- `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` — GUIWebsocketServer guards
 - `CollisionDetector.cpp` / `DARTCollisionDetector_ios.cpp` / `World.cpp` —
   explicit fail-closed collision boundary when Assimp/libccd is not linked
 - Vendored deps: Eigen 3.4.0 in `third_party/eigen`, tinyxml2 in `third_party/tinyxml2`
@@ -102,6 +104,7 @@ Then apply the reviewed behaviour patches recorded by this repository:
 git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
 git -C nimblephysics apply ../nimble-patches/ios-collision-fail-closed.patch
+git -C nimblephysics apply ../nimble-patches/ios-c3d-boundary.patch
 ```
 
 See `nimble-patches/README.md` for pinned SHAs, reverse-checks and regression
@@ -111,8 +114,8 @@ remaining port diff has also been exported.
 
 The reviewed nested commits are published on the maintained
 [`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
-branch. At the 2026-08-11 receipt that branch resolved to
-`23e359d516e3d6da38cda0207ab057c37c9c7779`; the fork's remote symbolic `HEAD`
+branch. At the latest 2026-08-11 receipt that branch resolved to
+`03fa30ca524376747f7e0e884c8c8c14c4d5526f`; the fork's remote symbolic `HEAD`
 remained `refs/heads/master` at the pinned upstream baseline
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
@@ -129,6 +132,14 @@ return a null detector and crash at a later dereference. A factory-only probe
 verifies that ordinary dead-stripped static-archive linking extracts the
 fail-closed implementation without `-all_load` or `-force_load`. This is a
 refusal boundary, not collision/contact support.
+
+The iOS build also does not provide ezc3d file loading or its force-platform
+adapter. `C3D` remains a usable value type, including its `ForcePlate` data,
+and `OpenSimParser::loadMotAtLowestMarkerRMSERotation(..., C3D&, ...)` remains
+linked. `C3DLoader`, the loader-only weighted-convention heuristic, and the
+`ForcePlatform` / `ForcePlatforms` ezc3d adapters are absent from the iOS public
+surface. Consumers must compile with `DART_IOS_BUILD=1`, as the current app,
+tests, CMake target, and probes do.
 
 Here “linear extrapolation” means continuation along an endpoint tangent only:
 SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses
@@ -185,7 +196,7 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 # Tests on simulator — always via the script, never a hand-typed xcodebuild line.
 # It provisions a private simulator (naming one shared with another xcodebuild
 # process is what made this suite untrustworthy) and emits an xcresult receipt.
-tools/run_tests.sh fast    # exactly 524; 0 failed/skipped/restarted
+tools/run_tests.sh fast    # exactly 526; 0 failed/skipped/restarted
 tools/run_tests.sh slow    # only testE1RunAll; exactly 1; 0 failed/skipped
 tools/run_tests.sh all     # commit gate: fast, then slow
 

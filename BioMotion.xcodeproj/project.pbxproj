@@ -53,6 +53,7 @@
 		6F9E2397D836AB52F990355E /* ModelScalingTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0C28EDD6674979DABB128FB8 /* ModelScalingTests.mm */; };
 		732EF1424B7BE159A1A2A35B /* GaitClipFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52B4879A902F36227CC79DBA /* GaitClipFixtureTests.swift */; };
 		776F7C63402275798F72DCF9 /* GaitReportPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6812C3DE8176C6B95FB8FFB6 /* GaitReportPanel.swift */; };
+		79FE63924DDD5F2194802099 /* C3DIOSBoundaryTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = EA08C791AB48AA5A4C976822 /* C3DIOSBoundaryTests.mm */; };
 		7CC7D377AAE200F3C611F8F2 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = BB09CCB3DD5A4B20A3553080 /* Fixtures */; };
 		7D675D34A1FC4A52B6096561 /* GaitClaimSurvivalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */; };
 		7ED1CE05D8C199C942D22051 /* SkeletonOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80745E520E5C70DE78840DA /* SkeletonOverlayView.swift */; };
@@ -258,6 +259,7 @@
 		DFB5E836348FD533923DAD62 /* FixtureScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureScanner.swift; sourceTree = "<group>"; };
 		E09CC28BA4450B3F4385431E /* MusclePathWrap.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MusclePathWrap.h; sourceTree = "<group>"; };
 		E3DD62C1285CC0A293F53014 /* GaitSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitSignal.swift; sourceTree = "<group>"; };
+		EA08C791AB48AA5A4C976822 /* C3DIOSBoundaryTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = C3DIOSBoundaryTests.mm; sourceTree = "<group>"; };
 		EB4E89539823D96EB49C208D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EE2B9AAD0354C5643CD4E31D /* RootTranslationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTranslationTests.swift; sourceTree = "<group>"; };
 		F0EB06662FAF6CC71EDFBD44 /* OfflineDerivativeIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDerivativeIsolationTests.swift; sourceTree = "<group>"; };
@@ -314,6 +316,7 @@
 				4B51E2644E744BA3FADE38F5 /* BodyPlausibilityTests.swift */,
 				6655F1FDE0BBF68E3191CA2C /* BoxQP.swift */,
 				6714B170D3735DD500D2ADE4 /* BoxQPTests.swift */,
+				EA08C791AB48AA5A4C976822 /* C3DIOSBoundaryTests.mm */,
 				3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */,
 				A72797213E433B0F010275E7 /* ClaimSurfaceTests.swift */,
 				9D1C8E7D814B5628852F2D61 /* CollisionFailClosedTests.mm */,
@@ -702,6 +705,7 @@
 				C75C2BE5D8B1D4D7FC19605E /* BodyPlausibilityTests.swift in Sources */,
 				F49FD7115442BA7D6C6E79FA /* BoxQP.swift in Sources */,
 				48CD1D0034287855D0319D28 /* BoxQPTests.swift in Sources */,
+				79FE63924DDD5F2194802099 /* C3DIOSBoundaryTests.mm in Sources */,
 				5EAF2F8A2F45C0B4C65E83C0 /* CalibrationTests.swift in Sources */,
 				86CC439C0B44FFAC6F3D2391 /* ClaimSurfaceTests.swift in Sources */,
 				EB421363DA63235C197A66BC /* CollisionFailClosedTests.mm in Sources */,

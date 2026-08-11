@@ -84,7 +84,9 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
 - `OpenSimParser.cpp` — guarded MarkerFitter, GUIRecording, SdfParser, MJCFExporter includes
 - `MarkerAspect.hpp` / `Marker.hpp` — enum `NO` → `CONSTRAINT_NONE` (ObjC macro conflict)
 - `AssimpInputResourceAdaptor.hpp`, `SoftMeshShape.hpp` — Assimp guards
-- `C3DLoader.hpp`, `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` etc — GUIWebsocketServer guards
+- `C3DLoader.*` / `C3DForcePlatforms.*` — iOS keeps the pure C3D/ForcePlate data surface but hides
+  loader-only ezc3d and GUI adapters; every iOS consumer target must define `DART_IOS_BUILD=1`
+- `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` etc — GUIWebsocketServer guards
 - `DARTCollisionDetector_ios.cpp` — stub for collision detector factory
 - Vendored: Eigen 3.4.0 (`third_party/eigen`), tinyxml2 (`third_party/tinyxml2`)
 
@@ -172,7 +174,7 @@ The vendored `nimblephysics/` tree carries iOS-specific patches. Grep for `DART_
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 524 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 526 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

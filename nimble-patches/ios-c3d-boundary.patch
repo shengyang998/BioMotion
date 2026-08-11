@@ -1,0 +1,116 @@
+diff --git a/dart/biomechanics/C3DForcePlatforms.cpp b/dart/biomechanics/C3DForcePlatforms.cpp
+index 48e0c31..b6e336e 100644
+--- a/dart/biomechanics/C3DForcePlatforms.cpp
++++ b/dart/biomechanics/C3DForcePlatforms.cpp
+@@ -7,6 +7,8 @@
+ 
+ #include "dart/biomechanics/C3DForcePlatforms.hpp"
+ 
++#ifndef DART_IOS_BUILD
++
+ #include <ezc3d_all.h>
+ 
+ namespace dart {
+@@ -558,4 +560,6 @@ const ForcePlatform& ForcePlatforms::forcePlatform(size_t idx) const
+ }
+ 
+ } // namespace biomechanics
+-} // namespace dart
+\ No newline at end of file
++} // namespace dart
++
++#endif // !DART_IOS_BUILD
+diff --git a/dart/biomechanics/C3DForcePlatforms.hpp b/dart/biomechanics/C3DForcePlatforms.hpp
+index ef8ec75..1a5237d 100644
+--- a/dart/biomechanics/C3DForcePlatforms.hpp
++++ b/dart/biomechanics/C3DForcePlatforms.hpp
+@@ -1,6 +1,8 @@
+ #ifndef DART_BIOMECH_C3D_FORCE_PLATFORMS_HPP_
+ #define DART_BIOMECH_C3D_FORCE_PLATFORMS_HPP_
+ 
++#ifndef DART_IOS_BUILD
++
+ #include <memory>
+ // #include <unordered_map>
+ #include <map>
+@@ -245,4 +247,6 @@ public:
+ } // namespace biomechanics
+ } // namespace dart
+ 
+-#endif
+\ No newline at end of file
++#endif // !DART_IOS_BUILD
++
++#endif
+diff --git a/dart/biomechanics/C3DLoader.cpp b/dart/biomechanics/C3DLoader.cpp
+index c23017e..f897561 100644
+--- a/dart/biomechanics/C3DLoader.cpp
++++ b/dart/biomechanics/C3DLoader.cpp
+@@ -1,5 +1,7 @@
+ #include "dart/biomechanics/C3DLoader.hpp"
+ 
++#ifndef DART_IOS_BUILD
++
+ #include <algorithm> // std::sort
+ #include <fstream>
+ #include <iostream>
+@@ -687,4 +689,6 @@ void C3DLoader::debugToGUI(
+ }
+ 
+ } // namespace biomechanics
+-} // namespace dart
+\ No newline at end of file
++} // namespace dart
++
++#endif // !DART_IOS_BUILD
+diff --git a/dart/biomechanics/C3DLoader.hpp b/dart/biomechanics/C3DLoader.hpp
+index ab68f9d..24dc762 100644
+--- a/dart/biomechanics/C3DLoader.hpp
++++ b/dart/biomechanics/C3DLoader.hpp
+@@ -1,16 +1,18 @@
+ #ifndef DART_BIOMECH_C3D_HPP_
+ #define DART_BIOMECH_C3D_HPP_
+ 
+-#include <memory>
+-// #include <unordered_map>
+ #include <map>
++#include <string>
+ #include <vector>
+ 
+ #include <Eigen/Dense>
+ 
+ #include "dart/biomechanics/ForcePlate.hpp"
+-#include "dart/dynamics/Skeleton.hpp"
++#ifndef DART_IOS_BUILD
++#include <memory>
++
+ #include "dart/server/GUIWebsocketServer.hpp"
++#endif
+ 
+ namespace dart {
+ 
+@@ -33,9 +35,12 @@ struct C3D
+   /// This computes the weighted distance from each CoP to its nearest marker on
+   /// that timestep. This is used as part of the heuristic to guess which
+   /// convention a C3D file is using for storing its GRF data.
++#ifndef DART_IOS_BUILD
+   s_t getWeightedDistFromCoPToNearestMarker();
++#endif
+ };
+ 
++#ifndef DART_IOS_BUILD
+ class C3DLoader
+ {
+ public:
+@@ -51,8 +56,9 @@ public:
+   static void debugToGUI(
+       C3D& file, std::shared_ptr<server::GUIWebsocketServer> server);
+ };
++#endif
+ 
+ } // namespace biomechanics
+ } // namespace dart
+ 
+-#endif
+\ No newline at end of file
++#endif

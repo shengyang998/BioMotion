@@ -322,7 +322,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 524 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 526 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -4505,6 +4505,63 @@ This closes an unsupported-API boundary; it does **not** add collision/contact s
 foot support, or reopen torque, GRF, CoP, muscle-effort, or gait-load product output. The patch also
 does not export the older dirty CMake/source-manifest port, so it is not yet a complete fresh-clone
 bootstrap.
+
+
+## The iOS C3D header surface now matches the absent ezc3d backend (2026-08-11)
+
+The iOS source manifest has never compiled `C3DLoader.cpp` or `C3DForcePlatforms.cpp`, but the public
+headers still exposed their full API. `C3DLoader` and
+`C3D::getWeightedDistFromCoPToNearestMarker()` could therefore compile and fail only at link time;
+including `C3DForcePlatforms.hpp` instead failed immediately because ezc3d is not present. That was
+a split contract rather than usable C3D support.
+
+The reviewed boundary keeps exactly the portion that the app and archive can support:
+
+- The pure `C3D` value struct retains all fields, including its `std::vector<ForcePlate>`; its layout
+  is unchanged. `ForcePlate.cpp.o` remains in both archives.
+- `OpenSimParser::loadMotAtLowestMarkerRMSERotation(..., C3D&, ...)` remains public and defined. It
+  consumes only `dataRotation` and `markerTimesteps`, not ezc3d or `C3DLoader`.
+- iOS hides the loader-only weighted convention method, the whole `C3DLoader` class, and
+  `FORCE_PLATFORM_NUM_CONVENTIONS`, `ForcePlatform`, and `ForcePlatforms`.
+- Both production `.cpp` files include their own header before the platform guard. An accidental
+  future iOS source-manifest entry therefore produces a valid empty translation unit rather than
+  reintroducing ezc3d through a transitive include.
+- Non-iOS declarations and implementation bodies are unchanged. `C3DLoader.hpp` now explicitly
+  includes `<string>` and no longer depends on the unused `Skeleton.hpp` include.
+
+The causal RED reported **8 contract failures**: the adapter header and both production sources
+leaked missing ezc3d includes, two unavailable loader APIs still compiled, and three adapter
+negative cases failed for that missing include instead of because the names were absent. After the
+four-file fix:
+
+- simulator and device `nimble_ios` archives rebuilt successfully;
+- the two retained-contract XCTest methods passed separate **1/1** receipts in 12 s and 7 s, with
+  zero failures, skips, expected failures, or restarts;
+- `c3d_ios_boundary_probe.sh` passed all supported and forbidden compile surfaces, verified both
+  archives member by member as simulator platform 7 and device platform 2, required the retained
+  OpenSimParser/ForcePlate members and symbols exactly once in each, and rejected the complete
+  forbidden surface from defined and undefined symbols. Ordinary dead-stripped links for both
+  platforms extracted `OpenSimParser.cpp.o` and `ForcePlate.cpp.o` without force-loading or
+  unresolved ezc3d/DART symbols; the simulator binary ran on `BioMotion-CI` to
+  `C3D_IOS_ARCHIVE_PROBE_PASS` and `C3D_IOS_BOUNDARY_PROBE_PASS`;
+- an independent nested review reported no blocker, high, medium, or low issue; and
+- the enclosing `tools/run_tests.sh all` gate passed. The fast lane completed **526/526** tests in
+  1696 s and the slow lane completed **1/1** in 6274 s. Both `xcodebuild` and `xcresulttool`
+  returned 0 for both lanes; both xcresults were `Passed`, with zero failures, skips, expected
+  failures, or test-host restarts. The runner emitted `ALL GATE PASS`.
+
+The nested source change is isolated in
+`03fa30ca524376747f7e0e884c8c8c14c4d5526f` (`fix(ios): hide unavailable C3D loading APIs`),
+contains exactly four C3D files, and is published at
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05).
+`git ls-remote` resolved the fork branch to the same SHA. The tracked
+`nimble-patches/ios-c3d-boundary.patch` is byte-identical to that commit diff, reverse-checks against
+the branch head, is 116 lines, and has SHA-256
+`63b5bc8ad9206738eedabf89100a1fee84ce856f3cba6895dc63bb5fc50ea6a7`.
+
+Every iOS consumer target must define `DART_IOS_BUILD=1`; the current CMake target, app, tests, and
+probe do. This closes a false public API. It does **not** add C3D file loading, and the older dirty
+CMake/source-manifest port is still not exported as a fresh-clone bootstrap.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
