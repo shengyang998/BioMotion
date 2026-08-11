@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "artifactRevision": 1,
+  "assetPackID": "sam3d-body-pose",
+  "modelBaseName": "SAM3DBodyPose",
+  "license": {
+    "file": "SAM-LICENSE.txt",
+    "sha256": "b3a5a0e2d973ab80e6610ccf1cffc40756050d0ace3cd4fec879b3ec290b2e9b",
+    "upstreamPath": "LICENSE"
+  },
+  "provenance": {
+    "repository": "https://github.com/facebookresearch/sam-3d-body",
+    "exportRecipeCommit": "faa96fc8f9e651131579849701e0fa682b4d4b9c",
+    "contract": {
+      "path": "export/CONTRACT.md",
+      "sha256": "6aa70b392b750bcfb4c1695b88fca336a13d284721d1689383427a5654ca5f47"
+    },
+    "conversionLog": {
+      "path": "export/coreml/convert_log.json",
+      "sha256": "f1de5dd9a61e5d7677c952330dd5efe57abce29a64a15ba46ce81841dcb2370b"
+    },
+    "coremlReport": {
+      "path": "export/coreml/coreml_report.json",
+      "sha256": "76976adb3973cabc0e747c190dc11d6840730debbc9ce0c156b17d78e30a753a"
+    },
+    "sourceInputs": [
+      {
+        "path": "checkpoints/vith/model.ckpt",
+        "size": 1691205237,
+        "sha256": "3b1cb897f4bbd977bf81cbb0b30780a9582681ac642ee112865790ceb4d66056"
+      },
+      {
+        "path": "export/assets/mhr_export_assets.pt",
+        "size": 29750464,
+        "sha256": "4427ac984426313518ccb163edffda8c80c97b95557b47f80b6aa6b21fc2c673"
+      }
+    ],
+    "conversionToolchain": {
+      "python": "3.11.15",
+      "torch": "2.13.0",
+      "coremltools": "9.0",
+      "computePrecision": "mixed",
+      "ioDType": "float16",
+      "deploymentTarget": "iOS17"
+    },
+    "compileToolchain": {
+      "xcode": "26.4",
+      "xcodeBuild": "17E192",
+      "coremlcompiler": "3520.5.1",
+      "baPackage": "1.2"
+    }
+  },
+  "sourcePackage": {
+    "directoryName": "SAM3DBodyPose.mlpackage",
+    "files": [
+      {
+        "path": "Manifest.json",
+        "size": 617,
+        "sha256": "28fdc65d4b1ceca4e536e1a6d344280d68e1ce96ca0e8ca337513f0dac111efe"
+      },
+      {
+        "path": "Data/com.apple.CoreML/model.mlmodel",
+        "size": 3201988,
+        "sha256": "946e3457259a29f8fa4dae6028982f15d3f74c1f5dfd409971d532e519456284"
+      },
+      {
+        "path": "Data/com.apple.CoreML/weights/weight.bin",
+        "size": 1401100744,
+        "sha256": "57c7eacb381e6a898343a30e0303ddda780b7aea9b0e3193d2b01c7a79e46316"
+      }
+    ]
+  },
+  "compiledModel": {
+    "directoryName": "SAM3DBodyPose.mlmodelc",
+    "files": [
+      {
+        "path": "coremldata.bin",
+        "size": 503,
+        "sha256": "442b4588860a34c3e7695762a3ccd25cbe56c3897ff674536aea8c533fa43c38"
+      },
+      {
+        "path": "metadata.json",
+        "size": 4300,
+        "sha256": "2cf4a34b108adc679ac3c4f588e35f53f465d21ddb20bb0af1090aa22fddc2cd"
+      },
+      {
+        "path": "model.mil",
+        "size": 3722685,
+        "sha256": "5e6a81aa47306c54627be3d5df4dcfce7741d214e00bbff0fce4032c51b3017d"
+      },
+      {
+        "path": "analytics/coremldata.bin",
+        "size": 243,
+        "sha256": "0ca568f2ddf5852232bbf3ed335dfb30eaa07c460b8d225534173ec9cc477ccb"
+      },
+      {
+        "path": "weights/weight.bin",
+        "size": 1401100744,
+        "sha256": "57c7eacb381e6a898343a30e0303ddda780b7aea9b0e3193d2b01c7a79e46316"
+      }
+    ]
+  },
+  "interface": {
+    "specificationVersion": 8,
+    "modelType": "mlProgram",
+    "minimumIOS": "17.0",
+    "generatedClassName": "SAM3DBodyPose",
+    "allowAdditionalFeatures": false,
+    "inputs": [
+      {
+        "name": "image",
+        "featureType": "multiArray",
+        "dataType": "float16",
+        "shape": [
+          1,
+          3,
+          512,
+          384
+        ],
+        "optional": false,
+        "shapeFlexible": false
+      },
+      {
+        "name": "ray_map",
+        "featureType": "multiArray",
+        "dataType": "float16",
+        "shape": [
+          1,
+          2,
+          512,
+          384
+        ],
+        "optional": false,
+        "shapeFlexible": false
+      },
+      {
+        "name": "cliff",
+        "featureType": "multiArray",
+        "dataType": "float16",
+        "shape": [
+          1,
+          3
+        ],
+        "optional": false,
+        "shapeFlexible": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "joint_coords",
+        "featureType": "multiArray",
+        "dataType": "float32",
+        "shape": [
+          127,
+          3
+        ],
+        "optional": false,
+        "shapeFlexible": false
+      },
+      {
+        "name": "global_rots",
+        "featureType": "multiArray",
+        "dataType": "float32",
+        "shape": [
+          127,
+          3,
+          3
+        ],
+        "optional": false,
+        "shapeFlexible": false
+      },
+      {
+        "name": "cam_t",
+        "featureType": "multiArray",
+        "dataType": "float32",
+        "shape": [
+          3
+        ],
+        "optional": false,
+        "shapeFlexible": false
+      },
+      {
+        "name": "keypoints_2d",
+        "featureType": "multiArray",
+        "dataType": "float32",
+        "shape": [
+          70,
+          2
+        ],
+        "optional": false,
+        "shapeFlexible": false
+      }
+    ]
+  }
+}

@@ -30,6 +30,13 @@ labs/BioMotion/
 
 The `nimblephysics/` and `osqp/` folders are third-party C++ libraries. They are **not** committed to the project repo — you clone them separately and build the static archives that the iOS app links against.
 
+The large SAM3DBodyPose Core ML artifact is also not committed. Its accepted
+source/compiled file trees, hashes, toolchain provenance, exact interface, and
+license are pinned by `BioMotion/Resources/SAM3DBodyPose.lock.json` and checked
+by `tools/assetpack/verify_model_lock.py`. The lock/verifier is the supply-chain
+foundation; packaging, upload, and runtime enforcement are tracked as separate
+fail-closed integration steps in `tools/assetpack/README.md` and `STATUS.md`.
+
 ## What ships in the binary
 
 The compiled `.ipa` is only ~3.5MB. The repo on disk can balloon to 1.2GB if you keep the upstream nimblephysics tree intact, but **99% of that is never linked into the app**:

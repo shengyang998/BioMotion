@@ -17,49 +17,66 @@ it on every app update.
 
 ---
 
+## Locked supply-chain contract
+
+The 1.3 GiB model is intentionally not committed. Instead, the repository pins
+the only accepted source package, compiled model, license, provenance, and Core
+ML interface in:
+
+- `BioMotion/Resources/SAM3DBodyPose.lock.json`
+- `BioMotion/Resources/SAM-LICENSE.txt`
+- `tools/assetpack/verify_model_lock.py`
+
+The stable asset-pack identifier is exactly `sam3d-body-pose`. Verify the
+checked-in contract and license without the large artifact:
+
+```bash
+python3 tools/assetpack/verify_model_lock.py repository
+python3 tools/tests/assetpack_supply_chain_tests.py
+```
+
+When the artifacts are present, verify every regular file, size, SHA-256, and
+the complete Core ML interface:
+
+```bash
+python3 tools/assetpack/verify_model_lock.py source \
+  BioMotion/CoreML/SAM3DBodyPose.mlpackage
+python3 tools/assetpack/verify_model_lock.py compiled \
+  build/assetpack/stage/SAM3DBodyPose.mlmodelc
+```
+
+The verifier rejects unknown or duplicate JSON keys, unsafe paths, symlinks,
+missing/extra/non-regular files, byte drift, license drift, and interface type,
+dtype, shape, optionality, or flexibility drift.
+
+**Integration status:** the lock/verifier is the completed foundation. The
+current `package.sh`, `upload.sh`, developer bundle, and runtime loader predate
+it and are not yet release-approved. Do not package or upload until the next
+integration commits make the lock mandatory at every entry point and emit a
+verifiable receipt. The existing App Store Connect version 1 lacks the lock and
+license and must not be treated as a compliant shipping artifact.
+
+---
+
 ## Package
 
-```bash
-cd labs/BioMotion
-bash tools/assetpack/package.sh            # ~1 min; writes build/assetpack/sam3d-body-pose.aar
-```
-
-It compiles `SAM3DBodyPose.mlpackage` → `SAM3DBodyPose.mlmodelc` with
-`xcrun coremlcompiler`, then archives it with `xcrun ba-package`. It looks for
-the source in `labs/sam-3d-body/export/coreml/` then `BioMotion/CoreML/`; pass a
-path to override.
-
-Raw equivalent:
-
-```bash
-xcrun coremlcompiler compile <src>/SAM3DBodyPose.mlpackage build/assetpack/stage
-cp tools/assetpack/Manifest.json build/assetpack/stage/
-cd build/assetpack/stage && xcrun ba-package Manifest.json -o ../sam3d-body-pose.aar
-```
+`package.sh` currently compiles `SAM3DBodyPose.mlpackage` with
+`xcrun coremlcompiler`, then archives it with `xcrun ba-package`. That older
+path does not yet enforce the checked-in lock or re-extract its AAR, so it is
+documented for migration context only and must not be used for a release.
+Direct `coremlcompiler` / `ba-package` commands are also not an approved bypass.
 
 `ba-package` resolves the manifest's relative `fileSelectors` against the **current
 working directory**, which is why the stage directory is the CWD.
 
 ## Upload
 
-The pack is uploaded on a **separate channel** from the app binary.
-
-```bash
-bash tools/assetpack/upload.sh             # build/assetpack/sam3d-body-pose.aar by default
-```
-
-Raw equivalent:
-
-```bash
-xcrun altool --upload-asset-pack build/assetpack/sam3d-body-pose.aar \
-  --apple-id 6761994383 --platform ios \
-  --apiKey 4KH2G3HUYG --apiIssuer 25194e91-5f40-43b4-b598-98a189994f54
-```
-
-* `--apple-id 6761994383` is BioMotion's App Store Connect app id (not the bundle id).
-* An **ASC API key is mandatory**. An app-specific password returns 401 for
-  `--upload-asset-pack`. The `.p8` must be at
-  `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`.
+The pack is uploaded on a **separate channel** from the app binary. The current
+script reads credentials before it proves the AAR and has no receipt or
+verification-only mode, so neither it nor a raw `altool` call is an approved
+release path. The next integration slice must verify the repository contract,
+receipt, re-extracted AAR, and compiled model before it is even allowed to read
+App Store Connect credentials; upload must then require an explicit flag.
 
 Check state (both read-only):
 
@@ -187,10 +204,12 @@ Verified on this machine (2026-08-07):
   2. `Couldn't get the pose model from the App Store: No team ID was specified for the app with the bundle ID "com.soleil.BioMotion".`
   The second is the Simulator's real reason, surfaced on the next attempt once
   the asynchronous lookup has failed.
-* Asset pack uploaded to App Store Connect: `sam3d-body-pose` version 1,
+* Historical asset pack uploaded to App Store Connect: `sam3d-body-pose` version 1,
   `0 errors, 0 warnings`, version id `137b671a-f5dc-4c6c-9abd-1b1fad37eb16`,
   state **READY_FOR_TESTING**, platform IOS (it went PROCESSING →
-  READY_FOR_TESTING in about 10 minutes).
+  READY_FOR_TESTING in about 10 minutes). That AAR omitted
+  `SAM-LICENSE.txt` and `SAM3DBodyPose.lock.json`; it is now obsolete and must
+  not be used as the shipping compliance artifact.
 
 **Not** verified, and only verifiable once a TestFlight build carrying these
 Info.plist keys is installed on a real device:

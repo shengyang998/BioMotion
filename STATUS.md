@@ -4507,6 +4507,42 @@ does not export the older dirty CMake/source-manifest port, so it is not yet a c
 bootstrap.
 
 
+## The SAM3DBodyPose artifact and license contract is now pinned (2026-08-11)
+
+The 1.3 GiB model must stay outside Git, but accepting a directory merely because it is named
+`SAM3DBodyPose.mlpackage` or `.mlmodelc` is not a supply-chain contract. The repository now carries
+the small, reviewable authority files `BioMotion/Resources/SAM3DBodyPose.lock.json` and
+`SAM-LICENSE.txt`, plus `tools/assetpack/verify_model_lock.py`.
+
+The lock fixes the asset-pack ID to exactly `sam3d-body-pose`, the upstream repository and export
+recipe commit `faa96fc8f9e651131579849701e0fa682b4d4b9c`, both source-input hashes, conversion and compile
+toolchains, the exact three-file source package, exact five-file compiled model, and every Core ML
+input/output name, type, dtype, shape, optionality, and shape-flexibility flag. The 8,204-byte SAM
+license is checked byte-for-byte at SHA-256
+`b3a5a0e2d973ab80e6610ccf1cffc40756050d0ace3cd4fec879b3ec290b2e9b`.
+
+The verifier reads strict UTF-8 JSON from non-symlink regular files, rejects duplicate/unknown keys
+and unsafe paths, and exact-matches file sets, directories, sizes, hashes, and Core ML metadata.
+Its self-contained suite passes **23/23**, covering ID/version drift, duplicate JSON, missing/extra
+or symlinked artifacts, license mismatch, and interface/schema drift. Repository mode passes, and
+the real local source `.mlpackage` and staged compiled `.mlmodelc` both pass their respective
+full-tree/interface modes. The external dirty SAM export worktree was read-only throughout.
+
+This is deliberately the first supply-chain slice, not a claim that delivery is finished. Audit of
+the existing paths found release blockers that remain explicit:
+
+- `package.sh` does not yet invoke the verifier or re-extract and verify its AAR;
+- `upload.sh` reads credentials before artifact validation and lacks a receipt and `--verify-only`;
+- the historical App Store Connect version 1 AAR omits both the lock and full license and is not a
+  compliant shipping artifact;
+- developer bundling and runtime loading still accept unverified artifacts; and
+- package/upload/runtime enforcement, NOTICE, app resources, and a replacement asset-pack version
+  remain separate tested commits.
+
+The asset-pack README no longer recommends raw packaging or upload bypasses while those gates are
+open. No upload or other external mutation was performed by this contract slice.
+
+
 ## XML conversion no longer depends on a machine-specific Boost install (2026-08-11)
 
 `dart/utils/XmlHelpers.cpp` previously pulled header-only Boost string and lexical-conversion code
