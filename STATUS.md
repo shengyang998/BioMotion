@@ -338,7 +338,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 646 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 633 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -5591,7 +5591,7 @@ TDD RED ran the three new methods against the old parser: **0/3 passed**, with a
 cases and all six non-finite cases accepted. GREEN passes **3/3** with zero failures/skips/restarts.
 The complete `RootTranslationTests` class passes **10/10**, the fail-closed gate harness passes
 **49/49**, both edited Swift files parse, and unsigned Debug `build-for-testing` succeeds for generic
-arm64 device. The reviewed fast-lane count is now **646**; these focused receipts are not represented
+arm64 device. The reviewed fast-lane count at that receipt was **646**; these focused receipts are not represented
 as a new full-fast-lane pass.
 
 
@@ -5615,8 +5615,34 @@ skips or restarts, in **568 seconds**. After the one 60-pose scan, the ellipsoid
 0.072 s and the straight-line suite in **0.101 s** instead of 277.265 s. All four straight-line
 distributions are unchanged, including 12,384 reference rows and the same 0.008068 m / 0.146574 m
 maxima. The expected fast-lane saving is **277.164 seconds (about 4 min 37 s)** per run. The fast /
-slow lane sizes remain **646 + 1**; this focused receipt is not represented as a new full-fast-lane
+slow lane sizes at that receipt were **646 + 1**; this focused receipt is not represented as a new full-fast-lane
 pass.
+
+
+## Temporary IK diagnostics are permanent regressions now (2026-08-12)
+
+`IKDriftDiagnosticsTests` (6 methods) and `IKSolverInternalsTests` (8 methods) still described
+themselves as temporary root-cause probes after the fixed-point and parser repairs had shipped.
+Twelve of the fourteen methods printed solver traces without asserting the diagnosed outcome; some
+also copied nimble's former IK internals even though the shipping bridge no longer calls that
+solver. Keeping them in the commit gate made a printed observation look like regression coverage.
+
+The two unique protections were migrated before either file was deleted. The existing
+`NimbleBridgeTests.testRepeatedIKOnIdenticalMarkersIsStable` now runs both the original planar
+fixture and the historical soft-knee/toe 3D fixture that amplified the old drift to 0.19 / 0.84
+rad. Each fixture gets an isolated bridge and eight identical solves; every solve after the warm
+fixed point must move by less than `1e-6` in native coordinate units, tightened from the former
+planar-only `1e-3` check.
+`OpenSimGeometryBoundaryTests.testCustomJointPreservesNonIdentityLinearFunctionsAndCoordinateMappings`
+is the permanent native parser regression: it pins `2*q`, the sign/intercept pair for `-q+0.5`,
+and remapping `pelvis_tx` to `pelvis_ty` so one coordinate drives both X and Y exactly.
+
+The two formal regressions passed **2/2** both before deletion and after Xcode project regeneration.
+Their complete containing classes pass **31/31**, and the fail-closed gate harness passes **49/49**.
+Unsigned Debug `build-for-testing` also succeeds for generic arm64 device. No product source
+changed. The reviewed fast count is now **633**: 646 minus 14 temporary methods plus one newly named
+parser method; the 3D fixture lives inside an existing test method. The slow lane remains 1. This
+is focused evidence, not a new full-fast-lane receipt.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

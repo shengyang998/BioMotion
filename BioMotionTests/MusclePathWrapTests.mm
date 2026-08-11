@@ -1,8 +1,8 @@
 // The ported cylinder and ellipsoid wrap solvers, tested as GEOMETRY — no
 // skeleton, no model, no fixture.
 //
-// ObjC++ (like `IKSolverInternalsTests.mm`) so it can call
-// `biomotion::wrapCylinderLine` and `biomotion::wrapEllipsoidLine` directly.
+// ObjC++ so it can call `biomotion::wrapCylinderLine` and
+// `biomotion::wrapEllipsoidLine` directly.
 // Everything here is an answer somebody can check on paper — a closed form, an
 // invariant, or an exhaustive search — which is the point: the reference fixture
 // says whether the whole chain agrees with OpenSim, and these say WHICH PIECE

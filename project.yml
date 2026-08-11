@@ -248,9 +248,8 @@ targets:
         # Exposes the legacy unconstrained near-CoP selector only inside the
         # test module. The app bridging header intentionally omits it.
         SWIFT_OBJC_BRIDGING_HEADER: BioMotionTests/BioMotionTests-Bridging-Header.h
-        # TEMPORARY (IK drift diagnosis): lets an ObjC++ XCTestCase in this
-        # target call nimblephysics directly. Remove with
-        # BioMotionTests/IKSolverInternalsTests.mm.
+        # Permanent ObjC++ geometry and observability regressions call the
+        # vendored C++17 nimblephysics surface directly.
         CLANG_CXX_LANGUAGE_STANDARD: "c++17"
         "HEADER_SEARCH_PATHS[sdk=iphoneos*]":
           - "$(PROJECT_DIR)/nimblephysics/build_ios"

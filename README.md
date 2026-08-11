@@ -252,7 +252,7 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 # Tests on simulator — always via the script, never a hand-typed xcodebuild line.
 # It provisions a private simulator (naming one shared with another xcodebuild
 # process is what made this suite untrustworthy) and emits an xcresult receipt.
-tools/run_tests.sh fast    # exactly 646; 0 failed/skipped/restarted
+tools/run_tests.sh fast    # exactly 633; 0 failed/skipped/restarted
 tools/run_tests.sh slow    # only testE1RunAll; exactly 1; 0 failed/skipped
 tools/run_tests.sh all     # commit gate: fast, then slow
 

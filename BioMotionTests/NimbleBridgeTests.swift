@@ -467,19 +467,14 @@ final class NimbleBridgeTests: XCTestCase {
     }
 
     func testRepeatedIKOnIdenticalMarkersIsStable() {
-        loadModel()
-        _ = solveStandingPose()  // first solve is cold; warms the solver
-        guard let a = solveStandingPose(), let b = solveStandingPose() else {
-            XCTFail("IK should solve the standing pose")
-            return
-        }
-
-        let maxDelta = zip(a.jointAngles, b.jointAngles)
-            .map { abs($0.0.doubleValue - $0.1.doubleValue) }
-            .max() ?? 0
-        XCTAssertLessThan(maxDelta, 1e-3,
-                          "Warm-started IK on identical markers must not wander; " +
-                          "random restarts can land in a different basin")
+        assertRepeatedIKIsStable(
+            markers: arkitStandingMarkers(),
+            fixture: "planar"
+        )
+        assertRepeatedIKIsStable(
+            markers: arkitThreeDimensionalStandingMarkers(),
+            fixture: "three-dimensional"
+        )
     }
 
     func testIKPoseIsContinuousUnderSmallMarkerPerturbation() {
@@ -509,19 +504,9 @@ final class NimbleBridgeTests: XCTestCase {
     /// continuity with a perturbation well below the ARKit noise floor.
     private func arkitStandingMarkers(shiftX: Double = 0)
         -> (positions: [NSNumber], names: [String]) {
-        // NOTE: this fixture is a near-singular marker set — every point lies in
-        // the z = 0 plane and each leg's HJC/KJC/AJC are colinear, so rotations
-        // about the femur long axis barely move any marker. That is deliberate
-        // here only in the sense that it is the ORIGINAL fixture; it is what
-        // makes testRepeatedIKOnIdenticalMarkersIsStable fail. Perturbing it
-        // toward a more realistic 3D pose (soft-knee z-offset, toe markers) was
-        // tried and made the drift an order of magnitude WORSE (0.006 -> 0.19 ->
-        // 0.84 rad), which is the signature of near-singularity amplification in
-        // the damped pseudo-inverse rather than an exact null space. The real
-        // defect is upstream: the bridge's IK has no null-space damping toward
-        // the seed pose, and nimble's refineIK terminates on error-CHANGE, never
-        // on lossLowerBound, so it keeps stepping along the flat manifold on
-        // every call. Fix the solver, not this table.
+        // This near-singular planar fixture originally exposed repeated-solve
+        // drift. Keep it beside the 3D amplification fixture below as a
+        // permanent fixed-point regression for the shipped bridge solver.
         let layout: [(String, Double, Double, Double)] = [
             ("PELVIS",  0.00, 0.95, 0.00),
             ("LHJC",   -0.09, 0.92, 0.00),
@@ -547,6 +532,80 @@ final class NimbleBridgeTests: XCTestCase {
         return (positions, names)
     }
 
+    /// The historical discriminator that amplified the old repeated-solve
+    /// drift to 0.19 / 0.84 rad: soft-knee depth plus toe markers.
+    private func arkitThreeDimensionalStandingMarkers()
+        -> (positions: [NSNumber], names: [String]) {
+        let layout: [(String, Double, Double, Double)] = [
+            ("PELVIS",  0.00, 0.95,  0.00),
+            ("LHJC",   -0.09, 0.92,  0.00),
+            ("RHJC",    0.09, 0.92,  0.00),
+            ("LKJC",   -0.09, 0.52,  0.04),
+            ("RKJC",    0.09, 0.52,  0.04),
+            ("LAJC",   -0.09, 0.10,  0.00),
+            ("RAJC",    0.09, 0.10,  0.00),
+            ("LTOE",   -0.09, 0.03,  0.16),
+            ("RTOE",    0.09, 0.03,  0.16),
+            ("C7",      0.00, 1.40, -0.02),
+            ("LSJC",   -0.18, 1.35, -0.02),
+            ("RSJC",    0.18, 1.35, -0.02),
+            ("LEJC",   -0.20, 1.07,  0.02),
+            ("REJC",    0.20, 1.07,  0.02),
+        ]
+        var positions: [NSNumber] = []
+        var names: [String] = []
+        for (name, x, y, z) in layout {
+            names.append(name)
+            positions.append(NSNumber(value: x))
+            positions.append(NSNumber(value: y))
+            positions.append(NSNumber(value: z))
+        }
+        return (positions, names)
+    }
+
+    private func assertRepeatedIKIsStable(
+        markers: (positions: [NSNumber], names: [String]),
+        fixture: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let isolatedBridge = NimbleBridge()
+        guard loadModel(into: isolatedBridge, file: file, line: line) else { return }
+
+        var previousWarmPose: [Double]?
+        for solveIndex in 0..<8 {
+            guard let result = isolatedBridge.solveIK(
+                withMarkerPositions: markers.positions,
+                markerNames: markers.names
+            ) else {
+                XCTFail("IK should solve the \(fixture) fixture", file: file, line: line)
+                return
+            }
+
+            let pose = result.jointAngles.map(\.doubleValue)
+            let expectedDOFs = Int(isolatedBridge.numDOFs)
+            XCTAssertGreaterThan(expectedDOFs, 0, file: file, line: line)
+            XCTAssertEqual(pose.count, expectedDOFs, file: file, line: line)
+            guard expectedDOFs > 0, pose.count == expectedDOFs else { return }
+            // Solve 0 is cold and solve 1 establishes the warm fixed point.
+            // Every later identical input must remain at that point.
+            if solveIndex >= 2, let previousWarmPose {
+                XCTAssertEqual(pose.count, previousWarmPose.count, file: file, line: line)
+                let maxDelta = zip(previousWarmPose, pose)
+                    .map { abs($0.0 - $0.1) }
+                    .max() ?? .infinity
+                XCTAssertLessThan(
+                    maxDelta,
+                    1e-6,
+                    "Warm-started IK wandered on the \(fixture) fixture at solve \(solveIndex)",
+                    file: file,
+                    line: line
+                )
+            }
+            previousWarmPose = pose
+        }
+    }
+
     private func solveStandingPose(shiftX: Double = 0) -> NimbleIKResult? {
         let markers = arkitStandingMarkers(shiftX: shiftX)
         return bridge.solveIK(withMarkerPositions: markers.positions,
@@ -554,14 +613,24 @@ final class NimbleBridgeTests: XCTestCase {
     }
 
     private func loadModel() {
+        _ = loadModel(into: bridge)
+    }
+
+    @discardableResult
+    private func loadModel(
+        into target: NimbleBridge,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
         let path = Bundle(for: type(of: self)).path(forResource: "Rajagopal2016", ofType: "osim")
             ?? Bundle.main.path(forResource: "Rajagopal2016", ofType: "osim")
         guard let path else {
-            XCTFail("Cannot find Rajagopal2016.osim")
-            return
+            XCTFail("Cannot find Rajagopal2016.osim", file: file, line: line)
+            return false
         }
-        let success = bridge.loadModel(fromPath: path)
-        XCTAssertTrue(success)
+        let success = target.loadModel(fromPath: path)
+        XCTAssertTrue(success, file: file, line: line)
+        return success
     }
 
     private func runIKWithStandingPose() -> NimbleIKResult? {

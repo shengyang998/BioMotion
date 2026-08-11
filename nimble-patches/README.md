@@ -83,7 +83,7 @@ inspecting source:
   functions, non-Cartesian/negative translation axes, incomplete transforms,
   unknown parents and unknown coordinates while preserving the old DOF count
   and active mask.
-- `IKSolverInternalsTests.testP8ModelCoordinateRepresentation` proves `2*q`
+- `OpenSimGeometryBoundaryTests.testCustomJointPreservesNonIdentityLinearFunctionsAndCoordinateMappings` proves `2*q`
   produces `0.2 m` at `q=0.1`, pins the `-q+0.5` intercept sign, and verifies a
   valid remapping makes `pelvis_ty` drive both X and Y. The focused receipt also
   recorded the reflected fixture's root as `CustomJoint<6>` and the unmodified
@@ -116,7 +116,7 @@ documented in the outer `README.md`, then run the product regressions:
 cd /path/to/BioMotion
 tools/run_tests.sh subset \
   -only-testing:BioMotionTests/DOFMaskTests/testFailedReloadPreservesActiveDOFMask \
-  -only-testing:BioMotionTests/IKSolverInternalsTests/testP8ModelCoordinateRepresentation \
+  -only-testing:BioMotionTests/OpenSimGeometryBoundaryTests/testCustomJointPreservesNonIdentityLinearFunctionsAndCoordinateMappings \
   -only-testing:BioMotionTests/NimbleBridgeTests/testBundledModelsFailClosedWithoutValidatedFootContactSupport
 ```
 

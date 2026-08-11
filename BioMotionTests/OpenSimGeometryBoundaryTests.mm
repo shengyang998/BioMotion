@@ -11,6 +11,8 @@
 #include "dart/biomechanics/OpenSimParser.hpp"
 #include "dart/common/ResourceRetriever.hpp"
 #include "dart/dynamics/BodyNode.hpp"
+#include "dart/dynamics/CustomJoint.hpp"
+#include "dart/dynamics/DegreeOfFreedom.hpp"
 #include "dart/dynamics/MeshShape.hpp"
 #include "dart/dynamics/ShapeNode.hpp"
 #include "dart/dynamics/Skeleton.hpp"
@@ -261,6 +263,192 @@ std::size_t countMeshShapes(
   XCTAssertEqual(parsed.meshMap.size(), static_cast<std::size_t>(79));
   XCTAssertEqual(parsed.meshScaleMap.size(), static_cast<std::size_t>(79));
   XCTAssertEqual(countMeshShapes(parsed.skeleton), static_cast<std::size_t>(0));
+}
+
+- (void)testCustomJointPreservesNonIdentityLinearFunctionsAndCoordinateMappings
+{
+  NSString* sourcePath = [self modelPath:@"Rajagopal2016"];
+  if (sourcePath == nil)
+    return;
+
+  NSError* readError = nil;
+  NSString* source = [NSString stringWithContentsOfFile:sourcePath
+                                                encoding:NSUTF8StringEncoding
+                                                   error:&readError];
+  XCTAssertNotNil(source, @"%@", readError);
+  if (source == nil)
+    return;
+
+  // The specialized six-axis fast path may only accept identity functions.
+  // Force pelvis_tx to 2*q and require the exact CustomJoint fallback to move
+  // the pelvis by 0.2 m when q is 0.1 m.
+  NSRange translationAnchor
+      = [source rangeOfString:@"<coordinates>pelvis_tx</coordinates>"];
+  XCTAssertNotEqual(translationAnchor.location, NSNotFound);
+  if (translationAnchor.location == NSNotFound)
+    return;
+  NSRange search = NSMakeRange(
+      NSMaxRange(translationAnchor),
+      source.length - NSMaxRange(translationAnchor));
+  NSRange translationCoefficients
+      = [source rangeOfString:@"<coefficients> 1 0</coefficients>"
+                      options:0
+                        range:search];
+  XCTAssertNotEqual(translationCoefficients.location, NSNotFound);
+  if (translationCoefficients.location == NSNotFound)
+    return;
+
+  NSMutableString* doubled = [source mutableCopy];
+  [doubled replaceCharactersInRange:translationCoefficients
+                         withString:@"<coefficients> 2 0</coefficients>"];
+  NSString* doubledPath = [NSTemporaryDirectory()
+      stringByAppendingPathComponent:[NSString
+          stringWithFormat:@"nonidentity-linear-%@.osim", NSUUID.UUID.UUIDString]];
+  NSError* writeError = nil;
+  BOOL didWrite = [doubled writeToFile:doubledPath
+                            atomically:YES
+                              encoding:NSUTF8StringEncoding
+                                 error:&writeError];
+  XCTAssertTrue(didWrite, @"%@", writeError);
+  if (!didWrite)
+    return;
+
+  dart::biomechanics::OpenSimFile doubledFile
+      = dart::biomechanics::OpenSimParser::parseOsim(
+          std::string(doubledPath.UTF8String), "", true);
+  [[NSFileManager defaultManager] removeItemAtPath:doubledPath error:nil];
+  XCTAssertTrue(doubledFile.skeleton != nullptr);
+  if (doubledFile.skeleton == nullptr)
+    return;
+
+  dart::dynamics::DegreeOfFreedom* pelvisTX
+      = doubledFile.skeleton->getDof("pelvis_tx");
+  dart::dynamics::BodyNode* pelvis
+      = doubledFile.skeleton->getBodyNode("pelvis");
+  XCTAssertTrue(pelvisTX != nullptr);
+  XCTAssertTrue(pelvis != nullptr);
+  if (pelvisTX == nullptr || pelvis == nullptr)
+    return;
+
+  Eigen::VectorXs q
+      = Eigen::VectorXs::Zero(doubledFile.skeleton->getNumDofs());
+  doubledFile.skeleton->setPositions(q);
+  Eigen::Vector3s before = pelvis->getWorldTransform().translation();
+  q(pelvisTX->getIndexInSkeleton()) = 0.1;
+  doubledFile.skeleton->setPositions(q);
+  Eigen::Vector3s delta
+      = pelvis->getWorldTransform().translation() - before;
+  XCTAssertEqualWithAccuracy(delta.x(), 0.2, 1e-12);
+  XCTAssertEqualWithAccuracy(delta.y(), 0.0, 1e-12);
+  XCTAssertEqualWithAccuracy(delta.z(), 0.0, 1e-12);
+
+  // Baking a -1 rotational slope into the axis must negate the intercept too:
+  // a*(-q+b) == (-a)*(q-b).
+  NSRange tiltAnchor
+      = [source rangeOfString:@"<coordinates>pelvis_tilt</coordinates>"];
+  XCTAssertNotEqual(tiltAnchor.location, NSNotFound);
+  if (tiltAnchor.location == NSNotFound)
+    return;
+  search = NSMakeRange(
+      NSMaxRange(tiltAnchor), source.length - NSMaxRange(tiltAnchor));
+  NSRange tiltCoefficients
+      = [source rangeOfString:@"<coefficients> 1 0</coefficients>"
+                      options:0
+                        range:search];
+  XCTAssertNotEqual(tiltCoefficients.location, NSNotFound);
+  if (tiltCoefficients.location == NSNotFound)
+    return;
+
+  NSMutableString* reflected = [source mutableCopy];
+  [reflected replaceCharactersInRange:tiltCoefficients
+                           withString:@"<coefficients> -1 0.5</coefficients>"];
+  NSString* reflectedPath = [NSTemporaryDirectory()
+      stringByAppendingPathComponent:[NSString
+          stringWithFormat:@"reflected-linear-%@.osim", NSUUID.UUID.UUIDString]];
+  writeError = nil;
+  didWrite = [reflected writeToFile:reflectedPath
+                         atomically:YES
+                           encoding:NSUTF8StringEncoding
+                              error:&writeError];
+  XCTAssertTrue(didWrite, @"%@", writeError);
+  if (!didWrite)
+    return;
+
+  dart::biomechanics::OpenSimFile reflectedFile
+      = dart::biomechanics::OpenSimParser::parseOsim(
+          std::string(reflectedPath.UTF8String), "", true);
+  [[NSFileManager defaultManager] removeItemAtPath:reflectedPath error:nil];
+  XCTAssertTrue(reflectedFile.skeleton != nullptr);
+  if (reflectedFile.skeleton == nullptr)
+    return;
+
+  auto* reflectedRoot = dynamic_cast<dart::dynamics::CustomJoint<6>*>(
+      reflectedFile.skeleton->getJoint("ground_pelvis"));
+  XCTAssertTrue(reflectedRoot != nullptr);
+  if (reflectedRoot == nullptr)
+    return;
+  XCTAssertEqualWithAccuracy(reflectedRoot->getFlipAxisMap()(0), -1.0, 1e-12);
+  XCTAssertEqualWithAccuracy(
+      reflectedRoot->getCustomFunction(0)->calcValue(0.0), -0.5, 1e-12);
+  XCTAssertEqualWithAccuracy(
+      reflectedRoot->getCustomFunction(0)->calcValue(0.1), -0.4, 1e-12);
+
+  // A specialized joint also requires each TransformAxis to reference its
+  // corresponding DOF. Remap X to pelvis_ty and require the exact fallback:
+  // pelvis_tx drives neither translation, while pelvis_ty drives X and Y.
+  NSMutableString* remapped = [source mutableCopy];
+  [remapped replaceCharactersInRange:translationAnchor
+                           withString:@"<coordinates>pelvis_ty</coordinates>"];
+  NSString* remappedPath = [NSTemporaryDirectory()
+      stringByAppendingPathComponent:[NSString
+          stringWithFormat:@"remapped-coordinate-%@.osim", NSUUID.UUID.UUIDString]];
+  writeError = nil;
+  didWrite = [remapped writeToFile:remappedPath
+                        atomically:YES
+                          encoding:NSUTF8StringEncoding
+                             error:&writeError];
+  XCTAssertTrue(didWrite, @"%@", writeError);
+  if (!didWrite)
+    return;
+
+  dart::biomechanics::OpenSimFile remappedFile
+      = dart::biomechanics::OpenSimParser::parseOsim(
+          std::string(remappedPath.UTF8String), "", true);
+  [[NSFileManager defaultManager] removeItemAtPath:remappedPath error:nil];
+  XCTAssertTrue(remappedFile.skeleton != nullptr);
+  if (remappedFile.skeleton == nullptr)
+    return;
+
+  dart::dynamics::DegreeOfFreedom* remappedTX
+      = remappedFile.skeleton->getDof("pelvis_tx");
+  dart::dynamics::DegreeOfFreedom* remappedTY
+      = remappedFile.skeleton->getDof("pelvis_ty");
+  dart::dynamics::BodyNode* remappedPelvis
+      = remappedFile.skeleton->getBodyNode("pelvis");
+  XCTAssertTrue(remappedTX != nullptr);
+  XCTAssertTrue(remappedTY != nullptr);
+  XCTAssertTrue(remappedPelvis != nullptr);
+  if (remappedTX == nullptr || remappedTY == nullptr
+      || remappedPelvis == nullptr)
+    return;
+
+  q = Eigen::VectorXs::Zero(remappedFile.skeleton->getNumDofs());
+  remappedFile.skeleton->setPositions(q);
+  before = remappedPelvis->getWorldTransform().translation();
+  q(remappedTX->getIndexInSkeleton()) = 0.1;
+  remappedFile.skeleton->setPositions(q);
+  delta = remappedPelvis->getWorldTransform().translation() - before;
+  XCTAssertEqualWithAccuracy(delta.x(), 0.0, 1e-12);
+  XCTAssertEqualWithAccuracy(delta.y(), 0.0, 1e-12);
+  XCTAssertEqualWithAccuracy(delta.z(), 0.0, 1e-12);
+
+  q.setZero();
+  q(remappedTY->getIndexInSkeleton()) = 0.1;
+  remappedFile.skeleton->setPositions(q);
+  delta = remappedPelvis->getWorldTransform().translation() - before;
+  XCTAssertEqualWithAccuracy(delta.x(), 0.1, 1e-12);
+  XCTAssertEqualWithAccuracy(delta.y(), 0.1, 1e-12);
+  XCTAssertEqualWithAccuracy(delta.z(), 0.0, 1e-12);
 }
 
 - (void)testFullBodyBridgeMarkerNamesRemainStable

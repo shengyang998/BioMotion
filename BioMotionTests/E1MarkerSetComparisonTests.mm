@@ -5,9 +5,8 @@
 // verbatim. Nothing here may be re-thresholded after a result is read; the
 // PASS/FAIL verdict is produced exclusively by experiments/e1_check_gates.py.
 //
-// ObjC++ (not Swift) so it can call nimblephysics directly, the same way
-// BioMotionTests/IKSolverInternalsTests.mm does. It does not modify any shipped
-// code path.
+// ObjC++ (not Swift) so it can call nimblephysics directly through the bridge's
+// test-only internal surface. It does not modify any shipped code path.
 //
 // Output: a JSON blob written to NSTemporaryDirectory(); the absolute path is
 // printed as `E1|RESULTS|<path>`.
