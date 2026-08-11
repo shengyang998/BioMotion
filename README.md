@@ -89,28 +89,28 @@ git clone https://github.com/keenon/nimblephysics.git
 git -C nimblephysics checkout --detach c405b056fc35068027e03e0c384e84e12870b475
 ```
 
-Then apply the iOS-specific patches. Search the existing tree for `DART_IOS_BUILD` to find the exact diff sites; the touched files are:
+The following older iOS-port setup is still **not exported** as a reviewed
+patch. This is an audit list, not a recipe to hand-edit files that are named by
+the tracked patches below:
 
 - `config.hpp` — manual config with `HAVE_IPOPT=0`, `DART_IOS_BUILD=1`
-- `MeshShape.hpp` / `MeshShape_ios.cpp` — Assimp stubs
 - `OpenSimParser.cpp` — guarded MarkerFitter, GUIRecording, SdfParser, MJCFExporter includes
 - `MarkerAspect.hpp` / `Marker.hpp` — enum `NO` → `CONSTRAINT_NONE` (ObjC macro conflict)
-- `AssimpInputResourceAdaptor.hpp`, `SoftMeshShape.hpp` — Assimp guards
-- `C3DLoader.*` / `C3DForcePlatforms.*` — preserve the C3D value type while hiding unavailable
-  ezc3d loading and adapter APIs from iOS consumers
-- `XmlHelpers.cpp` — classic-locale standard-library conversion with no Boost dependency
+- `AssimpInputResourceAdaptor.hpp` — remaining headless Assimp include guard
 - `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` — GUIWebsocketServer guards
-- `CollisionDetector.cpp` / `DARTCollisionDetector_ios.cpp` / `World.cpp` —
-  explicit fail-closed collision boundary when Assimp/libccd is not linked
 - Vendored deps: Eigen 3.4.0 in `third_party/eigen`, tinyxml2 in `third_party/tinyxml2`
 
 Replace `nimblephysics/CMakeLists.txt` with the iOS-specific version (the upstream original is preserved as `CMakeLists_original.txt` in the patched tree).
 
-Then apply the reviewed behaviour patches recorded by this repository:
+Do not improvise those unexported edits on a release checkout. Until the later
+CMake/dependency slice records them, preserve the maintained local port tree.
+Apply the already reviewed behavior patches only through the files recorded by
+this repository:
 
 ```bash
 git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/ios-opensim-geometry-boundary.patch
+git -C nimblephysics apply ../nimble-patches/ios-mesh-shape-boundary.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
 git -C nimblephysics apply ../nimble-patches/ios-collision-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/ios-c3d-boundary.patch
@@ -125,7 +125,7 @@ remaining port diff has also been exported.
 The reviewed nested commits are published on the maintained
 [`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
 branch. At the latest 2026-08-11 receipt that branch resolved to
-`3829f1682b772cee7812e59767dae1cb067f3541`; the fork's remote symbolic `HEAD`
+`ffad0db626ba90ad9d7f73e813202c0a7a176381`; the fork's remote symbolic `HEAD`
 remained `refs/heads/master` at the pinned upstream baseline
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
@@ -164,6 +164,17 @@ retriever. BioMotion passes `ignoreGeometry=true` explicitly at every supported
 model-loading call site. The archive probe ordinary-links both SDK variants and
 runs both refusal paths in an iOS simulator; the XCTest contract separately
 pins FullBody/Rajagopal parsing and bridge-marker counts with geometry ignored.
+
+`MeshShape` and `SoftMeshShape` themselves also fail closed when
+`DART_IOS_BUILD=1`. Their headers expose only incomplete Assimp types, both
+constructors and every backend-dependent method throw one pinned
+`std::runtime_error`, and only type metadata plus destructors remain safe. A
+failed `SoftBodyNode` construction now rolls back its notifier, point masses,
+parent BodyNode entry, and hidden Jacobian-child entry. The archive probe
+ordinary-links both SDK variants and runs fresh plus archived implementations
+on an iOS simulator; a separate host fault-injection probe proves 32 root and
+32 child rejection transactions, address-balanced notifier allocation, and an
+ASan-clean normal path. This is a refusal boundary, not mesh rendering support.
 
 Here “linear extrapolation” means continuation along an endpoint tangent only:
 SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses

@@ -1,0 +1,435 @@
+diff --git a/dart/dynamics/MeshShape.hpp b/dart/dynamics/MeshShape.hpp
+index be095c7..27fe61a 100644
+--- a/dart/dynamics/MeshShape.hpp
++++ b/dart/dynamics/MeshShape.hpp
+@@ -36,7 +36,19 @@
+ #include <string>
+ #include <vector>
+ 
++#ifdef DART_IOS_BUILD
++// Keep Assimp types incomplete when the backend is not linked. Empty stand-in
++// definitions would create a false ABI and allow unavailable mesh code to look
++// usable to iOS consumers.
++#ifndef DART_ASSIMP_FORWARD_DECLARATIONS
++#define DART_ASSIMP_FORWARD_DECLARATIONS
++struct aiScene;
++struct aiNode;
++struct aiMesh;
++#endif
++#else
+ #include <assimp/scene.h>
++#endif
+ 
+ #include "dart/common/ResourceRetriever.hpp"
+ #include "dart/dynamics/Shape.hpp"
+@@ -227,4 +239,4 @@ protected:
+ } // namespace dynamics
+ } // namespace dart
+ 
+-#endif // DART_DYNAMICS_MESHSHAPE_HPP_
+\ No newline at end of file
++#endif // DART_DYNAMICS_MESHSHAPE_HPP_
+diff --git a/dart/dynamics/MeshShape_ios.cpp b/dart/dynamics/MeshShape_ios.cpp
+new file mode 100644
+index 0000000..da6b3c4
+--- /dev/null
++++ b/dart/dynamics/MeshShape_ios.cpp
+@@ -0,0 +1,304 @@
++/*
++ * Copyright (c) 2011-2019, The DART development contributors
++ * All rights reserved.
++ *
++ * The list of contributors can be found at:
++ *   https://github.com/dartsim/dart/blob/master/LICENSE
++ *
++ * This file is provided under the following "BSD-style" License:
++ *   Redistribution and use in source and binary forms, with or
++ *   without modification, are permitted provided that the following
++ *   conditions are met:
++ *   * Redistributions of source code must retain the above copyright
++ *     notice, this list of conditions and the following disclaimer.
++ *   * Redistributions in binary form must reproduce the above
++ *     copyright notice, this list of conditions and the following
++ *     disclaimer in the documentation and/or other materials provided
++ *     with the distribution.
++ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
++ *   CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
++ *   INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++ *   MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ *   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
++ *   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
++ *   USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ *   AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ *   LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
++ *   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ *   POSSIBILITY OF SUCH DAMAGE.
++ */
++
++// Fail-closed MeshShape definitions for iOS builds without Assimp.
++
++#ifdef DART_IOS_BUILD
++
++#include "dart/dynamics/MeshShape.hpp"
++#include "dart/dynamics/SoftMeshShape.hpp"
++
++#include <stdexcept>
++
++namespace dart {
++namespace dynamics {
++namespace {
++
++[[noreturn]] void throwMeshShapeUnavailable()
++{
++  throw std::runtime_error(
++      "MeshShape is unavailable in this iOS build because Assimp mesh support "
++      "is not linked.");
++}
++
++[[noreturn]] void throwSoftMeshShapeUnavailable()
++{
++  throw std::runtime_error(
++      "SoftMeshShape is unavailable in this iOS build because Assimp mesh "
++      "support is not linked.");
++}
++
++} // namespace
++
++SharedMeshWrapper::SharedMeshWrapper(const aiScene*) : mesh(nullptr)
++{
++  throwMeshShapeUnavailable();
++}
++
++SharedMeshWrapper::~SharedMeshWrapper() = default;
++
++MeshShape::MeshShape(
++    const Eigen::Vector3s&,
++    std::shared_ptr<SharedMeshWrapper>,
++    const common::Uri&,
++    common::ResourceRetrieverPtr,
++    bool)
++  : Shape(MESH)
++{
++  throwMeshShapeUnavailable();
++}
++
++MeshShape::MeshShape(
++    const Eigen::Vector3s&,
++    const std::string&,
++    common::ResourceRetrieverPtr,
++    bool)
++  : Shape(MESH)
++{
++  throwMeshShapeUnavailable();
++}
++
++MeshShape::~MeshShape() = default;
++
++const std::string& MeshShape::getType() const
++{
++  return getStaticType();
++}
++
++const std::string& MeshShape::getStaticType()
++{
++  static const std::string type("MeshShape");
++  return type;
++}
++
++std::vector<Eigen::Vector3s> MeshShape::getVertices() const
++{
++  throwMeshShapeUnavailable();
++}
++
++const aiScene* MeshShape::getMesh() const
++{
++  throwMeshShapeUnavailable();
++}
++
++std::string MeshShape::getMeshUri() const
++{
++  throwMeshShapeUnavailable();
++}
++
++const common::Uri& MeshShape::getMeshUri2() const
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::update()
++{
++  throwMeshShapeUnavailable();
++}
++
++const std::string& MeshShape::getMeshPath() const
++{
++  throwMeshShapeUnavailable();
++}
++
++common::ResourceRetrieverPtr MeshShape::getResourceRetriever()
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::setMesh(
++    std::shared_ptr<SharedMeshWrapper>,
++    const std::string&,
++    common::ResourceRetrieverPtr)
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::setMesh(
++    std::shared_ptr<SharedMeshWrapper>,
++    const common::Uri&,
++    common::ResourceRetrieverPtr)
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::setScale(const Eigen::Vector3s&)
++{
++  throwMeshShapeUnavailable();
++}
++
++const Eigen::Vector3s& MeshShape::getScale() const
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::setColorMode(ColorMode)
++{
++  throwMeshShapeUnavailable();
++}
++
++MeshShape::ColorMode MeshShape::getColorMode() const
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::setAlphaMode(AlphaMode)
++{
++  throwMeshShapeUnavailable();
++}
++
++MeshShape::AlphaMode MeshShape::getAlphaMode() const
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::setColorIndex(int)
++{
++  throwMeshShapeUnavailable();
++}
++
++int MeshShape::getColorIndex() const
++{
++  throwMeshShapeUnavailable();
++}
++
++int MeshShape::getDisplayList() const
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::setDisplayList(int)
++{
++  throwMeshShapeUnavailable();
++}
++
++std::shared_ptr<SharedMeshWrapper> MeshShape::loadMesh(
++    const std::string&)
++{
++  throwMeshShapeUnavailable();
++}
++
++std::shared_ptr<SharedMeshWrapper> MeshShape::loadMesh(
++    const std::string&, const common::ResourceRetrieverPtr&)
++{
++  throwMeshShapeUnavailable();
++}
++
++std::shared_ptr<SharedMeshWrapper> MeshShape::loadMesh(
++    const common::Uri&, const common::ResourceRetrieverPtr&)
++{
++  throwMeshShapeUnavailable();
++}
++
++Eigen::Matrix3s MeshShape::computeInertia(s_t) const
++{
++  throwMeshShapeUnavailable();
++}
++
++ShapePtr MeshShape::clone() const
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::updateBoundingBox() const
++{
++  throwMeshShapeUnavailable();
++}
++
++void MeshShape::updateVolume() const
++{
++  throwMeshShapeUnavailable();
++}
++
++SoftMeshShape::SoftMeshShape(SoftBodyNode*)
++  : Shape(SOFT_MESH), mSoftBodyNode(nullptr), mAssimpMesh(nullptr)
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++SoftMeshShape::~SoftMeshShape() = default;
++
++const std::string& SoftMeshShape::getType() const
++{
++  return getStaticType();
++}
++
++const std::string& SoftMeshShape::getStaticType()
++{
++  static const std::string type("SoftMeshShape");
++  return type;
++}
++
++const aiMesh* SoftMeshShape::getAssimpMesh() const
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++const SoftBodyNode* SoftMeshShape::getSoftBodyNode() const
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++void SoftMeshShape::update()
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++Eigen::Matrix3s SoftMeshShape::computeInertia(s_t) const
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++ShapePtr SoftMeshShape::clone() const
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++void SoftMeshShape::updateBoundingBox() const
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++void SoftMeshShape::updateVolume() const
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++void SoftMeshShape::_buildMesh()
++{
++  throwSoftMeshShapeUnavailable();
++}
++
++} // namespace dynamics
++} // namespace dart
++
++#endif // DART_IOS_BUILD
+diff --git a/dart/dynamics/SoftBodyNode.cpp b/dart/dynamics/SoftBodyNode.cpp
+index d435f6e..3ca5830 100644
+--- a/dart/dynamics/SoftBodyNode.cpp
++++ b/dart/dynamics/SoftBodyNode.cpp
+@@ -255,21 +255,43 @@ SoftBodyNode::SoftBodyNode(
+   : Entity(Frame::World(), false),
+     Frame(Frame::World()),
+     Base(std::make_tuple(_parentBodyNode, _parentJoint, _properties)),
++    mNotifier(nullptr),
+     mSoftShapeNode(nullptr)
+ {
+-  createSoftBodyAspect();
+-  mNotifier = new PointMassNotifier(this, getName() + "_PointMassNotifier");
+-  ShapeNode* softNode
+-      = createShapeNodeWith<VisualAspect, CollisionAspect, DynamicsAspect>(
+-          std::make_shared<SoftMeshShape>(this), getName() + "_SoftMeshShape");
+-  mSoftShapeNode = softNode;
+-
+-  // Dev's Note: We do this workaround (instead of just using setProperties(~))
+-  // because mSoftShapeNode cannot be used until init(SkeletonPtr) has been
+-  // called on this BodyNode, but that happens after construction is finished.
+-  mAspectProperties = _properties;
+-  configurePointMasses(softNode);
+-  mNotifier->dirtyTransform();
++  try
++  {
++    createSoftBodyAspect();
++    mNotifier = new PointMassNotifier(this, getName() + "_PointMassNotifier");
++    ShapeNode* softNode
++        = createShapeNodeWith<VisualAspect, CollisionAspect, DynamicsAspect>(
++            std::make_shared<SoftMeshShape>(this),
++            getName() + "_SoftMeshShape");
++    mSoftShapeNode = softNode;
++
++    // Dev's Note: We do this workaround (instead of just using
++    // setProperties(~)) because mSoftShapeNode cannot be used until
++    // init(SkeletonPtr) has been called on this BodyNode, but that happens
++    // after construction is finished.
++    mAspectProperties = _properties;
++    configurePointMasses(softNode);
++    mNotifier->dirtyTransform();
++  }
++  catch (...)
++  {
++    for (PointMass* pointMass : mPointMasses)
++      delete pointMass;
++    mPointMasses.clear();
++
++    delete mNotifier;
++    mNotifier = nullptr;
++
++    // BodyNode construction attaches a child to its parent before this
++    // derived constructor runs. Detach while the dynamic type is intact so
++    // BodyNode::processRemovedEntity() can erase the BodyNode-specific child
++    // and child-Jacobian entries before base-class unwinding begins.
++    changeParentFrame(nullptr);
++    throw;
++  }
+ }
+ 
+ //==============================================================================
+diff --git a/dart/dynamics/SoftMeshShape.hpp b/dart/dynamics/SoftMeshShape.hpp
+index 32f83a3..b354c84 100644
+--- a/dart/dynamics/SoftMeshShape.hpp
++++ b/dart/dynamics/SoftMeshShape.hpp
+@@ -34,7 +34,16 @@
+ #define DART_DYNAMICS_SOFTMESHSHAPE_HPP_
+ 
+ #include <Eigen/Dense>
++#ifndef DART_IOS_BUILD
+ #include <assimp/scene.h>
++#else
++#ifndef DART_ASSIMP_FORWARD_DECLARATIONS
++#define DART_ASSIMP_FORWARD_DECLARATIONS
++struct aiScene;
++struct aiNode;
++struct aiMesh;
++#endif
++#endif
+ 
+ #include "dart/dynamics/Shape.hpp"
+ 
+@@ -92,7 +101,11 @@ private:
+   SoftBodyNode* mSoftBodyNode;
+ 
+   /// \brief
++#ifdef DART_IOS_BUILD
++  aiMesh* mAssimpMesh;
++#else
+   std::unique_ptr<aiMesh> mAssimpMesh;
++#endif
+ };
+ 
+ } // namespace dynamics

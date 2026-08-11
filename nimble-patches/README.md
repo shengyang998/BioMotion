@@ -477,6 +477,115 @@ git -C nimblephysics apply --reverse --check \
   ../nimble-patches/ios-opensim-geometry-boundary.patch
 ```
 
+## `ios-mesh-shape-boundary.patch`
+
+**Applies to**:
+`dart/dynamics/MeshShape.hpp`, `MeshShape_ios.cpp`, `SoftMeshShape.hpp`, and
+`SoftBodyNode.cpp`
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commit**:
+`ffad0db626ba90ad9d7f73e813202c0a7a176381`
+(`fix(ios): reject unavailable mesh shapes`) on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05).
+`git ls-remote` resolved that public branch to the same full SHA.
+
+**Patch receipt**: 435 lines; SHA-256
+`da9f70d1b908f0936a1f0323fb6fa805f10de2890ee8c749f8d244759929d160`.
+It is byte-identical to the four-file commit diff, applies cleanly to the
+baseline, and reverse-checks at the reviewed branch head.
+
+### Problem and boundary
+
+The iOS source manifest replaces desktop `MeshShape.cpp` and omits
+`SoftMeshShape.cpp` because both require Assimp. The public headers still
+included Assimp, however, and there was no complete reviewed iOS definition for
+their declared methods. A consumer could therefore fail at include or link
+time, while `SoftBodyNode` still attempted to construct `SoftMeshShape` and
+could leave its already-attached parent/Jacobian relationship or raw derived
+allocations behind when construction threw.
+
+The patch makes the unavailable capability explicit:
+
+- iOS headers forward-declare `aiScene`, `aiNode`, and `aiMesh` instead of
+  defining fake Assimp types. Desktop headers retain the real Assimp include.
+- `MeshShape_ios.cpp` carries the DART BSD notice and defines the full current
+  `MeshShape`, `SharedMeshWrapper`, and `SoftMeshShape` surface. Type metadata
+  and destructors are the only safe whitelist. Both constructors, all loaders,
+  accessors, mutators, update/clone/inertia, and bounding-volume methods reject
+  unconditionally with one of two exact `std::runtime_error` messages.
+- `SoftMeshShape` uses a non-owning incomplete `aiMesh*` only in the iOS ABI;
+  no instance can finish construction there. Desktop keeps its
+  `std::unique_ptr<aiMesh>` ownership.
+- `SoftBodyNode` preserves the upstream successful construction order, but
+  initializes its notifier and transactionally cleans point masses, notifier,
+  parent BodyNode membership, and the hidden Jacobian-child set if any later
+  derived-constructor operation throws. That exception-safety improvement is
+  shared by desktop and iOS; it is not described as byte-semantic desktop
+  invariance.
+
+This is not an Assimp substitute and does not add mesh rendering, geometry
+loading, collision/contact support, or soft-mesh simulation on iOS.
+
+### Verification
+
+- A source contract requires every rejected method body to consist solely of
+  its shared throw helper. It separately full-matches the type-metadata
+  whitelist and default destructors, parses both headers, and fails if any
+  current or future declaration is not explicitly classified.
+- Strict simulator/device compilation passes. Both rebuilt archives contain
+  exactly one `MeshShape_ios.cpp.o`, define the complete current surface, carry
+  both exact messages, and have no unresolved Assimp dependency.
+- Ordinary dead-stripped links, without `-all_load` or `-force_load`, extract
+  the archive member. Fresh-object and archive-object executables both run on
+  an iOS simulator to `MESH_SHAPE_IOS_FAIL_CLOSED_PASS` and
+  `SOFT_MESH_SHAPE_IOS_FAIL_CLOSED_PASS`; the enclosing probe reaches
+  `MESH_SHAPE_IOS_BOUNDARY_PROBE_PASS`.
+- The separate host fault-injection probe removes the production mesh object,
+  injects the exact SoftMesh rejection, and performs 32 root plus 32 child
+  `SoftBodyNode` attempts. Every attempt restores Skeleton counts, public child
+  membership, and the directly inspected protected Jacobian-child set. A
+  pointer-level allocation tracker proves each notifier-sized allocation is
+  released; its positive control reports `allocated=1 freed=0 live=1`, while
+  the normal transaction runs cleanly under AddressSanitizer and ends in
+  `SOFT_BODY_MESH_REJECTION_TRANSACTION_PASS`.
+- A fresh unsigned arm64 simulator `build-for-testing` compiled and linked the
+  complete app and test target. The final independent review found no blocker,
+  high, or medium issue.
+
+No post-change XCTest execution is claimed: the local Xcode 26.4 testmanager
+channel remains unable to launch even the unrelated smoke test. This boundary
+adds no XCTest methods or reviewed fast-count change.
+
+### Apply and verify
+
+```sh
+cd labs/BioMotion/nimblephysics
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/ios-mesh-shape-boundary.patch
+# Install/apply the current iOS source manifest, selecting MeshShape_ios.cpp
+# instead of the two Assimp-backed desktop implementation files.
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
+
+cd ..
+SIMULATOR_UDID=<booted-udid> tools/tests/mesh_shape_ios_boundary_probe.sh
+tools/tests/soft_body_node_mesh_rejection_probe.sh
+```
+
+On the reviewed branch head, provenance must reverse-check:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/ios-mesh-shape-boundary.patch
+```
+
+The compile definition must remain consistent across every consumer of these
+conditional public headers. Exporting `DART_IOS_BUILD` as a public property of
+the reproducible CMake target remains part of the later source-manifest slice.
+
 ## `simmspline-linear-extrapolation.patch`
 
 **Applies to**: `nimblephysics/dart/math/SimmSpline.cpp` and its upstream unit

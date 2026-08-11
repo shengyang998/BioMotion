@@ -4614,6 +4614,76 @@ gate failure, not a pass. The focused six methods and then `tools/run_tests.sh a
 on a fresh runner before release.
 
 
+## Mesh shapes now fail closed on the no-Assimp iOS build (2026-08-11)
+
+The iOS source manifest replaces desktop `MeshShape.cpp` and omits
+`SoftMeshShape.cpp`, but the public headers still included Assimp and did not
+have one complete reviewed definition for their current surface. That was not
+usable mesh support: clients could fail at include/link time, and the normal
+`SoftBodyNode` constructor still tried to create `SoftMeshShape` after attaching
+itself to a parent BodyNode and Jacobian tree.
+
+Nested commit `ffad0db626ba90ad9d7f73e813202c0a7a176381`
+(`fix(ios): reject unavailable mesh shapes`) is published on
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05),
+and `git ls-remote` resolved the branch to that exact SHA. It contains exactly
+four files: `MeshShape.hpp`, new `MeshShape_ios.cpp`, `SoftMeshShape.hpp`, and
+`SoftBodyNode.cpp`.
+
+The boundary has one explicit policy:
+
+- iOS keeps Assimp types incomplete. It does not invent layout-compatible fake
+  `aiScene`/`aiNode`/`aiMesh` structs. Desktop retains the real Assimp include
+  and `SoftMeshShape`'s `unique_ptr<aiMesh>` ownership.
+- `getStaticType()`, `getType()`, and destructors are the only safe metadata
+  whitelist. Both constructors and every backend-dependent Mesh/SoftMesh API
+  unconditionally throw one of two exact `std::runtime_error` messages.
+- `SoftBodyNode` preserves the upstream notifier-before-mesh successful order.
+  On an exception it now deletes any derived point masses and notifier, then
+  detaches while the dynamic type is intact so both the parent's public child
+  list and protected Jacobian-child set are cleaned before base unwinding. This
+  is a general constructor exception-safety improvement used to make the iOS
+  refusal transactional; desktop exception behavior is improved rather than
+  claimed unchanged.
+
+The verification closes the earlier false-green gaps:
+
+- The source contract requires each unavailable method body to be only its
+  shared throw helper, full-matches the safe metadata bodies/destructors, and
+  parses both headers to reject any unclassified current or future method.
+- Simulator and device archives were rebuilt after the final source bytes.
+  Each contains exactly one `MeshShape_ios.cpp.o`, defines the complete surface,
+  carries both pinned messages, and has no unresolved Assimp dependency.
+- Ordinary dead-stripped fresh-object and archive-object links passed for both
+  SDKs without force-loading. All four simulator executions reached the two
+  exact fail-closed sentinels, followed by
+  `MESH_SHAPE_IOS_BOUNDARY_PROBE_PASS`.
+- The host fault-injection transaction removes the production mesh object and
+  injects the exact SoftMesh rejection. Root and child construction each
+  rejected **32/32** times; Skeleton counts, public child membership, and the
+  directly inspected hidden Jacobian-child set returned to zero every time.
+  A pointer-level global allocation tracker proved every notifier-sized
+  allocation was released, while its positive control reported
+  `allocated=1 freed=0 live=1`. The normal path was AddressSanitizer-clean and
+  ended in `SOFT_BODY_MESH_REJECTION_TRANSACTION_PASS`.
+- A fresh unsigned arm64 simulator `build-for-testing` compiled and linked the
+  whole app and test target. The final independent review reported no blocker,
+  high, or medium issue.
+
+The exported `nimble-patches/ios-mesh-shape-boundary.patch` is byte-identical
+to the nested commit diff, is 435 lines at SHA-256
+`da9f70d1b908f0936a1f0323fb6fa805f10de2890ee8c749f8d244759929d160`,
+applies to the pinned `c405b05` baseline in a temporary clean worktree, and
+reverse-checks at the branch head.
+
+This closes a refusal and constructor-transaction boundary. It does not add
+Assimp, mesh rendering/loading, collision/contact, or soft-mesh simulation.
+The dirty iOS CMake/source manifest still has to be exported separately and
+must publish `DART_IOS_BUILD` consistently to all header consumers. This slice
+adds no XCTest methods or count change, and no post-change XCTest execution is
+claimed while the local Xcode 26.4 testmanager launch channel remains broken.
+
+
 ## The iOS C3D header surface now matches the absent ezc3d backend (2026-08-11)
 
 The iOS source manifest has never compiled `C3DLoader.cpp` or `C3DForcePlatforms.cpp`, but the public
