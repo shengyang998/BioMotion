@@ -1,0 +1,210 @@
+diff --git a/dart/collision/CollisionDetector.cpp b/dart/collision/CollisionDetector.cpp
+index 0b47c2f..ef881a2 100644
+--- a/dart/collision/CollisionDetector.cpp
++++ b/dart/collision/CollisionDetector.cpp
+@@ -37,6 +37,9 @@
+ #include "dart/common/Console.hpp"
+ #include "dart/collision/CollisionObject.hpp"
+ #include "dart/collision/CollisionGroup.hpp"
++#ifdef DART_IOS_BUILD
++#include "dart/collision/dart/DARTCollisionDetector.hpp"
++#endif
+ #include "dart/dynamics/BodyNode.hpp"
+ #include "dart/dynamics/Skeleton.hpp"
+ 
+@@ -46,7 +49,21 @@ namespace collision {
+ //==============================================================================
+ CollisionDetector::Factory* CollisionDetector::getFactory()
+ {
++#ifdef DART_IOS_BUILD
++  static Factory* const factory = SingletonFactory::getSingletonPtr();
++  static const bool dartRegistered = []() {
++    factory->registerCreator(
++        DARTCollisionDetector::getStaticType(),
++        []() -> std::shared_ptr<CollisionDetector> {
++          return DARTCollisionDetector::create();
++        });
++    return true;
++  }();
++  (void)dartRegistered;
++  return factory;
++#else
+   return SingletonFactory::getSingletonPtr();
++#endif
+ }
+ 
+ //==============================================================================
+diff --git a/dart/collision/dart/DARTCollisionDetector_ios.cpp b/dart/collision/dart/DARTCollisionDetector_ios.cpp
+new file mode 100644
+index 0000000..fa77b40
+--- /dev/null
++++ b/dart/collision/dart/DARTCollisionDetector_ios.cpp
+@@ -0,0 +1,146 @@
++/*
++ * Copyright (c) 2011-2019, The DART development contributors
++ * All rights reserved.
++ *
++ * The list of contributors can be found at:
++ *   https://github.com/dartsim/dart/blob/master/LICENSE
++ *
++ * This file is provided under the following "BSD-style" License:
++ *   Redistribution and use in source and binary forms, with or
++ *   without modification, are permitted provided that the following
++ *   conditions are met:
++ *   * Redistributions of source code must retain the above copyright
++ *     notice, this list of conditions and the following disclaimer.
++ *   * Redistributions in binary form must reproduce the above
++ *     copyright notice, this list of conditions and the following
++ *     disclaimer in the documentation and/or other materials provided
++ *     with the distribution.
++ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
++ *   CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
++ *   INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++ *   MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ *   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
++ *   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
++ *   USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ *   AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ *   LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
++ *   ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ *   POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifdef DART_IOS_BUILD
++
++#include "dart/collision/dart/DARTCollisionDetector.hpp"
++
++#include <stdexcept>
++
++namespace dart {
++namespace collision {
++
++namespace {
++
++[[noreturn]] void throwUnavailable()
++{
++  throw std::runtime_error(
++      "DARTCollisionDetector is unavailable in this iOS build because "
++      "Assimp/libccd collision support is not linked.");
++}
++
++} // namespace
++
++//==============================================================================
++std::shared_ptr<DARTCollisionDetector> DARTCollisionDetector::create()
++{
++  return std::shared_ptr<DARTCollisionDetector>(new DARTCollisionDetector());
++}
++
++//==============================================================================
++std::shared_ptr<CollisionDetector>
++DARTCollisionDetector::cloneWithoutCollisionObjects() const
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++const std::string& DARTCollisionDetector::getType() const
++{
++  return getStaticType();
++}
++
++//==============================================================================
++const std::string& DARTCollisionDetector::getStaticType()
++{
++  static const std::string type = "dart";
++  return type;
++}
++
++//==============================================================================
++std::unique_ptr<CollisionGroup> DARTCollisionDetector::createCollisionGroup()
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++bool DARTCollisionDetector::collide(
++    CollisionGroup* /*group*/,
++    const CollisionOption& /*option*/,
++    CollisionResult* /*result*/)
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++bool DARTCollisionDetector::collide(
++    CollisionGroup* /*group1*/,
++    CollisionGroup* /*group2*/,
++    const CollisionOption& /*option*/,
++    CollisionResult* /*result*/)
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++double DARTCollisionDetector::distance(
++    CollisionGroup* /*group*/,
++    const DistanceOption& /*option*/,
++    DistanceResult* /*result*/)
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++double DARTCollisionDetector::distance(
++    CollisionGroup* /*group1*/,
++    CollisionGroup* /*group2*/,
++    const DistanceOption& /*option*/,
++    DistanceResult* /*result*/)
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++DARTCollisionDetector::DARTCollisionDetector() : CollisionDetector()
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++std::unique_ptr<CollisionObject> DARTCollisionDetector::createCollisionObject(
++    const dynamics::ShapeFrame* /*shapeFrame*/)
++{
++  throwUnavailable();
++}
++
++//==============================================================================
++void DARTCollisionDetector::refreshCollisionObject(
++    CollisionObject* /*object*/)
++{
++  throwUnavailable();
++}
++
++} // namespace collision
++} // namespace dart
++
++#endif // DART_IOS_BUILD
+diff --git a/dart/simulation/World.cpp b/dart/simulation/World.cpp
+index 4321f49..b874a2d 100644
+--- a/dart/simulation/World.cpp
++++ b/dart/simulation/World.cpp
+@@ -77,7 +77,7 @@ World::World(const std::string& _name)
+     mTime(0.0),
+     mFrame(0),
+     mDofs(0),
+-    mRecording(new Recording(mSkeletons)),
++    mRecording(nullptr),
+     onNameChanged(mNameChangedSignal),
+     mParallelVelocityAndPositionUpdates(
+         true), // TODO(keenon): We should fix our backprop to somehow achieve
+@@ -96,6 +96,8 @@ World::World(const std::string& _name)
+ 
+   auto solver = std::make_unique<constraint::BoxedLcpConstraintSolver>();
+   setConstraintSolver(std::move(solver));
++
++  mRecording = new Recording(mSkeletons);
+ }
+ 
+ //==============================================================================

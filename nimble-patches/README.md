@@ -115,6 +115,109 @@ git -C nimblephysics apply --reverse --check \
   ../nimble-patches/opensimparser-fail-closed.patch
 ```
 
+## `ios-collision-fail-closed.patch`
+
+**Applies to**:
+
+- `nimblephysics/dart/collision/CollisionDetector.cpp`
+- `nimblephysics/dart/collision/dart/DARTCollisionDetector_ios.cpp`
+- `nimblephysics/dart/simulation/World.cpp`
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commit** on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05):
+`23e359d516e3d6da38cda0207ab057c37c9c7779` — fail closed when the iOS
+collision backend is absent.
+
+**Patch receipt**: 210 lines; SHA-256
+`d8c50a8f58e4e4a79c43d4e1be173e9d4f5d539d3be44b717c561ac97b304399`.
+
+### Problem
+
+The old local iOS stub declared a shortened, incompatible version of
+`DARTCollisionDetector` and returned `nullptr` from `create()`. Its object file
+also had no ordinary static-archive reference from `CollisionDetector.cpp`, so
+the linker did not extract it and the factory did not expose the `"dart"` key.
+Direct consumers then either received null or dereferenced it while constructing
+`ConstraintSolver`, `BoxedLcpConstraintSolver`, or `World`.
+
+`World` allocated its raw `Recording` before constructing that solver. Once the
+collision rejection became an exception, the old order would leak the recording
+because a partially constructed `World` does not run `World::~World()`.
+
+### Fix and verification
+
+The iOS implementation now uses the real public class declaration and defines
+its complete virtual surface. `getType()` and `getStaticType()` retain the
+stable `"dart"` identifier; construction and every operation that would require
+Assimp/libccd throw one exact descriptive `std::runtime_error`.
+`CollisionDetector::getFactory()` performs thread-safe, one-time registration
+and directly references the unavailable implementation, which makes an
+ordinary static link extract it. `World` allocates its `Recording` only after
+the solver has been constructed successfully.
+
+Regression evidence is intentionally layered:
+
+- The causal RED was **0/5**: direct creation returned null, the factory lacked
+  `"dart"`, and all three consumer tests stopped at their safe preflight. The
+  pre-fix archive probe also proved that the linker did not extract
+  `DARTCollisionDetector_ios.cpp.o`.
+- Both arm64 simulator and device archives rebuilt. The focused linked-archive
+  receipt then passed **5/5 in 7 s**, with no failures, skips, expected failures,
+  or test-host restarts.
+- `collision_static_link_probe.sh` links a factory-only consumer with
+  dead-stripping, without `-all_load` or `-force_load`; its link map and
+  `-why_load` receipt require both archive members and its simulator run ends in
+  `ARCHIVE_FACTORY_PROBE_PASS`.
+- `collision_world_leak_probe.sh` performs a fresh current-port host-native
+  build. Its separate positive-control process reported one deliberate
+  `leakForPositiveControl()` allocation (160 bytes after allocator rounding),
+  while 32 `World()` and 32 `World::create()` rejection attempts reported
+  **0 leaks / 0 bytes** and ended in
+  `WORLD_COLLISION_REJECTION_LEAK_PROBE_PASS`. This proves the exception-order
+  fix with the macOS allocator; it is not an iOS allocator measurement and it
+  currently depends on the still-unexported iOS CMake source manifest.
+- The shell gate policy self-tests pass **49/49**. The enclosing full gate
+  passed the fast lane **524/524 in 1685s** and the slow lane **1/1 in
+  6172s**. Both `xcodebuild` and `xcresulttool` returned 0, both result bundles
+  reported `Passed`, and the receipts contained zero failures, skips, expected
+  failures, or runner restarts before `ALL GATE PASS`.
+
+This is an explicit refusal boundary. It does not add collision/contact
+simulation and does not reopen any dynamics product claim.
+
+### Apply and verify
+
+The patch can be applied independently at the pinned source baseline, but its
+new iOS source file still has to be selected by the current iOS-port CMake
+manifest. That older manifest is not yet represented by this patch, so the
+commands below describe the maintained current port, not a complete fresh-clone
+bootstrap:
+
+```sh
+cd labs/BioMotion/nimblephysics
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/ios-collision-fail-closed.patch
+# Install/apply the current iOS source manifest before these two builds.
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
+
+cd ..
+tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/CollisionFailClosedTests
+bash tools/tests/collision_static_link_probe.sh
+bash tools/tests/collision_world_leak_probe.sh
+```
+
+On the reviewed branch head, provenance must reverse-check:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/ios-collision-fail-closed.patch
+```
+
 ## `simmspline-linear-extrapolation.patch`
 
 **Applies to**: `nimblephysics/dart/math/SimmSpline.cpp` and its upstream unit

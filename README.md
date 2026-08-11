@@ -90,7 +90,8 @@ Then apply the iOS-specific patches. Search the existing tree for `DART_IOS_BUIL
 - `MarkerAspect.hpp` / `Marker.hpp` — enum `NO` → `CONSTRAINT_NONE` (ObjC macro conflict)
 - `AssimpInputResourceAdaptor.hpp`, `SoftMeshShape.hpp` — Assimp guards
 - `C3DLoader.hpp`, `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` — GUIWebsocketServer guards
-- `DARTCollisionDetector_ios.cpp` — stub for collision detector factory
+- `CollisionDetector.cpp` / `DARTCollisionDetector_ios.cpp` / `World.cpp` —
+  explicit fail-closed collision boundary when Assimp/libccd is not linked
 - Vendored deps: Eigen 3.4.0 in `third_party/eigen`, tinyxml2 in `third_party/tinyxml2`
 
 Replace `nimblephysics/CMakeLists.txt` with the iOS-specific version (the upstream original is preserved as `CMakeLists_original.txt` in the patched tree).
@@ -100,6 +101,7 @@ Then apply the reviewed behaviour patches recorded by this repository:
 ```bash
 git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
+git -C nimblephysics apply ../nimble-patches/ios-collision-fail-closed.patch
 ```
 
 See `nimble-patches/README.md` for pinned SHAs, reverse-checks and regression
@@ -110,7 +112,7 @@ remaining port diff has also been exported.
 The reviewed nested commits are published on the maintained
 [`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
 branch. At the 2026-08-11 receipt that branch resolved to
-`6b082fd0feec9cac7bc2d21b15bc63bd6225c58f`; the fork's remote symbolic `HEAD`
+`23e359d516e3d6da38cda0207ab057c37c9c7779`; the fork's remote symbolic `HEAD`
 remained `refs/heads/master` at the pinned upstream baseline
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
@@ -118,6 +120,15 @@ The OpenSim parser patch rejects unsupported or incomplete joint topology
 instead of substituting a plausible-but-wrong joint. For valid CustomJoints it
 also preserves non-identity functions and explicit coordinate mappings rather
 than silently simplifying them to a different motion.
+
+The iOS build does not provide collision simulation. Direct detector creation,
+factory creation through the `"dart"` key, both `ConstraintSolver` and
+`BoxedLcpConstraintSolver` constructor forms, `World()` and `World::create()`
+all reject with the same descriptive `std::runtime_error`; they no longer
+return a null detector and crash at a later dereference. A factory-only probe
+verifies that ordinary dead-stripped static-archive linking extracts the
+fail-closed implementation without `-all_load` or `-force_load`. This is a
+refusal boundary, not collision/contact support.
 
 Here “linear extrapolation” means continuation along an endpoint tangent only:
 SimmSpline remains cubic inside its knot domain, and `MomentArmComputer` uses
@@ -174,7 +185,7 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 # Tests on simulator — always via the script, never a hand-typed xcodebuild line.
 # It provisions a private simulator (naming one shared with another xcodebuild
 # process is what made this suite untrustworthy) and emits an xcresult receipt.
-tools/run_tests.sh fast    # exactly 519; 0 failed/skipped/restarted
+tools/run_tests.sh fast    # exactly 524; 0 failed/skipped/restarted
 tools/run_tests.sh slow    # only testE1RunAll; exactly 1; 0 failed/skipped
 tools/run_tests.sh all     # commit gate: fast, then slow
 

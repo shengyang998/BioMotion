@@ -322,7 +322,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 519 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 524 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -4430,10 +4430,81 @@ resolved to `6b082fd0feec9cac7bc2d21b15bc63bd6225c58f`. Its remote symbolic `HEA
 resolved to `refs/heads/master` at
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
-This closes the OpenSim parser slice, not the complete iOS port. The nested working tree still has
-older, deliberately unstaged CMake/GUI/mesh/collision/dependency changes. They remain dirty because
-they have not yet been separated, licensed and validated; none was included in `7ecf61c` or
-`6b082fd`.
+This closes the OpenSim parser slice, not the complete iOS port. At that receipt, the nested working
+tree still held older, deliberately unstaged CMake/GUI/mesh/collision/dependency changes; none was
+included in `7ecf61c` or `6b082fd`. The collision subset has since been isolated below. CMake, GUI,
+mesh and dependency work remains uncommitted until separately licensed and validated.
+
+
+## The unavailable iOS collision backend now fails closed (2026-08-11)
+
+The old local iOS collision stub was not a harmless no-op. It redeclared a shortened version of
+`DARTCollisionDetector`, defined only `create()`, and returned `nullptr`. Its object file also had no
+ordinary static-archive reference from `CollisionDetector.cpp`; a factory-only link extracted
+`CollisionDetector.cpp.o` but not `DARTCollisionDetector_ios.cpp.o`, so the registry did not even
+contain the `"dart"` key. Direct consumers could receive null, while `ConstraintSolver`,
+`BoxedLcpConstraintSolver`, and `World` dereferenced the result during construction.
+
+The regression was causal and crash-safe. Against the old archive, the five-method focused suite
+failed **0/5**: direct creation returned null, factory lookup could not create `"dart"`, and the
+consumer cases deliberately stopped after that exact preflight rather than dereferencing the known
+bad pointer. The independent archive probe failed at the `-why_load` receipt because the stub member
+was not extracted. Those are two different REDs for the runtime and static-link defects.
+
+The reviewed implementation now has one explicit contract:
+
+- `DARTCollisionDetector_ios.cpp` includes the real class declaration and defines the full virtual
+  surface. `getType()` / `getStaticType()` preserve `"dart"`; construction and every group,
+  collision, distance, object, refresh, or clone operation that would require Assimp/libccd throw
+  `std::runtime_error("DARTCollisionDetector is unavailable in this iOS build because Assimp/libccd collision support is not linked.")`.
+- `CollisionDetector::getFactory()` initializes the singleton pointer and registration through
+  function-local statics. Its creator directly references `DARTCollisionDetector::create()` and
+  `getStaticType()`, so ordinary archive extraction does not depend on an unreferenced global
+  registrar.
+- `World` now initializes `mRecording` to null, constructs and installs its solver, and allocates the
+  raw `Recording` only after that throwing step succeeds. A partially constructed `World` therefore
+  owns no recording that its never-run destructor would have needed to delete.
+- The earlier fake `aiScene`/libccd header types and shortened Assimp license/whole-header guard were
+  restored to their pinned upstream bytes; they are not part of this commit or a substitute backend.
+
+Verification is layered instead of treating one green XCTest line as sufficient:
+
+- Both arm64 simulator and device `nimble_ios` archives rebuilt; each has exactly one
+  `CollisionDetector.cpp.o` and one `DARTCollisionDetector_ios.cpp.o`. The factory member has the two
+  intended undefined references, while the stub defines every method, vtable and typeinfo and has no
+  Assimp, `ai*`, libccd, real DART collision-object/group, cache, or `mRegistrar` dependency.
+- The final focused receipt passed **5/5 in 7 s**, with `xcodebuild = 0`, `xcresulttool = 0`,
+  `Passed`, and zero failures, skips, expected failures, or test-host restarts.
+- `collision_static_link_probe.sh` compiles a consumer that includes only `CollisionDetector.hpp`,
+  links the simulator archive with dead-stripping and without `-all_load` / `-force_load`, requires
+  both members in `-why_load` and the link map, rejects accidental solver/World extraction, and runs
+  to `ARCHIVE_FACTORY_PROBE_PASS` on `BioMotion-CI`.
+- `collision_world_leak_probe.sh` makes a fresh current-port macOS host-native build and runs two
+  separate `leaks --atExit` processes. The positive control reports one deliberate
+  `leakForPositiveControl()` allocation (160 bytes after allocator rounding); 32 `World()` plus 32
+  `World::create()` rejection attempts report **0 leaks for 0 total leaked bytes** and end in
+  `WORLD_COLLISION_REJECTION_LEAK_PROBE_PASS`. This proves the exception-order repair with the host
+  allocator, not the iOS allocator; reproducing it still depends on the not-yet-exported iOS CMake
+  source manifest.
+- The shell gate-policy harness passes **49/49**. The full outer commit gate passed fast
+  **524/524 in 1685s** and slow **1/1 in 6172s**. Both `xcodebuild` and `xcresulttool` returned 0,
+  both result bundles reported `Passed`, and the receipts contained zero failures, skips, expected
+  failures, or runner restarts before `ALL GATE PASS`.
+
+The nested source change is isolated in
+`23e359d516e3d6da38cda0207ab057c37c9c7779` (`fix(ios): fail closed without collision backend`),
+containing exactly `CollisionDetector.cpp`, `DARTCollisionDetector_ios.cpp`, and `World.cpp`. It is
+published at
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05),
+and `git ls-remote` resolved that branch to the same SHA. The tracked
+`nimble-patches/ios-collision-fail-closed.patch` is byte-identical to that commit's three-file diff,
+reverse-checks against the branch head, is 210 lines, and has SHA-256
+`d8c50a8f58e4e4a79c43d4e1be173e9d4f5d539d3be44b717c561ac97b304399`.
+
+This closes an unsupported-API boundary; it does **not** add collision/contact simulation, validate
+foot support, or reopen torque, GRF, CoP, muscle-effort, or gait-load product output. The patch also
+does not export the older dirty CMake/source-manifest port, so it is not yet a complete fresh-clone
+bootstrap.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
