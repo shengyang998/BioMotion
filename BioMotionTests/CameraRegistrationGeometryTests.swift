@@ -152,34 +152,10 @@ final class CameraRegistrationGeometryTests: XCTestCase {
     }
 
     func testActualRegistrationPeaksRejectPeriod40ShiftedOnePeriod() throws {
-        let spacing = 8
-        let width = 48
-        let height = 48
-        let periodSamples = 40 / spacing
-        let reference = (0..<(width * height)).map { index -> Double in
-            let x = index % width
-            let y = index / width
-            return Double((x % periodSamples) * 37 + (y * y + 11 * y) % 251)
-        }
-        let target = (0..<(width * height)).map { index -> Double in
-            let x = index % width
-            let y = index / width
-            let shiftedX = (x + periodSamples) % width
-            return reference[y * width + shiftedX]
-        }
-
-        let evidence = try XCTUnwrap(CameraRegistrationPeakAnalyzer.analyze(
-            referenceBoxAverages: reference,
-            targetBoxAverages: target,
-            width: width,
-            height: height,
-            renderOriginPixels: .zero,
-            boxSpacingPixels: spacing,
-            correlationSampleSpacingPixels: 32,
-            maximumSearchRadiusPixels: 48,
-            minimumPeakSeparationPixels: 16,
-            minimumBestCorrelation: 0.5
-        ))
+        let evidence = try peakEvidenceForPeriodicRenderShift(
+            periodBoxSamples: SIMD2(5, 48),
+            trueShiftBoxSamples: SIMD2(5, 0)
+        )
 
         XCTAssertEqual(evidence.bestOffsetPixels, .zero)
         XCTAssertEqual(evidence.bestCorrelation, 1, accuracy: 1e-12)
@@ -731,8 +707,10 @@ final class CameraRegistrationGeometryTests: XCTestCase {
             minimumTileAreaFraction: 0.01
         )
 
-        XCTAssertEqual(plan.excludedPersonRegion,
-                       CGRect(x: 0.35, y: 0.07, width: 0.32, height: 0.78))
+        XCTAssertEqual(plan.excludedPersonRegion.minX, 0.35, accuracy: 1e-12)
+        XCTAssertEqual(plan.excludedPersonRegion.minY, 0.07, accuracy: 1e-12)
+        XCTAssertEqual(plan.excludedPersonRegion.maxX, 0.67, accuracy: 1e-12)
+        XCTAssertEqual(plan.excludedPersonRegion.maxY, 0.85, accuracy: 1e-12)
         XCTAssertEqual(plan.backgroundFraction,
                        1 - plan.excludedPersonRegion.width * plan.excludedPersonRegion.height,
                        accuracy: 1e-12)

@@ -5480,7 +5480,9 @@ The solve path now has an exact accepted-frame receipt and five terminal causes:
 failure, admission rejection, busy and superseded. Publication ownership is separate from physical
 solver occupancy: timeout/cancel revokes the exact generation immediately, while the engine remains
 physically busy until its queued work actually exits, preventing both late-result attribution and a
-hidden backlog. A process-wide offline policy lease blocks live submissions/resets during a batch;
+hidden backlog. Its source-contract regression locates the executable post-fence `finish` call,
+rather than matching the same phrase in a preceding safety comment. A process-wide offline policy
+lease blocks live submissions/resets during a batch;
 runner-local ownership, conditional resets and re-entrancy checks fence close, interactive dismiss,
 observer callbacks and run replacement. Padding failure propagates instead of silently advancing a
 filter window, and every accepted result is routed by receipt to its owning frame. Result fields and
@@ -5495,17 +5497,16 @@ subscriber can start a successor.
 TDD added 110 Swift test methods covering contact-first admission, profile/fingerprint drift,
 cadence/coverage, reader and format failures, raster/memory/correlation limits, periodic aliases,
 raw luma-to-box-to-peak registration, translation sign, exact receipt routing, timeout/cancel races,
-dual leases, close/reset ordering and distinct failure presentation. The reviewed fast lane is now
-exactly **642** tests; its fail-closed gate harness passes **49/49**. All Swift sources parse,
-`git diff --check`, the privacy-manifest probe and app-resource-boundary probe pass. Fresh unsigned
-Debug `build-for-testing` succeeds for both generic arm64 Simulator and generic arm64 device
-destinations. A focused three-suite run through `tools/run_tests.sh subset` then rebuilt, linked and
-signed on a freshly rebooted private `BioMotion-CI` simulator, but Xcode 26.4 launched no test host
-and emitted no `Test Suite` or `Test Case` in 193 seconds. The run was cancelled, and the gate
-correctly rejected its interrupted rc 73 / incomplete xcresult; **no XCTest pass or product-test
-failure is claimed**. Real-device camera footage, a contact-valid model, calibrated profile,
-representative native-rate clips and physical-device ground truth remain prerequisites before
-enabling temporal dynamics.
+dual leases, close/reset ordering and distinct failure presentation. Periodic fixtures now derive
+their shifted target from an analytic motif instead of wrapping a non-divisible finite raster, and
+normalized rectangle assertions compare all four edges with a `1e-12` tolerance. The reviewed fast
+lane remains exactly **642** tests and its fail-closed gate harness passes **49/49**. On the current
+tree, the camera reducer suite passes **45/45** and the camera-reference plus registration-geometry
+suites pass **64/64** on Simulator; these selected **109/109** results are not represented as a new
+full-fast-lane receipt. All changed Swift sources parse, `git diff --check` passes, and unsigned
+Debug `build-for-testing` succeeds for generic arm64 device. Real-device camera footage, a
+contact-valid model, calibrated profile, representative native-rate clips and physical-device
+ground truth remain prerequisites before enabling temporal dynamics.
 
 
 ## Offline model scale is lease-scoped (2026-08-12)

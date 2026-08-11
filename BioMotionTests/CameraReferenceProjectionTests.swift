@@ -1021,8 +1021,12 @@ final class CameraReferenceProjectionTests: XCTestCase {
 
         let waiter = runner[waiterStart.lowerBound...]
         XCTAssertTrue(waiter.contains("case timedOut"))
-        XCTAssertTrue(waiter.contains("finish(.timedOut)"))
-        XCTAssertTrue(waiter.contains("finish(.superseded)"),
+        XCTAssertTrue(waiter.contains(
+            "\n                self?.supersedeAndFinish(.timedOut)"
+        ))
+        XCTAssertTrue(waiter.contains(
+            "\n            supersedeAndFinish(.superseded)"
+        ),
                       "external reset/cancellation remains distinct from timeout")
     }
 
@@ -1069,13 +1073,20 @@ final class CameraReferenceProjectionTests: XCTestCase {
             of: "cancellable?.cancel()"))
         let exactFence = try XCTUnwrap(exactFenceBody.range(
             of: "engine?.supersedeFrame(expectedReceipt)"))
-        let resume = try XCTUnwrap(exactFenceBody.range(of: "finish(outcome)"))
+        let resume = try XCTUnwrap(exactFenceBody.range(
+            of: "\n            finish(outcome)",
+            range: exactFence.upperBound..<exactFenceBody.endIndex
+        ))
         XCTAssertLessThan(stopObserving.lowerBound, exactFence.lowerBound,
                           "local timeout must not let synchronous .superseded steal its reason")
         XCTAssertLessThan(exactFence.lowerBound, resume.lowerBound,
                           "generation must be fenced before timeout resumes")
-        XCTAssertTrue(source.contains("supersedeAndFinish(.timedOut)"))
-        XCTAssertTrue(source.contains("supersedeAndFinish(.superseded)"))
+        XCTAssertTrue(source.contains(
+            "\n                self?.supersedeAndFinish(.timedOut)"
+        ))
+        XCTAssertTrue(source.contains(
+            "\n            supersedeAndFinish(.superseded)"
+        ))
         XCTAssertTrue(source.contains("state.cancel()"),
                       "task cancellation must use the same exact fence")
 
