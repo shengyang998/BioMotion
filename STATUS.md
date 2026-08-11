@@ -4627,13 +4627,76 @@ license `b3a5a0e2…`. Apple Archive filesystem metadata makes the AAR hash gene
 why the receipt records the exact published instance rather than claiming reproducible AAR container
 bytes.
 
-This closes local package/receipt enforcement, not delivery. `upload.sh` still defaults to the obsolete
-top-level `build/assetpack/sam3d-body-pose.aar` and must not be run; it must gain a credential-free full
-verification mode, validate the atomic `release/` pair before reading App Store Connect credentials,
-and require explicit upload authorization. Developer bundling, runtime model
-loading, NOTICE/app-resource wiring, a replacement App Store Connect pack version, and real-device
-TestFlight download/load remain open. No credential was read and no upload or other external mutation
-was performed in this slice.
+At this receipt, local package/receipt enforcement was closed but delivery was not. `upload.sh` still
+used the obsolete top-level `build/assetpack/sam3d-body-pose.aar`; the immediately following slice
+closes that local upload gate. Developer bundling and runtime model loading, NOTICE/app-resource
+wiring, a replacement App Store Connect pack version, and real-device TestFlight download/load
+remained open. No credential was read and no upload or other external mutation was performed in the
+package/receipt slice.
+
+
+## The SAM upload entry point is receipt-first and explicit (2026-08-11)
+
+`tools/assetpack/upload.sh` no longer accepts the obsolete top-level AAR or treats invocation as
+implicit permission to contact App Store Connect. Its default behavior and explicit `--verify-only`
+mode run `/usr/bin/python3 -I tools/assetpack/verify_model_lock.py receipt` over the canonical atomic
+pair in `build/assetpack/release/`. These modes do not expand or validate `ASC_API_KEY_ID`,
+`ASC_API_ISSUER`, or the `$HOME` key path; they never invoke `altool` or make a network request. The
+verifier's local Apple Archive list/extract operations remain part of the complete receipt gate.
+
+Only a literal `--upload` authorizes both `altool --upload-asset-pack` and the subsequent
+`--list-asset-pack-versions`. After validation, that mode requires an exact ten-character uppercase
+API key ID, an issuer UUID, and a non-symlink regular `.p8` at the standard App Store Connect key
+location. The numeric target is fixed to BioMotion's Apple ID `6761994383`; ambient app-target
+overrides are not accepted. If upload succeeds and the list operation fails, the process returns
+nonzero but the remote mutation may already exist, so a retry requires checking App Store Connect
+state first.
+
+The initial receipt-first implementation still had an artifact-generation gap: it validated the
+published pathname and later let `altool` reopen that pathname, so a normal concurrent package
+directory swap could change the uploaded bytes. Upload mode now copies both canonical files with
+symlinks preserved into one random mode-0700 private directory, sets both snapshot files to mode
+0600, and rejects non-regular source or snapshot leaves. The full receipt/archive gate runs on this
+snapshot, and the upload receives that exact same snapshot AAR path. The snapshot remains present
+through upload and version listing and is removed through a prefix-checked EXIT cleanup. Replacing
+the public release after verification cannot change the bytes consumed by `altool`; a replacement
+between the two source copies produces a mismatched AAR/receipt generation and fails the verifier.
+
+The entry point pins `/bin/bash`, resets PATH to `/usr/bin:/bin:/usr/sbin:/sbin`, invokes the verifier
+with isolated Python mode (`/usr/bin/python3 -I`), and fixes `/usr/bin/xcrun`. It removes ambient
+`DEVELOPER_DIR`, `TOOLCHAINS`, and `SDKROOT` before either local archive verification or `altool`
+selection. Custom candidates are deliberately narrow: `--aar` and `--receipt` must appear together,
+must retain the exact canonical filenames, and must resolve to the same physical directory.
+Positional paths, partial pairs, duplicate/conflicting modes, unknown arguments, and a combined help
+request fail before verification or external action; parameter errors return status 64.
+
+The strict TDD suite passes **11/11 hermetic causal groups covering 27 scenarios**. It uses only
+copied fixture repositories, an exact fake verifier, and a fixture-only mechanical replacement of
+the otherwise fixed `/usr/bin/xcrun`; no test can reach real `altool`. The tests prove exact receipt
+argv, default and explicit read-only behavior, zero `altool` calls on verification/credential/key
+failure, credential creation only after verification, upload-then-list ordering, propagation of both
+external failures, canonical custom-pair enforcement, source and key symlink rejection, safe snapshot
+cleanup on every tested exit, and fixed trusted tools. An adversarial source-generation test hashes
+the private AAR, replaces the public source after verifier success, and requires the fake upload to
+receive the same path and digest recorded by the verifier. A malicious `PYTHONPATH/sitecustomize` and
+poisoned Xcode-selection variables are also injected and proven unable to replace the gate or tool
+selection. Shell syntax, ShellCheck, Python byte-compilation, executable modes, and tracked/untracked
+whitespace checks pass. Independent review reports blocker 0, high 0, and medium 0 under the stated
+host/account-integrity model.
+
+The real published 1,096,258,817-byte AAR and its 722-byte receipt pass the new default gate. A real
+upload-mode local preflight also created and fully verified the private snapshot, then stopped on an
+intentionally empty `ASC_API_KEY_ID`, cleaned the snapshot, and never entered `altool`. No real API
+key path was inspected, no real `xcrun altool` command ran, and no App Store Connect request, listing,
+upload, or other external mutation occurred. Historical hosted version 1 therefore remains obsolete;
+developer bundling, runtime model verification/loading, NOTICE/resource wiring, an explicitly
+authorized replacement upload, and real-device TestFlight download/load remain open.
+
+This snapshot is a transaction-stability boundary, not a same-UID sandbox. A malicious process with
+arbitrary code execution as the same macOS user can still race paths or the credential store and is
+already inside the trusted account boundary. A hard kill can also leave a mode-0700 temporary
+snapshot for manual removal from the system temporary directory. Those are conditional hardening
+items, not claims of privilege isolation.
 
 
 ## XML conversion no longer depends on a machine-specific Boost install (2026-08-11)

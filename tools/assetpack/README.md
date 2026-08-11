@@ -56,12 +56,13 @@ flexibility drift. It uses absolute `/usr/bin/xcrun`, `/usr/bin/xcodebuild`, and
 to `/usr/bin:/bin:/usr/sbin:/sbin`, and invokes `/usr/bin/python3`, so an
 untrusted caller PATH cannot substitute its verifier or basic system tools.
 
-**Integration status:** repository, source, compile, package, extraction, and
-receipt enforcement are complete. `upload.sh`, developer bundling, and runtime
-loading remain separate release gates. Do not upload yet: the existing App
-Store Connect version 1 lacks the lock and license, and the old upload script
-still defaults to the obsolete `build/assetpack/sam3d-body-pose.aar` path and
-reads credentials before it proves the complete release pair.
+**Integration status:** repository, source, compile, package, extraction,
+receipt, and local upload-preflight enforcement are complete. Developer
+bundling and runtime loading remain separate release gates. The existing App
+Store Connect version 1 still lacks the lock and license and is not a compliant
+shipping artifact; this slice did not upload a replacement. `--upload` remains
+an explicit release operation and must not be used without release approval and
+closure of the remaining delivery gates.
 
 ---
 
@@ -148,24 +149,63 @@ working directory**, which is why the stage directory is the CWD.
 
 ## Upload
 
-The pack is uploaded on a **separate channel** from the app binary. The current
-script still defaults to the obsolete top-level
-`build/assetpack/sam3d-body-pose.aar`, reads credentials before artifact
-validation, and does not consume the atomic `release/` pair. **Do not run
-`upload.sh` or a raw `altool` upload yet.** The upload slice must run the same
-full receipt/archive gate before it is allowed to read App Store Connect
-credentials, provide `--verify-only`, and require an explicit flag for external
-mutation.
-
-Check state (both read-only):
+The pack is uploaded on a **separate channel** from the app binary. With no
+arguments, or with `--verify-only`, the script performs only the complete local
+receipt/archive gate over the atomic published pair:
 
 ```bash
-xcrun altool --list-asset-packs --apple-id 6761994383 \
-  --apiKey 4KH2G3HUYG --apiIssuer 25194e91-5f40-43b4-b598-98a189994f54
-xcrun altool --list-asset-pack-versions --apple-id 6761994383 \
-  --asset-pack-identifier sam3d-body-pose \
-  --apiKey 4KH2G3HUYG --apiIssuer 25194e91-5f40-43b4-b598-98a189994f54
+/bin/bash tools/assetpack/upload.sh
+/bin/bash tools/assetpack/upload.sh --verify-only
 ```
+
+These modes do not inspect App Store Connect credential variables or the API
+key path, do not invoke `altool`, and do not make a network request. The
+verifier's local `xcrun aa` list/extract operations are part of the archive
+gate, not App Store Connect access.
+
+Only the literal `--upload` flag authorizes the external upload and the
+subsequent version-list request:
+
+```bash
+ASC_API_KEY_ID=YOUR_KEY_ID \
+ASC_API_ISSUER=YOUR_ISSUER_UUID \
+  /bin/bash tools/assetpack/upload.sh --upload
+```
+
+The target Apple ID is fixed to BioMotion's `6761994383`. Only after the full
+receipt gate succeeds does the script require those two variables and a
+non-symlink regular key at
+`$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8`. An
+app-specific password is not accepted by `altool` for asset-pack upload. If the
+upload succeeds but the following list request fails, the command returns
+failure even though the remote upload may already have happened; inspect App
+Store Connect before retrying.
+
+Upload mode copies the canonical AAR and receipt into a random mode-0700 private
+directory with mode-0600 files before verification. `/usr/bin/python3 -I`
+performs the complete receipt/archive gate on that snapshot, and `altool` opens
+the exact same snapshot AAR. A concurrent atomic replacement of `release/`
+therefore cannot switch the uploaded generation after validation. The snapshot
+survives through both authorized `altool` calls and is removed on ordinary and
+error exits. Source or snapshot symlinks and non-regular files fail closed.
+
+For a private candidate, `--aar` and `--receipt` must be provided together;
+both must use the canonical filenames below in the same physical directory.
+There is no AAR-only or positional bypass:
+
+```bash
+/bin/bash tools/assetpack/upload.sh --verify-only \
+  --aar /private/candidate/sam3d-body-pose.aar \
+  --receipt /private/candidate/sam3d-body-pose.aar.receipt.json
+```
+
+The driver fixes `/bin/bash`, a trusted system PATH, `/usr/bin/python3 -I`, and
+`/usr/bin/xcrun`; it removes ambient `DEVELOPER_DIR`, `TOOLCHAINS`, and
+`SDKROOT` selection before verification. The remaining boundary is the same
+host/account-integrity boundary as packaging: a malicious process already
+running as the same macOS UID is not contained, and the active system
+`xcode-select` installation and credential store remain trusted. Do not bypass
+this gate with a raw `altool` command.
 
 ## Ship the app
 
@@ -289,6 +329,20 @@ Verified on this machine (2026-08-07 through 2026-08-11):
   of the previous release when provable, and preservation of the complete
   recovery transaction and lock when it is not, including unexpected publisher
   exceptions and signal termination after the namespace swap.
+* The upload gate passes **11/11** hermetic causal groups (27 scenarios) with a
+  copied fixture repository and fake verifier/`xcrun`; no real `altool` is
+  reachable from the suite. Coverage includes default and explicit read-only
+  modes, exact verifier and `altool` argv/order, receipt failure before any
+  credential-path access, malformed/custom-pair arguments, missing/malformed
+  credentials, missing/directory/symlink keys, upload/list failures, source
+  symlinks, hostile PATH/PYTHONPATH/Xcode-selection environments, private
+  snapshot modes and cleanup, and source replacement after verification while
+  the exact verified snapshot generation is uploaded. The real 1,096,258,817-
+  byte published AAR also passed default verification and an upload-mode local
+  preflight; that preflight stopped on an intentionally empty API key ID after
+  the receipt gate, cleaned the snapshot, and never entered `altool`. No real
+  credential was inspected and no App Store Connect request or mutation was
+  performed by this slice.
 * Dev-bundled toggle produces `BioMotion.app/SAM3DBodyPose.mlmodelc` exactly where
   `Bundle.main.url(forResource:withExtension:)` looks.
 * Simulator build + launch, and the existing test suite still builds and passes.
