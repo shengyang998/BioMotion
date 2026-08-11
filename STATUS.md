@@ -4707,6 +4707,58 @@ gate failure, not a pass. The focused six methods and then `tools/run_tests.sh a
 on a fresh runner before release.
 
 
+## Unavailable OpenSim conversion utilities are no longer advertised on iOS (2026-08-11)
+
+The iOS archive deliberately omits MarkerFitter and the SDF/MJCF exporters, but
+`OpenSimParser.hpp` still declared `translateOsimMarkers`, `convertOsimToSDF`,
+and `convertOsimToMJCF`. Before this fix, simulator and device consumers for
+each API compiled successfully, produced the intended undefined reference, and
+then failed an ordinary link because neither archive defined it: six exact
+`CAUSAL_RED` receipts.
+
+Nested commit `24712fc826374c887ffb6eceac48a30f8cb6f2b8`
+(`fix(ios): hide unavailable OpenSim utilities`) pairs those three declarations,
+implementations, and their MarkerFitter/SDF/MJCF includes behind
+`DART_IOS_BUILD`. It also removes `GUIRecording.hpp`; the only apparent use was
+inside a block comment. Desktop keeps all three utilities. The commit is
+published on
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05),
+and `git ls-remote` resolved the branch to the same full SHA.
+
+The supported surface is independently pinned rather than inferred from the
+three removals. Both `parseOsim` overloads, `loadTRC`, `loadMot`, `loadGRF`, and
+`loadMotAtLowestMarkerRMSERotation` remain public and defined. The final probe:
+
+- negative-compiles all three unavailable names for simulator and device with
+  exact `no member named` diagnostics;
+- uses a comment- and literal-aware active-view parser for iOS and desktop,
+  fails closed on unknown `DART_IOS_BUILD` expressions or malformed/unbalanced
+  conditional stacks, and mutation-tests declarations hidden in block comments;
+- takes exact function pointers to all six supported signatures and requires
+  their exact counts in both consumer objects, both archives, both dead-strip
+  link maps, and both linked executables; and
+- executes both `parseOsim` geometry-refusal overloads on the simulator before
+  emitting `OPENSIM_UTILS_SOURCE_CONTRACT_SELF_TEST_PASS`,
+  `OPENSIM_UTILS_IOS_BOUNDARY_PASS`, and
+  `OPENSIM_UTILS_IOS_ARCHIVES_PASS`.
+
+Both arm64 archives rebuilt after the production change, and a fresh unsigned
+arm64 simulator `build-for-testing` succeeded. A true desktop binary build is
+not claimed: this maintained checkout currently carries an iOS-only generated
+config and lacks the desktop Asio dependency. Desktop preservation is covered
+by the strict source contract until the reproducible CMake/dependency slice
+restores a clean desktop configuration. Final independent review reported
+zero blocker, high, medium, or low issue.
+
+The tracked `nimble-patches/ios-opensim-utilities-boundary.patch` is
+byte-identical to the nested commit diff, applies to the pinned `c405b05`
+baseline, reverse-checks at the public branch head, is 100 lines, and has
+SHA-256
+`68c34b8e38752b64e4a7a6ed8ade15b3bffee6ff143e61304786911c1f42570a`.
+This closes an API/header-to-archive boundary; it does not add iOS marker
+translation or SDF/MJCF export.
+
+
 ## Mesh shapes now fail closed on the no-Assimp iOS build (2026-08-11)
 
 The iOS source manifest replaces desktop `MeshShape.cpp` and omits

@@ -110,6 +110,7 @@ this repository:
 ```bash
 git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/ios-opensim-geometry-boundary.patch
+git -C nimblephysics apply ../nimble-patches/ios-opensim-utilities-boundary.patch
 git -C nimblephysics apply ../nimble-patches/ios-mesh-shape-boundary.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
 git -C nimblephysics apply ../nimble-patches/ios-collision-fail-closed.patch
@@ -125,7 +126,7 @@ remaining port diff has also been exported.
 The reviewed nested commits are published on the maintained
 [`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
 branch. At the latest 2026-08-11 receipt that branch resolved to
-`ffad0db626ba90ad9d7f73e813202c0a7a176381`; the fork's remote symbolic `HEAD`
+`24712fc826374c887ffb6eceac48a30f8cb6f2b8`; the fork's remote symbolic `HEAD`
 remained `refs/heads/master` at the pinned upstream baseline
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
@@ -164,6 +165,15 @@ retriever. BioMotion passes `ignoreGeometry=true` explicitly at every supported
 model-loading call site. The archive probe ordinary-links both SDK variants and
 runs both refusal paths in an iOS simulator; the XCTest contract separately
 pins FullBody/Rajagopal parsing and bridge-marker counts with geometry ignored.
+
+Three desktop OpenSim conversion utilities are absent from the iOS archive and
+are no longer advertised there: `translateOsimMarkers`, `convertOsimToSDF`, and
+`convertOsimToMJCF`. Their declarations, implementations, and MarkerFitter/SDF/
+MJCF dependencies are paired behind `DART_IOS_BUILD`; desktop keeps the complete
+surface. Both `parseOsim` overloads plus `loadTRC`, `loadMot`, `loadGRF`, and the
+C3D rotation consumer remain public and linked. A comment-aware source contract,
+dual-SDK symbol/count checks, ordinary dead-strip links, and a simulator run pin
+both sides of that boundary.
 
 `MeshShape` and `SoftMeshShape` themselves also fail closed when
 `DART_IOS_BUILD=1`. Their headers expose only incomplete Assimp types, both

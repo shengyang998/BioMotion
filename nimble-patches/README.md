@@ -477,6 +477,92 @@ git -C nimblephysics apply --reverse --check \
   ../nimble-patches/ios-opensim-geometry-boundary.patch
 ```
 
+## `ios-opensim-utilities-boundary.patch`
+
+**Applies to**:
+
+- `nimblephysics/dart/biomechanics/OpenSimParser.hpp`
+- `nimblephysics/dart/biomechanics/OpenSimParser.cpp`
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commit**:
+`24712fc826374c887ffb6eceac48a30f8cb6f2b8`
+(`fix(ios): hide unavailable OpenSim utilities`) on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05).
+`git ls-remote` resolved that public branch to the same full SHA.
+
+**Patch receipt**: 100 lines; SHA-256
+`68c34b8e38752b64e4a7a6ed8ade15b3bffee6ff143e61304786911c1f42570a`.
+It is byte-identical to the two-file commit diff, applies cleanly to the pinned
+baseline, and reverse-checks at the reviewed branch head.
+
+### Problem and boundary
+
+The iOS source manifest omits MarkerFitter and the SDF/MJCF exporters, but
+`OpenSimParser.hpp` still advertised three utilities implemented through those
+desktop dependencies: `translateOsimMarkers`, `convertOsimToSDF`, and
+`convertOsimToMJCF`. Each compiled for an iOS consumer and then failed only at
+link time because neither archive defined it.
+
+The patch pairs those three declarations and implementations behind
+`DART_IOS_BUILD`, along with the exact MarkerFitter, SDF, and MJCF includes.
+The unused `GUIRecording.hpp` include is removed; its only apparent use was
+inside a block comment. Desktop retains all three utilities. This is an API
+boundary, not an iOS implementation of model translation or SDF/MJCF export.
+
+The supported parser/file surface is pinned independently. Both `parseOsim`
+overloads, `loadTRC`, `loadMot`, `loadGRF`, and
+`loadMotAtLowestMarkerRMSERotation` remain declared and defined for iOS.
+
+### Verification
+
+- Before the fix, simulator/device consumers for each unavailable API compiled,
+  produced the intended undefined reference, found no archive definition, and
+  failed their ordinary link: six exact `CAUSAL_RED` receipts.
+- The final negative consumers fail at compile time with `no member named`, not
+  because a dependency header is missing. Simulator and device strict
+  `-Wall -Wextra -Werror` compilation passes.
+- A comment- and literal-aware active-view contract checks iOS and desktop
+  declarations, definitions, and dependencies. It fails closed on unknown
+  `DART_IOS_BUILD` expressions or an unbalanced conditional stack. Mutation
+  self-tests prove that commenting out either the desktop `loadTRC` declaration
+  or definition cannot leave the contract green.
+- The positive consumer takes exact function pointers to both `parseOsim`
+  overloads and all four supported file/C3D methods. Its object, each archive,
+  both dead-strip link maps, and both linked executables require their exact
+  symbol counts; the simulator executes both geometry-refusal paths and ends in
+  `OPENSIM_UTILS_IOS_BOUNDARY_PASS` and
+  `OPENSIM_UTILS_IOS_ARCHIVES_PASS`.
+- Both arm64 archives rebuilt, and a fresh unsigned arm64 simulator
+  `build-for-testing` succeeded. A true desktop build was unavailable in this
+  iOS-only checkout because its generated config and Asio dependencies are not
+  present; desktop preservation is therefore a source-contract receipt, not a
+  claimed desktop binary receipt. Final independent review reported zero
+  blocker, high, medium, or low issue.
+
+### Apply and verify
+
+```sh
+cd labs/BioMotion/nimblephysics
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/ios-opensim-utilities-boundary.patch
+# Install/apply the current iOS source manifest before these two builds.
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
+
+cd ..
+bash tools/tests/opensim_utils_ios_boundary_probe.sh
+```
+
+On the reviewed branch head, provenance must reverse-check:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/ios-opensim-utilities-boundary.patch
+```
+
 ## `ios-mesh-shape-boundary.patch`
 
 **Applies to**:

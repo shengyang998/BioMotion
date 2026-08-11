@@ -1,0 +1,100 @@
+diff --git a/dart/biomechanics/OpenSimParser.cpp b/dart/biomechanics/OpenSimParser.cpp
+index a61c956..e8819fa 100644
+--- a/dart/biomechanics/OpenSimParser.cpp
++++ b/dart/biomechanics/OpenSimParser.cpp
+@@ -18,7 +18,9 @@
+ 
+ #include "dart/biomechanics/ForcePlate.hpp"
+ #include "dart/biomechanics/IKErrorReport.hpp"
++#ifndef DART_IOS_BUILD
+ #include "dart/biomechanics/MarkerFitter.hpp"
++#endif
+ #include "dart/biomechanics/macros.hpp"
+ #include "dart/common/Uri.hpp"
+ #include "dart/dynamics/BallJoint.hpp"
+@@ -53,13 +55,16 @@
+ #include "dart/math/PiecewiseLinearFunction.hpp"
+ #include "dart/math/PolynomialFunction.hpp"
+ #include "dart/math/SimmSpline.hpp"
+-#include "dart/server/GUIRecording.hpp"
+ #include "dart/utils/CompositeResourceRetriever.hpp"
+ #include "dart/utils/DartResourceRetriever.hpp"
++#ifndef DART_IOS_BUILD
+ #include "dart/utils/MJCFExporter.hpp"
++#endif
+ #include "dart/utils/StringUtils.hpp"
+ #include "dart/utils/XmlHelpers.hpp"
++#ifndef DART_IOS_BUILD
+ #include "dart/utils/sdf/SdfParser.hpp"
++#endif
+ 
+ using namespace std;
+ 
+@@ -1836,6 +1841,7 @@ void OpenSimParser::moveOsimMarkers(
+   newFile.SaveFile(outputPath.c_str());
+ }
+ 
++#ifndef DART_IOS_BUILD
+ //==============================================================================
+ /// Read an original *.osim file (which contains a marker set), and a target
+ /// *.osim file, and translate the markers from the original to the target,
+@@ -2543,6 +2549,7 @@ OpenSimParser::translateOsimMarkers(
+ 
+   return std::make_pair(guessedMarkers, missingMarkers);
+ }
++#endif // DART_IOS_BUILD
+ 
+ //==============================================================================
+ /// This method will use several heuristics, including the names of joints,
+@@ -4828,6 +4835,7 @@ OpenSimScaleAndMarkerOffsets OpenSimParser::getScaleAndMarkerOffsets(
+   return config;
+ }
+ 
++#ifndef DART_IOS_BUILD
+ //==============================================================================
+ /// This does its best to convert a *.osim file to a URDF file.
+ bool OpenSimParser::convertOsimToSDF(
+@@ -4876,6 +4884,7 @@ bool OpenSimParser::convertOsimToMJCF(
+     return false;
+   }
+ }
++#endif // DART_IOS_BUILD
+ 
+ Eigen::Vector3s readAttachedGeometry(
+     tinyxml2::XMLElement* attachedGeometry,
+diff --git a/dart/biomechanics/OpenSimParser.hpp b/dart/biomechanics/OpenSimParser.hpp
+index f6a9f70..b10aa07 100644
+--- a/dart/biomechanics/OpenSimParser.hpp
++++ b/dart/biomechanics/OpenSimParser.hpp
+@@ -211,6 +211,7 @@ public:
+       const std::string& outputPath,
+       const common::ResourceRetrieverPtr& retriever = nullptr);
+ 
++#ifndef DART_IOS_BUILD
+   /// Read an original *.osim file (which contains a marker set), and a target
+   /// *.osim file, and translate the markers from the original to the target,
+   /// and write it out to a new *.osim file
+@@ -229,6 +230,7 @@ public:
+       const common::Uri& targetModel,
+       const std::string& outputPath,
+       bool verbose = false);
++#endif // DART_IOS_BUILD
+ 
+   /// This method will use several heuristics, including the names of joints,
+   /// meshes, and bones to determine if this body on this skeleton should be
+@@ -381,6 +383,7 @@ public:
+   static OpenSimScaleAndMarkerOffsets getScaleAndMarkerOffsets(
+       const OpenSimFile& standardSkeleton, const OpenSimFile& scaledSkeleton);
+ 
++#ifndef DART_IOS_BUILD
+   /// This does its best to convert a *.osim file to an SDF file. It will
+   /// simplify the skeleton by merging any bodies that are requested, and
+   /// deleting any joints linking those bodies.
+@@ -396,6 +399,7 @@ public:
+       const common::Uri& uri,
+       const std::string& outputPath,
+       std::map<std::string, std::string> mergeBodiesInto);
++#endif // DART_IOS_BUILD
+ 
+ protected:
+   static OpenSimFile readOsim30(
