@@ -62,37 +62,51 @@ final class RootTranslationTests: XCTestCase {
     private static func outputProvider(
         camT: SIMD3<Float>,
         camTShape: [Int] = [3],
-        invalidJoint: (index: Int, component: Int, value: Float)? = nil
+        invalidJoint: (index: Int, component: Int, value: Float)? = nil,
+        rotationElement: (index: Int, row: Int, column: Int, value: Float)? = nil,
+        keypoint: (index: Int, value: SIMD2<Float>)? = nil,
+        dataTypes: [String: MLMultiArrayDataType] = [:]
     ) throws -> MLDictionaryFeatureProvider {
-        func array(_ shape: [Int]) throws -> MLMultiArray {
+        func array(_ shape: [Int], feature: String) throws -> MLMultiArray {
             let value = try MLMultiArray(
                 shape: shape.map(NSNumber.init(value:)),
-                dataType: .float32
+                dataType: dataTypes[feature] ?? .float32
             )
             for index in 0..<value.count { value[index] = 0 }
             return value
         }
 
         let jointCount = SAM3DPoseEstimator.PreprocessingConstants.numBodyJoints
-        let joints = try array([jointCount, 3])
+        let joints = try array([jointCount, 3], feature: "joint_coords")
         if let invalidJoint {
             joints[invalidJoint.index * 3 + invalidJoint.component] =
                 NSNumber(value: invalidJoint.value)
         }
-        let rotations = try array([jointCount, 3, 3])
+        let rotations = try array([jointCount, 3, 3], feature: "global_rots")
         for joint in 0..<jointCount {
             for axis in 0..<3 {
                 rotations[joint * 9 + axis * 3 + axis] = 1
             }
         }
-        let camera = try array(camTShape)
+        if let rotationElement {
+            rotations[
+                rotationElement.index * 9
+                    + rotationElement.row * 3
+                    + rotationElement.column
+            ] = NSNumber(value: rotationElement.value)
+        }
+        let camera = try array(camTShape, feature: "cam_t")
         camera[0] = NSNumber(value: camT.x)
         camera[1] = NSNumber(value: camT.y)
         camera[2] = NSNumber(value: camT.z)
-        let keypoints = try array([
-            SAM3DPoseEstimator.PreprocessingConstants.numOutputKeypoints2D,
-            2,
-        ])
+        let keypoints = try array(
+            [SAM3DPoseEstimator.PreprocessingConstants.numOutputKeypoints2D, 2],
+            feature: "keypoints_2d"
+        )
+        if let keypoint {
+            keypoints[keypoint.index * 2] = NSNumber(value: keypoint.value.x)
+            keypoints[keypoint.index * 2 + 1] = NSNumber(value: keypoint.value.y)
+        }
         return try MLDictionaryFeatureProvider(dictionary: [
             "joint_coords": MLFeatureValue(multiArray: joints),
             "global_rots": MLFeatureValue(multiArray: rotations),
@@ -327,6 +341,88 @@ final class RootTranslationTests: XCTestCase {
         XCTAssertTrue(MHRRetarget.makeBodyFrame(
             jointCoords: directJointCoords, timestamp: 0, frameNumber: 0
         ).joints.isEmpty, "direct retarget callers must also fail closed")
+    }
+
+    func testParserRequiresFloat32ForEveryOutputFeature() throws {
+        let features = ["joint_coords", "global_rots", "cam_t", "keypoints_2d"]
+        for feature in features {
+            for dataType: MLMultiArrayDataType in [.float16, .double] {
+                let provider = try Self.outputProvider(
+                    camT: SIMD3<Float>(0, 1, 4),
+                    dataTypes: [feature: dataType]
+                )
+                XCTAssertThrowsError(try SAM3DPoseEstimator.parseOutput(
+                    provider, usedFallbackBBox: false, inputChecksum: 0,
+                    sourceHash: 0, bboxHash: 0, warpHash: 0
+                ), "\(feature) must reject \(dataType)") { error in
+                    guard case SAM3DPoseEstimator.EstimatorError
+                        .unexpectedOutputDataType(let detail) = error
+                    else { return XCTFail("wrong parser error for \(feature): \(error)") }
+                    XCTAssertTrue(detail.contains(feature), detail)
+                    XCTAssertTrue(detail.contains("Float32"), detail)
+                }
+            }
+        }
+    }
+
+    func testParserRejectsNonFiniteGlobalRotations() throws {
+        let invalidElements: [(row: Int, column: Int, value: Float)] = [
+            (0, 1, .nan),
+            (1, 2, .infinity),
+            (2, 0, -.infinity),
+        ]
+        for invalid in invalidElements {
+            let provider = try Self.outputProvider(
+                camT: SIMD3<Float>(0, 1, 4),
+                rotationElement: (7, invalid.row, invalid.column, invalid.value)
+            )
+            XCTAssertThrowsError(try SAM3DPoseEstimator.parseOutput(
+                provider, usedFallbackBBox: false, inputChecksum: 0,
+                sourceHash: 0, bboxHash: 0, warpHash: 0
+            )) { error in
+                guard case SAM3DPoseEstimator.EstimatorError.invalidOutputValue(let detail) = error
+                else { return XCTFail("wrong parser error: \(error)") }
+                XCTAssertTrue(
+                    detail.contains("global_rots[7][\(invalid.row)][\(invalid.column)]"),
+                    detail
+                )
+            }
+        }
+    }
+
+    func testParserRejectsNonFiniteKeypointsAndPreservesFiniteContractValues() throws {
+        for invalid in [
+            SIMD2<Float>(.nan, 12),
+            SIMD2<Float>(12, .infinity),
+            SIMD2<Float>(-.infinity, 12),
+        ] {
+            let provider = try Self.outputProvider(
+                camT: SIMD3<Float>(0, 1, 4),
+                keypoint: (11, invalid)
+            )
+            XCTAssertThrowsError(try SAM3DPoseEstimator.parseOutput(
+                provider, usedFallbackBBox: false, inputChecksum: 0,
+                sourceHash: 0, bboxHash: 0, warpHash: 0
+            )) { error in
+                guard case SAM3DPoseEstimator.EstimatorError.invalidOutputValue(let detail) = error
+                else { return XCTFail("wrong parser error: \(error)") }
+                XCTAssertTrue(detail.contains("keypoints_2d[11]"), detail)
+            }
+        }
+
+        let finiteButUnconstrained = try SAM3DPoseEstimator.parseOutput(
+            Self.outputProvider(
+                camT: SIMD3<Float>(0, 1, 4),
+                rotationElement: (7, 0, 1, 2.5),
+                keypoint: (11, SIMD2<Float>(-20, 600))
+            ),
+            usedFallbackBBox: false, inputChecksum: 0,
+            sourceHash: 0, bboxHash: 0, warpHash: 0
+        )
+        XCTAssertEqual(finiteButUnconstrained.keypoints2D[11], SIMD2<Float>(-20, 600),
+                       "contract-space keypoints are not clamped to the crop")
+        XCTAssertEqual(finiteButUnconstrained.globalRots[7][1][0], 2.5,
+                       "finite rotations are not silently orthonormalized")
     }
 
     func testRetargetRejectsFiniteInputsThatOverflowDuringMarkerConstruction() {

@@ -11,18 +11,16 @@ import simd
 ///             std=[0.229,0.224,0.225], from affine-warping the padded person bbox
 ///             to 512x512 then cropping width [64:-64].
 ///   ray_map : [1,2,512,384] Float16, per-pixel camera ray field, same crop geometry.
-///   cliff   : [1,3] Float16, [(cx-cx_int)/f, (cy-cy_int)/f, bbox_w/f].
+///   cliff   : [1,3] Float16, [(cx-cx_int)/f, (cy-cy_int)/f, b/f], where `b`
+///             is the padded square crop side from the frozen contract.
 ///   joint_coords/global_rots/cam_t/keypoints_2d outputs, Float32, per contract.
 ///
-/// `CONTRACT.md` (labs/sam-3d-body/export/CONTRACT.md) did not exist yet when this
-/// file was written. Every geometric formula in `PreprocessingConstants` and the
-/// private helpers below was instead derived directly from the released Python
-/// source and cross-checked empirically by running the actual PyTorch transform
-/// functions (`GetBBoxCenterScale`, `TopdownAffine`, `get_ray_condition`,
-/// `prepare_batch`'s default `cam_int`) against this Swift port's closed-form
-/// formulas on concrete numeric examples — every value matched exactly. See the
-/// citations inline and `BioMotion/Offline/README.md` for the full derivation and
-/// residual risk. CROSS-CHECK AGAINST CONTRACT.md ONCE IT EXISTS regardless.
+/// The exact contract revision is pinned by
+/// `BioMotion/Resources/SAM3DBodyPose.lock.json`. Every interface field and
+/// geometric formula below has been cross-checked against it. The formulas were
+/// also independently derived from the released Python source and verified on
+/// concrete numeric examples with its real transform functions; see the inline
+/// citations and `BioMotion/Offline/README.md` for the evidence and residual risk.
 final class SAM3DPoseEstimator {
 
     // MARK: - Output
@@ -129,6 +127,7 @@ final class SAM3DPoseEstimator {
         case preprocessingFailed(String)
         case predictionFailed(Error)
         case missingOutputFeature(String)
+        case unexpectedOutputDataType(String)
         case unexpectedOutputShape(String)
         case invalidOutputValue(String)
 
@@ -143,7 +142,9 @@ final class SAM3DPoseEstimator {
             case .predictionFailed(let error):
                 return "Pose model prediction failed: \(error.localizedDescription)"
             case .missingOutputFeature(let name):
-                return "Pose model output is missing expected field \"\(name)\" — check SAM3DBodyPose.mlpackage matches the frozen contract."
+                return "Pose model output is missing expected field \"\(name)\" — check the compiled SAM3DBodyPose artifact against the frozen lock."
+            case .unexpectedOutputDataType(let detail):
+                return "Pose model output data type mismatch: \(detail)"
             case .unexpectedOutputShape(let detail):
                 return "Pose model output shape mismatch: \(detail)"
             case .invalidOutputValue(let detail):
@@ -671,6 +672,17 @@ final class SAM3DPoseEstimator {
             throw EstimatorError.missingOutputFeature("keypoints_2d")
         }
 
+        for (name, array) in [
+            ("joint_coords", jointCoordsArray),
+            ("global_rots", globalRotsArray),
+            ("cam_t", camTArray),
+            ("keypoints_2d", keypoints2DArray),
+        ] where array.dataType != .float32 {
+            throw EstimatorError.unexpectedOutputDataType(
+                "\(name): expected Float32, got \(outputDataTypeName(array.dataType))"
+            )
+        }
+
         let jointCoords = try readVec3Array(jointCoordsArray, count: PreprocessingConstants.numBodyJoints, name: "joint_coords")
         guard jointCoords.allSatisfy(MHRRetarget.isValidSourceJointCoordinate) else {
             throw EstimatorError.invalidOutputValue(
@@ -703,6 +715,14 @@ final class SAM3DPoseEstimator {
     @inline(__always)
     private static func idx(_ values: Int...) -> [NSNumber] { values.map { NSNumber(value: $0) } }
 
+    private static func outputDataTypeName(_ dataType: MLMultiArrayDataType) -> String {
+        if dataType == .float16 { return "Float16" }
+        if dataType == .float32 { return "Float32" }
+        if dataType == .double { return "Double" }
+        if dataType == .int32 { return "Int32" }
+        return "raw type \(dataType.rawValue)"
+    }
+
     private static func readVec3Array(_ array: MLMultiArray, count: Int, name: String) throws -> [SIMD3<Float>] {
         guard array.shape.map(\.intValue) == [count, 3] else {
             throw EstimatorError.unexpectedOutputShape("\(name): expected [\(count),3], got \(array.shape)")
@@ -730,7 +750,14 @@ final class SAM3DPoseEstimator {
         var result: [SIMD2<Float>] = []
         result.reserveCapacity(count)
         for i in 0..<count {
-            result.append(SIMD2<Float>(array[idx(i, 0)].floatValue, array[idx(i, 1)].floatValue))
+            let x = array[idx(i, 0)].floatValue
+            let y = array[idx(i, 1)].floatValue
+            guard x.isFinite, y.isFinite else {
+                throw EstimatorError.invalidOutputValue(
+                    "\(name)[\(i)] must contain two finite coordinates"
+                )
+            }
+            result.append(SIMD2<Float>(x, y))
         }
         return result
     }
@@ -754,10 +781,18 @@ final class SAM3DPoseEstimator {
         var result: [simd_float3x3] = []
         result.reserveCapacity(count)
         for i in 0..<count {
-            func v(_ r: Int, _ c: Int) -> Float { array[idx(i, r, c)].floatValue }
-            let col0 = SIMD3<Float>(v(0, 0), v(1, 0), v(2, 0))
-            let col1 = SIMD3<Float>(v(0, 1), v(1, 1), v(2, 1))
-            let col2 = SIMD3<Float>(v(0, 2), v(1, 2), v(2, 2))
+            func finiteValue(_ row: Int, _ column: Int) throws -> Float {
+                let value = array[idx(i, row, column)].floatValue
+                guard value.isFinite else {
+                    throw EstimatorError.invalidOutputValue(
+                        "\(name)[\(i)][\(row)][\(column)] must be finite"
+                    )
+                }
+                return value
+            }
+            let col0 = try SIMD3<Float>(finiteValue(0, 0), finiteValue(1, 0), finiteValue(2, 0))
+            let col1 = try SIMD3<Float>(finiteValue(0, 1), finiteValue(1, 1), finiteValue(2, 1))
+            let col2 = try SIMD3<Float>(finiteValue(0, 2), finiteValue(1, 2), finiteValue(2, 2))
             result.append(simd_float3x3(col0, col1, col2))
         }
         return result

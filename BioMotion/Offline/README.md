@@ -567,23 +567,25 @@ a video reader.
 
 `MLModelConfiguration.computeUnits = .cpuAndGPU` (not `.all`) per this task's
 explicit constraint. Loading happens on a dedicated background queue via a
-checked continuation, resolving `SAM3DBodyPose.mlmodelc` first (what Xcode
-actually compiles a bundled `.mlpackage` target member into) with `.mlpackage`
-as a fallback name. A missing model throws `EstimatorError.modelNotBundled`
-with a specific message — the UI shows `runner.phase = .failed(...)`, no crash,
-no silent no-op. Loading state is shown as an indeterminate spinner + text
-("Loading pose model…"), not a fake percentage — Core ML's `MLModel(contentsOf:)`
-gives no progress callback, so a determinate bar would have to be fabricated,
-which the task's own honesty requirement rules out.
+checked continuation. `AssetPackModelStore` resolves only a precompiled
+`SAM3DBodyPose.mlmodelc`: first the optional developer-bundled copy, then the
+Managed Background Assets pack. It never accepts or compiles a raw `.mlpackage`
+at runtime. If neither copy is local, it starts or joins the system-managed
+download and throws promptly with the observed progress or real failure reason;
+the UI publishes that failure state without crashing or silently skipping the
+model. Core ML loading itself remains indeterminate because
+`MLModel(contentsOf:)` exposes no progress callback.
 
 ## Preprocessing — derivation and verification
 
-`CONTRACT.md` (`labs/sam-3d-body/export/CONTRACT.md`) did not exist when this
-was written (checked at the start of this task and again before finalizing).
-Every geometric formula in `SAM3DPoseEstimator` was derived from the released
-Python source and then **empirically verified** by running the actual PyTorch
-functions in `labs/sam-3d-body/.venv` against this file's closed-form Swift
-formulas on concrete numeric examples:
+The exact `CONTRACT.md` revision is pinned at SHA-256
+`6aa70b392b750bcfb4c1695b88fca336a13d284721d1689383427a5654ca5f47`
+by `BioMotion/Resources/SAM3DBodyPose.lock.json`. The Swift interface, shapes,
+dtypes, bbox/camera formulae, axes, `cam_t`, and crop-space keypoints have now
+been checked field by field against that frozen revision. Independently, every
+geometric formula in `SAM3DPoseEstimator` was derived from the released Python
+source and **empirically verified** by running the actual PyTorch functions in
+`labs/sam-3d-body/.venv` against this file's closed-form Swift formulas:
 
 - `GetBBoxCenterScale` + `TopdownAffine(input_size=(512,512))` — bbox padding
   (1.25), the two-stage `fix_aspect_ratio` square-forcing, and the resulting
@@ -597,10 +599,8 @@ formulas on concrete numeric examples:
   assumption, not just an unverified guess: the alternative in the Python
   source is a full MoGe2 monocular-geometry model
   (`tools/build_fov_estimator.py`), which is obviously out of scope for an
-  on-device pipeline and is not hinted anywhere in this task's brief — so the
-  no-calibration default is very likely what the model-export agent's
-  CONTRACT.md will also specify, but that file should still be checked once it
-  exists.**
+  on-device pipeline. The frozen contract explicitly requires this same
+  no-calibration default.**
 - `get_ray_condition` (`sam3d_body.py:1027`) — its own code comments claim
   shapes ("B x N x H x W x 2", "B x num_person x 2 x H x W") that are actually
   WRONG for `H != W` inputs (verified: `torch.meshgrid(..., indexing="xy")`
@@ -619,8 +619,8 @@ formulas on concrete numeric examples:
 
 All of this is written up with inline citations in
 `SAM3DPoseEstimator.PreprocessingConstants`'s doc comment and each formula's
-own comment — cross-check against `CONTRACT.md` once it exists regardless;
-this is the highest-value single thing to re-verify before shipping.
+own comment. The locked contract cross-check and the independent Python
+derivation now agree; pixel-level resampling remains the separate boundary below.
 
 ## External verification boundaries
 
@@ -656,15 +656,21 @@ this is the highest-value single thing to re-verify before shipping.
   in-code (`renderWarpedRGBA`'s doc comment) as the top candidate for a
   device-side numeric check once frames can actually be run through the real
   model — not something fixable without hardware to measure against.
-- The exact Core ML input/output feature names ("image", "ray_map", "cliff",
-  "joint_coords", "global_rots", "cam_t", "keypoints_2d") match the frozen
-  contract as given to this task; whether the actual exported `.mlpackage`
-  declares them with those exact strings is the export agent's responsibility
-  and unverified here.
-- `MLMultiArray.dataPointer.bindMemory(to: Float16.self, ...)` for filling
-  freshly-created input arrays, and `array[[NSNumber...]]` for reading
-  (presumably Float32) output arrays — standard, long-stable Core ML Swift
-  APIs, but never compiled in this pass.
+- The lock records and the verifier checks the real source/compiled Core ML
+  interface: `image`, `ray_map`, and `cliff` are fixed-shape Float16 inputs;
+  `joint_coords`, `global_rots`, `cam_t`, and `keypoints_2d` are fixed-shape
+  Float32 outputs. The Swift output parser now rejects any dtype drift before
+  reading values, and rejects non-finite joints, rotations, camera translation,
+  and keypoints. Finite crop-external keypoints remain unclamped as required.
+- Frozen `CONTRACT.md` §2.2 labels `global_rots` “world→joint” but immediately
+  defines `R @ v_local = v_world`, which is joint-local→world. The Swift matrix
+  layout follows the explicit equation and does not re-orthonormalise; no current
+  product path consumes these rotations. The locked document cannot be edited
+  alone without invalidating its lock and artifact receipts, so the export owner
+  must correct and republish that prose before rotations become product input.
+- The Core ML array APIs and the real names/shapes/dtypes compile in the app and
+  are pinned by the artifact lock. Loading the shipping Managed Background
+  Assets copy still needs the real-device/TestFlight receipt described in STATUS.
 - `VNDetectHumanRectanglesRequest` behavior on real photos (confidence
   ranking, bbox tightness) — Vision framework usage is standard but untested
   here.

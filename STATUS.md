@@ -338,7 +338,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 643 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 646 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -5499,9 +5499,9 @@ cadence/coverage, reader and format failures, raster/memory/correlation limits, 
 raw luma-to-box-to-peak registration, translation sign, exact receipt routing, timeout/cancel races,
 dual leases, close/reset ordering and distinct failure presentation. Periodic fixtures now derive
 their shifted target from an analytic motif instead of wrapping a non-divisible finite raster, and
-normalized rectangle assertions compare all four edges with a `1e-12` tolerance. The reviewed fast
-lane contains exactly **643** tests and its fail-closed gate harness passes **49/49**. On the current
-tree, the camera reducer suite passes **45/45** and the camera-reference plus registration-geometry
+normalized rectangle assertions compare all four edges with a `1e-12` tolerance. At that receipt,
+the reviewed fast lane contained exactly **643** tests and its fail-closed gate harness passed
+**49/49**. On that tree, the camera reducer suite passes **45/45** and the camera-reference plus registration-geometry
 suites pass **64/64** on Simulator; these selected **109/109** results are not represented as a new
 full-fast-lane receipt. All changed Swift sources parse, `git diff --check` passes, and unsigned
 Debug `build-for-testing` succeeds for generic arm64 device. Real-device camera footage, a
@@ -5558,8 +5558,41 @@ markers, leaving the skeleton at a different pose from the one used to cache the
 That numerator/denominator mismatch produced a deterministic `1.77e-7` error. Constructing both
 marker sets first restores the same-pose comparison and keeps the original `1e-10` assertion for
 measurement, recipe replay and default restoration alike. The complete model-scaling class passes
-**4/4**, the fail-closed gate harness passes **49/49**, and fast/slow lane sizes are exactly
-**643 + 1**.
+**4/4**, the fail-closed gate harness passes **49/49**, and at that receipt the fast/slow lane sizes
+were exactly **643 + 1**.
+
+
+## Core ML output parsing enforces the frozen interface (2026-08-12)
+
+`SAM3DPoseEstimator.parseOutput` previously checked feature presence and shape but let
+`MLMultiArray` widen any dtype through `floatValue`. A shape-compatible Float16 or Double output
+therefore crossed an interface that the artifact lock fixes to Float32. `joint_coords` and `cam_t`
+already had finite/domain gates, but `global_rots` and `keypoints_2d` could also carry NaN or
+infinity into the result.
+
+The parser now checks all four output dtypes together, before decoding any value, and reports the
+exact feature on mismatch. Every matrix/keypoint element must be finite. This is structural
+validation only: finite crop-external keypoints remain unchanged, and finite rotation matrices are
+neither clamped nor re-orthonormalised, matching the frozen model contract. Three table-driven
+regressions cover Float16/Double drift on every output, non-finite off-diagonal rotations, non-finite
+keypoints, crop-external keypoints and a finite non-orthogonal matrix.
+
+The adjacent export contract remains pinned at SHA-256
+`6aa70b392b750bcfb4c1695b88fca336a13d284721d1689383427a5654ca5f47`; this change does not rewrite
+that authority or invalidate its lock/asset receipts. Its §2.2 prose says “world→joint” while the
+explicit equation says `R @ v_local = v_world`. The app follows the equation and does not currently
+consume these rotations; the export owner must correct and republish the locked document before that
+field becomes product input. The estimator and Offline README now describe the existing frozen
+contract, square-side `b/f` CLIFF term, precompiled developer/Managed Background Assets resolution,
+and compiled interface evidence instead of the obsolete “CONTRACT does not exist / raw mlpackage
+fallback / never compiled” state.
+
+TDD RED ran the three new methods against the old parser: **0/3 passed**, with all eight wrong-dtype
+cases and all six non-finite cases accepted. GREEN passes **3/3** with zero failures/skips/restarts.
+The complete `RootTranslationTests` class passes **10/10**, the fail-closed gate harness passes
+**49/49**, both edited Swift files parse, and unsigned Debug `build-for-testing` succeeds for generic
+arm64 device. The reviewed fast-lane count is now **646**; these focused receipts are not represented
+as a new full-fast-lane pass.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)
