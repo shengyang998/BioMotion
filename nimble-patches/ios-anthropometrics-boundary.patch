@@ -1,0 +1,204 @@
+diff --git a/dart/biomechanics/Anthropometrics.cpp b/dart/biomechanics/Anthropometrics.cpp
+index 62ef082..b4d0b38 100644
+--- a/dart/biomechanics/Anthropometrics.cpp
++++ b/dart/biomechanics/Anthropometrics.cpp
+@@ -2,9 +2,12 @@
+ 
+ #include <algorithm>
+ 
++#ifndef DART_IOS_BUILD
+ #include "dart/dynamics/BodyNode.hpp"
++#include "dart/dynamics/MeshShape.hpp"
+ #include "dart/math/FiniteDifference.hpp"
+ #include "dart/math/Geometry.hpp"
++#endif
+ #include "dart/math/MathTypes.hpp"
+ #include "dart/utils/CompositeResourceRetriever.hpp"
+ #include "dart/utils/DartResourceRetriever.hpp"
+@@ -123,6 +126,7 @@ std::shared_ptr<Anthropometrics> Anthropometrics::loadFromFile(
+   return result;
+ }
+ 
++#ifndef DART_IOS_BUILD
+ //==============================================================================
+ void Anthropometrics::debugToGUI(
+     std::shared_ptr<server::GUIWebsocketServer> server,
+@@ -291,6 +295,7 @@ void Anthropometrics::debugValues(std::shared_ptr<dynamics::Skeleton> skel)
+               << mDist->getVariance(pair.first) << ")" << std::endl;
+   }
+ }
++#endif // DART_IOS_BUILD
+ 
+ //==============================================================================
+ void Anthropometrics::addMetric(
+@@ -399,6 +404,7 @@ void Anthropometrics::setSkelToMetricPose(
+   }
+ }
+ 
++#ifndef DART_IOS_BUILD
+ //==============================================================================
+ std::pair<
+     std::pair<dynamics::BodyNode*, Eigen::Vector3s>,
+@@ -650,6 +656,7 @@ Eigen::VectorXs Anthropometrics::finiteDifferenceGradientOfLogPDFWrtGroupScales(
+ 
+   return result;
+ }
++#endif // DART_IOS_BUILD
+ 
+ } // namespace biomechanics
+-} // namespace dart
+\ No newline at end of file
++} // namespace dart
+diff --git a/dart/biomechanics/Anthropometrics.hpp b/dart/biomechanics/Anthropometrics.hpp
+index 94429f4..7ab75d1 100644
+--- a/dart/biomechanics/Anthropometrics.hpp
++++ b/dart/biomechanics/Anthropometrics.hpp
+@@ -4,19 +4,20 @@
+ #include <memory>
+ // #include <unordered_map>
+ #include <map>
++#include <string>
+ #include <vector>
+ 
+ #include <Eigen/Dense>
+ 
+-#include "dart/biomechanics/LilypadSolver.hpp"
+ #include "dart/common/LocalResourceRetriever.hpp"
+ #include "dart/common/Uri.hpp"
+-#include "dart/dynamics/BodyNode.hpp"
+-#include "dart/dynamics/Shape.hpp"
+ #include "dart/dynamics/Skeleton.hpp"
+ #include "dart/math/MathTypes.hpp"
+ #include "dart/math/MultivariateGaussian.hpp"
++#ifndef DART_IOS_BUILD
++#include "dart/dynamics/BodyNode.hpp"
+ #include "dart/server/GUIWebsocketServer.hpp"
++#endif
+ 
+ namespace dart {
+ 
+@@ -51,6 +52,7 @@ public:
+       const common::Uri& uri,
+       const common::ResourceRetrieverPtr& retriever = nullptr);
+ 
++#ifndef DART_IOS_BUILD
+   void debugToGUI(
+       std::shared_ptr<server::GUIWebsocketServer> server,
+       std::shared_ptr<dynamics::Skeleton> skel);
+@@ -58,6 +60,7 @@ public:
+   /// This prints a summary of each metric, and its relationship to its mean and
+   /// variance, to the console
+   void debugValues(std::shared_ptr<dynamics::Skeleton> skel);
++#endif
+ 
+   void addMetric(
+       std::string name,
+@@ -77,6 +80,7 @@ public:
+   std::shared_ptr<Anthropometrics> condition(
+       const std::map<std::string, s_t>& observedValues);
+ 
++#ifndef DART_IOS_BUILD
+   std::pair<
+       std::pair<dynamics::BodyNode*, Eigen::Vector3s>,
+       std::pair<dynamics::BodyNode*, Eigen::Vector3s>>
+@@ -88,10 +92,12 @@ public:
+ 
+   s_t getLogPDF(
+       std::shared_ptr<dynamics::Skeleton> skel, bool normalized = true);
++#endif
+ 
+   void setSkelToMetricPose(
+       std::shared_ptr<dynamics::Skeleton> skel, const AnthroMetric& metric);
+ 
++#ifndef DART_IOS_BUILD
+   Eigen::VectorXs getGradientOfLogPDFWrtBodyScales(
+       std::shared_ptr<dynamics::Skeleton> skel);
+ 
+@@ -103,6 +109,7 @@ public:
+ 
+   Eigen::VectorXs finiteDifferenceGradientOfLogPDFWrtGroupScales(
+       std::shared_ptr<dynamics::Skeleton> skel);
++#endif
+ 
+ protected:
+   std::vector<AnthroMetric> mMetrics;
+@@ -112,4 +119,4 @@ protected:
+ } // namespace biomechanics
+ } // namespace dart
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/dart/biomechanics/IKErrorReport.cpp b/dart/biomechanics/IKErrorReport.cpp
+index 1aecbe9..ab38d3e 100644
+--- a/dart/biomechanics/IKErrorReport.cpp
++++ b/dart/biomechanics/IKErrorReport.cpp
+@@ -2,8 +2,10 @@
+ 
+ #include <fstream>
+ #include <ostream>
++#include <stdexcept>
+ #include <string>
+ 
++#include "dart/biomechanics/Anthropometrics.hpp"
+ #include "dart/utils/StringUtils.hpp"
+ 
+ namespace dart {
+@@ -23,7 +25,13 @@ IKErrorReport::IKErrorReport(
+   anthroPDF = 0.0;
+   if (anthropometrics)
+   {
++#ifdef DART_IOS_BUILD
++    throw std::runtime_error(
++        "Anthropometric IK scoring is unavailable in this iOS build because "
++        "mesh-backed anthropometric measurements are not linked.");
++#else
+     anthroPDF = anthropometrics->getLogPDF(skel);
++#endif
+   }
+ 
+   // Collect the names of all the observed markers on any timestep into a single
+@@ -213,4 +221,4 @@ std::vector<std::pair<std::string, s_t>> IKErrorReport::getSortedMarkerRMSE()
+ }
+ 
+ } // namespace biomechanics
+-} // namespace dart
+\ No newline at end of file
++} // namespace dart
+diff --git a/dart/biomechanics/IKErrorReport.hpp b/dart/biomechanics/IKErrorReport.hpp
+index e7cd67e..6a90054 100644
+--- a/dart/biomechanics/IKErrorReport.hpp
++++ b/dart/biomechanics/IKErrorReport.hpp
+@@ -4,22 +4,20 @@
+ #include <memory>
+ // #include <unordered_map>
+ #include <map>
++#include <string>
+ #include <vector>
+ 
+ #include <Eigen/Dense>
+ 
+-#include "dart/biomechanics/Anthropometrics.hpp"
+-#include "dart/biomechanics/LilypadSolver.hpp"
+-#include "dart/dynamics/BodyNode.hpp"
+-#include "dart/dynamics/Shape.hpp"
+ #include "dart/dynamics/Skeleton.hpp"
+ #include "dart/math/MathTypes.hpp"
+-#include "dart/server/GUIWebsocketServer.hpp"
+ 
+ namespace dart {
+ 
+ namespace biomechanics {
+ 
++class Anthropometrics;
++
+ class IKErrorReport
+ {
+ public:
+@@ -56,4 +54,4 @@ public:
+ } // namespace biomechanics
+ } // namespace dart
+ 
+-#endif
+\ No newline at end of file
++#endif

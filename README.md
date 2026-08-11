@@ -97,7 +97,7 @@ the tracked patches below:
 - `OpenSimParser.cpp` — guarded MarkerFitter, GUIRecording, SdfParser, MJCFExporter includes
 - `MarkerAspect.hpp` / `Marker.hpp` — enum `NO` → `CONSTRAINT_NONE` (ObjC macro conflict)
 - `AssimpInputResourceAdaptor.hpp` — remaining headless Assimp include guard
-- `LilypadSolver.hpp`, `Anthropometrics.hpp`, `IKErrorReport.hpp` — GUIWebsocketServer guards
+- `LilypadSolver.hpp` — remaining GUIWebsocketServer guard
 - Vendored deps: Eigen 3.4.0 in `third_party/eigen`, tinyxml2 in `third_party/tinyxml2`
 
 Replace `nimblephysics/CMakeLists.txt` with the iOS-specific version (the upstream original is preserved as `CMakeLists_original.txt` in the patched tree).
@@ -111,6 +111,7 @@ this repository:
 git -C nimblephysics apply ../nimble-patches/opensimparser-fail-closed.patch
 git -C nimblephysics apply ../nimble-patches/ios-opensim-geometry-boundary.patch
 git -C nimblephysics apply ../nimble-patches/ios-opensim-utilities-boundary.patch
+git -C nimblephysics apply ../nimble-patches/ios-anthropometrics-boundary.patch
 git -C nimblephysics apply ../nimble-patches/ios-mesh-shape-boundary.patch
 git -C nimblephysics apply ../nimble-patches/simmspline-linear-extrapolation.patch
 git -C nimblephysics apply ../nimble-patches/ios-collision-fail-closed.patch
@@ -126,7 +127,7 @@ remaining port diff has also been exported.
 The reviewed nested commits are published on the maintained
 [`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05)
 branch. At the latest 2026-08-11 receipt that branch resolved to
-`24712fc826374c887ffb6eceac48a30f8cb6f2b8`; the fork's remote symbolic `HEAD`
+`b7068024286a72f66b7d9c841527656d7631b192`; the fork's remote symbolic `HEAD`
 remained `refs/heads/master` at the pinned upstream baseline
 `c405b056fc35068027e03e0c384e84e12870b475`.
 
@@ -174,6 +175,15 @@ surface. Both `parseOsim` overloads plus `loadTRC`, `loadMot`, `loadGRF`, and th
 C3D rotation consumer remain public and linked. A comment-aware source contract,
 dual-SDK symbol/count checks, ordinary dead-strip links, and a simulator run pin
 both sides of that boundary.
+
+Mesh-backed anthropometric scoring is also unavailable on iOS. The public
+`Anthropometrics` surface now retains its data-only load, metric, distribution,
+conditioning, and metric-pose methods while hiding the GUI, mesh measurement,
+PDF, and gradient APIs. `IKErrorReport` continues to support its prior-free
+path; a non-null anthropometric prior throws one descriptive runtime error
+before reading or mutating skeleton state. Desktop keeps the complete scoring
+surface. Dual-SDK current-source object, archive, link-map, and simulator probes
+pin that split without relying on stale archive members.
 
 `MeshShape` and `SoftMeshShape` themselves also fail closed when
 `DART_IOS_BUILD=1`. Their headers expose only incomplete Assimp types, both

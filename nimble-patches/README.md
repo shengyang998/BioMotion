@@ -563,6 +563,101 @@ git -C nimblephysics apply --reverse --check \
   ../nimble-patches/ios-opensim-utilities-boundary.patch
 ```
 
+## `ios-anthropometrics-boundary.patch`
+
+**Applies to**:
+
+- `nimblephysics/dart/biomechanics/Anthropometrics.hpp`
+- `nimblephysics/dart/biomechanics/Anthropometrics.cpp`
+- `nimblephysics/dart/biomechanics/IKErrorReport.hpp`
+- `nimblephysics/dart/biomechanics/IKErrorReport.cpp`
+
+**Baseline**: Nimble
+`c405b056fc35068027e03e0c384e84e12870b475`
+
+**Reviewed branch commit**:
+`b7068024286a72f66b7d9c841527656d7631b192`
+(`fix(ios): reject unavailable anthropometric scoring`) on
+[`biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05).
+`git ls-remote` resolved that public branch to the same full SHA.
+
+**Patch receipt**: 204 lines; SHA-256
+`89c8292a8fa6b86b89b57d4bf98e17bef7b063b67d6970ff7835b93a5796ffdd`.
+It is byte-identical to the four-file commit diff and to the cumulative diff
+from the pinned baseline for those files, and reverse-checks at the reviewed
+branch head.
+
+### Problem and boundary
+
+The iOS source manifest does not provide the mesh/GUI stack needed by
+anthropometric measurement, but `Anthropometrics.hpp` still pulled those
+dependencies into every consumer and advertised the complete desktop scoring
+surface. `IKErrorReport` also accepted a non-null anthropometric prior and
+could return a plausible score even though that path was not a supported iOS
+capability.
+
+The patch pairs ten mesh/GUI-backed declarations and definitions behind
+`DART_IOS_BUILD`: GUI debug output, marker resolution and measurement, PDF and
+log-PDF scoring, and body/group scale gradients. iOS retains the data-only
+surface: construction, file loading, metric insertion and names, distribution
+set/get, conditioning, and metric-pose application. `IKErrorReport` retains its
+prior-free report path; a non-null prior throws
+`std::runtime_error("Anthropometric IK scoring is unavailable in this iOS build because mesh-backed anthropometric measurements are not linked.")`
+before reading or mutating the skeleton. Desktop retains all method bodies.
+
+The two public headers no longer expose `LilypadSolver`, `MeshShape`, or
+`GUIWebsocketServer` transitively on iOS. This is an explicit capability
+boundary, not an iOS implementation of mesh-backed anthropometric scoring.
+
+### Verification
+
+- The causal RED reported 31 failures: all ten unavailable methods were still
+  advertised, both archives retained the mesh-backed non-debug surface, the
+  runtime prior returned a plausible result, and the partial old guard was not
+  warning-clean.
+- The final probe negative-compiles all ten unavailable APIs with exact
+  `no member named` diagnostics and checks the combined public-header include
+  trace for no `LilypadSolver`, `GUIWebsocketServer`, or `MeshShape`.
+- For both arm64 simulator and device SDKs, the probe strictly compiles the
+  current two implementation files into fresh objects, inspects those objects
+  for ten absent and eight retained symbols, and ordinary-links them before the
+  archive. Its link maps require the fresh objects and reject extraction of the
+  archive's same-name members, so stale archives cannot make the runtime test
+  pass.
+- The simulator executes the current-source objects. It proves the prior-free
+  report still works and that a rejected non-null prior preserves seeded,
+  non-empty positions, body scales, and group scales. Both archive surfaces
+  remain checked independently. The final sentinels are
+  `ANTHROPOMETRICS_IOS_BOUNDARY_PASS` and
+  `ANTHROPOMETRICS_IOS_ARCHIVES_PASS`.
+- A strict macOS SDK compile of both implementation files confirms that the
+  desktop source path remains warning-clean. A complete desktop binary build is
+  not claimed because this checkout still carries an iOS-only generated config.
+  Independent review reported zero blocker or high implementation issue; its
+  test-causality and skeleton-state observations were incorporated before the
+  final green run.
+
+### Apply and verify
+
+```sh
+cd labs/BioMotion/nimblephysics
+git checkout --detach c405b056fc35068027e03e0c384e84e12870b475
+git apply ../nimble-patches/ios-anthropometrics-boundary.patch
+# Install/apply the current iOS source manifest before these two builds.
+cmake --build build_ios --target nimble_ios --parallel
+cmake --build build_sim --target nimble_ios --parallel
+
+cd ..
+bash tools/tests/anthropometrics_ios_boundary_probe.sh
+```
+
+On the reviewed branch head, provenance must reverse-check:
+
+```sh
+git -C nimblephysics apply --reverse --check \
+  ../nimble-patches/ios-anthropometrics-boundary.patch
+```
+
 ## `ios-mesh-shape-boundary.patch`
 
 **Applies to**:

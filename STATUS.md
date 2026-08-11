@@ -4822,6 +4822,55 @@ This closes an API/header-to-archive boundary; it does not add iOS marker
 translation or SDF/MJCF export.
 
 
+## Mesh-backed anthropometric scoring now fails closed on iOS (2026-08-11)
+
+The iOS archive omits the mesh/GUI stack needed by Nimble's anthropometric
+measurement code, but `Anthropometrics.hpp` still included those dependencies
+and advertised the complete desktop surface. `IKErrorReport` also accepted a
+non-null anthropometric prior. The causal probe found 31 failures: all ten
+unsupported methods compiled for an iOS consumer, both archives retained the
+mesh-backed non-debug symbols, and a runtime prior could return a plausible
+score instead of refusing the unavailable capability.
+
+Nested commit `b7068024286a72f66b7d9c841527656d7631b192`
+(`fix(ios): reject unavailable anthropometric scoring`) is published on
+[`shengyang998/nimblephysics:biomotion/ios-static-c405b05`](https://github.com/shengyang998/nimblephysics/tree/biomotion/ios-static-c405b05),
+and `git ls-remote` resolved the branch to that exact SHA. Its boundary is:
+
+- iOS hides GUI debug output, mesh marker resolution/measurement, PDF/log-PDF
+  scoring, and all four body/group gradient methods. Their declarations and
+  definitions are paired behind `DART_IOS_BUILD`.
+- Construction, metric-file loading, metric insertion/names, distribution
+  set/get, conditioning, and metric-pose application remain public and linked.
+- `IKErrorReport` keeps its prior-free path. A non-null anthropometric prior
+  throws the exact descriptive `std::runtime_error` before any skeleton read or
+  mutation; desktop still calls `getLogPDF`.
+- The public headers no longer expose `LilypadSolver`, `MeshShape`, or
+  `GUIWebsocketServer` transitively on iOS.
+
+Both arm64 archives rebuilt successfully. The final probe then strictly
+compiled the current `Anthropometrics.cpp` and `IKErrorReport.cpp` for simulator
+and device, checked those fresh objects for ten absent and eight retained
+symbols, and linked the fresh objects ahead of each archive. Link maps require
+the current objects and reject extraction of the archive's same-name members,
+so an old static library cannot make the test falsely green. The simulator ran
+those current-source objects, preserved seeded non-empty positions, body
+scales, and group scales across both the prior-free and rejected-prior paths,
+and emitted `ANTHROPOMETRICS_IOS_BOUNDARY_PASS` plus
+`ANTHROPOMETRICS_IOS_ARCHIVES_PASS`. Header include tracing, all ten exact
+negative consumers, `bash -n`, ShellCheck, dual-SDK strict compilation, and a
+strict macOS SDK source compile also passed. A complete desktop binary build is
+not claimed while the checkout carries an iOS-only generated config.
+
+The tracked `nimble-patches/ios-anthropometrics-boundary.patch` is 204 lines,
+has SHA-256
+`89c8292a8fa6b86b89b57d4bf98e17bef7b063b67d6970ff7835b93a5796ffdd`,
+is byte-identical to the nested commit diff and the cumulative four-file diff
+from the pinned `c405b05` baseline, and reverse-checks at the public branch
+head. This closes a false capability boundary; it does not add mesh-backed
+anthropometric scoring to iOS.
+
+
 ## Mesh shapes now fail closed on the no-Assimp iOS build (2026-08-11)
 
 The iOS source manifest replaces desktop `MeshShape.cpp` and omits
