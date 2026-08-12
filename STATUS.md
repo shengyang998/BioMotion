@@ -52,6 +52,14 @@ biggest links were **not** where the effort had been going.
   cannot overwrite the live recipe, and the shared `MomentArmComputer` no longer remains on another
   person's geometry. See
   [offline model scale](#offline-model-scale-is-lease-scoped-2026-08-12).
+- **Live calibration now fails closed from camera permission through native scale completion**
+  (2026-08-12). It counts 60 distinct monotonic camera observations rather than 60 timer polls,
+  times out a frozen/sparse stream, stops immediately on tracking loss, and cannot capture before
+  the native model is loaded. Permission, interruption, unsupported-device and failure states have
+  explicit recovery; stale callbacks cannot restart a paused session. The success screen waits for
+  the real native scale result, and locale-formatted manual heights use the user's decimal
+  separator. See
+  [live calibration integrity](#live-calibration-is-an-end-to-end-integrity-boundary-2026-08-12).
 - **The gait-cycle route still supports KINEMATIC CONTACT TIMING; its load route is CLOSED on the
   bundled models** (updated 2026-08-10). The historical reasoning treated root acceleration and
   stance impulse as a possible load model. The evidence did NOT validate foot support: the probe that produced
@@ -5633,6 +5641,48 @@ marker sets first restores the same-pose comparison and keeps the original `1e-1
 measurement, recipe replay and default restoration alike. The complete model-scaling class passes
 **4/4**, the fail-closed gate harness passes **49/49**, and at that receipt the fast/slow lane sizes
 were exactly **643 + 1**.
+
+
+## Live calibration is an end-to-end integrity boundary (2026-08-12)
+
+The old capture timer sampled `BodyTrackingSession.currentFrame` at 30 Hz and appended whatever
+value happened to be there. ARKit did not need to publish a new body anchor: one frozen
+`BodyFrame` could be appended 60 times and satisfy the two-second window. Separately,
+`CalibrationView` moved to its success screen immediately after asynchronous queue admission, even
+if native model scaling later returned false. Camera permission and recovery were represented by
+loosely coupled booleans/messages, and late permission, interruption-end or failure callbacks could
+overwrite an explicit pause.
+
+`BodyTrackingSession` now publishes one typed `LiveCameraState`, performs explicit video
+authorization, clears `currentFrame` at every inactive boundary and exposes tested run/pause seams.
+Lifecycle generations fence late permission grants; state gates fence stale interruption and error
+callbacks. The view offers Settings, retry or offline import according to that state, and capture is
+enabled only while body tracking and the native model are both ready. Returning from Settings has
+an explicit in-app retry rather than depending on view reconstruction.
+
+Calibration now accepts only frames whose `frameNumber` and timestamp both advance. Sixty unique
+observations remain the target; losing tracking ends the attempt immediately, while a six-second
+deadline reports a frozen or sparse stream without manufacturing samples. The same identity gate
+runs again inside `CalibrationCalculator` as defense in depth. Leaving the view or choosing offline
+import invalidates the timer, accumulator and UI scale attempt. Manual height uses a strict
+locale-aware decimal parser, so `1,75` is valid where comma is the user's decimal separator while
+non-numeric and non-finite input remains rejected.
+
+Live scaling now has a typed async result and resumes only after the native mutation finishes on
+the solver queue. A failed mutation marks geometry unusable, does not replace the last successful
+live replay recipe and surfaces retry/offline recovery instead of `done`. The existing synchronous
+`scaleModel` API remains for the offline runner because its scale and frame submissions intentionally
+depend on exact lease admission plus FIFO queue order; an active offline lease rejects live scaling.
+
+TDD evidence is preserved in the xcresults under `/tmp`: the original frozen-frame regression
+failed because 60 copies of one frame passed quality; locale parsing first failed to compile because
+the parser did not exist; stale interruption-end and failure callbacks reproduced `searching` /
+`failed` overwriting `paused`; and the Settings recovery contract first failed without Retry.
+GREEN passes the complete `CalibrationTests` class **27/27** plus
+`CameraReferenceProjectionTests` **40/40**, `OfflineOrchestrationTests` **5/5** and native
+`ModelScalingTests` **4/4**: selected total **76/76**, zero failures, skips or restarts, in
+`/tmp/biomotion-calibration-final-regression.xcresult`. This is focused and related evidence, not a
+new full-fast-lane receipt.
 
 
 ## Core ML output parsing enforces the frozen interface (2026-08-12)

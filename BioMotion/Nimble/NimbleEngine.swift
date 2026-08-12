@@ -232,6 +232,19 @@ final class NimbleEngine: ObservableObject {
         let markerNames: [String]
     }
 
+    enum LiveModelScaleRejection: Equatable, Sendable {
+        case modelNotLoaded
+        case offlinePolicyActive
+    }
+
+    /// The result of the native geometry mutation, not merely admission to the
+    /// serial solver queue. Calibration UI may claim success only for `.applied`.
+    enum LiveModelScaleResult: Equatable, Sendable {
+        case applied
+        case rejected(LiveModelScaleRejection)
+        case nativeFailure
+    }
+
     private var nextOfflinePolicyLeaseID: UInt64 = 0
     private var activeOfflinePolicyLease: OfflinePolicyLease?
 
@@ -1007,7 +1020,16 @@ final class NimbleEngine: ObservableObject {
         "multifidus_T9_T7_L": "ercspn_l",
     ]
 
-    private let bridge = NimbleBridge()
+    typealias ModelScaleOperation = (
+        _ height: Double,
+        _ markerPositions: [NSNumber],
+        _ markerNames: [String]
+    ) -> Bool
+
+    private let bridge: NimbleBridge
+    /// Test seam around the native mutation. Production always falls through
+    /// to `NimbleBridge`; replay and first application share this exact path.
+    private let modelScaleOperation: ModelScaleOperation?
     private let muscleSolver = MuscleSolver()
     private let momentArmComputer = MomentArmComputer()
     private let solverQueue = DispatchQueue(label: "com.biomotion.nimble", qos: .userInteractive)
@@ -1017,6 +1039,18 @@ final class NimbleEngine: ObservableObject {
     // model's native defaults when no live calibration has succeeded yet.
     private var liveScaleRecipe: ModelScaleRecipe?
     private var modelScaleIsUsable = false
+
+    init(
+        bridge: NimbleBridge = NimbleBridge(),
+        modelScaleOperation: ModelScaleOperation? = nil
+    ) {
+        self.bridge = bridge
+        self.modelScaleOperation = modelScaleOperation
+        isModelLoaded = bridge.isModelLoaded
+        hasValidatedFootContactSupport = bridge.hasValidatedFootContactSupport
+        totalMassKg = bridge.totalMass
+        modelScaleIsUsable = bridge.isModelLoaded
+    }
 
     // Per-DOF Savitzky–Golay filters for smoothed q / dq / ddq.
     //
@@ -1254,25 +1288,75 @@ final class NimbleEngine: ObservableObject {
             markerPositions: markerPositions.map(Double.init),
             markerNames: markerNames
         )
-        solverQueue.async { [weak self] in
-            guard let self else { return }
-            let positions = recipe.markerPositions.map { NSNumber(value: $0) }
-            let succeeded = self.bridge.scaleModel(
-                withHeight: recipe.height,
-                markerPositions: positions,
-                markerNames: recipe.markerNames
-            )
-            // Admission is synchronous but native scaling is FIFO-async. A
-            // rejected scale must make the immediately following queued frame
-            // fail before IK instead of reusing the previous subject geometry.
-            self.modelScaleIsUsable = succeeded
-            if succeeded {
-                if offlinePolicyLease == nil {
-                    self.liveScaleRecipe = recipe
-                }
+        enqueueModelScale(
+            recipe,
+            retainsLiveRecipe: offlinePolicyLease == nil,
+            completion: nil
+        )
+        return true
+    }
+
+    /// Live calibration waits for the native scale operation so UI cannot turn
+    /// queue admission into a false success. Offline callers retain the
+    /// synchronous `scaleModel` API because they enqueue scale + frames under a
+    /// lease and depend on solverQueue FIFO ordering.
+    @MainActor
+    func scaleLiveModel(
+        height: Double,
+        markerPositions: [Float],
+        markerNames: [String]
+    ) async -> LiveModelScaleResult {
+        guard isModelLoaded else { return .rejected(.modelNotLoaded) }
+        guard permitsOfflinePolicyMutation(nil) else {
+            return .rejected(.offlinePolicyActive)
+        }
+        let recipe = ModelScaleRecipe(
+            height: height,
+            markerPositions: markerPositions.map(Double.init),
+            markerNames: markerNames
+        )
+
+        return await withCheckedContinuation { continuation in
+            enqueueModelScale(
+                recipe,
+                retainsLiveRecipe: true
+            ) { succeeded in
+                continuation.resume(returning: succeeded ? .applied : .nativeFailure)
             }
         }
-        return true
+    }
+
+    private func enqueueModelScale(
+        _ recipe: ModelScaleRecipe,
+        retainsLiveRecipe: Bool,
+        completion: ((Bool) -> Void)?
+    ) {
+        // Capture strongly: an accepted async request owns a continuation and
+        // must finish exactly once even if its presenting view disappears.
+        solverQueue.async { [self] in
+            let succeeded = performModelScale(recipe)
+            // A rejected scale must make the immediately following FIFO frame
+            // fail closed instead of reusing another subject's geometry.
+            modelScaleIsUsable = succeeded
+            if succeeded, retainsLiveRecipe {
+                liveScaleRecipe = recipe
+            }
+            if let completion {
+                DispatchQueue.main.async { completion(succeeded) }
+            }
+        }
+    }
+
+    private func performModelScale(_ recipe: ModelScaleRecipe) -> Bool {
+        let positions = recipe.markerPositions.map { NSNumber(value: $0) }
+        if let modelScaleOperation {
+            return modelScaleOperation(recipe.height, positions, recipe.markerNames)
+        }
+        return bridge.scaleModel(
+            withHeight: recipe.height,
+            markerPositions: positions,
+            markerNames: recipe.markerNames
+        )
     }
 
     /// Process a body frame: run IK (and optionally ID) on a background thread.
@@ -2104,12 +2188,7 @@ final class NimbleEngine: ObservableObject {
             if restoresLiveModelScale, self.bridge.isModelLoaded {
                 let restored: Bool
                 if let recipe = self.liveScaleRecipe {
-                    let positions = recipe.markerPositions.map { NSNumber(value: $0) }
-                    let replayed = self.bridge.scaleModel(
-                        withHeight: recipe.height,
-                        markerPositions: positions,
-                        markerNames: recipe.markerNames
-                    )
+                    let replayed = self.performModelScale(recipe)
                     if replayed {
                         restored = true
                     } else {

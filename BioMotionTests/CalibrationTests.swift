@@ -1,5 +1,47 @@
 import XCTest
+import ARKit
+import AVFoundation
 @testable import BioMotion
+
+private final class LockedScaleCalls {
+    private let lock = NSLock()
+    private var storage: [Double] = []
+
+    func append(_ height: Double) {
+        lock.lock()
+        storage.append(height)
+        lock.unlock()
+    }
+
+    var values: [Double] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
+private final class FakeCameraAuthorizationProvider: LiveCameraAuthorizationProviding {
+    var status: AVAuthorizationStatus
+    private(set) var requestCount = 0
+    private var completion: ((Bool) -> Void)?
+
+    init(status: AVAuthorizationStatus) {
+        self.status = status
+    }
+
+    func authorizationStatus() -> AVAuthorizationStatus { status }
+
+    func requestAccess(_ completion: @escaping (Bool) -> Void) {
+        requestCount += 1
+        self.completion = completion
+    }
+
+    func completeRequest(granted: Bool) {
+        let completion = completion
+        self.completion = nil
+        completion?(granted)
+    }
+}
 
 /// Tests for the pure calibration math extracted from `CalibrationView` — the per-joint
 /// quality gate, aggregate quality scoring, and height estimation/validation. These pin
@@ -138,7 +180,351 @@ final class CalibrationTests: XCTestCase {
                               "20cm alternation should exceed the ~2cm-std-dev variance budget")
     }
 
+    func testSixtyCopiesOfOneStaleFrameCannotPassCalibrationQuality() {
+        let stale = makeFullFrames(totalFrames: 1)[0]
+        let repeated = Array(repeating: stale, count: 60)
+
+        let score = CalibrationCalculator.evaluateCalibration(frames: repeated)
+
+        XCTAssertFalse(
+            score.isAcceptable,
+            "polling one frozen BodyFrame 60 times is one observation, not a 60-frame calibration"
+        )
+        XCTAssertTrue(
+            score.acceptedJoints.isEmpty,
+            "one unique observation must remain below the absolute sample floor"
+        )
+    }
+
+    func testCaptureAccumulatorAcceptsOnlyMonotonicFrameIdentityAndTimesOut() {
+        let stale = makeFullFrames(totalFrames: 1)[0]
+        var capture = CalibrationCaptureAccumulator(
+            targetFrameCount: 3,
+            timeout: 1.0,
+            startedAt: 10.0
+        )
+
+        XCTAssertEqual(
+            capture.observe(frame: stale, isTracking: true, now: 10.1),
+            .waiting
+        )
+        XCTAssertEqual(
+            capture.observe(frame: stale, isTracking: true, now: 10.5),
+            .waiting,
+            "a second poll of the same frame must not advance capture"
+        )
+        XCTAssertEqual(capture.frames.count, 1)
+        XCTAssertEqual(
+            capture.observe(frame: stale, isTracking: true, now: 11.01),
+            .timedOut
+        )
+    }
+
+    func testCaptureAccumulatorCompletesOnlyAfterUniqueFrames() {
+        let frames = makeFullFrames(totalFrames: 3)
+        var capture = CalibrationCaptureAccumulator(
+            targetFrameCount: 3,
+            timeout: 2.0,
+            startedAt: 0
+        )
+
+        XCTAssertEqual(capture.observe(frame: frames[0], isTracking: true, now: 0.1), .waiting)
+        XCTAssertEqual(capture.observe(frame: frames[1], isTracking: true, now: 0.2), .waiting)
+        XCTAssertEqual(capture.observe(frame: frames[2], isTracking: true, now: 0.3), .completed)
+        XCTAssertEqual(capture.frames.map(\.frameNumber), [0, 1, 2])
+    }
+
+    func testCaptureAccumulatorFailsImmediatelyWhenTrackingIsLost() {
+        var capture = CalibrationCaptureAccumulator(
+            targetFrameCount: 60,
+            timeout: 6.0,
+            startedAt: 0
+        )
+
+        XCTAssertEqual(
+            capture.observe(frame: nil, isTracking: false, now: 0.1),
+            .trackingLost
+        )
+    }
+
+    func testCalibrationControlsRequireBothTrackingAndLoadedModel() {
+        XCTAssertFalse(CalibrationCameraControls.resolve(
+            cameraState: .tracking,
+            isModelLoaded: false
+        ).canCapture)
+        XCTAssertTrue(CalibrationCameraControls.resolve(
+            cameraState: .tracking,
+            isModelLoaded: true
+        ).canCapture)
+
+        let denied = CalibrationCameraControls.resolve(
+            cameraState: .permissionDenied,
+            isModelLoaded: true
+        )
+        XCTAssertTrue(denied.showsSettings)
+        XCTAssertTrue(denied.showsRetry, "the user needs an in-app retry after returning from Settings")
+        XCTAssertTrue(denied.showsOffline)
+
+        let failed = CalibrationCameraControls.resolve(
+            cameraState: .failed("camera unavailable"),
+            isModelLoaded: true
+        )
+        XCTAssertTrue(failed.showsRetry)
+        XCTAssertTrue(failed.showsOffline)
+    }
+
+    @MainActor
+    func testAuthorizedCameraStartRunsSessionAndPublishesSearching() {
+        let authorization = FakeCameraAuthorizationProvider(status: .authorized)
+        var runCount = 0
+        let session = BodyTrackingSession(
+            arSession: ARSession(),
+            cameraAuthorization: authorization,
+            bodyTrackingSupport: { true },
+            runSession: { _, _ in runCount += 1 },
+            pauseSession: { _ in }
+        )
+
+        session.start()
+
+        XCTAssertEqual(runCount, 1)
+        XCTAssertEqual(session.cameraState, .searching)
+        XCTAssertNil(session.currentFrame)
+    }
+
+    @MainActor
+    func testDeniedCameraDoesNotRunAndClearsStaleFrame() {
+        let authorization = FakeCameraAuthorizationProvider(status: .denied)
+        var runCount = 0
+        let session = BodyTrackingSession(
+            arSession: ARSession(),
+            cameraAuthorization: authorization,
+            bodyTrackingSupport: { true },
+            runSession: { _, _ in runCount += 1 },
+            pauseSession: { _ in }
+        )
+        session.currentFrame = makeFullFrames(totalFrames: 1)[0]
+
+        session.start()
+
+        XCTAssertEqual(runCount, 0)
+        XCTAssertEqual(session.cameraState, .permissionDenied)
+        XCTAssertEqual(session.trackingMessage, "Camera access is off")
+        XCTAssertNil(session.currentFrame)
+    }
+
+    @MainActor
+    func testLatePermissionGrantCannotRestartPausedSession() async {
+        let authorization = FakeCameraAuthorizationProvider(status: .notDetermined)
+        var runCount = 0
+        var pauseCount = 0
+        let session = BodyTrackingSession(
+            arSession: ARSession(),
+            cameraAuthorization: authorization,
+            bodyTrackingSupport: { true },
+            runSession: { _, _ in runCount += 1 },
+            pauseSession: { _ in pauseCount += 1 }
+        )
+
+        session.start()
+        XCTAssertEqual(session.cameraState, .requestingPermission)
+        XCTAssertEqual(authorization.requestCount, 1)
+        session.pause()
+        authorization.completeRequest(granted: true)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        XCTAssertEqual(pauseCount, 1)
+        XCTAssertEqual(runCount, 0)
+        XCTAssertEqual(session.cameraState, .paused)
+    }
+
+    @MainActor
+    func testInterruptionEndCannotRestartAnExplicitlyPausedSession() async {
+        let authorization = FakeCameraAuthorizationProvider(status: .authorized)
+        var runCount = 0
+        let arSession = ARSession()
+        let session = BodyTrackingSession(
+            arSession: arSession,
+            cameraAuthorization: authorization,
+            bodyTrackingSupport: { true },
+            runSession: { _, _ in runCount += 1 },
+            pauseSession: { _ in }
+        )
+
+        session.start()
+        session.sessionWasInterrupted(arSession)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        XCTAssertEqual(session.cameraState, .interrupted)
+
+        session.pause()
+        session.sessionInterruptionEnded(arSession)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        XCTAssertEqual(runCount, 1, "an old interruption callback must not override an explicit pause")
+        XCTAssertEqual(session.cameraState, .paused)
+    }
+
+    @MainActor
+    func testLateSessionFailureCannotOverrideAnExplicitPause() async {
+        let authorization = FakeCameraAuthorizationProvider(status: .authorized)
+        let arSession = ARSession()
+        let session = BodyTrackingSession(
+            arSession: arSession,
+            cameraAuthorization: authorization,
+            bodyTrackingSupport: { true },
+            runSession: { _, _ in },
+            pauseSession: { _ in }
+        )
+
+        session.start()
+        session.pause()
+        session.session(arSession, didFailWithError: NSError(
+            domain: "CalibrationTests",
+            code: 1
+        ))
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        XCTAssertEqual(session.cameraState, .paused)
+        XCTAssertNil(session.currentFrame)
+    }
+
+    @MainActor
+    func testLiveScaleReportsNativeFailureInsteadOfAdmissionSuccess() async throws {
+        let bridge = try makeLoadedBridge()
+        let engine = NimbleEngine(
+            bridge: bridge,
+            modelScaleOperation: { _, _, _ in false }
+        )
+
+        let result = await engine.scaleLiveModel(
+            height: 1.75,
+            markerPositions: [],
+            markerNames: []
+        )
+
+        XCTAssertEqual(result, .nativeFailure)
+    }
+
+    @MainActor
+    func testLiveScaleFailsClosedBeforeModelLoadAndDuringOfflineLease() async throws {
+        let unloaded = NimbleEngine()
+        let unloadedResult = await unloaded.scaleLiveModel(
+            height: 1.75,
+            markerPositions: [],
+            markerNames: []
+        )
+        XCTAssertEqual(unloadedResult, .rejected(.modelNotLoaded))
+
+        let loaded = NimbleEngine(
+            bridge: try makeLoadedBridge(),
+            modelScaleOperation: { _, _, _ in true }
+        )
+        let lease = loaded.acquireOfflinePolicyLease()
+        let leasedResult = await loaded.scaleLiveModel(
+            height: 1.75,
+            markerPositions: [],
+            markerNames: []
+        )
+        XCTAssertEqual(leasedResult, .rejected(.offlinePolicyActive))
+        XCTAssertTrue(loaded.releaseOfflinePolicyLease(lease))
+    }
+
+    @MainActor
+    func testOfflineLeaseReleaseReplaysLastSuccessfulLiveScaleFIFO() async throws {
+        let calls = LockedScaleCalls()
+        let engine = NimbleEngine(
+            bridge: try makeLoadedBridge(),
+            modelScaleOperation: { height, _, _ in
+                calls.append(height)
+                return true
+            }
+        )
+
+        let firstLive = await engine.scaleLiveModel(
+            height: 1.70,
+            markerPositions: [],
+            markerNames: []
+        )
+        XCTAssertEqual(firstLive, .applied)
+        let lease = engine.acquireOfflinePolicyLease()
+        XCTAssertTrue(engine.scaleModel(
+            height: 1.90,
+            markerPositions: [],
+            markerNames: [],
+            offlinePolicyLease: lease
+        ))
+        XCTAssertTrue(engine.releaseOfflinePolicyLease(lease))
+        let finalLive = await engine.scaleLiveModel(
+            height: 1.80,
+            markerPositions: [],
+            markerNames: []
+        )
+        XCTAssertEqual(finalLive, .applied)
+
+        XCTAssertEqual(calls.values, [1.70, 1.90, 1.70, 1.80])
+    }
+
+    @MainActor
+    func testFailedLiveScaleDoesNotReplaceReplayRecipe() async throws {
+        let calls = LockedScaleCalls()
+        let engine = NimbleEngine(
+            bridge: try makeLoadedBridge(),
+            modelScaleOperation: { height, _, _ in
+                calls.append(height)
+                return height != 1.71
+            }
+        )
+
+        let firstLive = await engine.scaleLiveModel(
+            height: 1.70,
+            markerPositions: [],
+            markerNames: []
+        )
+        XCTAssertEqual(firstLive, .applied)
+        let failedLive = await engine.scaleLiveModel(
+            height: 1.71,
+            markerPositions: [],
+            markerNames: []
+        )
+        XCTAssertEqual(failedLive, .nativeFailure)
+        let lease = engine.acquireOfflinePolicyLease()
+        XCTAssertTrue(engine.releaseOfflinePolicyLease(lease))
+        let finalLive = await engine.scaleLiveModel(
+            height: 1.80,
+            markerPositions: [],
+            markerNames: []
+        )
+        XCTAssertEqual(finalLive, .applied)
+
+        XCTAssertEqual(calls.values, [1.70, 1.71, 1.70, 1.80])
+    }
+
     // MARK: - (C) No silent height fallback
+
+    func testManualHeightParserUsesTheUsersDecimalSeparator() throws {
+        let german = Locale(identifier: "de_DE")
+        let parsed = try XCTUnwrap(
+            CalibrationHeightParser.parse("1,75", locale: german)
+        )
+
+        XCTAssertEqual(parsed, 1.75, accuracy: 0.000_001)
+    }
+
+    func testManualHeightParserRejectsNonNumericAndNonFiniteInput() {
+        let english = Locale(identifier: "en_US")
+
+        XCTAssertNil(CalibrationHeightParser.parse("height 1.75", locale: english))
+        XCTAssertNil(CalibrationHeightParser.parse("NaN", locale: english))
+        XCTAssertNil(CalibrationHeightParser.parse("∞", locale: english))
+    }
 
     func testAbsurdHeightIsRejectedNotSilentlyReplaced() {
         // Under the old behavior, an absurd estimate never surfaced at all — `estimateHeight`
@@ -188,5 +574,21 @@ final class CalibrationTests: XCTestCase {
 
     func testEstimateFloorToCrownHeightReturnsNilWithoutAnyFrames() {
         XCTAssertNil(CalibrationCalculator.estimateFloorToCrownHeight(from: []))
+    }
+
+    private func makeLoadedBridge(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> NimbleBridge {
+        let path = try XCTUnwrap(
+            Bundle(for: type(of: self)).path(forResource: "Rajagopal2016", ofType: "osim")
+                ?? Bundle.main.path(forResource: "Rajagopal2016", ofType: "osim"),
+            "Rajagopal2016.osim must be available for the engine seam",
+            file: file,
+            line: line
+        )
+        let bridge = NimbleBridge()
+        XCTAssertTrue(bridge.loadModel(fromPath: path), file: file, line: line)
+        return bridge
     }
 }

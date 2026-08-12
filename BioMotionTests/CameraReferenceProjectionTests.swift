@@ -791,44 +791,64 @@ final class CameraReferenceProjectionTests: XCTestCase {
                       "offline scale/reset calls must present the captured lease")
         let engine = try Self.source("BioMotion/Nimble/NimbleEngine.swift")
         let scaleStart = try XCTUnwrap(engine.range(of: "    func scaleModel("))
+        let liveScaleStart = try XCTUnwrap(engine.range(
+            of: "    func scaleLiveModel(",
+            range: scaleStart.upperBound..<engine.endIndex))
+        let enqueueStart = try XCTUnwrap(engine.range(
+            of: "    private func enqueueModelScale(",
+            range: liveScaleStart.upperBound..<engine.endIndex))
+        let performStart = try XCTUnwrap(engine.range(
+            of: "    private func performModelScale(",
+            range: enqueueStart.upperBound..<engine.endIndex))
         let processStart = try XCTUnwrap(engine.range(
             of: "    func processFrame(",
-            range: scaleStart.upperBound..<engine.endIndex))
-        let scale = engine[scaleStart.lowerBound..<processStart.lowerBound]
+            range: performStart.upperBound..<engine.endIndex))
+        let scale = engine[scaleStart.lowerBound..<liveScaleStart.lowerBound]
+        let liveScale = engine[liveScaleStart.lowerBound..<enqueueStart.lowerBound]
+        let enqueue = engine[enqueueStart.lowerBound..<performStart.lowerBound]
+        let perform = engine[performStart.lowerBound..<processStart.lowerBound]
         XCTAssertTrue(scale.contains("offlinePolicyLease: OfflinePolicyLease? = nil"))
         XCTAssertTrue(scale.contains("permitsOfflinePolicyMutation(offlinePolicyLease)"))
         XCTAssertTrue(engine.contains("struct ModelScaleRecipe: Equatable, Sendable"),
                       "live calibration must be retained as value-only Swift state")
         XCTAssertTrue(scale.contains("let recipe = ModelScaleRecipe("))
-        let scaleQueue = try XCTUnwrap(scale.range(of: "solverQueue.async"))
-        let nativeScale = try XCTUnwrap(scale.range(
-            of: "let succeeded = self.bridge.scaleModel(",
-            range: scaleQueue.upperBound..<scale.endIndex))
-        let usability = try XCTUnwrap(scale.range(
-            of: "self.modelScaleIsUsable = succeeded",
-            range: nativeScale.upperBound..<scale.endIndex))
-        let nativeSuccess = try XCTUnwrap(scale.range(
-            of: "if succeeded",
-            range: usability.upperBound..<scale.endIndex))
-        let liveOnly = try XCTUnwrap(scale.range(
-            of: "if offlinePolicyLease == nil",
-            range: nativeSuccess.upperBound..<scale.endIndex))
-        let retainRecipe = try XCTUnwrap(scale.range(
-            of: "self.liveScaleRecipe = recipe",
-            range: liveOnly.upperBound..<scale.endIndex))
-        let scaleQueueEnd = try XCTUnwrap(scale.range(
-            of: "\n        }\n        return true",
-            range: retainRecipe.upperBound..<scale.endIndex))
+        XCTAssertTrue(scale.contains("retainsLiveRecipe: offlinePolicyLease == nil"),
+                      "offline scale must never replace the retained live recipe")
+        XCTAssertTrue(scale.contains("completion: nil"),
+                      "offline callers preserve synchronous admission + FIFO execution")
+
+        XCTAssertTrue(liveScale.contains("guard isModelLoaded else"))
+        XCTAssertTrue(liveScale.contains("guard permitsOfflinePolicyMutation(nil) else"))
+        XCTAssertTrue(liveScale.contains("withCheckedContinuation"),
+                      "live UI must await native completion, not queue admission")
+        XCTAssertTrue(liveScale.contains("retainsLiveRecipe: true"))
+        XCTAssertTrue(liveScale.contains(".applied : .nativeFailure"))
+
+        let scaleQueue = try XCTUnwrap(enqueue.range(of: "solverQueue.async"))
+        let nativeScale = try XCTUnwrap(enqueue.range(
+            of: "let succeeded = performModelScale(recipe)",
+            range: scaleQueue.upperBound..<enqueue.endIndex))
+        let usability = try XCTUnwrap(enqueue.range(
+            of: "modelScaleIsUsable = succeeded",
+            range: nativeScale.upperBound..<enqueue.endIndex))
+        let nativeSuccess = try XCTUnwrap(enqueue.range(
+            of: "if succeeded, retainsLiveRecipe",
+            range: usability.upperBound..<enqueue.endIndex))
+        let retainRecipe = try XCTUnwrap(enqueue.range(
+            of: "liveScaleRecipe = recipe",
+            range: nativeSuccess.upperBound..<enqueue.endIndex))
         XCTAssertLessThan(scaleQueue.lowerBound, nativeScale.lowerBound,
                           "native geometry mutation must stay solver-queue confined")
         XCTAssertLessThan(nativeScale.lowerBound, usability.lowerBound)
         XCTAssertLessThan(usability.lowerBound, nativeSuccess.lowerBound,
                           "a failed native scale must fail the next queued frame closed")
-        XCTAssertLessThan(nativeSuccess.lowerBound, liveOnly.lowerBound)
-        XCTAssertLessThan(liveOnly.lowerBound, retainRecipe.lowerBound,
-                          "only a successful live scale may replace the live recipe")
-        XCTAssertLessThan(retainRecipe.lowerBound, scaleQueueEnd.lowerBound,
+        XCTAssertLessThan(nativeSuccess.lowerBound, retainRecipe.lowerBound,
+                          "only a successful retained scale may replace the recipe")
+        XCTAssertTrue(enqueue[retainRecipe.upperBound...].contains("DispatchQueue.main.async"),
                           "recipe/usable state must stay inside the native queue block")
+        XCTAssertTrue(perform.contains("if let modelScaleOperation"))
+        XCTAssertTrue(perform.contains("return bridge.scaleModel("),
+                      "production and replay must share the native scale primitive")
 
         let loadStart = try XCTUnwrap(engine.range(of: "    func loadBundledModel()"))
         let load = engine[loadStart.lowerBound..<scaleStart.lowerBound]
@@ -908,7 +928,7 @@ final class CameraReferenceProjectionTests: XCTestCase {
         XCTAssertLessThan(filterReset.lowerBound, resetQueueEnd.lowerBound)
         XCTAssertTrue(reset.contains("if let recipe = self.liveScaleRecipe"))
         XCTAssertTrue(reset.contains("bridge.restoreLoadedModelBodyScales()"))
-        XCTAssertTrue(reset.contains("bridge.scaleModel("))
+        XCTAssertTrue(reset.contains("self.performModelScale(recipe)"))
         XCTAssertTrue(reset.contains("self.liveScaleRecipe = nil"),
                       "a failed recipe must be discarded before default fallback")
         XCTAssertTrue(reset.contains("self.modelScaleIsUsable = restored"))

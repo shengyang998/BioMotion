@@ -1,7 +1,10 @@
 import SwiftUI
+import Foundation
 import ARKit
 import RealityKit
 import simd
+import QuartzCore
+import UIKit
 
 /// T-pose calibration flow with live camera preview.
 /// User sees themselves, positions into T-pose, then taps Capture.
@@ -9,27 +12,48 @@ struct CalibrationView: View {
     @ObservedObject var bodyTracking: BodyTrackingSession
     @ObservedObject var nimble: NimbleEngine
     let onComplete: () -> Void
+    let onUseOffline: () -> Void
+
+    @Environment(\.openURL) private var openURL
 
     @State private var phase: CalibrationPhase = .livePreview
     @State private var capturedHeight: Double?
     @State private var calibrationFrames: [BodyFrame] = []
-    @State private var isCapturing = false
+    @State private var captureAccumulator: CalibrationCaptureAccumulator?
     @State private var timer: Timer?
     @State private var qualityScore: CalibrationQualityScore?
     @State private var manualHeightText: String = ""
+    @State private var scaleTask: Task<Void, Never>?
+    @State private var scaleAttemptID = 0
 
-    enum CalibrationPhase {
+    enum CalibrationPhase: Equatable {
         case livePreview          // Live camera + skeleton, user positions themselves
         case capturing            // Brief capture (~2s)
+        case captureInterrupted   // Tracking disappeared before 60 unique frames
+        case captureTimedOut      // Frozen/sparse stream never produced 60 unique frames
         case heightEntryNeeded    // Height couldn't be estimated (or was implausible) — retry or enter manually
         case insufficientQuality  // Per-joint quality gate failed — must redo, no silent degraded scaling
+        case applyingScale        // Native scaling is FIFO-async; wait for its real result
+        case scaleFailed          // Native mutation/admission failed — never claim success
         case done                 // Show results
+    }
+
+    private var cameraControls: CalibrationCameraControls {
+        .resolve(cameraState: bodyTracking.cameraState, isModelLoaded: nimble.isModelLoaded)
+    }
+
+    private var cameraStatusColor: Color {
+        switch bodyTracking.cameraState {
+        case .tracking: return .green
+        case .permissionDenied, .restricted, .unsupported, .failed: return .red
+        default: return .orange
+        }
     }
 
     /// Whether the text currently in `manualHeightText` is a plausible height, i.e. safe
     /// to use in place of the failed automatic estimate.
     private var isManualHeightValid: Bool {
-        guard let value = Double(manualHeightText) else { return false }
+        guard let value = CalibrationHeightParser.parse(manualHeightText) else { return false }
         return CalibrationCalculator.isPlausibleHeight(value)
     }
 
@@ -57,20 +81,11 @@ struct CalibrationView: View {
                         .font(.title2.bold())
                         .foregroundStyle(.white)
 
-                    if bodyTracking.isTracking {
-                        HStack(spacing: 6) {
-                            Circle().fill(.green).frame(width: 8, height: 8)
-                            Text("Body detected")
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        }
-                    } else {
-                        HStack(spacing: 6) {
-                            Circle().fill(.orange).frame(width: 8, height: 8)
-                            Text("Looking for body...")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
+                    HStack(spacing: 6) {
+                        Circle().fill(cameraStatusColor).frame(width: 8, height: 8)
+                        Text(bodyTracking.trackingMessage)
+                            .font(.caption)
+                            .foregroundStyle(cameraStatusColor)
                     }
 
                     Text("Stand in a T-pose facing the camera")
@@ -100,7 +115,6 @@ struct CalibrationView: View {
                 VStack(spacing: 12) {
                     switch phase {
                     case .livePreview:
-                        // Capture button — only enabled when body is tracked
                         Button {
                             startCapturing()
                         } label: {
@@ -113,11 +127,42 @@ struct CalibrationView: View {
                             .padding(.horizontal, 32)
                             .padding(.vertical, 14)
                             .background(
-                                bodyTracking.isTracking ? Color.blue : Color.gray,
+                                cameraControls.canCapture ? Color.blue : Color.gray,
                                 in: RoundedRectangle(cornerRadius: 12)
                             )
                         }
-                        .disabled(!bodyTracking.isTracking)
+                        .disabled(!cameraControls.canCapture)
+
+                        if bodyTracking.cameraState == .tracking && !nimble.isModelLoaded {
+                            HStack(spacing: 8) {
+                                ProgressView().tint(.white)
+                                Text("Loading biomechanical model...")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.8))
+                        }
+
+                        if cameraControls.showsSettings {
+                            Button("Open Camera Settings") {
+                                guard let url = URL(string: UIApplication.openSettingsURLString) else {
+                                    return
+                                }
+                                openURL(url)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+
+                        if cameraControls.showsRetry {
+                            Button("Retry Camera") { bodyTracking.retry() }
+                                .buttonStyle(.bordered)
+                                .tint(.white)
+                        }
+
+                        if cameraControls.showsOffline {
+                            Button("Use Offline Video") { useOffline() }
+                                .buttonStyle(.bordered)
+                                .tint(.white)
+                        }
 
                         Button("Skip Calibration") {
                             onComplete()
@@ -140,6 +185,40 @@ struct CalibrationView: View {
                         Text("Hold your pose")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.6))
+
+                    case .captureInterrupted:
+                        VStack(spacing: 10) {
+                            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                                .font(.system(size: 36))
+                                .foregroundStyle(.orange)
+                            Text("Tracking was lost")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                            Text("No partial or repeated frames were used. Re-enter the full T-pose and try again.")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                            Button("Retry Capture") { resetAttempt() }
+                                .buttonStyle(.borderedProminent)
+                        }
+
+                    case .captureTimedOut:
+                        VStack(spacing: 10) {
+                            Image(systemName: "clock.badge.exclamationmark")
+                                .font(.system(size: 36))
+                                .foregroundStyle(.orange)
+                            Text("Not enough new camera frames")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                            Text("The camera stream stalled or tracking was too sparse. A frozen frame is never counted twice.")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                            Button("Retry Capture") { resetAttempt() }
+                                .buttonStyle(.borderedProminent)
+                            Button("Use Offline Video") { useOffline() }
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
 
                     case .heightEntryNeeded:
                         VStack(spacing: 12) {
@@ -170,9 +249,7 @@ struct CalibrationView: View {
                             }
 
                             Button("Redo Calibration") {
-                                phase = .livePreview
-                                calibrationFrames.removeAll()
-                                manualHeightText = ""
+                                resetAttempt()
                             }
                             .foregroundStyle(.white.opacity(0.7))
                             .font(.callout)
@@ -205,8 +282,7 @@ struct CalibrationView: View {
                             }
 
                             Button {
-                                phase = .livePreview
-                                calibrationFrames.removeAll()
+                                resetAttempt()
                             } label: {
                                 Text("Redo Calibration")
                                     .font(.callout)
@@ -215,6 +291,40 @@ struct CalibrationView: View {
                                     .padding(.vertical, 10)
                                     .background(.gray.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
                             }
+                        }
+
+                    case .applyingScale:
+                        HStack(spacing: 12) {
+                            ProgressView().tint(.white)
+                            Text("Scaling biomechanical model...")
+                                .font(.callout)
+                                .foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(.blue.opacity(0.8), in: Capsule())
+
+                    case .scaleFailed:
+                        VStack(spacing: 10) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 38))
+                                .foregroundStyle(.red)
+                            Text("Model scaling failed")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                            Text("Your calibration was not applied, so tracking has not started with stale body geometry.")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.7))
+                                .multilineTextAlignment(.center)
+
+                            if let height = capturedHeight {
+                                Button("Retry Scaling") { applyScale(height: height) }
+                                    .buttonStyle(.borderedProminent)
+                            }
+                            Button("Redo Calibration") { resetAttempt() }
+                                .foregroundStyle(.white.opacity(0.8))
+                            Button("Use Offline Video") { useOffline() }
+                                .foregroundStyle(.white.opacity(0.8))
                         }
 
                     case .done:
@@ -243,8 +353,7 @@ struct CalibrationView: View {
 
                         HStack(spacing: 16) {
                             Button {
-                                phase = .livePreview
-                                calibrationFrames.removeAll()
+                                resetAttempt()
                             } label: {
                                 Text("Redo")
                                     .font(.callout)
@@ -279,29 +388,83 @@ struct CalibrationView: View {
                 )
             }
         }
+        .onChange(of: bodyTracking.cameraState) { _, state in
+            if phase == .capturing, !state.isTracking {
+                stopCapture()
+                phase = .captureInterrupted
+            }
+        }
+        .onDisappear { cleanUpAttempt() }
     }
 
     // MARK: - Calibration Logic (thin view-side glue over CalibrationCalculator)
 
     private func startCapturing() {
+        guard cameraControls.canCapture else { return }
+        stopCapture()
         phase = .capturing
         calibrationFrames.removeAll()
+        captureAccumulator = CalibrationCaptureAccumulator(
+            targetFrameCount: 60,
+            timeout: 6.0,
+            startedAt: CACurrentMediaTime()
+        )
 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { _ in
-            if let frame = bodyTracking.currentFrame {
-                calibrationFrames.append(frame)
-            }
+            guard var capture = captureAccumulator else { return }
+            let outcome = capture.observe(
+                frame: bodyTracking.currentFrame,
+                isTracking: bodyTracking.cameraState.isTracking,
+                now: CACurrentMediaTime()
+            )
+            captureAccumulator = capture
+            calibrationFrames = capture.frames
 
-            if calibrationFrames.count >= 60 {
-                timer?.invalidate()
+            switch outcome {
+            case .waiting:
+                break
+            case .completed:
+                stopCapture()
                 processCalibration()
+            case .trackingLost:
+                stopCapture()
+                phase = .captureInterrupted
+            case .timedOut:
+                stopCapture()
+                phase = .captureTimedOut
             }
         }
     }
 
+    private func stopCapture() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func resetAttempt() {
+        stopCapture()
+        scaleAttemptID &+= 1
+        scaleTask?.cancel()
+        scaleTask = nil
+        captureAccumulator = nil
+        calibrationFrames.removeAll()
+        qualityScore = nil
+        capturedHeight = nil
+        manualHeightText = ""
+        phase = .livePreview
+    }
+
+    private func cleanUpAttempt() {
+        stopCapture()
+        scaleAttemptID &+= 1
+        scaleTask?.cancel()
+        scaleTask = nil
+        captureAccumulator = nil
+    }
+
     private func processCalibration() {
         guard !calibrationFrames.isEmpty else {
-            phase = .livePreview
+            phase = .captureTimedOut
             return
         }
 
@@ -313,7 +476,7 @@ struct CalibrationView: View {
         }
 
         guard !trackedFrames.isEmpty else {
-            phase = .livePreview
+            phase = .captureInterrupted
             return
         }
 
@@ -327,21 +490,28 @@ struct CalibrationView: View {
             return
         }
 
-        finishCalibration(height: height)
+        applyScale(height: height)
     }
 
     private func submitManualHeight() {
-        guard let height = Double(manualHeightText),
+        guard let height = CalibrationHeightParser.parse(manualHeightText),
               CalibrationCalculator.isPlausibleHeight(height) else {
             return
         }
-        finishCalibration(height: height)
+        applyScale(height: height)
+    }
+
+    private func useOffline() {
+        // Stop polling and fence any late native-scale completion before the
+        // parent switches coordinate sessions and presents offline import.
+        cleanUpAttempt()
+        onUseOffline()
     }
 
     /// Applies a validated height (auto-estimated or manually entered) against the
     /// already-computed quality score. Joints that failed the per-joint gate never reach
-    /// `nimble.scaleModel` — see `CalibrationQualityScore.acceptedJoints`.
-    private func finishCalibration(height: Double) {
+    /// `nimble.scaleLiveModel` — see `CalibrationQualityScore.acceptedJoints`.
+    private func applyScale(height: Double) {
         guard let score = qualityScore else { return }
         capturedHeight = height
 
@@ -361,8 +531,126 @@ struct CalibrationView: View {
             markerPositions.append(sample.averagePosition.z)
         }
 
-        nimble.scaleModel(height: height, markerPositions: markerPositions, markerNames: markerNames)
-        phase = .done
+        scaleAttemptID &+= 1
+        let attemptID = scaleAttemptID
+        scaleTask?.cancel()
+        phase = .applyingScale
+        scaleTask = Task { @MainActor in
+            let result = await nimble.scaleLiveModel(
+                height: height,
+                markerPositions: markerPositions,
+                markerNames: markerNames
+            )
+            guard scaleAttemptID == attemptID else { return }
+            scaleTask = nil
+            switch result {
+            case .applied:
+                phase = .done
+            case .nativeFailure, .rejected:
+                phase = .scaleFailed
+            }
+        }
+    }
+}
+
+/// A capture accepts a frame only when both identities move forward. Polling a
+/// frozen `currentFrame` therefore cannot manufacture temporal observations.
+struct CalibrationFrameIdentityGate {
+    private var lastFrameNumber: Int?
+    private var lastTimestamp: TimeInterval?
+
+    mutating func accepts(_ frame: BodyFrame) -> Bool {
+        guard frame.timestamp.isFinite else { return false }
+        if let lastFrameNumber, frame.frameNumber <= lastFrameNumber { return false }
+        if let lastTimestamp, frame.timestamp <= lastTimestamp { return false }
+        lastFrameNumber = frame.frameNumber
+        lastTimestamp = frame.timestamp
+        return true
+    }
+}
+
+struct CalibrationCaptureAccumulator {
+    enum Outcome: Equatable {
+        case waiting
+        case completed
+        case trackingLost
+        case timedOut
+    }
+
+    let targetFrameCount: Int
+    let timeout: TimeInterval
+    let startedAt: TimeInterval
+    private(set) var frames: [BodyFrame] = []
+    private var identityGate = CalibrationFrameIdentityGate()
+
+    init(targetFrameCount: Int, timeout: TimeInterval, startedAt: TimeInterval) {
+        self.targetFrameCount = targetFrameCount
+        self.timeout = timeout
+        self.startedAt = startedAt
+    }
+
+    mutating func observe(
+        frame: BodyFrame?,
+        isTracking: Bool,
+        now: TimeInterval
+    ) -> Outcome {
+        guard isTracking else { return .trackingLost }
+        guard now.isFinite, now - startedAt < timeout else { return .timedOut }
+        guard let frame, identityGate.accepts(frame) else { return .waiting }
+        frames.append(frame)
+        return frames.count >= targetFrameCount ? .completed : .waiting
+    }
+}
+
+struct CalibrationCameraControls: Equatable {
+    let canCapture: Bool
+    let showsSettings: Bool
+    let showsRetry: Bool
+    let showsOffline: Bool
+
+    static func resolve(
+        cameraState: LiveCameraState,
+        isModelLoaded: Bool
+    ) -> Self {
+        let recoverableFailure: Bool
+        switch cameraState {
+        case .interrupted, .paused, .permissionDenied, .failed:
+            recoverableFailure = true
+        default:
+            recoverableFailure = false
+        }
+
+        let needsOfflineAlternative: Bool
+        switch cameraState {
+        case .permissionDenied, .restricted, .unsupported, .failed:
+            needsOfflineAlternative = true
+        default:
+            needsOfflineAlternative = false
+        }
+
+        return Self(
+            canCapture: cameraState.isTracking && isModelLoaded,
+            showsSettings: cameraState == .permissionDenied,
+            showsRetry: recoverableFailure,
+            showsOffline: needsOfflineAlternative
+        )
+    }
+}
+
+enum CalibrationHeightParser {
+    static func parse(_ text: String, locale: Locale = .current) -> Double? {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .decimal
+        formatter.isLenient = false
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let value = formatter.number(from: trimmed)?.doubleValue,
+              value.isFinite else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -473,10 +761,14 @@ enum CalibrationCalculator {
     }
 
     /// Runs the per-joint gate across every primary mapping and produces the aggregate
-    /// quality score. `frames` should already be filtered to a coherent pose window (e.g.
-    /// frames where the root/hips joint was tracked).
+    /// quality score. The view already admits only monotonic frames; this second gate is
+    /// defense in depth for direct callers and future capture implementations.
     static func evaluateCalibration(frames: [BodyFrame]) -> CalibrationQualityScore {
-        let samples = JointMapping.primary.map { averageJointPosition(mapping: $0, frames: frames) }
+        var identityGate = CalibrationFrameIdentityGate()
+        let uniqueFrames = frames.filter { identityGate.accepts($0) }
+        let samples = JointMapping.primary.map {
+            averageJointPosition(mapping: $0, frames: uniqueFrames)
+        }
         let accepted = samples.filter(\.passesTrackingGate)
         let rejected = samples.filter { !$0.passesTrackingGate }
 

@@ -100,6 +100,10 @@ struct ContentView: View {
                     nimble: nimble,
                     onComplete: {
                         withAnimation { showCalibration = false }
+                    },
+                    onUseOffline: {
+                        withAnimation { showCalibration = false }
+                        showOfflineImport = true
                     }
                 )
             } else if showCharts {

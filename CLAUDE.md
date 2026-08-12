@@ -391,6 +391,16 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   constructing a plan or running a second pass. A future capability-valid branch clears pass-one
   dynamics before publishing `.analysed`, so observers cannot pair it with stale loads.
 - **The skeleton is shared process-wide.** `NimbleBridge -sharedSkeleton` hands the same `shared_ptr` to `MomentArmComputer` and the ID path, and it survives across `NimbleBridge` instances. Anything that reads "wherever the skeleton currently sits" is therefore reading process history, not the model — that was a real defect in `applyDOFMaskWithNames:` (fixed 2026-08-07) and it is why the IK cold seed is an explicit `neutralSeedPose`.
+- **Live calibration is a fail-closed observation and mutation boundary.**
+  `BodyTrackingSession` publishes typed permission/searching/tracking/interruption/failure state and
+  clears stale frames whenever the camera session becomes inactive; a late permission,
+  interruption or failure callback cannot override an explicitly paused session. Calibration
+  starts only with tracking plus a loaded native model, counts 60 strictly monotonic
+  `(frameNumber, timestamp)` observations, and reports
+  tracking loss or a six-second sparse/frozen-stream timeout instead of polling one frame repeatedly.
+  Manual height uses the user's decimal locale. Leaving for offline import invalidates the timer and
+  pending UI attempt. Success is published only after `scaleLiveModel` receives the real native FIFO
+  result; queue admission, a failed native scale, or an active offline lease is never shown as done.
 - **Subject scaling starts from the loaded model, never the current skeleton or another model's
   constants.** `loadModelFromPath:` caches the exact default body-scale vector plus lower/upper and
   two source-specific trunk references: live `PELVIS` uses pelvis-origin→shoulder-mid; MHR_ROOT uses
