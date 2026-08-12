@@ -17,10 +17,10 @@ biggest links were **not** where the effort had been going.
   Pack recovery state/UI contract, live-calibration integrity, capture-atomic
   recording/frozen export, and Release UI isolation.
 - **It is not App Store ready.** Commercial rights for the upper-limb material,
-  replacement hosted-model upload plus a full TestFlight/device product smoke,
-  a controlled signed archive/IPA, an unused ASC build number, hardened ASC
-  credentials, and required product/privacy/review metadata remain explicit
-  distribution gates below.
+  a full TestFlight/device product smoke, the upper-limb rights decision, and
+  required product/privacy/review metadata remain explicit distribution gates
+  below. The compliant hosted-model version 2 is ready for testing and build 31
+  has been validated and uploaded to TestFlight.
 
 - Five implementation defects were found, fixed, and pinned with tests. The test target
   **did not even compile** before this work, so the project had no regression net at all.
@@ -6841,6 +6841,29 @@ literals. This remains compile/binary evidence, not a signed archive or
 TestFlight receipt.
 
 ### Local MVP complete; App Store readiness remains separate
+
+### TestFlight build 31 and hosted Asset Pack v2 uploaded (2026-08-12)
+
+The checked-in build number was advanced from 30 to 31 and pushed to `main` at
+source commit `9c9c630e9eea4a456c75413cf1908ca7ffc0c6c8`. The replacement compliant
+`sam3d-body-pose` AAR (1,096,258,817 bytes, SHA-256
+`910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`) was
+uploaded as Asset Pack version 2; App Store Connect version id
+`44e679ae-9bb3-4556-9b37-c70a4c0c6702` reached `READY_FOR_TESTING`. It is an
+Apple-hosted Managed Background Asset Pack, not classic ODR and not part of the
+main `.app`/IPA bundle.
+
+BioMotion 1.0.0 build 31 produced a signed arm64 archive with the Background
+Download extension, passed the source/resource/privacy/dependency-receipt
+archive gates, and produced an IPA that passed the independent release-IPA
+gate. The IPA is 1,541,663 bytes at SHA-256
+`3b86fedafefcca46e946d10237a8d7f30bab1dfb81832047be94d24dbf56b850`.
+Apple `altool` validation completed with no errors, and upload of those exact
+bytes completed with no errors under delivery UUID
+`933fa8fb-7f34-4b80-994e-7fae069b490c`. App Store Connect then exposed build
+31 with processing state `VALID`, `expired=false`, and minimum OS version
+26.0. Device installation and hosted model load/inference are not claimed by
+the upload/processing receipt.
 
 The integrated source inventory is exactly 698 fast tests plus the one slow E1
 test. The final protected `tools/run_tests.sh all` run passed on the integrated

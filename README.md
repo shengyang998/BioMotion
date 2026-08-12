@@ -14,13 +14,16 @@ closed imported-video ownership, the app-side Asset Pack recovery state/UI
 contract, live-calibration integrity, capture-atomic recording/frozen export,
 and Release UI isolation.
 
-This does **not** mean App Store distribution is ready. Commercial rights for
-the MoBL-ARMS-derived upper-limb material, a full TestFlight/device product
-smoke using the replacement hosted model and real photo/video inputs, a
-controlled signed archive/IPA, an unused App Store Connect build number,
-hardened ASC credentials, and the required product/review metadata remain
-separate release gates. See [`STATUS.md`](./STATUS.md) for the exact receipts
-and owner decisions.
+The replacement Apple-hosted `sam3d-body-pose` Asset Pack version 2 is
+**READY_FOR_TESTING**, and BioMotion 1.0.0 build 31 was validated and uploaded
+to App Store Connect on 2026-08-12. The uploaded IPA is only 1,541,663 bytes;
+the 1,096,258,817-byte model remains a separately hosted asset and is not in
+the main app bundle. This does **not** mean App Store distribution is ready.
+Commercial rights for the MoBL-ARMS-derived upper-limb material, a full
+TestFlight/device product smoke using the hosted model and real photo/video
+inputs, and the required product/review metadata remain separate release
+gates. See [`STATUS.md`](./STATUS.md) for the exact receipts and owner
+decisions.
 
 The two bundled OpenSim models do **not** currently publish dynamics. Their
 `ContactGeometrySet`s are empty, and the active near-CoP routine does not add a
@@ -489,6 +492,23 @@ explicitly authorized App Store Connect transaction.
 
 ## TestFlight upload
 
+### Build 31 upload receipt (2026-08-12)
+
+BioMotion 1.0.0 build 31 was validated by Apple with no errors, then the exact
+same byte-pinned IPA was uploaded with no errors. The upload delivery UUID is
+`933fa8fb-7f34-4b80-994e-7fae069b490c`. The IPA is 1,541,663 bytes at SHA-256
+`3b86fedafefcca46e946d10237a8d7f30bab1dfb81832047be94d24dbf56b850`.
+The signed archive and its dependency receipt are retained under
+`build/releases/31/`; generated release artifacts and signing material remain
+untracked.
+
+The 1.096 GB model is not an On-Demand Resources tag and is not in that IPA.
+It is the separately uploaded Apple-hosted Managed Background Asset Pack
+`sam3d-body-pose` version 2, whose App Store Connect state reached
+`READY_FOR_TESTING` before the app upload. A physical-device TestFlight smoke
+must still prove download progress, relaunch recovery, hosted leaf lookup,
+`MLModel(contentsOf:)`, and one real inference.
+
 The Release configuration uses manual App Store signing. At the 2026-08-12
 workstation review, a valid Apple Distribution identity for team `N7VVB6PWZS`
 and the two App Store profiles named `BioMotion AppStore AG` and
@@ -499,8 +519,8 @@ id, certificate, entitlement set, development/ad-hoc signing, or a profile/
 certificate with less than 30 days of remaining validity.
 
 ```bash
-# The checked-in value is 30, but App Store Connect reuse has not been checked.
-# First choose a strictly unused ASC build number, then set BOTH target-level
+# Build 31 is already used by the 2026-08-12 TestFlight upload. For the next
+# upload, choose a number greater than every ASC build, then set BOTH target-level
 # CURRENT_PROJECT_VERSION entries in project.yml to that same number.
 # Regenerate only after the bump; the source gate rejects a stale pbxproj.
 xcodegen generate

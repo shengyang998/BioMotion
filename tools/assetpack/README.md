@@ -479,6 +479,14 @@ Verified on this machine (2026-08-07 through 2026-08-11):
   READY_FOR_TESTING in about 10 minutes). That AAR omitted
   `SAM-LICENSE.txt` and `SAM3DBodyPose.lock.json`; it is now obsolete and must
   not be used as the shipping compliance artifact.
+* Replacement compliant asset pack uploaded on 2026-08-12:
+  `sam3d-body-pose` version 2, version id
+  `44e679ae-9bb3-4556-9b37-c70a4c0c6702`, state **READY_FOR_TESTING**. Its
+  1,096,258,817-byte AAR has SHA-256
+  `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`
+  and includes both the lock and full license. This Apple-hosted Managed
+  Background Asset Pack remains outside the 1,541,663-byte TestFlight build 31
+  IPA; real-device download/load/inference is still a separate smoke gate.
 
 **Not** verified, and only verifiable once a TestFlight build carrying these
 Info.plist keys is installed on a real device:
