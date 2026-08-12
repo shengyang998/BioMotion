@@ -5007,10 +5007,18 @@ and active-keyboard inventories to remain empty. The patterns cover every API
 spelling in Apple's current five categories, including `getattrlistat`, all file
 date keys, and all four disk-capacity keys, plus the NSUserDefaults,
 CFPreferences, and AppStorage language-layer aliases. The gate separately pins
-all 13 reviewed `CACurrentMediaTime()` calls by file and requires
+all 17 reviewed `CACurrentMediaTime()` calls by file and requires
 `clock_gettime()` to remain absent, so elapsed-clock changes cannot bypass
 review or be mistaken for a required-reason category. Network, analytics,
 advertising, and tracking SDK tokens remain prohibited by the same source gate.
+
+The 2026-08-12 calibration and atomic-recording slices add four reviewed uses:
+two compare a six-second calibration capture timeout, and two choose the shared
+uptime origin for an explicitly started live capture. They neither read nor
+derive system boot time, and Apple does not list `CACurrentMediaTime()` as a
+required-reason API. The exact per-file inventory and adversarial fixture were
+updated together; comments no longer use call syntax, so the gate counts real
+invocations rather than documentation tokens.
 
 XcodeGen assigns the manifest explicitly to the app resource phase and excludes
 it from broad source inference. The generated project must contain exactly one

@@ -2,7 +2,7 @@ import Foundation
 import QuartzCore
 
 /// Immutable identity and shared clock origin for one atomic live capture.
-/// ARKit frame timestamps and `CACurrentMediaTime()` use the same uptime clock.
+/// ARKit frame timestamps and `CACurrentMediaTime` use the same uptime clock.
 struct CaptureEpoch: Hashable, Sendable {
     let id: UUID
     let timeOrigin: TimeInterval

@@ -178,9 +178,11 @@ for source in sources:
 expected_elapsed_clocks = {
     "CACurrentMediaTime": Counter({
         "BioMotion/ARKit/BodyTrackingSession.swift": 3,
+        "BioMotion/App/CalibrationView.swift": 2,
         "BioMotion/Muscle/MuscleSolver.mm": 2,
         "BioMotion/Nimble/NimbleEngine.swift": 4,
         "BioMotion/Offline/OfflineSessionRunner.swift": 4,
+        "BioMotion/Recording/MotionRecorder.swift": 2,
     }),
     "clock_gettime": Counter(),
 }

@@ -13,9 +13,11 @@ mkdir -p \
   "$FIXTURE_ROOT/tools/tests" \
   "$FIXTURE_ROOT/BioMotion.xcodeproj" \
   "$FIXTURE_ROOT/BioMotion/ARKit" \
+  "$FIXTURE_ROOT/BioMotion/App" \
   "$FIXTURE_ROOT/BioMotion/Muscle" \
   "$FIXTURE_ROOT/BioMotion/Nimble" \
-  "$FIXTURE_ROOT/BioMotion/Offline"
+  "$FIXTURE_ROOT/BioMotion/Offline" \
+  "$FIXTURE_ROOT/BioMotion/Recording"
 cp "$REPO_ROOT/tools/tests/privacy_manifest_probe.sh" \
   "$FIXTURE_ROOT/tools/tests/privacy_manifest_probe.sh"
 cp "$REPO_ROOT/BioMotion/PrivacyInfo.xcprivacy" \
@@ -39,11 +41,15 @@ write_elapsed_fixture() {
 write_elapsed_fixture \
   "$FIXTURE_ROOT/BioMotion/ARKit/BodyTrackingSession.swift" 3
 write_elapsed_fixture \
+  "$FIXTURE_ROOT/BioMotion/App/CalibrationView.swift" 2
+write_elapsed_fixture \
   "$FIXTURE_ROOT/BioMotion/Muscle/MuscleSolver.mm" 2
 write_elapsed_fixture \
   "$FIXTURE_ROOT/BioMotion/Nimble/NimbleEngine.swift" 4
 write_elapsed_fixture \
   "$FIXTURE_ROOT/BioMotion/Offline/OfflineSessionRunner.swift" 4
+write_elapsed_fixture \
+  "$FIXTURE_ROOT/BioMotion/Recording/MotionRecorder.swift" 2
 
 pass_count=0
 total_count=0
