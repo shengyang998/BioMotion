@@ -129,14 +129,19 @@ for required in (
     "bundledCompiledModelURL()",
     "assetPackURL()",
     'compiledModelInteriorFileName = "coremldata.bin"',
-    'FilePath(leafPath)',
-    "deletingLastPathComponent()",
+    'FilePath(compiledModelFileName)',
     'withExtension: "mlmodelc"',
     "case bundledCompiled",
     "case assetPackCompiled",
 ):
     if required not in active:
         raise ContractError(f"compiled-only runtime surface lost {required!r}")
+
+if 'FilePath(leafPath)' in active or "deletingLastPathComponent()" in active:
+    raise ContractError(
+        "asset-pack runtime must request the complete .mlmodelc package URL; "
+        "a parent derived from a leaf URL may retain access only to that leaf"
+    )
 
 print("ASSETPACK_RUNTIME_PRECOMPILED_ONLY_PASS")
 PY

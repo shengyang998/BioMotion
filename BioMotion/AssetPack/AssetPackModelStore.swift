@@ -370,23 +370,31 @@ final class AssetPackModelStore: ObservableObject {
 
     // MARK: - Live Background Assets adapter
 
-    /// Looks up a leaf known to exist in every compiled model, then recovers its
-    /// `.mlmodelc` parent directory. Background Assets also supports directory
-    /// lookups, but a pack can merge content from shared directories; resolving
-    /// the required leaf proves this particular model payload is present.
+    /// Requests the complete `.mlmodelc` package URL from Background Assets.
+    /// Deriving its parent from a leaf URL is not equivalent: the returned URL
+    /// can carry access only to that leaf, leaving Core ML unable to open sibling
+    /// files such as `weights/weight.bin` on a distributed build. A direct
+    /// directory lookup keeps the package-wide access that `MLModel` needs.
     private nonisolated static func assetPackURL() -> URL? {
-        let leafPath = "\(compiledModelFileName)/\(compiledModelInteriorFileName)"
-        guard let leaf = try? AssetPackManager.shared.url(for: FilePath(leafPath)),
-              FileManager.default.fileExists(atPath: leaf.path) else {
+        guard let container = try? AssetPackManager.shared.url(
+            for: FilePath(compiledModelFileName)
+        ) else {
             return nil
         }
 
-        let container = leaf.deletingLastPathComponent()
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(
             atPath: container.path,
             isDirectory: &isDirectory
         ), isDirectory.boolValue else {
+            return nil
+        }
+
+        let requiredLeaf = container.appendingPathComponent(
+            compiledModelInteriorFileName,
+            isDirectory: false
+        )
+        guard FileManager.default.fileExists(atPath: requiredLeaf.path) else {
             return nil
         }
         return container
