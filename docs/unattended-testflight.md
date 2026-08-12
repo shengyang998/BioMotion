@@ -1,5 +1,14 @@
 # Unattended TestFlight release
 
+The global Codex Skill `ios-testflight-release` is the default workflow for
+this and future iOS apps. Its installed source is
+`~/.codex/skills/ios-testflight-release/`; it supplies the reusable project
+contract, credential boundary, exact-IPA delivery tool, `VALID` polling, and
+private receipt format. BioMotion keeps its repository-owned wrappers because
+its nested native dependencies, Managed Background Asset Pack, manual/offline
+signing fallback, resource allowlist, and dependency receipt need stricter
+app-specific gates than the global delivery primitive.
+
 This is BioMotion's default release path on the maintained workstation. It
 requires no Xcode Organizer, Transporter, browser session, or UI click. Upload
 is still an explicit action: use `--upload`; never make upload an implicit side
@@ -14,6 +23,9 @@ effect of a build.
   `com.soleilyu.biomotion.appstoreconnect.key-id`, account `biomotion`.
 - ASC Issuer reference: macOS Keychain generic password service
   `com.soleilyu.biomotion.appstoreconnect.issuer`, account `biomotion`.
+- Global same-provider references for other iOS apps: Keychain services
+  `com.soleilyu.ios-release.appstoreconnect.key-id` and
+  `com.soleilyu.ios-release.appstoreconnect.issuer`, account `ios-release`.
 - Persistent distribution certificate/key, app and extension profiles, and the
   pinned `rcodesign` binary:
   `~/.config/biomotion/release-signing/`, owner-only. This is the fallback when
@@ -24,6 +36,9 @@ print any of the three values into release logs or commit them. The release
 script consults Keychain only after the source, dependency receipt, archive,
 privacy, export, and byte-pinned IPA gates have passed. Supplying
 `ASC_API_KEY_ID` and `ASC_API_ISSUER` explicitly remains a one-run override.
+Apps owned by another App Store Connect provider must declare separate
+Keychain account/service names in their project release contract; never
+overwrite the global same-provider entries.
 
 ## Release sequence
 

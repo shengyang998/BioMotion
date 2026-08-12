@@ -253,8 +253,10 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   `CURRENT_PROJECT_VERSION` entries in `project.yml` to that same value, then run
   XcodeGen before the source/archive gates.
 - **Default unattended TestFlight path**: use
+  the global `ios-testflight-release` Skill plus
   `docs/unattended-testflight.md`; no Xcode Organizer, Transporter, browser, or
-  UI click is part of the normal release. The guarded wrapper requires explicit
+  UI click is part of the normal release. Keep BioMotion's repository wrapper
+  as the stricter project-specific boundary. It requires explicit
   `--upload`, but after all local gates it reads the stable ASC Key ID and
   Issuer references from the current user's macOS Keychain when one-run
   environment overrides are absent. Keep the `.p8` and persistent signing
