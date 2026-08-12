@@ -186,10 +186,28 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   `/bin/bash -p`. `bash script.sh` is unsupported and is not evidence because
   hostile `BASH_ENV` content can execute before the script reaches its own
   guard or sanitizer. The adversarial dependency suite passes **83/83**. On the
-  reviewed Asset Pack tree, the protected gate passes fast **652/652** and slow
-  **1/1**, with zero failures, skips, expected failures, or test-host restarts;
-  its structured receipts are under `/tmp/biomotion-tests.SbMAmG`. Hosted pack
-  delivery remains separate TestFlight/device evidence.
+  historical reviewed Asset Pack slice, before the later calibration, recording,
+  Release-UI, and privacy-inventory work, the protected gate passed fast
+  **652/652** and slow **1/1**, with zero failures, skips, expected failures, or
+  test-host restarts; its structured receipts are under
+  `/tmp/biomotion-tests.SbMAmG`. That is slice-specific evidence, not the current
+  698+1 inventory. Hosted pack delivery remains separate TestFlight/device
+  evidence.
+  On the final integrated tree, the direct dependency, app-resource and privacy
+  probes pass, the privacy adversarial harness passes **41/41**, and a fresh
+  unsigned Release/iphoneos build succeeds for both product targets with
+  `BIOMOTION_INTERNAL_UI` absent. Both product executables pass the 14-literal
+  internal-diagnostics byte scan; that is local compile/binary evidence, not a
+  signed archive or hosted-delivery receipt.
+  The final protected `tools/run_tests.sh all` run under
+  `/tmp/biomotion-tests.DLG7RX` passed fast **698/698** (runner wall 1,381 s;
+  xcresult interval 1,377.573 s) and slow E1 **1/1** (runner wall 6,084 s;
+  xcresult interval 6,080.845 s). Both structured results are `Passed`, both
+  logs contain `** TEST SUCCEEDED **`, every failure/skip/expected-failure/
+  restart count is zero, and the runner prints `ALL GATE PASS`. This closes the
+  local-MVP code/test boundary. It does not close the signed-archive, hosted
+  model/device, commercial-rights, build-number, or ASC publication boundaries.
+  Only documentation changed after the tested product/test/tool source hashes.
 - **Release archive provenance**: never hand-run `xcodebuild archive`. After
   XcodeGen, execute `tools/release/archive_release.sh` directly or with
   `/bin/bash -p`; it compares the full observed dependency snapshot before and
@@ -229,7 +247,21 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   not two interchangeable RMS values. Preserve `opensimMarkerNameOverride` through every filter/copy. TRC
   must fail if one id changes marker alias across frames or two ids collapse to one marker.
 - **C++ exceptions**: Always use C++ `try/catch`, never ObjC `@try/@catch` — ObjC exceptions don't catch `std::exception` or SIGSEGV.
-- **Build number**: Must increment `CURRENT_PROJECT_VERSION` in `project.yml` before each TestFlight upload.
+- **Build number**: The checked-in value is 30, but its reuse has not been
+  confirmed in App Store Connect. Before each TestFlight upload, choose a
+  strictly unused ASC build number, set both target-level
+  `CURRENT_PROJECT_VERSION` entries in `project.yml` to that same value, then run
+  XcodeGen before the source/archive gates.
+- **Local completion is not App Store readiness.** A passing current 698+1 gate
+  plus an unsigned Release build can close the integrated local-MVP code/test
+  boundary only. Commercial rights for the 42 MoBL-ARMS-derived muscles, the
+  replacement Asset Pack upload, a final TestFlight/device product smoke
+  covering hosted load/inference plus real photo/video, Photos-provider, Vision,
+  memory/performance and cancellation behavior, a current controlled signed
+  archive/receipt/IPA, an unused ASC build number, owner-only ASC credential
+  permissions, and required ASC product/privacy/review metadata remain separate
+  distribution gates. The Asset Pack tests prove the app-side state/UI contract,
+  not CDN or relaunch behavior.
 - **Library search paths**: Conditional on SDK — `[sdk=iphoneos*]` for device, `[sdk=iphonesimulator*]` for simulator.
 - **Nimble source is not the linked artefact.** The app links
   `nimblephysics/build_ios/libnimble_ios.a` and `build_sim/libnimble_ios.a`, not

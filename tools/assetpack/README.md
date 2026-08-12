@@ -420,7 +420,7 @@ Verified on this machine (2026-08-07 through 2026-08-11):
   latest run exercised the private seal snapshot, atomic no-clobber receipt
   install, frozen-authority validation, trusted system tools, pre-publication
   fsync, and replacement of an existing release via the real atomic swap. Its
-  published AAR is 1,096,258,817 bytes at SHA-256
+  locally published AAR is 1,096,258,817 bytes at SHA-256
   `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`;
   its 722-byte receipt passes a fresh full list/extract verification. AAR bytes
   can change between builds because Apple Archive records filesystem metadata;
@@ -444,8 +444,9 @@ Verified on this machine (2026-08-07 through 2026-08-11):
   symlinks, hostile PATH/PYTHONPATH/Xcode-selection environments, private
   snapshot modes and cleanup, and source replacement after verification while
   the exact verified snapshot generation is uploaded. The real 1,096,258,817-
-  byte published AAR also passed default verification and an upload-mode local
-  preflight; that preflight stopped on an intentionally empty API key ID after
+  byte AAR published to the local release pair also passed default verification
+  and an upload-mode local preflight; that preflight stopped on an intentionally
+  empty API key ID after
   the receipt gate, cleaned the snapshot, and never entered `altool`. No real
   credential was inspected and no App Store Connect request or mutation was
   performed by this slice.

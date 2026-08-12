@@ -3,6 +3,25 @@
 Pose-analysis iOS app. ARKit or imported-video tracking feeds Nimble
 IK, kinematics-only findings, gait contact timing, and a 3-D anatomy view.
 
+## Current status
+
+The **local MVP code/test boundary is complete** as of 2026-08-12. The final
+protected runner passed all **698** fast tests plus the one slow E1 experiment,
+with zero failures, skips, expected failures, or test-host restarts, and a fresh
+unsigned generic-device Release build passed the reviewed source, privacy,
+resource, build-setting, and binary-literal gates. The final integration also
+closed imported-video ownership, the app-side Asset Pack recovery state/UI
+contract, live-calibration integrity, capture-atomic recording/frozen export,
+and Release UI isolation.
+
+This does **not** mean App Store distribution is ready. Commercial rights for
+the MoBL-ARMS-derived upper-limb material, a full TestFlight/device product
+smoke using the replacement hosted model and real photo/video inputs, a
+controlled signed archive/IPA, an unused App Store Connect build number,
+hardened ASC credentials, and the required product/review metadata remain
+separate release gates. See [`STATUS.md`](./STATUS.md) for the exact receipts
+and owner decisions.
+
 The two bundled OpenSim models do **not** currently publish dynamics. Their
 `ContactGeometrySet`s are empty, and the active near-CoP routine does not add a
 validated support polygon, unilateral-contact, or friction constraint in their
@@ -88,7 +107,10 @@ fail-closed integration steps in `tools/assetpack/README.md` and `STATUS.md`.
 
 ## What ships in the binary
 
-The compiled `.ipa` is only ~3.5MB. The repo on disk can balloon to 1.2GB if you keep the upstream nimblephysics tree intact, but **99% of that is never linked into the app**:
+A historical development `.ipa` measured about 3.5 MB; no current controlled
+distribution IPA is claimed. The repo on disk can balloon to 1.2 GB if you keep
+the upstream nimblephysics tree intact, but almost all of that is never linked
+into the app:
 
 | Path | Size | Required for build? |
 |------|------|---------------------|
@@ -375,11 +397,31 @@ shebang) or with `/bin/bash -p` as shown. An unprotected `bash script.sh`
 invocation is unsupported and is not evidence: an inherited `BASH_ENV` can run
 before the script starts, so the script may never reach its own rejection or
 sanitization. The dependency boundary suite is green **83/83**, and the runner's
-independent gate-policy harness is green **53/53**. On the reviewed Asset Pack
-tree, the exact protected gate passed fast **652/652** and slow **1/1**, with
-zero failures, skips, expected failures, or test-host restarts; both structured
-receipts are under `/tmp/biomotion-tests.SbMAmG`. This is local commit-gate
-evidence, not a TestFlight hosted-delivery receipt.
+independent gate-policy harness is green **53/53**. On the historical reviewed
+Asset Pack slice—before the later calibration, capture-atomic recording,
+Release-UI, and privacy-inventory work—the exact protected gate passed fast
+**652/652** and slow **1/1**, with zero failures, skips, expected failures, or
+test-host restarts; both structured receipts are under
+`/tmp/biomotion-tests.SbMAmG`. Those are slice-specific local commit-gate
+receipts, not the current 698+1 inventory and not a TestFlight hosted-delivery
+receipt.
+
+On the final integrated tree, the direct dependency, app-resource, and privacy
+probes pass, the privacy adversarial harness is green **41/41**, and a fresh
+unsigned generic-device Release build succeeds for the app plus asset-pack
+extension with `BIOMOTION_INTERNAL_UI` absent. Both Release executables pass the
+14-literal internal-diagnostics byte scan. This is local compile/binary evidence,
+not a signed archive or TestFlight hosted-delivery receipt.
+
+The final protected `tools/run_tests.sh all` receipt is under
+`/tmp/biomotion-tests.DLG7RX`: fast passed **698/698** (runner wall 1,381 s;
+xcresult interval 1,377.573 s) and slow E1 passed **1/1** (runner wall 6,084 s;
+xcresult interval 6,080.845 s). Both structured results are `Passed`, both logs
+contain `** TEST SUCCEEDED **`, all failure/skip/expected-failure/restart counts
+are zero, and the runner ended with `ALL GATE PASS`. Only the five documentation
+files named in the final documentation commit changed after the tested
+product/test/tool sources, so that doc-only commit does not invalidate this
+receipt.
 
 `fast`, `slow`, and `all` accept no caller arguments; their fixed invocation is
 part of the reviewed receipt. `subset` is the diagnostic escape hatch, but it
@@ -436,18 +478,30 @@ muscles in `FullBody.osim`. A commercial/App Store release remains blocked until
 owner obtains written commercial permission or replaces/removes that material. See
 [`STATUS.md`](./STATUS.md) for the evidence and open owner decision.
 
+A passing current **698+1** protected gate can establish integrated local-MVP
+code/test completion; it cannot establish App Store readiness. Distribution
+remains separately blocked by the arm-material rights decision; upload of the
+locally verified replacement Asset Pack; a final TestFlight/device product
+smoke covering hosted delivery/load/inference, real photo/video workflows,
+Photos-provider lifecycle, Vision behavior, performance/memory, and
+cancellation; and a current controlled signed archive/receipt/IPA plus an
+explicitly authorized App Store Connect transaction.
+
 ## TestFlight upload
 
-The Release configuration uses manual App Store signing. Install an Apple
-Distribution certificate for team `N7VVB6PWZS` and the two App Store profiles
-named `BioMotion AppStore AG` and `BioMotion Ext AppStore AG`; both profiles
-must authorize `group.com.soleilyu.biomotion`. Renewing a profile may keep the
-same name, but the archive gate will still reject the wrong team, bundle id,
-certificate, entitlement set, development/ad-hoc signing, or a profile/certificate
-with less than 30 days of remaining validity.
+The Release configuration uses manual App Store signing. At the 2026-08-12
+workstation review, a valid Apple Distribution identity for team `N7VVB6PWZS`
+and the two App Store profiles named `BioMotion AppStore AG` and
+`BioMotion Ext AppStore AG` are installed; both profiles authorize
+`group.com.soleilyu.biomotion` and expire on 2027-08-06. That inventory is not a
+signed-archive receipt. The archive gate still rejects the wrong team, bundle
+id, certificate, entitlement set, development/ad-hoc signing, or a profile/
+certificate with less than 30 days of remaining validity.
 
 ```bash
-# Bump CURRENT_PROJECT_VERSION in project.yml
+# The checked-in value is 30, but App Store Connect reuse has not been checked.
+# First choose a strictly unused ASC build number, then set BOTH target-level
+# CURRENT_PROJECT_VERSION entries in project.yml to that same number.
 # Regenerate only after the bump; the source gate rejects a stale pbxproj.
 xcodegen generate
 
@@ -465,7 +519,7 @@ xcodegen generate
 # and a final IPA-vs-archive gate. The export directory must be new or empty.
 /bin/bash -p tools/release/testflight_release.sh \
   --archive build/BioMotion.xcarchive \
-  --export-dir build/testflight-30
+  --export-dir build/testflight-CONFIRMED_BUILD_NUMBER
 ```
 
 The tracked `tools/release/ExportOptions-TestFlight.plist` uses manual signing,
@@ -484,6 +538,20 @@ raw `xcodebuild archive`, `xcodebuild destination=upload`, or `altool` around
 the wrappers. `BioMotion.xcarchive.dependency-receipt.json` is part of the
 archive handoff; copying or renaming an archive without its adjacent receipt is
 fail-closed.
+
+At the 2026-08-12 review, both local ASC key directories were mode 0755, the
+`.p8` was mode 0644, and `ASC_API_KEY_ID` / `ASC_API_ISSUER` were unset. The
+TestFlight wrapper therefore correctly fails closed until the directories are
+owner-only, the key is mode 0600, identifiers are supplied for an explicitly
+authorized validation/upload, and the confirmed unused build number has been
+regenerated into the project.
+
+Before review submission, the owner must also complete and verify Apple's
+current [required App Store Connect properties](https://developer.apple.com/help/app-store-connect/reference/app-information/required-localizable-and-editable-properties):
+the privacy-policy/support URLs and App Privacy answers, age rating and content
+rights, screenshots and localized product copy, App Review contact/notes, and
+any prompted export-compliance or regulated-medical-device declarations. No
+completed App Store listing or review-metadata receipt is claimed here.
 
 The observed snapshot contains the actual checkout identities, both SDKs'
 artifacts, generated headers, CMake settings and exact project linkage; it is

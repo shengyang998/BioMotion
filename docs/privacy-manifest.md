@@ -20,10 +20,12 @@ the raw-model compile cache. The production source also contains no
 `systemUptime` or `mach_absolute_time()` call, the APIs Apple lists for the
 System Boot Time category.
 
-There are 13 reviewed `CACurrentMediaTime()` calls: three in
+There are 17 reviewed `CACurrentMediaTime()` calls: three in
 `BodyTrackingSession.swift`, two in `MuscleSolver.mm`, four in
-`NimbleEngine.swift`, and four in `OfflineSessionRunner.swift`. They measure
-frame, solver, timeout, and tracking-loss elapsed time. Apple does not list
+`NimbleEngine.swift`, four in `OfflineSessionRunner.swift`, two in
+`CalibrationView.swift`, and two in `MotionRecorder.swift`. They measure frame,
+solver, timeout, tracking-loss, calibration-capture, and live-recording elapsed
+time. Apple does not list
 `CACurrentMediaTime()` or `clock_gettime()` in its System Boot Time
 required-reason API category, so those calls are pinned by the audit but are not
 misdeclared as reason `35F9.1`. The source audit separately found no UserDefaults,
@@ -58,7 +60,7 @@ manifest and a strict code-signature verification:
 
 The expected sentinel is `PRIVACY_MANIFEST_PROBE_PASS`. The gate requires
 `NSPrivacyTracking = false`, rejects every other top-level key while the
-reviewed inventories remain empty, and pins the exact 13-call non-required
+reviewed inventories remain empty, and pins the exact 17-call non-required
 elapsed-clock inventory. The **41/41** suite includes negative injections for
 every spelling in Apple's current five-category API list, three language-layer
 UserDefaults aliases, both reviewed elapsed clocks, an invalid empty API array,

@@ -10,6 +10,18 @@ Last updated: 2026-08-12.
 The app's inaccuracy was diagnosed to root cause. It was never one bug — it is a chain, and the
 biggest links were **not** where the effort had been going.
 
+- **Current integrated status (2026-08-12): the local MVP code/test boundary is
+  complete.** The final protected runner passed **698/698** fast tests plus the
+  one slow E1 test, and the fresh unsigned Release/privacy/resource checks also
+  passed. This integration closed imported-video ownership, the app-side Asset
+  Pack recovery state/UI contract, live-calibration integrity, capture-atomic
+  recording/frozen export, and Release UI isolation.
+- **It is not App Store ready.** Commercial rights for the upper-limb material,
+  replacement hosted-model upload plus a full TestFlight/device product smoke,
+  a controlled signed archive/IPA, an unused ASC build number, hardened ASC
+  credentials, and required product/privacy/review metadata remain explicit
+  distribution gates below.
+
 - Five implementation defects were found, fixed, and pinned with tests. The test target
   **did not even compile** before this work, so the project had no regression net at all.
 - The dominant remaining error source is **not** the muscle solver: it is that IK solves
@@ -19,7 +31,9 @@ biggest links were **not** where the effort had been going.
   is currently meaningless regardless of anything else.~~ **Fixed 2026-08-06** — see
   [Muscle-output ship blockers](#muscle-output-ship-blockers-fixed-2026-08-06).
 - A **commercial licence blocker** was found on the upper limb (MoBL-ARMS is non-commercial).
-  A BSD-3 alternative exists.
+  A potential BSD-3-plus-citation upstream route exists, but the current
+  `FullBody.osim` still requires permission or replacement/removal of that
+  material plus legal confirmation.
 - **IK is now a fixed point** (2026-08-07). Repeated converged solves on identical markers move
   exactly 0 rad and the answer no longer depends on how many solves preceded it. Under the former
   PELVIS-root mapping the dancer RMS went 5.4913 → 2.1224 cm; the source-specific MHR_ROOT repair on
@@ -740,8 +754,8 @@ fp16 body-path weights **1.285 GiB**, and max activation magnitude sits **145× 
 ceiling** — so the AutoLevel DINOv2 fp16-overflow experience does not transfer to this model.
 "Not real-time" still holds; "cannot run on the phone" does not. Still-image tier is plausible.
 
-**2026-08-06, second update — the model now ships.** It was converted to Core ML and integrated, but
-as a **new video/photo input path**, not as a replacement for the ARKit marker set. See
+**2026-08-06, second update — the offline model path is integrated.** It was converted to Core ML
+and integrated as a **new video/photo input path**, not as a replacement for the ARKit marker set. See
 [SAM 3D Body integration](#sam-3d-body-is-integrated-as-an-offline-videophoto-path-2026-08-06).
 The paragraph below remains correct about what it is correct about: a better per-frame pose source
 does not buy spinal observability.
@@ -1232,12 +1246,13 @@ deliberately not lowered — STATUS records it as chosen so the visualisation wo
 "permanently blue", and moving a rendering parameter to improve a physics number is exactly the move
 to avoid.
 
-### Model delivery: the app binary is 8 MB (2026-08-07)
+### Model delivery architecture: the app binary is 8 MB (2026-08-07)
 
-The 1.3 GiB Core ML model no longer ships inside the app. It is delivered as an **Apple-Hosted
-Managed Background Asset** (iOS 26; ODR is deprecated as of iOS 27), carrying a **pre-compiled
-`.mlmodelc`** — byte-diffed against the artifact Xcode was previously embedding, with only the
-503-byte root `coremldata.bin` differing, and only in metadata key order.
+The 1.3 GiB Core ML model no longer belongs inside the app. The implemented shipping architecture
+uses an **Apple-Hosted Managed Background Asset** (iOS 26; ODR is deprecated as of iOS 27), carrying
+a **pre-compiled `.mlmodelc`** — byte-diffed against the artifact Xcode was previously embedding,
+with only the 503-byte root `coremldata.bin` differing, and only in metadata key order. The current
+compliant replacement pack is locally verified but is not yet hosted.
 
 App bundle **1.3151 GiB → 0.0069 GiB**; archived payload 8 MB. Device-side `compileModel` was
 rejected because it would need the package and its output resident simultaneously (~2.6 GiB of user
@@ -1255,9 +1270,11 @@ bundle is empty by default, so nothing in this checkout reaches `MLModel(content
 At this 2026-08-07 receipt, `AssetPackManager.url(for:)` against a directory entry had not been
 checked against the SDK contract. Xcode 26.4 now explicitly documents directory/package URLs, and
 the current runtime is narrower still: it resolves the required `coremldata.bin` leaf and takes its
-verified parent. Packaging and upload are verified (`.aar` = 1.0210 GiB); actual hosted leaf
-delivery and load are not. They can only be confirmed by a TestFlight install on a device. Build 23
-remains installable with the model bundled, so a failure here has a fallback.
+verified parent. Local packaging and the upload entry point are verified (`.aar` = 1.0210 GiB), but
+the compliant replacement AAR has not been uploaded; historical hosted version 1 is obsolete because
+it omits the lock and full license. Actual hosted leaf delivery and load can only be confirmed by a
+TestFlight install on a device. At this historical receipt, build 23 remained installable with the
+model bundled; that is not current distribution evidence.
 
 Packaging and upload: `tools/assetpack/README.md`. The pack uploads **separately from the app** via
 `xcrun altool --upload-asset-pack` and **requires an ASC API key** — an app-specific password
@@ -1891,7 +1908,8 @@ states the measurement and a lever.
   and the rate is never above `FrameSource.highestAnalysableFrameRate`.
 
 **What this did NOT establish.** The whole chain has never been run end to end on the owner's real
-clips: the 1.3 GiB pose model ships as a Background Asset and is not in the test bundle, and the
+clips: the intended hosted-delivery architecture uses a Background Asset, but the compliant
+replacement pack has not been uploaded and is not in the test bundle; the
 pinned fixtures carry only 5 joints — enough for the gait module, not for IK. So the new contact
 gate's real pass rate on `video_012`/`video_015` is **unmeasured**, and it may withhold. The only
 end-to-end number is synthetic: 9 stance frames, 5 contact-detector disagreements, 3 frames with a
@@ -4755,7 +4773,7 @@ The asset-pack README no longer recommends raw packaging or upload bypasses whil
 open. No upload or other external mutation was performed by this contract slice.
 
 
-## The SAM package and receipt are now fail-closed and atomically published (2026-08-11)
+## The SAM package and receipt are fail-closed and atomically published to a local release pair (2026-08-11)
 
 `tools/assetpack/package.sh` is now the only approved local package entry point. The documented
 command starts it with `/bin/bash -p`; the entry point fixes `/usr/bin/python3`, `/usr/bin/xcrun`,
@@ -4836,7 +4854,7 @@ existing release with the real atomic swap. The final AAR is 1,096,258,817 bytes
 `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`; its 722-byte receipt passes a
 fresh standalone list/extract verification and binds Manifest `8dd36bea…`, lock `20970430…`, and
 license `b3a5a0e2…`. Apple Archive filesystem metadata makes the AAR hash generation-specific, which is
-why the receipt records the exact published instance rather than claiming reproducible AAR container
+why the receipt records the exact locally published instance rather than claiming reproducible AAR container
 bytes.
 
 At this receipt, local package/receipt enforcement was closed but delivery was not. `upload.sh` still
@@ -4897,7 +4915,7 @@ selection. Shell syntax, ShellCheck, Python byte-compilation, executable modes, 
 whitespace checks pass. Independent review reports blocker 0, high 0, and medium 0 under the stated
 host/account-integrity model.
 
-The real published 1,096,258,817-byte AAR and its 722-byte receipt pass the new default gate. A real
+The real locally published 1,096,258,817-byte AAR and its 722-byte receipt pass the new default gate. A real
 upload-mode local preflight also created and fully verified the private snapshot, then stopped on an
 intentionally empty `ASC_API_KEY_ID`, cleaned the snapshot, and never entered `altool`. No real API
 key path was inspected, no real `xcrun altool` command ran, and no App Store Connect request, listing,
@@ -5111,8 +5129,9 @@ retain at least 30 days of validity. Because this project does not enable Keycha
 `keychain-access-groups` entitlement is now unreviewed and rejected instead of receiving wildcard
 subset treatment.
 
-The strengthened resource suite passes **42/42** source, PBX, arm64 Simulator-app, test-bundle,
-archive-provenance, stale-version, export-option, and unsafe-IPA cases. The IPA negatives include
+The strengthened resource suite passes **45/45** source, PBX, arm64 Simulator-app, test-bundle,
+archive-provenance, stale-version, export-option, unsafe-IPA, Release-UI guard, and Release-binary
+literal cases. The IPA negatives include
 a raw ZIP name whose NUL suffix Python would otherwise truncate, an 8 MiB DEFLATE stream whose
 local and central metadata falsely claim one byte, and an app executable with its execute bits
 removed. The gate independently checks raw central/local headers, actual inflate EOF/CRC/size and
@@ -5887,8 +5906,8 @@ structured project linkage, normalized archive content, QDLDL and generated-head
 later cases cover header-order/ABI-definition drift, an unattached PBX decoy, and a competing
 same-name dylib that cannot redirect an explicit archive path. The final expansion additionally
 covers physical checkout/index/ref bypasses, ignored shadow headers, complete PBX graph/container
-drift, toolchain drift and guard-script substitution. The final dependency suite passes
-**79/79**. The real-tree wrapper prints
+drift, toolchain drift and guard-script substitution. The current dependency suite passes
+**83/83**. The real-tree wrapper prints
 `DEPENDENCY_BOUNDARY_PASS` with both exact SHAs. It is called by `tools/run_tests.sh` after changing
 to the repository root but before the simulator lock or boot, so a dependency failure cannot consume
 a test device. It also gives each invocation a fresh private DerivedData instead of reusing a shared
@@ -5950,14 +5969,17 @@ network sandbox, so this is not a claim of general network isolation. Validate/u
 on one private byte-pinned IPA snapshot, validate precedes upload, and post-export receipt failure
 prevents even the IPA SHA receipt from being published.
 
-Adversarial coverage is green: dependency boundary **79/79**, dependency/archive receipt **38/38**,
+Adversarial coverage is green: dependency boundary **83/83**, dependency/archive receipt **38/38**,
 controlled archive wrapper **14/14**, and TestFlight wrapper **15/15**. The real dependency sentinel
 and canonical single-line JSON snapshot pass against the current clean nested trees with no
 repository-root path; stdout is the JSON payload followed by its terminating newline, not a stable
 documented byte count. The runner's independent anti-bypass suite is also green **53/53**, and the
-unsigned Release product links both locked device archives. No real signed archive, App Store
-validation or upload was performed: signing credentials,
-build-number choice and explicit external publication authorization remain release-time boundaries.
+unsigned Release product links both locked device archives. A valid Apple Distribution identity and
+the two named App Store profiles are now installed, but no current wrapper-produced signed archive,
+adjacent dependency receipt, IPA, App Store validation, or upload is claimed. Build 30 is the
+checked-in source value, not a confirmed unused App Store Connect number; successful controlled
+signing, build-number choice, and explicit external publication authorization remain release-time
+boundaries.
 The wrappers assume a trusted, quiescent same-user build machine. This receipt proves that every
 tracked blob in the four nested Git checkouts matched the recorded `HEAD` at both observations and
 combines those bytes with the exact inspected build artifacts, project linkage and resulting archive
@@ -6095,11 +6117,13 @@ closed because the runner still expected 642. The count audit is exact rather
 than inferred from that result: the last reviewed 633 baseline plus the prior
 video-lifecycle slice's seven new lifecycle methods and three new camera/cancel
 methods, plus this slice's nine Asset Pack methods, is **633 + 10 + 9 = 652**.
-The runner, its 53-case fail-closed harness and current operational docs now use
-652. That count-mismatch execution is evidence for the inventory audit, not a
-passing commit-gate receipt; the protected fast/slow gate is rerun separately.
+At that Asset Pack slice, the runner, its 53-case fail-closed harness and
+operational docs used 652; the integrated current inventory is 698 fast tests
+plus the one slow E1 test. That count-mismatch execution is evidence for the
+slice's inventory audit, not a passing commit-gate receipt; the protected
+fast/slow gate was rerun separately.
 
-The exact final-source protected commit gate then passed end to end.
+The exact Asset Pack-slice protected commit gate then passed end to end.
 `tools/run_tests.sh all` executed the fast lane **652/652** (the structured
 xcresult interval was **1,374.494 s**) and the slow E1 lane **1/1** (runner wall
 time **6,114 s**; XCTest **6,106.721 s**). Both lanes had zero failures, skips,
@@ -6794,14 +6818,85 @@ methods plus 59 Objective-C/Objective-C++ methods equals 699 total; the one
 slow lane, leaving exactly **698** fast methods. The runner and its fail-closed
 harness now use that exact value. This inventory licenses the final gate run;
 it is not itself a passing 698-test receipt.
-After fresh XcodeGen regeneration, an unsigned generic-device Release build
-completed with `BUILD SUCCEEDED` in the private DerivedData directory
-`/tmp/biomotion-release-ui-build.Ts2mKz`; this is compile and binary-inspection
-input, not a signed archive or TestFlight receipt.
-This branch was cut immediately before the adjacent capture-clock privacy
-inventory commit `408839d`; its standalone privacy probe therefore reports that
-known inventory drift. Do not duplicate that patch here. The combined tree must
-pass the privacy probe and its adversarial harness after this commit is applied.
+On the Release-UI slice before final integration, fresh XcodeGen regeneration
+and an unsigned generic-device Release build completed with `BUILD SUCCEEDED` in
+the private DerivedData directory `/tmp/biomotion-release-ui-build.Ts2mKz`;
+this is slice-specific compile and binary-inspection input, not the final
+integrated Release receipt, a signed archive, or a TestFlight receipt.
+
+The final integrated tree was then rechecked independently of that historical
+slice. The direct dependency, app-resource, and privacy-manifest probes passed;
+the privacy adversarial harness passed **41/41**. Fresh Release/iphoneos build
+settings for both `BioMotion` and `AssetPackDownloader` omitted
+`BIOMOTION_INTERNAL_UI`, and the unsigned generic-device Release build completed
+with `BUILD SUCCEEDED` in
+`/tmp/biomotion-release-accept.w4aESP/DerivedData`. The resulting 13,892,528-byte
+app executable (SHA-256
+`9a47bcd9a2be05134d6020bee2e9fb731b7bc63408a33a8a4e3f5e42ba1d890e`)
+and 172,968-byte embedded asset-pack extension executable (SHA-256
+`6eb462258af4f5dd5e13c54097e50442bbad6ecb9a182b1b6bfed4c70039c1cd`)
+both passed the raw-byte scan
+for all 14 reviewed internal UI, metric, checksum, backend, and tool-path
+literals. This remains compile/binary evidence, not a signed archive or
+TestFlight receipt.
+
+### Local MVP complete; App Store readiness remains separate
+
+The integrated source inventory is exactly 698 fast tests plus the one slow E1
+test. The final protected `tools/run_tests.sh all` run passed on the integrated
+product/test/tool tree at `4b1ab0084ad8235bd9b42898df851bb74155648f`:
+
+- artifact root: `/tmp/biomotion-tests.DLG7RX`;
+- fast: **698/698**, runner wall **1,381 s**, xcresult interval
+  **1,377.573 s** (2026-08-12 14:28:36.921–14:51:34.494 CST);
+- slow E1: **1/1**, runner wall **6,084 s**, xcresult interval
+  **6,080.845 s** (2026-08-12 14:51:39.555–16:33:00.400 CST);
+- both structured receipts say `Passed`, both logs contain
+  `** TEST SUCCEEDED **`, and failures, skips, expected failures, and test-host
+  restarts are all zero; and
+- the protected runner ended with `SLOW GATE PASS` and `ALL GATE PASS`.
+
+A post-run audit confirmed that all 255 other tracked files still matched the
+tested commit. The only working-tree changes were `README.md`, `CLAUDE.md`,
+`STATUS.md`, `docs/privacy-manifest.md`, and `tools/assetpack/README.md`; the
+product/test/tool source hashes therefore remained unchanged while this final
+receipt was written. Together with the fresh integrated unsigned Release build
+and direct source/privacy/resource gates above, this establishes local-MVP
+code/test completion. Distribution remains a separate boundary:
+
+- Commercial rights for the 42 MoBL-ARMS-derived upper-limb muscles remain
+  unresolved; App Store distribution of `FullBody.osim` stays blocked until the
+  owner obtains written permission or replaces/removes that material.
+- The locally verified compliant AAR is 1,096,258,817 bytes at SHA-256
+  `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`, but it
+  has not been uploaded. Hosted version 1 remains obsolete, and real TestFlight
+  progress/pause/relaunch, hosted leaf resolution, `MLModel(contentsOf:)`, and
+  one inference still lack a device receipt.
+- A final TestFlight/device product smoke remains wider than hosted model load:
+  physical Photos-provider and force-kill residue, Vision behavior, peak
+  memory/runtime and cancellation latency, Release-device timing, findings on
+  deliberate real photos, and the complete offline path on real video still
+  lack a final device receipt. These are external product/UX/performance gates,
+  not missing local unit-test implementation.
+- At the 2026-08-12 workstation review, a valid Apple Distribution identity and
+  both named App Store profiles were installed and expire on 2027-08-06. No
+  current controlled signed archive with its adjacent dependency receipt, IPA,
+  App Store validation, or upload is claimed.
+- Both target-level `CURRENT_PROJECT_VERSION` values remain 30. Reuse of 30 has
+  not been checked in App Store Connect; the owner must select a strictly unused
+  number, update both values in `project.yml`, and regenerate the project before
+  the source/archive gates.
+- The local `.appstoreconnect` and `private_keys` directories were mode 0755 and
+  the `.p8` was mode 0644; `ASC_API_KEY_ID` and `ASC_API_ISSUER` were unset. The
+  TestFlight wrapper correctly fails closed until both directories are
+  owner-only, the key is mode 0600, the identifiers are supplied, and validation
+  or upload is explicitly authorized.
+- No completed App Store listing/review-metadata receipt is claimed. Before
+  submission, the owner must complete and verify Apple's current
+  [required properties](https://developer.apple.com/help/app-store-connect/reference/app-information/required-localizable-and-editable-properties),
+  including privacy-policy/support URLs and App Privacy answers, age rating and
+  content rights, screenshots/localized product copy, App Review contact/notes,
+  and any prompted export-compliance or regulated-medical-device declarations.
 
 ### Owner decisions still open
 
@@ -6811,7 +6906,9 @@ pass the privacy probe and its adversarial harness after this commit is applied.
   multiple path functions changed. **Needs actual legal counsel** — the verbatim terms, URLs,
   hashes and diff receipts above are assembled so a lawyer can be briefed directly.
 - **Does the upper limb need muscles, or only posture?** If the value is "rounded shoulders /
-  forward head", that is pure geometry and the licence question does not block the product at all.
+  forward head", that is pure geometry; the licence question stops blocking the
+  product only after the MoBL-ARMS-derived material is removed from or replaced
+  in every distributed `FullBody.osim` artifact.
 - **Whether to keep `FullBody.osim` at all.** Rajagopal2016 is ruled out (no upper limb). Every
   alternative surveyed avoided the former FullBody shoulder-parser failure only by having a total
   *absence* of shoulder muscles; FullBody's own shoulder weld defect has already been repaired.
