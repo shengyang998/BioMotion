@@ -2,7 +2,7 @@ import simd
 import ARKit
 
 /// A single tracked joint with its 3D position in the owning frame's space.
-struct TrackedJoint: Identifiable {
+struct TrackedJoint: Identifiable, Sendable {
     let id: String          // ARSkeleton.JointName rawValue
     let name: String        // Human-readable name
     /// Metres, Y-up. `BodyFrame.dynamicsReference` states whether this is an
@@ -29,7 +29,7 @@ struct TrackedJoint: Identifiable {
 }
 
 /// A complete body frame — all joints at one instant.
-struct BodyFrame {
+struct BodyFrame: Sendable {
     /// The two independent spatial facts required before marker kinematics can
     /// support an inverse-dynamics claim. A camera-relative metric position is
     /// useful for IK and overlays, but it is not an inertial trajectory: image
@@ -144,7 +144,7 @@ struct BodyFrame {
 
 /// Stable body-joint ids and their live/default OpenSim marker names.
 enum JointMapping {
-    struct Mapping {
+    struct Mapping: Sendable {
         let arkitName: String
         let opensimName: String
         let displayName: String

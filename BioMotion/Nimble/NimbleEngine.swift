@@ -14,6 +14,15 @@ final class NimbleEngine: ObservableObject {
     struct FrameReceipt: Hashable, Sendable {
         let generation: UInt64
         let submissionID: UInt64
+        let captureEpoch: CaptureEpoch?
+
+        init(generation: UInt64,
+             submissionID: UInt64,
+             captureEpoch: CaptureEpoch? = nil) {
+            self.generation = generation
+            self.submissionID = submissionID
+            self.captureEpoch = captureEpoch
+        }
     }
 
     /// Synchronous admission result from `processFrame`. Only an accepted frame
@@ -1097,9 +1106,24 @@ final class NimbleEngine: ObservableObject {
     // rejected any solve captured before a reset.
     /// `markerRMSMeters` is the TRUE per-marker RMS in metres, not the solver
     /// loss. See `IKOutput.ikLossSquaredMeters` for why the distinction matters.
-    private(set) var ikHistory: [(timestamp: TimeInterval, angles: [String: Double], markerRMSMeters: Double)] = []
-    private(set) var idHistory: [(timestamp: TimeInterval, jointTorques: [String: Double])] = []
+    struct IKHistoryEntry: Sendable {
+        let timestamp: TimeInterval
+        let angles: [String: Double]
+        let markerRMSMeters: Double
+    }
+
+    struct IDHistoryEntry: Sendable {
+        let timestamp: TimeInterval
+        let jointTorques: [String: Double]
+    }
+
+    private(set) var ikHistory: [IKHistoryEntry] = []
+    private(set) var idHistory: [IDHistoryEntry] = []
     private var isRecordingResults = false
+    private var activeRecordingEpoch: CaptureEpoch?
+    private(set) var resultHistoryEpoch: CaptureEpoch?
+
+    var recordingResultsAreArmed: Bool { isRecordingResults }
 
     /// True only when the live IK and ID payloads can describe one solver
     /// publication. The engine copies one centre timestamp into both outputs;
@@ -1369,6 +1393,17 @@ final class NimbleEngine: ObservableObject {
         offlinePolicyLease: OfflinePolicyLease? = nil
     ) -> FrameSubmission {
         guard isModelLoaded else { return .rejected }
+        let isOfflineSubmission = offlinePolicyLease != nil
+
+        // ARKit delegates timestamp before hopping to the main actor. A frame
+        // already queued when Record is pressed belongs to the old temporal
+        // window, so reject it before backpressure, native IK warm-start, SG
+        // filters, or any other solver state can observe it.
+        guard RecordingCapturePolicy.mayProcessFrame(
+            activeEpoch: activeRecordingEpoch,
+            frameTimestamp: frame.timestamp,
+            isOfflineSubmission: isOfflineSubmission
+        ) else { return .rejected }
 
         // While an offline runner owns global SG/camera/gait policy, live or
         // stale runners without that exact engine-global lease must not slip a
@@ -1416,7 +1451,12 @@ final class NimbleEngine: ObservableObject {
         nextSubmissionID &+= 1
         let receipt = FrameReceipt(
             generation: frameGeneration,
-            submissionID: nextSubmissionID
+            submissionID: nextSubmissionID,
+            captureEpoch: RecordingCapturePolicy.epochForSubmission(
+                activeEpoch: activeRecordingEpoch,
+                frameTimestamp: frame.timestamp,
+                isOfflineSubmission: isOfflineSubmission
+            )
         )
         isFrameInFlight = true
         solverOccupancyReceipt = receipt
@@ -2028,18 +2068,30 @@ final class NimbleEngine: ObservableObject {
                 self.finishFrameOnMain(receipt: receipt, status: .superseded)
                 return
             }
-            if self.isRecordingResults, motion != nil {
+            if RecordingCapturePolicy.mayPublish(
+                submissionEpoch: receipt.captureEpoch,
+                activeEpoch: self.activeRecordingEpoch,
+                isArmed: self.isRecordingResults,
+                hasMotion: motion != nil
+            ) {
                 // `ik` is the SG-centred output on every recordable path, so
                 // MOT and STO rows stay temporally aligned. Warm-up publishes
                 // have `motion == nil` and intentionally remain unrecorded.
-                self.ikHistory.append((ik.timestamp, ik.jointAngles, ikResidual))
+                self.ikHistory.append(IKHistoryEntry(
+                    timestamp: ik.timestamp,
+                    angles: ik.jointAngles,
+                    markerRMSMeters: ikResidual
+                ))
                 if let id,
                    Self.inverseDynamicsPayloadIsSameGeneration(
                        ikResult: ik,
                        idResult: id) {
                     // Keep the canonical IK timestamp only after proving that
                     // the ID came from the same centred publication.
-                    self.idHistory.append((ik.timestamp, id.jointTorques))
+                    self.idHistory.append(IDHistoryEntry(
+                        timestamp: ik.timestamp,
+                        jointTorques: id.jointTorques
+                    ))
                 }
             }
             self.lastIKResult = ik
@@ -2168,6 +2220,12 @@ final class NimbleEngine: ObservableObject {
         resetsGroundHeight: Bool = false,
         restoresLiveModelScale: Bool = false
     ) {
+        // Every solver reset is a capture boundary. In particular, offline
+        // policy acquisition and AR world-origin resets share this engine with
+        // live capture; leaving the flag armed would let their later frames
+        // enter the previous live MOT/STO history without matching TRC rows.
+        isRecordingResults = false
+        activeRecordingEpoch = nil
         // Bump first so any in-flight frame's publish will be discarded.
         _ = bumpGeneration()
         let supersededReceipt = activeFrameReceipt
@@ -2395,16 +2453,19 @@ final class NimbleEngine: ObservableObject {
 
     // MARK: - Recording
 
-    func startRecordingResults() {
+    func startRecordingResults(for captureEpoch: CaptureEpoch = .legacy) {
         dispatchPrecondition(condition: .onQueue(.main))
         ikHistory.removeAll()
         idHistory.removeAll()
+        resultHistoryEpoch = captureEpoch
+        activeRecordingEpoch = captureEpoch
         isRecordingResults = true
     }
 
     func stopRecordingResults() {
         dispatchPrecondition(condition: .onQueue(.main))
         isRecordingResults = false
+        activeRecordingEpoch = nil
     }
 
     /// Export IK results as .mot file.
@@ -2412,13 +2473,29 @@ final class NimbleEngine: ObservableObject {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !ikHistory.isEmpty else { throw ExportError.noData }
 
-        let startTime = ikHistory.first!.timestamp
-        let allDOFs = Array(ikHistory.first!.angles.keys).sorted()
+        let timeOrigin = resultHistoryEpoch.flatMap { epoch in
+            epoch.id == CaptureEpoch.legacy.id ? nil : epoch.timeOrigin
+        } ?? ikHistory[0].timestamp
+        let content = try Self.generateMOT(
+            history: ikHistory,
+            timeOrigin: timeOrigin,
+            filename: filename
+        )
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(filename).mot")
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    static func generateMOT(history: [IKHistoryEntry],
+                            timeOrigin: TimeInterval,
+                            filename: String) throws -> String {
+        guard let first = history.first else { throw ExportError.noData }
+        let allDOFs = Array(first.angles.keys).sorted()
 
         var lines: [String] = []
         lines.append(filename)
         lines.append("version=1")
-        lines.append("nRows=\(ikHistory.count)")
+        lines.append("nRows=\(history.count)")
         lines.append("nColumns=\(allDOFs.count + 1)")
         lines.append("inDegrees=yes")
         lines.append("endheader")
@@ -2427,8 +2504,8 @@ final class NimbleEngine: ObservableObject {
         lines.append("time\t" + allDOFs.joined(separator: "\t"))
 
         // Data rows
-        for entry in ikHistory {
-            let time = entry.timestamp - startTime
+        for entry in history {
+            let time = entry.timestamp - timeOrigin
             var row = String(format: "%.6f", time)
             for dof in allDOFs {
                 let angleRad = entry.angles[dof] ?? 0.0
@@ -2438,10 +2515,7 @@ final class NimbleEngine: ObservableObject {
             lines.append(row)
         }
 
-        let content = lines.joined(separator: "\n")
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(filename).mot")
-        try content.write(to: url, atomically: true, encoding: .utf8)
-        return url
+        return lines.joined(separator: "\n")
     }
 
     /// Export ID results as .sto file.
@@ -2449,21 +2523,37 @@ final class NimbleEngine: ObservableObject {
         dispatchPrecondition(condition: .onQueue(.main))
         guard hasPublishableIDHistory else { throw ExportError.noData }
 
-        let startTime = idHistory.first!.timestamp
-        let allDOFs = Array(idHistory.first!.jointTorques.keys).sorted()
+        let timeOrigin = resultHistoryEpoch.flatMap { epoch in
+            epoch.id == CaptureEpoch.legacy.id ? nil : epoch.timeOrigin
+        } ?? idHistory[0].timestamp
+        let content = try Self.generateSTO(
+            history: idHistory,
+            timeOrigin: timeOrigin,
+            filename: filename
+        )
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(filename).sto")
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    static func generateSTO(history: [IDHistoryEntry],
+                            timeOrigin: TimeInterval,
+                            filename: String) throws -> String {
+        guard let first = history.first else { throw ExportError.noData }
+        let allDOFs = Array(first.jointTorques.keys).sorted()
 
         var lines: [String] = []
         lines.append(filename)
         lines.append("version=1")
-        lines.append("nRows=\(idHistory.count)")
+        lines.append("nRows=\(history.count)")
         lines.append("nColumns=\(allDOFs.count + 1)")
         lines.append("inDegrees=no")
         lines.append("endheader")
 
         lines.append("time\t" + allDOFs.joined(separator: "\t"))
 
-        for entry in idHistory {
-            let time = entry.timestamp - startTime
+        for entry in history {
+            let time = entry.timestamp - timeOrigin
             var row = String(format: "%.6f", time)
             for dof in allDOFs {
                 row += String(format: "\t%.4f", entry.jointTorques[dof] ?? 0.0)
@@ -2471,10 +2561,7 @@ final class NimbleEngine: ObservableObject {
             lines.append(row)
         }
 
-        let content = lines.joined(separator: "\n")
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(filename).sto")
-        try content.write(to: url, atomically: true, encoding: .utf8)
-        return url
+        return lines.joined(separator: "\n")
     }
 
     enum ExportError: Error {

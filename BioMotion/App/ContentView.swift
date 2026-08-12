@@ -53,14 +53,27 @@ enum ExportDisclosure {
     }
 }
 
+enum ShareCompletionPolicy {
+    static func mayMarkExported(completed: Bool, activityError: Error?) -> Bool {
+        completed && activityError == nil
+    }
+}
+
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var bodyTracking = BodyTrackingSession()
     @StateObject private var recorder = MotionRecorder()
     @StateObject private var nimble = NimbleEngine()
+    @StateObject private var capture = LiveRecordingCoordinator()
     @State private var showExportSheet = false
     @State private var exportURLs: [URL] = []
+    @State private var exportedEpoch: CaptureEpoch?
+    @State private var exportDirectory: URL?
+    @State private var isExporting = false
     @State private var showExportError = false
+    @State private var exportErrorTitle = "Export unavailable"
     @State private var exportErrorMessage = ""
+    @State private var showReplacementConfirmation = false
     @State private var showIKPanel = false
     @State private var showCalibration = true
     @State private var showCharts = false
@@ -128,8 +141,7 @@ struct ContentView: View {
             // not just waste power, it interleaves a second motion into the
             // filters the offline run is reading.
             guard !showCalibration && !showCharts && !showOfflineImport else { return }
-            recorder.recordFrame(frame)
-            nimble.processFrame(frame)
+            capture.process(frame, recorder: recorder, nimble: nimble)
         }
         .onChange(of: bodyTracking.isTracking) { _, isTracking in
             if !isTracking {
@@ -137,23 +149,56 @@ struct ContentView: View {
                 // offline sheet pauses ARKit. The engine lease also rejects
                 // this reset, but keep the UI seam explicit so live lifecycle
                 // noise never even attempts to supersede a batch receipt.
+                if showOfflineImport {
+                    capture.stop(recorder: recorder, nimble: nimble, reason: .offlineImport)
+                }
                 guard !showOfflineImport else { return }
+                capture.stop(recorder: recorder, nimble: nimble, reason: .trackingLost)
                 // Tracking loss invalidates the AR world origin and therefore
                 // the floor expressed in it, not just the SG window.
                 nimble.resetSessionState()
             }
         }
-        // Charts shown via export button, not auto-transition
-        .sheet(isPresented: $showExportSheet) {
-            ShareSheet(items: exportURLs)
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            capture.stop(recorder: recorder, nimble: nimble, reason: .appInactive)
         }
-        .alert("Export unavailable", isPresented: $showExportError) {
+        // Charts shown via export button, not auto-transition
+        .sheet(isPresented: $showExportSheet, onDismiss: cleanupExportFiles) {
+            let sharingEpoch = exportedEpoch
+            ShareSheet(items: exportURLs) { completedSuccessfully in
+                guard completedSuccessfully, let sharingEpoch else { return }
+                capture.markExported(epoch: sharingEpoch)
+            }
+        }
+        .alert(exportErrorTitle, isPresented: $showExportError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(exportErrorMessage)
         }
+        .confirmationDialog(
+            "Replace unexported recording?",
+            isPresented: $showReplacementConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Export Current Recording") { exportAll() }
+            Button("Discard and Start New Recording", role: .destructive) {
+                guard bodyTracking.isTracking else {
+                    presentRecordingUnavailable()
+                    return
+                }
+                let result = capture.discardAndStart(recorder: recorder, nimble: nimble)
+                if result == .unavailable {
+                    presentRecordingUnavailable()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The current recording has not been exported. Export it or explicitly discard it before starting another.")
+        }
         .onChange(of: showOfflineImport) { _, presenting in
             if presenting {
+                capture.stop(recorder: recorder, nimble: nimble, reason: .offlineImport)
                 bodyTracking.pause()
                 // Offline input belongs to a different coordinate session.
                 nimble.resetSessionState()
@@ -197,6 +242,8 @@ struct ContentView: View {
                             .padding(8)
                             .background(.black.opacity(0.6), in: Circle())
                     }
+                    .accessibilityLabel("Import motion from photos or video")
+                    .accessibilityHint("Stops live recording and opens offline analysis")
                     if let frame = bodyTracking.currentFrame {
                         let tracked = frame.joints.filter(\.isTracked).count
                         StatusBadge(text: "\(tracked)/\(frame.joints.count)", isActive: tracked > 0)
@@ -421,6 +468,9 @@ struct ContentView: View {
                                 .padding(.horizontal, 10).padding(.vertical, 6)
                                 .background(.blue.opacity(0.8), in: Capsule())
                         }
+                        .disabled(isExporting)
+                        .accessibilityLabel("Export recording")
+                        .accessibilityHint("Creates matching TRC, MOT, and STO files from this capture")
                     } else {
                         Color.clear.frame(width: 80, height: 1)
                     }
@@ -428,13 +478,7 @@ struct ContentView: View {
                     Spacer()
 
                     Button {
-                        if recorder.isRecording {
-                            recorder.stopRecording()
-                            nimble.stopRecordingResults()
-                        } else {
-                            recorder.startRecording()
-                            nimble.startRecordingResults()
-                        }
+                        toggleRecording()
                     } label: {
                         ZStack {
                             Circle().strokeBorder(.white, lineWidth: 3).frame(width: 64, height: 64)
@@ -445,6 +489,16 @@ struct ContentView: View {
                             }
                         }
                     }
+                    .disabled(isExporting)
+                    .accessibilityLabel(recorder.isRecording
+                                        ? "Stop recording"
+                                        : "Start recording")
+                    .accessibilityValue(recorder.isRecording
+                                        ? "Recording, \(recorder.recordedFrameCount) frames"
+                                        : (nimble.isModelLoaded ? "Ready" : "Model loading"))
+                    .accessibilityHint(recorder.isRecording
+                                       ? "Stops marker and solver capture together"
+                                       : "Starts one synchronized motion capture")
 
                     Spacer()
                     Color.clear.frame(width: 80, height: 1)
@@ -457,66 +511,115 @@ struct ContentView: View {
     }
 
     private func exportAll() {
-        var urls: [URL] = []
-        var errors: [String] = []
-
-        // Export .trc (marker positions)
-        if recorder.hasRecording {
-            let trcExporter = TRCExporter(frames: recorder.frames)
-            do {
-                let url = try trcExporter.export()
-                urls.append(url)
-            } catch {
-                errors.append("TRC: \(error.localizedDescription)")
-            }
-        } else {
-            errors.append("No recording data")
+        guard !isExporting else { return }
+        if recorder.isRecording {
+            capture.stop(recorder: recorder, nimble: nimble, reason: .user)
         }
 
-        // Export .mot (joint angles from IK)
+        let snapshot: CaptureExportSnapshot
         do {
-            let url = try nimble.exportMOT()
-            urls.append(url)
-        } catch {
-            errors.append("MOT: no IK data")
-        }
-
-        // Export .sto (joint torques from capability-valid ID only).
-        if nimble.isModelLoaded && !nimble.hasValidatedFootContactSupport {
-            errors.append("STO: unavailable — this model and solver have no validated "
-                          + "foot-support mechanics; refilming cannot enable joint torque")
-        } else {
-            do {
-                let url = try nimble.exportSTO()
-                urls.append(url)
-            } catch {
-                errors.append("STO: no validated inverse-dynamics data")
+            if let completedSnapshotError = capture.completedSnapshotError {
+                throw completedSnapshotError
             }
-        }
-
-        do {
-            urls = try ExportDisclosure.prepareShareURLs(successfulURLs: urls,
-                                                          errors: errors,
-                                                          hasValidatedFootContactSupport:
-                                                              nimble.isModelLoaded
-                                                                  ? nimble.hasValidatedFootContactSupport
-                                                                  : nil)
+            snapshot = try capture.completedSnapshot ?? CaptureExportSnapshot(
+                markerEpoch: recorder.captureEpoch,
+                resultEpoch: nimble.resultHistoryEpoch,
+                frames: recorder.frames,
+                ikHistory: nimble.ikHistory,
+                idHistory: nimble.idHistory,
+                isModelLoaded: nimble.isModelLoaded,
+                hasValidatedFootContactSupport: nimble.hasValidatedFootContactSupport
+            )
+        } catch let snapshotError as CaptureExportSnapshot.SnapshotError {
+            exportErrorTitle = "Export unavailable"
+            switch snapshotError {
+            case .missingEpoch:
+                exportErrorMessage = "This recording is incomplete. Start a new recording and try again."
+            case .mismatchedEpochs:
+                exportErrorMessage = "Marker and solver data came from different recordings. Discard this recording and record again."
+            }
+            showExportError = true
+            return
         } catch {
-            // If even the warning artifact cannot be written, do not share a
-            // misleading partial bundle. Surface the same errors in an alert.
-            exportErrorMessage = (errors + ["Warning file: \(error.localizedDescription)"])
-                .joined(separator: "\n")
+            exportErrorTitle = "Export unavailable"
+            exportErrorMessage = "This recording could not be prepared. Start a new recording and try again."
             showExportError = true
             return
         }
 
-        guard !urls.isEmpty else {
-            exportErrorMessage = "No export files were produced."
-            showExportError = true
+        cleanupExportFiles()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "BioMotion-export-\(snapshot.epoch.id.uuidString)-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        exportDirectory = directory
+        isExporting = true
+
+        Task { @MainActor in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                CaptureExportWriter.export(snapshot: snapshot, directory: directory)
+            }.value
+            isExporting = false
+
+            if let internalError = outcome.errorMessage {
+                print("BioMotion capture export failed: \(internalError)")
+                cleanupExportFiles()
+                exportErrorTitle = "Export unavailable"
+                exportErrorMessage = "BioMotion could not write the export files. Check that the device has free storage, then try again."
+                showExportError = true
+                return
+            }
+
+            guard !outcome.urls.isEmpty else {
+                cleanupExportFiles()
+                exportErrorTitle = "Export unavailable"
+                exportErrorMessage = "No export files were produced. Record for a few seconds, then try again."
+                showExportError = true
+                return
+            }
+
+            exportURLs = outcome.urls
+            exportedEpoch = outcome.hasMotionArtifact ? snapshot.epoch : nil
+            showExportSheet = true
+        }
+    }
+
+    private func toggleRecording() {
+        if recorder.isRecording {
+            capture.stop(recorder: recorder, nimble: nimble, reason: .user)
             return
         }
-        exportURLs = urls
-        showExportSheet = true
+        guard bodyTracking.isTracking else {
+            presentRecordingUnavailable()
+            return
+        }
+
+        switch capture.start(recorder: recorder, nimble: nimble) {
+        case .started:
+            break
+        case .blockedByUnexportedCapture:
+            showReplacementConfirmation = true
+        case .unavailable:
+            presentRecordingUnavailable()
+        }
+    }
+
+    private func presentRecordingUnavailable() {
+        exportErrorTitle = "Recording unavailable"
+        exportErrorMessage = nimble.isModelLoaded
+            ? "Wait until body tracking finds a person, then try again."
+            : "The motion model is still loading. Wait a moment, then try again."
+        showExportError = true
+    }
+
+    private func cleanupExportFiles() {
+        if let exportDirectory {
+            try? FileManager.default.removeItem(at: exportDirectory)
+        }
+        exportDirectory = nil
+        exportURLs = []
+        exportedEpoch = nil
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {
@@ -688,9 +791,23 @@ struct IKReadoutPanel: View {
 /// UIKit share sheet wrapper.
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
+    let completion: (Bool) -> Void
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(
+            activityItems: items,
+            applicationActivities: nil
+        )
+        controller.completionWithItemsHandler = { _, completed, _, activityError in
+            let mayMarkExported = ShareCompletionPolicy.mayMarkExported(
+                completed: completed,
+                activityError: activityError
+            )
+            DispatchQueue.main.async {
+                completion(mayMarkExported)
+            }
+        }
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

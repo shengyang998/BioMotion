@@ -169,6 +169,164 @@ final class OfflineOrchestrationTests: XCTestCase {
                           "ID history must verify its IK/ID timestamps before relabelling the row")
     }
 
+    /// Regression for the live/offline recording seam: acquiring the offline
+    /// policy resets the shared solver, but it used to leave result recording
+    /// armed. Offline IK rows then entered the live MOT/STO history while the
+    /// marker recorder correctly rejected those same offline frames.
+    @MainActor
+    func testOfflinePolicyAcquisitionDisarmsLiveResultRecording() throws {
+        engine.startRecordingResults()
+        XCTAssertTrue(try resultRecordingIsArmed())
+
+        let lease = engine.acquireOfflinePolicyLease()
+        defer { _ = engine.releaseOfflinePolicyLease(lease) }
+
+        XCTAssertFalse(
+            try resultRecordingIsArmed(),
+            "an offline owner must never inherit the live capture's IK/ID recording flag"
+        )
+    }
+
+    /// A full AR world/session reset is a recording boundary. Leaving result
+    /// recording armed mixes rows expressed in two unrelated world origins.
+    @MainActor
+    func testSessionResetDisarmsLiveResultRecording() throws {
+        engine.startRecordingResults()
+        XCTAssertTrue(try resultRecordingIsArmed())
+
+        XCTAssertTrue(engine.resetSessionState())
+
+        XCTAssertFalse(
+            try resultRecordingIsArmed(),
+            "a reset world origin must end the capture before another frame can publish"
+        )
+    }
+
+    /// Solver work is asynchronous: a frame admitted during capture A may
+    /// publish after the user has stopped A and started B. Generation alone
+    /// cannot reject it because stop/start is not an AR/session reset. Pin a
+    /// submission-time capture epoch through the receipt and require the same
+    /// epoch at the one history publication owner.
+    func testFrameReceiptFencesLateResultsAcrossCaptures() throws {
+        let epochA = CaptureEpoch(timeOrigin: 100)
+        let receipt = NimbleEngine.FrameReceipt(
+            generation: 4,
+            submissionID: 18,
+            captureEpoch: epochA
+        )
+        XCTAssertEqual(receipt.captureEpoch, epochA)
+
+        let source = try nimbleEngineSource()
+        let processStart = try XCTUnwrap(source.range(of: "    func processFrame("))
+        let processEnd = try XCTUnwrap(
+            source.range(of: "    private func publishResults(",
+                         range: processStart.upperBound..<source.endIndex)
+        )
+        let process = String(source[processStart.lowerBound..<processEnd.lowerBound])
+        let preOriginGate = try XCTUnwrap(
+            process.range(of: "RecordingCapturePolicy.mayProcessFrame(")
+        )
+        let solverSideEffect = try XCTUnwrap(process.range(of: "isFrameInFlight = true"))
+        XCTAssertLessThan(
+            preOriginGate.lowerBound,
+            solverSideEffect.lowerBound,
+            "a queued pre-origin live frame must fail before solver/filter state changes"
+        )
+        XCTAssertTrue(
+            process.contains("RecordingCapturePolicy.epochForSubmission("),
+            "submission admission must use the behavior-tested capture policy"
+        )
+
+        let publishStart = try XCTUnwrap(source.range(of: "    private func publishResults("))
+        let publishEnd = try XCTUnwrap(
+            source.range(of: "    func resetRealtimeState(",
+                         range: publishStart.upperBound..<source.endIndex)
+        )
+        let publication = String(source[publishStart.lowerBound..<publishEnd.lowerBound])
+        XCTAssertTrue(
+            publication.contains("RecordingCapturePolicy.mayPublish("),
+            "the history owner must use the behavior-tested capture policy"
+        )
+    }
+
+    func testCapturePolicyRejectsLateAndOfflineResultsByValue() {
+        let epochA = CaptureEpoch(timeOrigin: 100)
+        let epochB = CaptureEpoch(timeOrigin: 200)
+
+        XCTAssertFalse(RecordingCapturePolicy.mayProcessFrame(
+            activeEpoch: epochA,
+            frameTimestamp: 99.999,
+            isOfflineSubmission: false
+        ), "a queued pre-origin live frame must not enter native temporal state")
+        XCTAssertTrue(RecordingCapturePolicy.mayProcessFrame(
+            activeEpoch: epochA,
+            frameTimestamp: 100,
+            isOfflineSubmission: false
+        ))
+        XCTAssertTrue(RecordingCapturePolicy.mayProcessFrame(
+            activeEpoch: epochA,
+            frameTimestamp: 1,
+            isOfflineSubmission: true
+        ), "offline analysis keeps its independent timestamp domain")
+        XCTAssertTrue(RecordingCapturePolicy.mayProcessFrame(
+            activeEpoch: nil,
+            frameTimestamp: 1,
+            isOfflineSubmission: false
+        ), "normal unrecorded live tracking remains available")
+
+        let admittedA = RecordingCapturePolicy.epochForSubmission(
+            activeEpoch: epochA,
+            frameTimestamp: 100.1,
+            isOfflineSubmission: false
+        )
+        XCTAssertEqual(admittedA, epochA)
+        XCTAssertNil(RecordingCapturePolicy.epochForSubmission(
+            activeEpoch: epochA,
+            frameTimestamp: 100.1,
+            isOfflineSubmission: true
+        ))
+        XCTAssertNil(RecordingCapturePolicy.epochForSubmission(
+            activeEpoch: epochA,
+            frameTimestamp: 99.999,
+            isOfflineSubmission: false
+        ), "the solver must reject the same pre-origin frame as the marker recorder")
+
+        XCTAssertFalse(RecordingCapturePolicy.mayPublish(
+            submissionEpoch: admittedA,
+            activeEpoch: epochB,
+            isArmed: true,
+            hasMotion: true
+        ), "capture A's late result must not enter capture B")
+        XCTAssertTrue(RecordingCapturePolicy.mayPublish(
+            submissionEpoch: admittedA,
+            activeEpoch: epochA,
+            isArmed: true,
+            hasMotion: true
+        ))
+        XCTAssertFalse(RecordingCapturePolicy.mayPublish(
+            submissionEpoch: admittedA,
+            activeEpoch: epochA,
+            isArmed: false,
+            hasMotion: true
+        ))
+        XCTAssertFalse(RecordingCapturePolicy.mayPublish(
+            submissionEpoch: nil,
+            activeEpoch: epochA,
+            isArmed: true,
+            hasMotion: true
+        ))
+    }
+
+    private func resultRecordingIsArmed() throws -> Bool {
+        let child = Mirror(reflecting: engine as NimbleEngine).children.first {
+            $0.label == "isRecordingResults"
+        }
+        return try XCTUnwrap(
+            child?.value as? Bool,
+            "NimbleEngine no longer exposes the result-recording ownership seam"
+        )
+    }
+
     private func nimbleEngineSource() throws -> String {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

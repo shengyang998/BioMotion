@@ -14,6 +14,34 @@ the public header and every Release binary. A Debug-host diagnostics category,
 declared only to XCTest, retains the older numbers solely for unvalidated
 engineering characterization; Release-configuration tests do not support it.
 
+## Live recording and export
+
+A live take is one atomic capture, not three independent buffers. Pressing the
+record button creates a unique capture ID and one uptime-clock origin shared by
+the AR marker frames and Nimble IK/ID history. Recording is refused until body
+tracking and the musculoskeletal model are ready. A take stops both sides
+together on a user stop, the 3,600-frame or 60-second limit, tracking loss,
+offline-import entry, app deactivation, or an internal solver reset.
+An AR frame already queued before the button press is rejected before it can
+enter the new take's native IK warm-start or temporal filters.
+
+Stopping freezes an immutable export snapshot before any tracking/session reset
+can clear the engine. A completed take cannot be replaced silently: starting a
+new one requires exporting it or explicitly confirming discard. A successful
+share with no activity error marks only that exact capture as exported;
+cancelling or failing the share, sharing only a warning with no motion-data
+file, or receiving a late completion from an older share sheet leaves the
+current take protected.
+
+Export runs from the frozen snapshot on a detached worker. The `.trc`, `.mot`,
+and capability-valid `.sto` use the same time origin and UUID basename in a
+fresh temporary directory; the TRC `PathFileType` header carries that same
+UUID filename. If the bundled model cannot provide validated joint
+torques, the shared bundle carries `BioMotion_export_warnings.txt` instead of
+inventing an STO. Temporary files are removed when sharing finishes. The live
+import, record/stop, and export controls expose explicit VoiceOver labels,
+values, and hints.
+
 ## Repo layout
 
 ```

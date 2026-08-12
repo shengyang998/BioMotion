@@ -38,6 +38,16 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertTrue(lines[0].hasPrefix("PathFileType\t4\t(X/Y/Z)"))
     }
 
+    func testTRCHeaderCarriesTheActualExportFilename() throws {
+        let output = try TRCExporter(frames: makeFrames(count: 1))
+            .generate(filename: "BioMotion_capture_ABC.trc")
+
+        XCTAssertEqual(
+            output.components(separatedBy: "\n")[0],
+            "PathFileType\t4\t(X/Y/Z)\tBioMotion_capture_ABC.trc"
+        )
+    }
+
     func testTRCHeaderLine2MetadataKeys() throws {
         let exporter = TRCExporter(frames: makeFrames(count: 3))
         let output = try exporter.generate()
@@ -183,6 +193,42 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertTrue(row2Cols[1].hasPrefix("0.05"))
     }
 
+    func testCaptureOriginAlignsTRCMOTAndSTOTimeAxes() throws {
+        let epoch = CaptureEpoch(timeOrigin: 100)
+        let trc = try TRCExporter(
+            frames: [BodyFrame(timestamp: 100.5, frameNumber: 1, joints: makeJoints())],
+            timeOrigin: epoch.timeOrigin
+        ).generate()
+        let mot = try NimbleEngine.generateMOT(
+            history: [NimbleEngine.IKHistoryEntry(
+                timestamp: 100.75,
+                angles: ["hip_flexion_r": 0],
+                markerRMSMeters: 0
+            )],
+            timeOrigin: epoch.timeOrigin,
+            filename: "aligned_ik"
+        )
+        let sto = try NimbleEngine.generateSTO(
+            history: [NimbleEngine.IDHistoryEntry(
+                timestamp: 100.8,
+                jointTorques: ["hip_flexion_r": 1]
+            )],
+            timeOrigin: epoch.timeOrigin,
+            filename: "aligned_id"
+        )
+
+        let trcTime = trc.components(separatedBy: "\n")[6]
+            .components(separatedBy: "\t")[1]
+        let motTime = mot.components(separatedBy: "\n")[7]
+            .components(separatedBy: "\t")[0]
+        let stoTime = sto.components(separatedBy: "\n")[7]
+            .components(separatedBy: "\t")[0]
+
+        XCTAssertEqual(trcTime, "0.500000")
+        XCTAssertEqual(motTime, "0.750000")
+        XCTAssertEqual(stoTime, "0.800000")
+    }
+
     func testTRCUntrackedMarkersEmpty() throws {
         let joints = JointMapping.primary.map { mapping in
             TrackedJoint(
@@ -266,6 +312,91 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertFalse(blockedWarning.contains("record for at least a few seconds"),
                        blockedWarning)
         XCTAssertFalse(blockedWarning.contains("model must load"), blockedWarning)
+    }
+
+    func testExportSnapshotRejectsMixedCaptureEpochs() {
+        XCTAssertThrowsError(try CaptureExportSnapshot(
+            markerEpoch: CaptureEpoch(timeOrigin: 10),
+            resultEpoch: CaptureEpoch(timeOrigin: 20),
+            frames: [],
+            ikHistory: [],
+            idHistory: [],
+            isModelLoaded: true,
+            hasValidatedFootContactSupport: true
+        )) { error in
+            XCTAssertEqual(error as? CaptureExportSnapshot.SnapshotError,
+                           .mismatchedEpochs)
+        }
+    }
+
+    func testImmutableSnapshotExportsOnDetachedWorker() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("biomotion-snapshot-export-\(UUID().uuidString)",
+                                   isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let epoch = CaptureEpoch(timeOrigin: 100)
+        let snapshot = try CaptureExportSnapshot(
+            markerEpoch: epoch,
+            resultEpoch: epoch,
+            frames: [BodyFrame(timestamp: 100.5, frameNumber: 1, joints: makeJoints())],
+            ikHistory: [NimbleEngine.IKHistoryEntry(
+                timestamp: 100.75,
+                angles: ["hip_flexion_r": 0],
+                markerRMSMeters: 0
+            )],
+            idHistory: [NimbleEngine.IDHistoryEntry(
+                timestamp: 100.8,
+                jointTorques: ["hip_flexion_r": 1]
+            )],
+            isModelLoaded: true,
+            hasValidatedFootContactSupport: true
+        )
+
+        let outcome = await Task.detached {
+            CaptureExportWriter.export(snapshot: snapshot, directory: directory)
+        }.value
+
+        XCTAssertNil(outcome.errorMessage)
+        XCTAssertTrue(outcome.hasMotionArtifact)
+        XCTAssertEqual(Set(outcome.urls.map(\.pathExtension)), ["trc", "mot", "sto"])
+        XCTAssertEqual(
+            Set(outcome.urls.map { $0.deletingPathExtension().lastPathComponent }),
+            ["BioMotion_capture_\(epoch.id.uuidString)"]
+        )
+        let trcURL = try XCTUnwrap(outcome.urls.first { $0.pathExtension == "trc" })
+        let motURL = try XCTUnwrap(outcome.urls.first { $0.pathExtension == "mot" })
+        let stoURL = try XCTUnwrap(outcome.urls.first { $0.pathExtension == "sto" })
+        let trc = try String(contentsOf: trcURL)
+        XCTAssertEqual(trc.components(separatedBy: "\n")[0],
+                       "PathFileType\t4\t(X/Y/Z)\t\(trcURL.lastPathComponent)")
+        XCTAssertTrue(trc.contains("1\t0.500000"))
+        XCTAssertTrue(try String(contentsOf: motURL).contains("0.750000\t"))
+        XCTAssertTrue(try String(contentsOf: stoURL).contains("0.800000\t"))
+    }
+
+    func testWarningOnlyExportDoesNotQualifyTheCaptureAsExported() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("biomotion-warning-only-export-\(UUID().uuidString)",
+                                   isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let epoch = CaptureEpoch(timeOrigin: 100)
+        let snapshot = try CaptureExportSnapshot(
+            markerEpoch: epoch,
+            resultEpoch: epoch,
+            frames: [],
+            ikHistory: [],
+            idHistory: [],
+            isModelLoaded: false,
+            hasValidatedFootContactSupport: false
+        )
+
+        let outcome = CaptureExportWriter.export(snapshot: snapshot, directory: directory)
+
+        XCTAssertNil(outcome.errorMessage)
+        XCTAssertFalse(outcome.hasMotionArtifact,
+                       "sharing only a warning must keep the take protected from overwrite")
+        XCTAssertEqual(outcome.urls.map(\.lastPathComponent),
+                       [ExportDisclosure.warningFilename])
     }
 
     // MARK: - Edge cases

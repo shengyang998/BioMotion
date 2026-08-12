@@ -6316,6 +6316,54 @@ arms must differ in the work that PRECEDES the mask.
 
 ---
 
+## Live recording and export are capture-atomic (2026-08-12)
+
+The former live UI independently toggled marker recording and solver-history
+recording, exported each mutable buffer on the main actor, and reset the shared
+engine on tracking/offline boundaries without first preserving the completed
+take. A queued solve from capture A could also publish after capture B began,
+while a second tap silently erased the prior marker recording.
+
+The capture now has one main-actor owner and one immutable `CaptureEpoch`:
+
+- A unique UUID and `CACurrentMediaTime()` origin are attached at submission to
+  both marker frames and solver receipts. Offline receipts carry no live epoch;
+  stopped, offline, wrong-epoch, and late A→B results fail closed. A live AR
+  frame queued before the button origin is rejected before native IK warm-start,
+  SG filters or solver state can observe it.
+- Start is unavailable until the Nimble model is loaded. User stop, 3,600
+  frames, 60 seconds from the button press, tracking loss, offline entry and app
+  deactivation disarm marker and solver recording through the same coordinator.
+  If the engine resets itself after an asynchronous solve failure, the next
+  frame closes the marker side before it can be appended.
+- Stop freezes marker, IK and capability-valid ID arrays before a subsequent
+  session reset can clear the engine. A reset or offline analysis therefore
+  cannot mutate the saved take.
+- An unexported take survives another record-button tap. The UI offers export,
+  explicit destructive discard, or cancel. Only an error-free share completion
+  for the matching epoch, containing at least one TRC/MOT/STO motion artifact,
+  clears the guard. Cancellation, activity errors, warning-only shares and stale
+  completion callbacks do not.
+- `.trc`, `.mot` and `.sto` are generated from one `Sendable` snapshot on a
+  detached worker, with one origin and one UUID basename in a unique temporary
+  directory. The TRC `PathFileType` metadata repeats the actual UUID filename.
+  Unsupported STO remains a disclosed warning, not a fabricated dynamics
+  artifact. Share dismissal removes the directory.
+- The import, record/stop and export controls now carry explicit VoiceOver
+  labels, current values and action hints.
+
+The implementation was driven through real compile/behaviour REDs for reset and
+offline contamination, recorder limits, epoch admission, model readiness,
+shared time axes, immutable detached export, UI lifecycle wiring, stale share
+completion, warning-only export protection, pre-origin solver admission and
+snapshot-before-reset. The final focused iPhone 17e Simulator
+receipt (`final-focused-4.xcresult`) is **54/54 passed, 0 failed, 0 skipped, 0
+expected failures** across `MotionRecorderTests`, `TRCExporterTests`,
+`OfflineOrchestrationTests` and the affected engine-lease source contract. A
+fresh-DerivedData simulator build then completed with `** BUILD SUCCEEDED **`.
+
+---
+
 ## Next steps (ordered)
 
 ### Immediate — unblocked, no licence exposure

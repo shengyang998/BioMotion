@@ -22,14 +22,18 @@ enum TRCExporterError: LocalizedError, Equatable {
 struct TRCExporter {
     let frames: [BodyFrame]
     let markerMappings: [JointMapping.Mapping]
+    let timeOrigin: TimeInterval?
 
-    init(frames: [BodyFrame], markerMappings: [JointMapping.Mapping] = JointMapping.primary) {
+    init(frames: [BodyFrame],
+         markerMappings: [JointMapping.Mapping] = JointMapping.primary,
+         timeOrigin: TimeInterval? = nil) {
         self.frames = frames
         self.markerMappings = markerMappings
+        self.timeOrigin = timeOrigin
     }
 
     /// Generates a .trc file string compatible with OpenSim.
-    func generate() throws -> String {
+    func generate(filename: String = "BioMotion_capture.trc") throws -> String {
         guard let firstFrame = frames.first else { return "" }
 
         let numFrames = frames.count
@@ -40,7 +44,7 @@ struct TRCExporter {
         var lines: [String] = []
 
         // Line 1: PathFileType header
-        lines.append("PathFileType\t4\t(X/Y/Z)\tBioMotion_capture.trc")
+        lines.append("PathFileType\t4\t(X/Y/Z)\t\(filename)")
 
         // Line 2: Metadata keys
         lines.append("DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames")
@@ -67,7 +71,7 @@ struct TRCExporter {
         lines.append("")
 
         // Data rows
-        let startTime = firstFrame.timestamp
+        let startTime = timeOrigin ?? firstFrame.timestamp
         for frame in frames {
             let time = frame.timestamp - startTime
             var row = "\(frame.frameNumber)\t\(String(format: "%.6f", time))"
@@ -93,7 +97,7 @@ struct TRCExporter {
 
     /// Writes the .trc file to a temporary location and returns the URL.
     func export(filename: String = "BioMotion_capture") throws -> URL {
-        let content = try generate()
+        let content = try generate(filename: "\(filename).trc")
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(filename).trc")
         try content.write(to: url, atomically: true, encoding: .utf8)
@@ -155,5 +159,144 @@ struct TRCExporter {
         }
 
         return markerMappings.map { namesByJointID[$0.arkitName] ?? $0.opensimName }
+    }
+}
+
+/// Value-only copy of one completed capture. No ObservableObject or mutable
+/// engine state crosses to the export worker, so all three artifacts describe
+/// the same epoch even if live tracking resumes while files are being written.
+struct CaptureExportSnapshot: Sendable {
+    enum SnapshotError: Error, Equatable {
+        case missingEpoch
+        case mismatchedEpochs
+    }
+
+    let epoch: CaptureEpoch
+    let frames: [BodyFrame]
+    let ikHistory: [NimbleEngine.IKHistoryEntry]
+    let idHistory: [NimbleEngine.IDHistoryEntry]
+    let isModelLoaded: Bool
+    let hasValidatedFootContactSupport: Bool
+
+    init(markerEpoch: CaptureEpoch?,
+         resultEpoch: CaptureEpoch?,
+         frames: [BodyFrame],
+         ikHistory: [NimbleEngine.IKHistoryEntry],
+         idHistory: [NimbleEngine.IDHistoryEntry],
+         isModelLoaded: Bool,
+         hasValidatedFootContactSupport: Bool) throws {
+        guard let markerEpoch, let resultEpoch else {
+            throw SnapshotError.missingEpoch
+        }
+        guard markerEpoch == resultEpoch else {
+            throw SnapshotError.mismatchedEpochs
+        }
+        self.epoch = markerEpoch
+        self.frames = frames
+        self.ikHistory = ikHistory
+        self.idHistory = idHistory
+        self.isModelLoaded = isModelLoaded
+        self.hasValidatedFootContactSupport = hasValidatedFootContactSupport
+    }
+}
+
+struct CaptureExportOutcome: Sendable {
+    let urls: [URL]
+    let errorMessage: String?
+    /// True only when at least one motion-data artifact (TRC, MOT, or STO)
+    /// was written. A warning text file alone must not unlock replacement of
+    /// the protected take.
+    let hasMotionArtifact: Bool
+}
+
+/// Pure snapshot-to-files worker. Callers create the snapshot on main, then
+/// invoke this function from a detached task so large OpenSim strings and disk
+/// writes never block body-tracking UI updates.
+enum CaptureExportWriter {
+    static func export(snapshot: CaptureExportSnapshot,
+                       directory: URL) -> CaptureExportOutcome {
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let basename = "BioMotion_capture_\(snapshot.epoch.id)"
+            var urls: [URL] = []
+            var errors: [String] = []
+
+            if snapshot.frames.isEmpty {
+                errors.append("No recording data")
+            } else {
+                do {
+                    let content = try TRCExporter(
+                        frames: snapshot.frames,
+                        timeOrigin: snapshot.epoch.timeOrigin
+                    ).generate(filename: "\(basename).trc")
+                    let url = directory.appendingPathComponent("\(basename).trc")
+                    try content.write(to: url, atomically: true, encoding: .utf8)
+                    urls.append(url)
+                } catch {
+                    errors.append("TRC: \(error.localizedDescription)")
+                }
+            }
+
+            do {
+                let content = try NimbleEngine.generateMOT(
+                    history: snapshot.ikHistory,
+                    timeOrigin: snapshot.epoch.timeOrigin,
+                    filename: basename
+                )
+                let url = directory.appendingPathComponent("\(basename).mot")
+                try content.write(to: url, atomically: true, encoding: .utf8)
+                urls.append(url)
+            } catch {
+                errors.append("MOT: no IK data")
+            }
+
+            if snapshot.isModelLoaded && !snapshot.hasValidatedFootContactSupport {
+                errors.append("STO: unavailable — this model and solver have no validated "
+                              + "foot-support mechanics; refilming cannot enable joint torque")
+            } else {
+                do {
+                    let content = try NimbleEngine.generateSTO(
+                        history: snapshot.idHistory,
+                        timeOrigin: snapshot.epoch.timeOrigin,
+                        filename: basename
+                    )
+                    let url = directory.appendingPathComponent("\(basename).sto")
+                    try content.write(to: url, atomically: true, encoding: .utf8)
+                    urls.append(url)
+                } catch {
+                    errors.append("STO: no validated inverse-dynamics data")
+                }
+            }
+
+            let prepared = try ExportDisclosure.prepareShareURLs(
+                successfulURLs: urls,
+                errors: errors,
+                hasValidatedFootContactSupport: snapshot.isModelLoaded
+                    ? snapshot.hasValidatedFootContactSupport
+                    : nil,
+                directory: directory
+            )
+            guard !prepared.isEmpty else {
+                return CaptureExportOutcome(
+                    urls: [],
+                    errorMessage: "No export files were produced.",
+                    hasMotionArtifact: false
+                )
+            }
+            return CaptureExportOutcome(
+                urls: prepared,
+                errorMessage: nil,
+                hasMotionArtifact: !urls.isEmpty
+            )
+        } catch {
+            return CaptureExportOutcome(
+                urls: [],
+                errorMessage: error.localizedDescription,
+                hasMotionArtifact: false
+            )
+        }
     }
 }
