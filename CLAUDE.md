@@ -435,7 +435,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 652 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 698 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

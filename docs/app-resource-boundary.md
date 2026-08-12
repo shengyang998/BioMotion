@@ -168,14 +168,15 @@ phases, or archive layout changes:
 /bin/bash -p tools/tests/testflight_release_gate_tests.sh
 ```
 
-The resource suite is green **42/42**; the TestFlight wrapper suite is green
+The resource suite is green **45/45**; the TestFlight wrapper suite is green
 **15/15**. The resource suite constructs accepted source, arm64 iOS Simulator app, and test-bundle
 fixtures plus an ad-hoc arm64 device archive that must be rejected, then mutates one
 boundary at a time. Its negative cases cover
-wrong target membership, stale guards, changed source identities, nested/renamed
+wrong target membership, stale or weaker internal-UI guards, changed source identities, nested/renamed
 models, extra OSIM or large data, hidden asset-catalog entries, altered legal files,
 symlinks, unsafe IPA paths, forged ZIP expansion or semantic metadata, ZIP comments,
-missing executable bits, macOS images relabelled as iOS, and wrong archive provenance.
+missing executable bits, an injected internal literal in a Release Mach-O, macOS
+images relabelled as iOS, and wrong archive provenance.
 The CMS suite signs a parseable fixture then mutates its embedded plist
 without changing its length, proving payload parsing cannot substitute for signature
 verification. The TestFlight suite causally proves gate-before-export ordering,

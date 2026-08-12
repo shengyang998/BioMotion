@@ -357,7 +357,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 652 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 698 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -6787,6 +6787,13 @@ focused suites **172/172**, with zero failures, skips, expected failures or test
 host restarts. The dependency adversarial harness passes **83/83** and the
 source/Release-binary resource harness passes **45/45**, including wrong guard
 expressions and injected internal Release strings.
+
+The final source inventory is independently reproducible: 640 Swift XCTest
+methods plus 59 Objective-C/Objective-C++ methods equals 699 total; the one
+`E1MarkerSetComparisonTests/testE1RunAll` method belongs exclusively to the
+slow lane, leaving exactly **698** fast methods. The runner and its fail-closed
+harness now use that exact value. This inventory licenses the final gate run;
+it is not itself a passing 698-test receipt.
 After fresh XcodeGen regeneration, an unsigned generic-device Release build
 completed with `BUILD SUCCEEDED` in the private DerivedData directory
 `/tmp/biomotion-release-ui-build.Ts2mKz`; this is compile and binary-inspection
