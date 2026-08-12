@@ -306,6 +306,28 @@ if [[ "$event" == xcrun:validate && \
 fi
 '''
 
+security = r'''#!/bin/bash
+set -euo pipefail
+FIXTURE_ROOT="$(cd -P -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
+''' + shell_environment_guard + r'''
+assert_clean_shell_environment "$FIXTURE_ROOT/home"
+[[ "$#" -eq 6 ]]
+[[ "$1" == find-generic-password ]]
+[[ "$2" == -a && "$3" == biomotion ]]
+[[ "$4" == -s && "$6" == -w ]]
+case "$5" in
+  com.soleilyu.biomotion.appstoreconnect.key-id)
+    printf '%s\n' 'keychain:key-id' >> "$EVENT_LOG"
+    printf '%s\n' 'TESTKEY123'
+    ;;
+  com.soleilyu.biomotion.appstoreconnect.issuer)
+    printf '%s\n' 'keychain:issuer' >> "$EVENT_LOG"
+    printf '%s\n' '12345678-1234-1234-1234-123456789abc'
+    ;;
+  *) exit 91 ;;
+esac
+'''
+
 (root / "tools/tests/dependency_boundary_probe.sh").write_text(
     dependency_gate, encoding="utf-8"
 )
@@ -320,6 +342,7 @@ fi
 )
 (root / "fake-tools/xcodebuild").write_text(xcodebuild, encoding="utf-8")
 (root / "fake-tools/xcrun").write_text(xcrun, encoding="utf-8")
+(root / "fake-tools/security").write_text(security, encoding="utf-8")
 
 wrapper_path = root / "tools/release/testflight_release.sh"
 wrapper = wrapper_path.read_text(encoding="utf-8")
@@ -328,6 +351,8 @@ replacements = {
         f'XCODEBUILD="{root / "fake-tools/xcodebuild"}"',
     'XCRUN="/usr/bin/xcrun"':
         f'XCRUN="{root / "fake-tools/xcrun"}"',
+    'SECURITY="/usr/bin/security"':
+        f'SECURITY="{root / "fake-tools/security"}"',
 }
 for old, new in replacements.items():
     if wrapper.count(old) != 1:
@@ -361,6 +386,7 @@ PY
     "$root/tools/tests/privacy_manifest_probe.sh" \
     "$root/fake-tools/xcodebuild" \
     "$root/fake-tools/xcrun" \
+    "$root/fake-tools/security" \
     "$root/injected-bash-env.sh" \
     "$root/injected-env.sh"
   : > "$root/home/.appstoreconnect/private_keys/AuthKey_${TEST_KEY_ID}.p8"
@@ -592,6 +618,21 @@ PY
 assert_snapshot_removed "$root/snapshot.log" "upload cleanup"
 pass "--upload validates before uploading the identical private snapshot"
 
+# With no per-run environment values, the upload path retrieves the stable
+# workstation references from Keychain only after every local gate has passed.
+root="$(make_fixture keychain_credentials)"
+standard_arguments "$root"
+run_release "$root" \
+  ASC_API_KEY_ID= \
+  ASC_API_ISSUER= \
+  -- --upload "${STANDARD_ARGUMENTS[@]}"
+assert_status 0 "$RUN_STATUS" "Keychain credential fallback"
+assert_file_text "$root/events.log" \
+  $'dependency:current\ndependency:receipt:pre\nresource:source\nresource:archive\nprivacy:archive\nxcodebuild:export\nresource:ipa\ndependency:receipt:post\nkeychain:key-id\nkeychain:issuer\nxcrun:validate\nxcrun:upload' \
+  "Keychain credential fallback order"
+assert_snapshot_removed "$root/snapshot.log" "Keychain credential cleanup"
+pass "--upload falls back to owner Keychain references after local gates"
+
 # A validator-side mutation must be detected before the upload call.
 root="$(make_fixture digest_change)"
 standard_arguments "$root"
@@ -695,4 +736,4 @@ do
 done
 pass "malformed, incomplete, duplicate, positional, and conflicting arguments are rejected"
 
-printf 'TESTFLIGHT_RELEASE_GATE_TESTS_PASS %s/15\n' "$PASS_COUNT"
+printf 'TESTFLIGHT_RELEASE_GATE_TESTS_PASS %s/16\n' "$PASS_COUNT"

@@ -31,6 +31,7 @@ MKTEMP="/usr/bin/mktemp"
 PLUTIL="/usr/bin/plutil"
 PYTHON="/usr/bin/python3"
 RM="/bin/rm"
+SECURITY="/usr/bin/security"
 SHASUM="/usr/bin/shasum"
 STAT="/usr/bin/stat"
 XCODEBUILD="/usr/bin/xcodebuild"
@@ -558,18 +559,40 @@ verify_external_bytes() {
   fi
 }
 
-# Deliberately do not expand credential variables or derive the API-key path
-# until every source, archive, privacy, export, and IPA gate above has passed.
-if [[ -z "${ASC_API_KEY_ID:-}" ]]; then
-  printf 'error: ASC_API_KEY_ID is required for --%s\n' "$MODE" >&2
+# Deliberately do not expand credential variables, consult Keychain, or derive
+# the API-key path until every source, archive, privacy, export, and IPA gate
+# above has passed. Explicit environment values remain the per-run override;
+# otherwise use the workstation's owner-scoped unattended release references.
+API_KEY_ID="${ASC_API_KEY_ID:-}"
+API_ISSUER="${ASC_API_ISSUER:-}"
+if [[ -z "$API_KEY_ID" ]]; then
+  if [[ ! -f "$SECURITY" || ! -x "$SECURITY" ]]; then
+    printf 'error: trusted security tool is unavailable: %s\n' \
+      "$SECURITY" >&2
+    exit 1
+  fi
+  API_KEY_ID="$(run_trusted_user_tool "$SECURITY" find-generic-password \
+    -a biomotion \
+    -s com.soleilyu.biomotion.appstoreconnect.key-id -w 2>/dev/null || true)"
+fi
+if [[ -z "$API_ISSUER" ]]; then
+  if [[ ! -f "$SECURITY" || ! -x "$SECURITY" ]]; then
+    printf 'error: trusted security tool is unavailable: %s\n' \
+      "$SECURITY" >&2
+    exit 1
+  fi
+  API_ISSUER="$(run_trusted_user_tool "$SECURITY" find-generic-password \
+    -a biomotion \
+    -s com.soleilyu.biomotion.appstoreconnect.issuer -w 2>/dev/null || true)"
+fi
+if [[ -z "$API_KEY_ID" ]]; then
+  printf 'error: ASC API key id is absent from the environment and Keychain\n' >&2
   exit 1
 fi
-if [[ -z "${ASC_API_ISSUER:-}" ]]; then
-  printf 'error: ASC_API_ISSUER is required for --%s\n' "$MODE" >&2
+if [[ -z "$API_ISSUER" ]]; then
+  printf 'error: ASC API issuer is absent from the environment and Keychain\n' >&2
   exit 1
 fi
-API_KEY_ID="$ASC_API_KEY_ID"
-API_ISSUER="$ASC_API_ISSUER"
 if [[ ! "$API_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
   printf '%s\n' \
     'error: ASC_API_KEY_ID must be exactly 10 uppercase letters/digits' >&2
