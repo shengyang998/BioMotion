@@ -63,13 +63,16 @@ execute before the script starts, before its own guard or sanitizer can run.
 
 **Integration status:** repository, source, compile, package, extraction,
 receipt, local upload preflight, developer bundling, and compiled-only runtime
-enforcement are complete. The existing App Store Connect version 1 still lacks
-the lock and license and is not a compliant shipping artifact; no replacement
-was uploaded by these local gates. `--upload` remains an explicit release
-operation and must not be used without release approval and closure of the
-documented legal/owner and real-device delivery gates. The local privacy and
-resource contracts themselves are implemented and are mandatory inputs to the
-controlled archive/export flow below.
+enforcement are complete. The app-side observable download state, pause
+presentation, explicit retry, generation fencing and automatic ready transition
+are covered locally with an injected client; the real Apple-hosted state stream
+and model load remain a TestFlight-device boundary. The existing App Store
+Connect version 1 still lacks the lock and license and is not a compliant
+shipping artifact; no replacement was uploaded by these local gates. `--upload`
+remains an explicit release operation and must not be used without release
+approval and closure of the documented legal/owner and real-device delivery
+gates. The local privacy and resource contracts themselves are implemented and
+are mandatory inputs to the controlled archive/export flow below.
 
 ---
 
@@ -282,8 +285,9 @@ quiescent same-user build host.
 
 1. `SAM3DBodyPose.mlmodelc` **in the app bundle** — developer/Simulator builds.
 2. `SAM3DBodyPose.mlmodelc` **in the asset pack** — the shipping path.
-3. Nothing: start the download in the background and throw immediately with a
-   message carrying the live percentage.
+3. Nothing: enter `.checking`, subscribe to the per-pack status stream, start or
+   rejoin one system-managed download, and return promptly. A percentage appears
+   only after Background Assets supplies a real progress event.
 
 Both branches accept only a **precompiled `.mlmodelc`**. The runtime neither
 accepts a raw `.mlpackage` nor imports Core ML's compiler API, and it owns no
@@ -359,17 +363,32 @@ therefore cannot erase the displaced model.
 
 ### When the pack is missing
 
-`loadModelIfNeeded()` never blocks on the transfer. It starts the download and
-throws immediately; `OfflineImportView` renders the message in its red "Error"
-section, e.g.
+`loadModelIfNeeded()` never blocks on the transfer. `OfflineImportView` observes
+the shared `AssetPackModelStore` directly: `.checking` shows indeterminate work,
+`.downloading` shows only the system's `Progress.fractionCompleted`, `.paused`
+retains the last real fraction while saying that iOS paused the transfer, and a
+terminal `.unavailable` supplies an explicit **Retry**. `Run` remains disabled
+until `.ready`; the picker and selected media remain usable throughout.
 
-> Couldn't load the pose model: Downloading the pose model — 37% (487 MB of 1310 MB).
-> It keeps going in the background; try again when it finishes.
+The store does not use a timer, persist a percentage, or label
+`completedUnitCount` / `totalUnitCount` as bytes—the Managed Background Assets
+contract does not document those unit counts as bytes. A fresh process probes
+the model, constructs a new per-pack status sequence before its ensure request,
+and calls
+`ensureLocalAvailability` again; iOS owns any partial download and rejoins or
+reschedules it. Each local attempt has a generation, so a late event or ensure
+completion from A cannot overwrite retry B. A resolver also rechecks the cached
+URL after its asynchronous probe, so a stale nil result cannot replace a model
+that became ready while the actor was re-entrant. A `.finished` event is not itself
+model readiness: the matching successful ensure completion probes the required
+compiled-model leaf, and only a successful probe publishes
+`.ready(.assetPackCompiled)` and ends the
+observer. The user then explicitly starts analysis once; download completion
+does not silently run a previously selected clip.
 
-Tapping **Run** again re-reads the current percentage. `AssetPackModelStore` is an
-`ObservableObject` publishing `.downloading(fraction:receivedBytes:totalBytes:)`,
-so a live progress bar is one `@ObservedObject var store = SAM3DPoseEstimator.modelStore`
-away in `OfflineImportView` — that view is not part of this change.
+Closing the import sheet or cancelling an analysis does not cancel the
+system-managed model transfer. No app-owned resume data, AssetPack URL, or stale
+percentage is persisted across launches.
 
 ---
 
@@ -442,16 +461,17 @@ Verified on this machine (2026-08-07 through 2026-08-11):
   1,096,258,817-byte release pair also passed a private verifier/extraction dry
   run without publishing the developer bundle.
 * Simulator build + launch, and the existing test suite still builds and passes.
-* The failure path, driven through the real UI on the Simulator (where the pack
-  genuinely does not exist). `AssetPackManager` initialises without trapping —
+* The underlying failure path was driven through the real UI on the Simulator
+  before live state wiring (the pack genuinely does not exist there).
+  `AssetPackManager` initialises without trapping —
   it takes **~2.5 s**, which is why the probe runs off the main actor — and the
   system log confirms the Info.plist is understood:
   `The app uses Apple hosting ("BAUsesAppleHosting" is set to "YES")`.
   The app then reports, in order and without hanging or crashing:
   1. `The 1.3 GB pose model isn't on this device yet — the download was just requested. Try again in a moment for progress, or the reason it can't start.`
   2. `Couldn't get the pose model from the App Store: No team ID was specified for the app with the bundle ID "com.soleil.BioMotion".`
-  The second is the Simulator's real reason, surfaced on the next attempt once
-  the asynchronous lookup has failed.
+  The second is the Simulator's real reason. The current observed state surfaces
+  that terminal result automatically; the user no longer presses Run to poll it.
 * Historical asset pack uploaded to App Store Connect: `sam3d-body-pose` version 1,
   `0 errors, 0 warnings`, version id `137b671a-f5dc-4c6c-9abd-1b1fad37eb16`,
   state **READY_FOR_TESTING**, platform IOS (it went PROCESSING →
@@ -462,11 +482,12 @@ Verified on this machine (2026-08-07 through 2026-08-11):
 **Not** verified, and only verifiable once a TestFlight build carrying these
 Info.plist keys is installed on a real device:
 
-* That `AssetPackManager.url(for: FilePath("SAM3DBodyPose.mlmodelc"))` resolves a
-  *directory* entry. `assetPackURL(for:)` has a second attempt that asks for
-  `SAM3DBodyPose.mlmodelc/coremldata.bin` and takes its parent, in case the
-  manager only indexes leaf files. One of the two must work; which one is
-  unknown from here.
-* Real download progress numbers, and that `MLModel(contentsOf:)` loads the
-  pack's copy. Every earlier link in that chain is verified; the model itself is
-  the artifact that already loaded on device from the app bundle.
+* Delivery and lookup of the required Apple-hosted leaf
+  `SAM3DBodyPose.mlmodelc/coremldata.bin`, recovery of its parent directory, and
+  `MLModel(contentsOf:)` loading that pack copy. The SDK documents directory and
+  package URLs, but this runtime deliberately resolves the required leaf first
+  so a merged directory alone cannot masquerade as the expected model.
+* Real progress/pause/resume events, relaunch while partially downloaded, and
+  the resulting percentage on a device. The local tests prove event mapping,
+  single-flight retry and stale-attempt fencing with an injected client; they do
+  not manufacture a TestFlight receipt.

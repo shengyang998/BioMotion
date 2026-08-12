@@ -316,7 +316,7 @@ xcodebuild -project BioMotion.xcodeproj -scheme BioMotion \
 # Tests on simulator — always via the script, never a hand-typed xcodebuild line.
 # It provisions a private simulator (naming one shared with another xcodebuild
 # process is what made this suite untrustworthy) and emits an xcresult receipt.
-tools/run_tests.sh fast    # exactly 633; 0 failed/skipped/restarted
+tools/run_tests.sh fast    # exactly 652; 0 failed/skipped/restarted
 tools/run_tests.sh slow    # only testE1RunAll; exactly 1; 0 failed/skipped
 tools/run_tests.sh all     # commit gate: fast, then slow
 
@@ -330,11 +330,11 @@ shebang) or with `/bin/bash -p` as shown. An unprotected `bash script.sh`
 invocation is unsupported and is not evidence: an inherited `BASH_ENV` can run
 before the script starts, so the script may never reach its own rejection or
 sanitization. The dependency boundary suite is green **79/79**, and the runner's
-independent gate-policy harness is green **53/53**. Before this provenance slice,
-the complete fast lane passed **633/633** in 1,370 s. After the tracked-first
-header order landed, a fresh diagnostic subset passed **1/1** in 38 s. The final
-complete fast receipt then passed **633/633** in 1,365 s, with zero failures,
-skips, expected failures, or test-host restarts.
+independent gate-policy harness is green **53/53**. On the reviewed Asset Pack
+tree, the exact protected gate passed fast **652/652** and slow **1/1**, with
+zero failures, skips, expected failures, or test-host restarts; both structured
+receipts are under `/tmp/biomotion-tests.SbMAmG`. This is local commit-gate
+evidence, not a TestFlight hosted-delivery receipt.
 
 `fast`, `slow`, and `all` accept no caller arguments; their fixed invocation is
 part of the reviewed receipt. `subset` is the diagnostic escape hatch, but it

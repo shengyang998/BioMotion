@@ -108,6 +108,8 @@ forbidden = {
     'withExtension: "mlpackage"': "raw app-bundle packages must not be probed",
     'hasSuffix(".mlpackage")': "raw asset-pack packages must not be probed",
     '"SAM3DBodyPose.mlpackage"': "the runtime must name only the compiled model",
+    "completedUnitCount": "Background Assets Progress units are not documented as bytes",
+    "totalUnitCount": "Background Assets Progress units are not documented as bytes",
 }
 violations = [
     f"{token}: {reason}" for token, reason in forbidden.items() if token in active
@@ -125,9 +127,11 @@ if len(compiled_constant) != 1:
 
 for required in (
     "bundledCompiledModelURL()",
-    "assetPackURL(for: compiledModelFileName)",
+    "assetPackURL()",
+    'compiledModelInteriorFileName = "coremldata.bin"',
+    'FilePath(leafPath)',
+    "deletingLastPathComponent()",
     'withExtension: "mlmodelc"',
-    '"coremldata.bin"',
     "case bundledCompiled",
     "case assetPackCompiled",
 ):

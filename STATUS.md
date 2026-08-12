@@ -349,7 +349,7 @@ The current runner separates the ordinary suite from the deliberately expensive 
 
 | mode | selection | required receipt | meaning |
 |---|---|---|---|
-| `fast` | runner-owned non-E1 suite | exactly 633 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
+| `fast` | runner-owned non-E1 suite | exactly 652 passed; 0 failed/skipped/expected-failed/restarted | fast lane |
 | `slow` | only `E1MarkerSetComparisonTests/testE1RunAll` | exactly 1 passed; 0 failed/skipped/expected-failed/restarted | slow lane |
 | `subset` | caller-owned `-only-testing` selection | at least 1 passed; 0 failed/skipped/expected-failed/restarted | diagnostic, explicitly not a commit gate |
 | `all` | `fast`, then `slow` | both lane receipts pass | **commit gate** |
@@ -1244,10 +1244,12 @@ directory from the canonical AAR/receipt pair.
 
 ⚠️ **The shipping load path has never been executed.** The Simulator is served no pack and the dev
 bundle is empty by default, so nothing in this checkout reaches `MLModel(contentsOf:)`.
-`AssetPackManager.url(for:)` against a *directory* entry is unproven. Packaging and upload are
-verified (`.aar` = 1.0210 GiB); the download-and-load is not. It can only be confirmed by a
-TestFlight install on a device. Build 23 remains installable with the model bundled, so a failure
-here has a fallback.
+At this 2026-08-07 receipt, `AssetPackManager.url(for:)` against a directory entry had not been
+checked against the SDK contract. Xcode 26.4 now explicitly documents directory/package URLs, and
+the current runtime is narrower still: it resolves the required `coremldata.bin` leaf and takes its
+verified parent. Packaging and upload are verified (`.aar` = 1.0210 GiB); actual hosted leaf
+delivery and load are not. They can only be confirmed by a TestFlight install on a device. Build 23
+remains installable with the model bundled, so a failure here has a fallback.
 
 Packaging and upload: `tools/assetpack/README.md`. The pack uploads **separately from the app** via
 `xcrun altool --upload-asset-pack` and **requires an ASC API key** — an app-specific password
@@ -4918,8 +4920,11 @@ a `.mlpackage`.
 `SAM3DBodyPose.mlmodelc`, then the same compiled directory in the managed asset
 pack. It no longer imports Core ML's compiler API, names or probes a raw package,
 owns an Application Support compile cache, or reads model modification time.
-The missing-pack path is unchanged: it starts/joins the Background Assets
-download and throws immediately rather than waiting on the transfer.
+At this dated 2026-08-11 slice, the missing-pack path started/joined Background
+Assets and threw immediately rather than waiting. The 2026-08-12 live-state
+slice below now makes that attempt single-flight and generation-fenced, observes
+it directly in the UI, and maps normal absence to `.waitingForModel` rather than
+a model failure.
 
 `tools/assetpack/dev_bundle_model.sh on` now defaults to the canonical atomic
 pair under `build/assetpack/release/`. It rejects symlink/FIFO/special-file
@@ -4962,10 +4967,12 @@ the extracted tree contained no symlink. That was a local read-only dry run: it
 did not publish `DevBundledModel`, inspect credentials, invoke upload mode, or
 contact App Store Connect. A fresh arm64 Simulator `build-for-testing` passed.
 
-The remaining limits are explicit. Background Assets directory resolution and
-the final `MLModel(contentsOf:)` load still need a TestFlight device. The local
-install temporarily needs space for the roughly 1 GiB frozen AAR plus extracted
-model. Existing Nimble/OSQP simulator archives are arm64-only, so a universal
+The remaining limits are explicit. Xcode 26.4 documents directory/package URL
+resolution, and the current runtime deliberately resolves the required
+`coremldata.bin` leaf before taking its parent; actual Apple-hosted leaf delivery
+and the final `MLModel(contentsOf:)` load still need a TestFlight device. The
+local install temporarily needs space for the roughly 1 GiB frozen AAR plus
+extracted model. Existing Nimble/OSQP simulator archives are arm64-only, so a universal
 x86_64 simulator link is not claimed. The mode-0700 transaction is a normal
 local-account boundary, not a sandbox against malicious code already running as
 the same UID. Removing the source-mtime cache also removes BioMotion's only File
@@ -5962,6 +5969,94 @@ same zero-failure/zero-skip/zero-restart result. These are focused diagnostic
 receipts; the final protected fast gate remains separate. Physical-device Photos
 provider behaviour, kill-time residue, and cancellation latency remain external
 evidence.
+
+
+## Asset-pack progress is live and retry-safe (2026-08-12)
+
+The Managed Background Assets plumbing already received system progress, but no
+view observed it: the first Run stored one error-string snapshot, so users had
+to press Run repeatedly to poll a percentage. `.began`, `.paused` and
+`.finished` were ignored, and a successful ensure/probe cleared the task without
+publishing `.ready`; even a future progress view could have remained stuck at
+its last percentage. Normal download wait also entered runner `.failed`, which
+incorrectly exposed the model self-test diagnostics.
+
+`OfflineImportView` now observes the shared `AssetPackModelStore`. It shows
+indeterminate checking, the real finite/clamped system fraction, paused with the
+last real fraction, and a terminal reason with explicit Retry. Run is enabled
+only after `.ready`; the picker and retained selection remain usable. The runner
+uses `.waitingForModel` for normal absence and releases its engine lease, while
+real `MLModel(contentsOf:)`/Core ML failures remain `.failed`. Closing the sheet
+or cancelling analysis does not cancel the independent OS transfer, and ready
+does not silently start analysis.
+
+The store now creates one observer/ensure pair per monotonic generation and
+constructs the status sequence before starting ensure, so a fast first event
+cannot land in an unobserved request/subscription gap. Retry is single-flight
+and advances ownership before B begins, so late A progress,
+failure, finish or ensure completion cannot touch B. Ensure success and the
+system `.finished` event still require the compiled-model leaf probe before
+ready; success closes both local tasks. Because the main actor is re-entrant at
+the asynchronous pack probe, every resumed resolver rechecks the authoritative
+cached URL before publishing its older probe result or opening an attempt; an
+old nil probe therefore cannot replace a concurrently published ready state. A
+fresh process persists no percentage,
+resume data, `AssetPack` object or URL: it probes, subscribes and ensures again,
+letting iOS rejoin its own partial download. Xcode 26.4 documents directory and
+package URL support; runtime lookup deliberately resolves
+`SAM3DBodyPose.mlmodelc/coremldata.bin` first and takes its verified parent so a
+merged directory cannot stand in for the required payload. The iOS 26.4 labelled
+ensure overload is availability-gated with the required iOS 26.0 fallback.
+
+One wording defect was found while reading the SDK contract: Foundation
+`Progress.completedUnitCount` / `totalUnitCount` are not documented here as
+bytes. The old “487 MB of 1310 MB” UI/documentation was therefore an unsupported
+unit claim. Production now stores and displays only
+`Progress.fractionCompleted`; there is no timer or locally derived progress.
+
+TDD receipt: the new focused selection first failed at compile time on the
+missing `DownloadEvent` API (xcodebuild 65; zero tests). After implementation,
+the first seven injected store/retry/relaunch/UI/runner contracts passed **7/7
+in 36 s**. A ninth actor-reentrancy contract then reproduced the stale-probe
+bug **0/1 in 46 s**: the old resolver threw, changed ready back to checking and
+opened an observer/ensure pair. After the post-await authority fence, that exact
+test passed **1/1 in 35 s**, and the final focused selection passed **9/9 in
+33 s**, with zero failures, skips, expected failures or host restarts and
+`** TEST SUCCEEDED **`. The updated
+compiled-only runtime probe also passes and
+now forbids reintroducing the undocumented unit-count/byte assumption. Wider
+offline regression then passed **97/97 in 74 s** across the asset store, import
+lifecycle, camera projection, disclosure, orchestration, derivative isolation,
+offline muscle chain, decode-memory and native-window suites, again with zero
+failures, skips, expected failures or restarts. These selections are focused
+diagnostic evidence; the final protected gate remains separate.
+
+The first complete fast execution on this tree ran **652/652 in 1,366 s**, with
+zero failures, skips, expected failures or host restarts, but correctly failed
+closed because the runner still expected 642. The count audit is exact rather
+than inferred from that result: the last reviewed 633 baseline plus the prior
+video-lifecycle slice's seven new lifecycle methods and three new camera/cancel
+methods, plus this slice's nine Asset Pack methods, is **633 + 10 + 9 = 652**.
+The runner, its 53-case fail-closed harness and current operational docs now use
+652. That count-mismatch execution is evidence for the inventory audit, not a
+passing commit-gate receipt; the protected fast/slow gate is rerun separately.
+
+The exact final-source protected commit gate then passed end to end.
+`tools/run_tests.sh all` executed the fast lane **652/652** (the structured
+xcresult interval was **1,374.494 s**) and the slow E1 lane **1/1** (runner wall
+time **6,114 s**; XCTest **6,106.721 s**). Both lanes had zero failures, skips,
+expected failures or test-host restarts; `xcodebuild` and `xcresulttool` both
+exited zero, both final verdicts were `TEST SUCCEEDED`, and the runner emitted
+`ALL GATE PASS`. The receipts are beneath `/tmp/biomotion-tests.SbMAmG`; the
+production-source hashes checked after the run matched the hashes captured
+before it started.
+
+This is a local state-machine and Simulator compile receipt, not proof of hosted
+delivery. A replacement compliant AAR has not been uploaded; App Store Connect
+version 1 remains obsolete because it omits the lock and license. Explicitly
+authorized replacement upload, real TestFlight progress/pause/relaunch events,
+Apple-hosted leaf resolution, `MLModel(contentsOf:)`, and one inference remain
+external release evidence.
 
 
 ## IK convergence: the solver is now a fixed point (2026-08-07)

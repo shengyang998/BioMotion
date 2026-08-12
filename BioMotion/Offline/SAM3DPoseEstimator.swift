@@ -204,8 +204,8 @@ final class SAM3DPoseEstimator {
     // MARK: - Loading
 
     /// Observable download state for the Background Assets pack that carries the
-    /// weights. Exposed so a view can show live progress; the message on the
-    /// error thrown by `loadModelIfNeeded()` already carries the same numbers.
+    /// weights. The import view reads this live state; a thrown availability
+    /// error is only the runner's prompt non-blocking control-flow signal.
     @MainActor static var modelStore: AssetPackModelStore { AssetPackModelStore.shared }
 
     /// An estimator is constructed when the import screen appears, several user
@@ -225,8 +225,9 @@ final class SAM3DPoseEstimator {
     /// The 1.31 GiB model is no longer in the app bundle; it arrives as an
     /// Apple-Hosted Managed Background Assets pack. `AssetPackModelStore`
     /// resolves it (preferring a bundled developer copy when one exists) and,
-    /// when the pack has not arrived yet, throws promptly with a message that
-    /// states the download percentage — this call never blocks on the transfer.
+    /// when the pack has not arrived yet, throws promptly while the observed
+    /// store publishes checking, system progress, pause, retry and ready. This
+    /// call never blocks on the transfer.
     func loadModelIfNeeded() async throws {
         if model != nil { return }
         let url = try await AssetPackModelStore.shared.resolveCompiledModelURL()

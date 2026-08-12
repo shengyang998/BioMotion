@@ -97,6 +97,7 @@
 		CF9ACF63C6AA5E0514A60D74 /* GaitLoadSummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2021A035EB1CD21341A0AF09 /* GaitLoadSummaryTests.swift */; };
 		D093D465CAC7E39DD39FDCE5 /* TRCExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D7EE8254FA65A2ED3CA941A /* TRCExporter.swift */; };
 		D0CA7F6666EE286577915C91 /* BodyFrameOrientationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */; };
+		D3D5AB47B6392C142C1403A4 /* AssetPackModelStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 480EB720142F377CE1A546FB /* AssetPackModelStoreTests.swift */; };
 		D5042C5568E0CC26BBB00D03 /* ShoulderRotMaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */; };
 		D59E7A15DFCE266734AE626E /* OfflineDerivativeIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EB06662FAF6CC71EDFBD44 /* OfflineDerivativeIsolationTests.swift */; };
 		D6ACBD79AA382B7E59CAF0A3 /* MomentArmComputer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7CC0C79CED5BDA3ECDCC98F2 /* MomentArmComputer.mm */; };
@@ -191,6 +192,7 @@
 		4472D307677A7F2DBB60C275 /* AssetPackModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetPackModelStore.swift; sourceTree = "<group>"; };
 		45C4166CB3ABFC531B03D4E1 /* GaitClaimSurvivalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitClaimSurvivalTests.swift; sourceTree = "<group>"; };
 		47A0577D615043AFBD9112E8 /* GaitLoadSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitLoadSummary.swift; sourceTree = "<group>"; };
+		480EB720142F377CE1A546FB /* AssetPackModelStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetPackModelStoreTests.swift; sourceTree = "<group>"; };
 		4874B31C9C33272450AE6B44 /* GaitDynamicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitDynamicsTests.swift; sourceTree = "<group>"; };
 		4A5E8807D42FF44784FCF22F /* OneEuroFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneEuroFilter.swift; sourceTree = "<group>"; };
 		4AEC9BFD12C6D6FC08E98C76 /* TRCExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TRCExporterTests.swift; sourceTree = "<group>"; };
@@ -326,6 +328,7 @@
 		2F98D548592CA55E3235266C /* BioMotionTests */ = {
 			isa = PBXGroup;
 			children = (
+				480EB720142F377CE1A546FB /* AssetPackModelStoreTests.swift */,
 				C238EC8275B15A189EEC70FE /* BioMotionTests-Bridging-Header.h */,
 				2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */,
 				39C64A42A229077EC3CF47FD /* BodyJointTests.swift */,
@@ -773,6 +776,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D3D5AB47B6392C142C1403A4 /* AssetPackModelStoreTests.swift in Sources */,
 				D0CA7F6666EE286577915C91 /* BodyFrameOrientationTests.swift in Sources */,
 				32F526B0CAC7BDF4677DC5BF /* BodyJointTests.swift in Sources */,
 				C75C2BE5D8B1D4D7FC19605E /* BodyPlausibilityTests.swift in Sources */,

@@ -29,6 +29,8 @@ OfflineImportView (PhotosPicker: photo or video)
      UUID directory; an AppOwnedTemporaryVideo owns that copy
   -> OfflineSessionRunner.run(source:samplingMode:)
        -> poseEstimator.loadModelIfNeeded()          [SAM3DPoseEstimator]
+          missing pack -> .waitingForModel; release engine lease
+                          while the independent iOS download continues
        -> wait for nimble.isModelLoaded               [poll, ≤10s]
        -> snapshot contact capability
        -> nimble.resetSessionState()                  [new clip: clear IK/QP and ground provenance]
@@ -604,11 +606,27 @@ explicit constraint. Loading happens on a dedicated background queue via a
 checked continuation. `AssetPackModelStore` resolves only a precompiled
 `SAM3DBodyPose.mlmodelc`: first the optional developer-bundled copy, then the
 Managed Background Assets pack. It never accepts or compiles a raw `.mlpackage`
-at runtime. If neither copy is local, it starts or joins the system-managed
-download and throws promptly with the observed progress or real failure reason;
-the UI publishes that failure state without crashing or silently skipping the
-model. Core ML loading itself remains indeterminate because
-`MLModel(contentsOf:)` exposes no progress callback.
+at runtime. If neither copy is local, it starts or rejoins one system-managed
+attempt and returns promptly. The import view observes the store rather than a
+one-time runner error: `.checking` is indeterminate, `.downloading` uses only
+the system fraction, `.paused` retains the last real fraction without claiming
+continued transfer, `.unavailable` offers Retry, and a verified model leaf
+publishes `.ready`. The runner maps the normal wait to `.waitingForModel`,
+releases its engine lease, and reserves `.failed`/Diagnostics for a real Core ML
+load or inference error. Run is disabled until ready, but selection remains
+available; download completion never starts analysis without another explicit
+Run.
+
+Each retry creates one generation and one observer/ensure pair; the observer is
+constructed before ensure can start. A late event or continuation from A cannot
+overwrite B, and a resolver returning from an older asynchronous probe rechecks
+the cached winner before it can publish or open an attempt. Relaunch recovery deliberately persists
+no percentage, resume data, pack object, or pack URL: it probes again,
+subscribes again and asks iOS to ensure the same pack, allowing the system to
+rejoin its own partial download. `Progress` unit counts are not documented as
+bytes, so the UI does not fabricate MB values. Closing the sheet or cancelling
+analysis leaves the OS-managed transfer alone. Core ML loading itself remains
+indeterminate because `MLModel(contentsOf:)` exposes no progress callback.
 
 ## Preprocessing — derivation and verification
 
@@ -703,8 +721,11 @@ derivation now agree; pixel-level resampling remains the separate boundary below
   alone without invalidating its lock and artifact receipts, so the export owner
   must correct and republish that prose before rotations become product input.
 - The Core ML array APIs and the real names/shapes/dtypes compile in the app and
-  are pinned by the artifact lock. Loading the shipping Managed Background
-  Assets copy still needs the real-device/TestFlight receipt described in STATUS.
+  are pinned by the artifact lock. The SDK documents directory/package URL
+  lookup; this runtime resolves the required `coremldata.bin` leaf and recovers
+  its parent. Actual Apple-hosted leaf delivery, real progress/pause/relaunch
+  events, and `MLModel(contentsOf:)` loading the pack copy still need the
+  real-device/TestFlight receipt described in STATUS.
 - `VNDetectHumanRectanglesRequest` behavior on real photos (confidence
   ranking, bbox tightness) — Vision framework usage is standard but untested
   here.

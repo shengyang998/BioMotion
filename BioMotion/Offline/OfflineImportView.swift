@@ -17,6 +17,10 @@ struct OfflineImportView: View {
     @ObservedObject var nimble: NimbleEngine
     let onDismiss: () -> Void
 
+    /// The transfer belongs to iOS rather than this sheet. Observing the shared
+    /// store keeps its system-reported state visible while selection, run, and
+    /// Close remain independent lifecycle controls.
+    @ObservedObject private var modelStore: AssetPackModelStore
     @StateObject private var runner: OfflineSessionRunner
     @State private var pickerItem: PhotosPickerItem?
     @State private var selection = OfflineImportSelectionState()
@@ -33,6 +37,7 @@ struct OfflineImportView: View {
     init(nimble: NimbleEngine, onDismiss: @escaping () -> Void) {
         self.nimble = nimble
         self.onDismiss = onDismiss
+        _modelStore = ObservedObject(wrappedValue: AssetPackModelStore.shared)
         _runner = StateObject(wrappedValue: OfflineSessionRunner(nimble: nimble))
     }
 
@@ -40,6 +45,7 @@ struct OfflineImportView: View {
         NavigationStack {
             Form {
                 pickerSection
+                modelAvailabilitySection
                 if selection.selectedPhoto != nil || selection.selectedVideo != nil {
                     samplingSection
                     runSection
@@ -168,6 +174,64 @@ struct OfflineImportView: View {
 
     // MARK: - Sections
 
+    @ViewBuilder
+    private var modelAvailabilitySection: some View {
+        switch modelStore.state {
+        case .checking:
+            Section("Pose Model") {
+                HStack {
+                    ProgressView()
+                    Text("Checking pose model availability…")
+                }
+                if let message = modelStore.state.message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        case .downloading(let progress):
+            Section("Pose Model") {
+                ProgressView(value: progress.fraction) {
+                    Text("Downloading pose model…")
+                } currentValueLabel: {
+                    Text("\(Int((progress.fraction * 100).rounded()))%")
+                }
+                if let message = modelStore.state.message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        case .paused(let progress):
+            Section("Pose Model") {
+                if let progress {
+                    ProgressView(value: progress.fraction) {
+                        Text("Pose model download paused")
+                    } currentValueLabel: {
+                        Text("\(Int((progress.fraction * 100).rounded()))%")
+                    }
+                } else {
+                    Label("Pose model download paused", systemImage: "pause.circle")
+                }
+                if let message = modelStore.state.message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        case .unavailable(let message):
+            Section("Pose Model") {
+                Text(message)
+                    .foregroundStyle(.red)
+                Button("Retry") {
+                    Task { await modelStore.retryDownload() }
+                }
+            }
+        case .ready:
+            EmptyView()
+        }
+    }
+
     private var pickerSection: some View {
         Section {
             PhotosPicker(selection: $pickerItem, matching: .any(of: [.images, .videos])) {
@@ -243,7 +307,11 @@ struct OfflineImportView: View {
             Button(action: startRun) {
                 runButtonLabel
             }
-            .disabled(isRunning || selection.isLoading)
+            .disabled(
+                isRunning
+                    || selection.isLoading
+                    || !modelStore.state.allowsModelLoadAttempt
+            )
 
             if isRunning {
                 Button("Cancel", role: .destructive) { runner.cancel() }
@@ -258,6 +326,12 @@ struct OfflineImportView: View {
             HStack { ProgressView(); Text("Checking camera reference…") }
         case .loadingModel:
             HStack { ProgressView(); Text("Loading pose model…") }
+        case .waitingForModel:
+            Text(
+                modelStore.state.allowsModelLoadAttempt
+                    ? "Run"
+                    : "Waiting for pose model…"
+            )
         case .decodingFrames:
             HStack { ProgressView(); Text("Reading video…") }
         case .running(let current, let total, let etaSeconds):
@@ -293,6 +367,7 @@ struct OfflineImportView: View {
     }
 
     private func startRun() {
+        guard modelStore.state.allowsModelLoadAttempt else { return }
         if let selectedPhoto = selection.selectedPhoto {
             runner.run(source: .photo(selectedPhoto), samplingMode: .singleFrame)
         } else if let selectedVideo = selection.selectedVideo {

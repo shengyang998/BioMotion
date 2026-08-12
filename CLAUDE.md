@@ -82,11 +82,11 @@ ObjC++ wrappers in `BioMotion/Nimble/` and `BioMotion/Muscle/`:
 | `BioMotion/ARKit/MuscleOverlay.swift` | 3-D muscle **anatomy** capsules — fixed set, one colour, no activation input. Read its type doc before adding anything magnitude-shaped |
 | `BioMotion/Nimble/NimbleEngine.swift` | Orchestrates IK and fail-closed gates on a serial queue. `processFrame` returns an exact generation/submission receipt; publication authority, physical solver occupancy, and engine-global offline policy ownership are separate leases. Contact capability is checked before camera authorization and any unauthorized solve stops before `solveIDGRF` |
 | `BioMotion/Offline/CameraMotionAnalyzer.swift`, `CameraMotionVideoAnalyzer.swift` | Clip-level camera policy/adapter: contact-first admission, typed versioned calibration fingerprint, ≤4 s/≤1000 native samples, actual-PTS cadence/coverage, upright bounded raster, person-excluded background registration, and translation/rotation/scale reduction. Production has no profile and skips the pass fail-closed |
-| `BioMotion/Offline/` | Photo/video path: `FrameSource`, `SAM3DPoseEstimator`, `MHRRetarget`, `OfflineSessionRunner` (engine lease, exact receipt wait/routing, camera-state finalization, batch + SG padding), `OfflineResultStore` (second dynamics projection), and playback/overlay views |
+| `BioMotion/Offline/` | Photo/video path: `FrameSource`, `SAM3DPoseEstimator`, `MHRRetarget`, `OfflineSessionRunner` (engine lease, exact receipt wait/routing, `.waitingForModel`, camera-state finalization, batch + SG padding), `OfflineResultStore` (second dynamics projection), and playback/overlay views |
 | `BioMotion/Findings/` | `PostureFindings` + `PostureFindingsPanel` — kinematics-only posture measurements with view gating. **No clinical thresholds, no verdicts.** |
 | `BioMotion/Gait/GaitAnalysis.swift` | Pure frames-in/report-out gait pass. Owns the product's ONE surviving left/right claim: `contactClaimFloorPercent` = `max(timing resolution, contact-duration sampling half-width)`. Never gate a claim on `GaitResolution` alone |
 | `BioMotion/Gait/MeanDifferenceUncertainty.swift` | The single Student-t half-width of a difference of two means, plus `StudentT`. Both the contact-time claim and the muscle path call it — a third claim must not reimplement it |
-| `BioMotion/CoreML/`, `BioMotion/AssetPack/` | Core ML model loading and the Apple-Hosted Background Asset that delivers it (the 1.3 GiB model is NOT in the app bundle; archived payload is 8 MB) |
+| `BioMotion/CoreML/`, `BioMotion/AssetPack/` | Core ML loading and observable, single-flight, generation-fenced Apple-Hosted Background Asset delivery (the 1.3 GiB model is NOT in the app bundle; archived payload measured 0.0069 GiB / 7.0 MiB) |
 | `BioMotion/Recording/TRCExporter.swift` | OpenSim .trc export |
 | `BioMotion/App/CalibrationView.swift` | T-pose calibration with live camera (live path only — the offline path scales from one frame's chain sums, see `MHRRetarget.segmentScaleMarkers`) |
 | `BioMotion/Muscle/osqp_interrupt_stub.c` | OSQP interrupt handler stub for iOS |
@@ -121,6 +121,22 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
 
 ## Gotchas
 
+- **Managed Background Assets progress is system truth.** Display only the
+  finite/clamped `Progress.fractionCompleted`; its unit counts are not documented
+  as bytes and must never be labelled MB. A missing model is `.waitingForModel`,
+  not runner `.failed`: the shared store owns checking/downloading/paused,
+  explicit Retry and automatic ready-after-leaf-probe. Each attempt constructs
+  its observer before ensure, gets one generation, and prevents A from
+  publishing into B. After every awaited pack probe, recheck the cached URL:
+  the main actor is re-entrant and an older nil probe must not reopen a ready
+  store. Relaunch
+  probes and rejoins through iOS; never persist a percentage, resume data,
+  `AssetPack` or pack URL. Resolve the required
+  `SAM3DBodyPose.mlmodelc/coremldata.bin` leaf and take its parent, even though
+  the SDK also documents directory/package URLs. Closing the import sheet or
+  cancelling analysis must not cancel the OS transfer. Injected tests and the
+  Simulator prove local state/UI behavior only; TestFlight CDN events, relaunch
+  recovery and `MLModel(contentsOf:)` still need a device receipt.
 - **Nimble build boundary**: use CMake 3.24+ with Ninja and configure with
   root-relative `cmake --fresh -S nimblephysics/ios -B
   nimblephysics/build_ios` / `build_sim`. Each build tree owns its generated
@@ -169,11 +185,11 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   directly through its `#!/bin/bash -p` shebang or explicitly with
   `/bin/bash -p`. `bash script.sh` is unsupported and is not evidence because
   hostile `BASH_ENV` content can execute before the script reaches its own
-  guard or sanitizer. The adversarial dependency suite passes **79/79**. The
-  pre-slice full-fast baseline is **633/633** in 1,370 s; after the tracked-first
-  header change a fresh diagnostic subset passed **1/1** in 38 s. The final
-  full-fast receipt then passed **633/633** in 1,365 s, with zero failures,
-  skips, expected failures, or test-host restarts.
+  guard or sanitizer. The adversarial dependency suite passes **79/79**. On the
+  reviewed Asset Pack tree, the protected gate passes fast **652/652** and slow
+  **1/1**, with zero failures, skips, expected failures, or test-host restarts;
+  its structured receipts are under `/tmp/biomotion-tests.SbMAmG`. Hosted pack
+  delivery remains separate TestFlight/device evidence.
 - **Release archive provenance**: never hand-run `xcodebuild archive`. After
   XcodeGen, execute `tools/release/archive_release.sh` directly or with
   `/bin/bash -p`; it compares the full observed dependency snapshot before and
@@ -399,7 +415,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 633 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 652 non-E1 tests, `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

@@ -181,6 +181,9 @@ final class OfflineSessionRunner: ObservableObject {
         case idle
         case checkingCameraReference
         case loadingModel
+        /// The system-managed model pack is not local yet. The runner has
+        /// released its engine lease; the independent OS transfer continues.
+        case waitingForModel
         case decodingFrames
         case running(current: Int, total: Int, etaSeconds: Double?)
         case finished(processed: Int, failed: Int, cancelled: Bool)
@@ -505,6 +508,20 @@ final class OfflineSessionRunner: ObservableObject {
         setPhase(.loadingModel, for: token)
         do {
             try await poseEstimator.loadModelIfNeeded()
+        } catch is CancellationError {
+            finishCancelledIfCurrent(token, processed: 0, failed: 0)
+            return
+        } catch is AssetPackModelStore.Unavailable {
+            guard isRunActive(token) else {
+                finishCancelledIfCurrent(token, processed: 0, failed: 0)
+                return
+            }
+            // Missing/downloading/paused asset-pack state is an availability
+            // wait, not evidence that Core ML failed. Keeping it out of
+            // `.failed` also keeps model diagnostics reserved for real load or
+            // inference faults.
+            setPhase(.waitingForModel, for: token)
+            return
         } catch {
             guard isRunActive(token) else {
                 finishCancelledIfCurrent(token, processed: 0, failed: 0)

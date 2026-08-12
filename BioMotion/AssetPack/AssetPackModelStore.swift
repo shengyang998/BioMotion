@@ -1,120 +1,198 @@
 import BackgroundAssets
+import Combine
 import Foundation
 import System
 
 /// Resolves the SAM 3D Body Core ML model, which is **not** in the app bundle.
 ///
-/// # Why
-/// `SAM3DBodyPose.mlmodelc` is 1.31 GiB — it was 99.5% of a 1.3151 GiB app
-/// download (measured on the 2026-08-07 Release archive). The weights never
-/// change between app versions, so they now ship as an Apple-Hosted **Managed
-/// Background Assets** pack (iOS 26): the OS fetches the pack from Apple's CDN
-/// and stores it outside the app bundle, and app updates no longer re-download
-/// it. ODR is not used — it is deprecated as of iOS 27.
-///
-/// # What is in the pack: a PRE-COMPILED model
-/// Asset delivery has no Xcode build step. Both production packs and local
-/// developer bundles therefore carry the already-compiled directory produced
-/// and receipt-verified by `tools/assetpack/package.sh` rather than accepting a
-/// source model at runtime, because:
-///
-///   * `.mlmodelc` is byte-for-byte the artifact Xcode already put in the app
-///     bundle, loaded by exactly the same `MLModel(contentsOf:)` call that has
-///     been running on this project's device builds. Nothing about the load
-///     path changes — only where the directory lives.
-///   * On-device compilation of a 1.3 GiB package would need the package
-///     *and* its compiled output resident at once (~2.6 GiB of the user's
-///     disk), and the output would have to live in the app container, where
-///     the OS cannot evict or update it. Keeping only `.mlmodelc`, inside the
-///     system-managed asset container, halves the disk cost and lets iOS
-///     manage it.
-///   * Compilation would land on the user's first import, adding a long,
-///     unattributable stall to an action that already runs a heavy pipeline.
-///
-/// # Resolution order (first hit wins)
-///   1. `SAM3DBodyPose.mlmodelc` in the app bundle  — developer builds and the
-///      Simulator, where Background Assets serves no packs at all. Populate it
-///      with `tools/assetpack/dev_bundle_model.sh on`.
-///   2. `SAM3DBodyPose.mlmodelc` in the asset pack   — the shipping path.
-///   3. Nothing available: kick the download off and throw `.downloading`
-///      carrying live progress, or `.unavailable` with the real reason.
-///
-/// # This never blocks on a 1.31 GiB download
-/// `resolveCompiledModelURL()` returns (or throws) promptly. When the pack is
-/// missing it starts the transfer in the background and reports the percentage
-/// so far, so the caller's UI shows a real, advancing number instead of an
-/// indefinite spinner. Retrying picks up the download already in flight.
+/// Shipping builds obtain the precompiled model from an Apple-hosted Managed
+/// Background Assets pack. `resolveCompiledModelURL()` never waits for the
+/// 1.3 GiB transfer: it either returns a model that is already local or starts
+/// (or joins) one system-managed attempt and throws `Unavailable` immediately.
+/// Its progress fraction is driven only by Background Assets events; there is
+/// no timer-based or byte-count-derived synthetic progress.
 @MainActor
 final class AssetPackModelStore: ObservableObject {
 
-    static let shared = AssetPackModelStore()
-
-    /// Must match `AssetPackIdentity.modelPackID` in the Downloader extension
-    /// and `assetPackID` in `tools/assetpack/Manifest.json`.
     nonisolated static let assetPackID = "sam3d-body-pose"
     nonisolated static let modelBaseName = "SAM3DBodyPose"
     nonisolated static let compiledModelFileName = "SAM3DBodyPose.mlmodelc"
     nonisolated static let compiledModelInteriorFileName = "coremldata.bin"
 
-    /// Where the model came from — surfaced so a bug report can say whether a
-    /// device was running the bundled developer copy or the shipping pack.
-    enum Provenance: String {
+    enum Provenance: String, Equatable, Sendable {
         case bundledCompiled = "app bundle (compiled)"
         case assetPackCompiled = "asset pack"
     }
 
-    enum State: Equatable {
-        case idle
-        case ready(Provenance)
-        case downloading(fraction: Double, receivedBytes: Int64, totalBytes: Int64)
-        case unavailable(String)
+    /// Progress reported by Background Assets. Foundation's `Progress` unit
+    /// counts are deliberately not exposed: Apple does not document them as
+    /// bytes, so presenting them as MB would invent information.
+    struct DownloadProgress: Equatable, Sendable {
+        let fraction: Double
+
+        init(fraction: Double) {
+            guard fraction.isFinite else {
+                self.fraction = 0
+                return
+            }
+            self.fraction = min(max(fraction, 0), 1)
+        }
     }
 
-    /// Observable so a view can render live progress. Nothing in the app
-    /// observes it yet; `OfflineImportView` currently surfaces the same
-    /// information through the message on the thrown `Unavailable` error. A
-    /// live progress bar is one `@ObservedObject var store = AssetPackModelStore.shared`
-    /// away.
-    @Published private(set) var state: State = .idle
+    enum State: Equatable, Sendable {
+        /// Looking up the pack, waiting for the first status event, or verifying
+        /// a `finished` event by probing the model leaf.
+        case checking
+        case downloading(DownloadProgress)
+        /// The last real system fraction is retained when one exists, but the
+        /// message does not claim that a paused transfer is still advancing.
+        case paused(DownloadProgress?)
+        case ready(Provenance)
+        case unavailable(String)
 
-    /// Thrown instead of blocking. `message` is written to be shown verbatim to
-    /// the user.
+        var message: String? {
+            switch self {
+            case .checking:
+                return "Checking the pose model download…"
+            case .downloading(let progress):
+                return AssetPackModelStore.progressMessage(progress)
+            case .paused(let progress):
+                let suffix = progress.map {
+                    " at \(AssetPackModelStore.percent($0.fraction))%"
+                } ?? ""
+                return "The pose model download was paused by iOS\(suffix). "
+                    + "It will resume when system conditions allow."
+            case .ready:
+                return nil
+            case .unavailable(let reason):
+                return reason
+            }
+        }
+
+        /// Loading unless the model is ready would only repeat `Unavailable`.
+        /// A terminal diagnostic has its own explicit `retryDownload()` path.
+        var allowsModelLoadAttempt: Bool {
+            switch self {
+            case .ready:
+                return true
+            case .checking, .downloading, .paused, .unavailable:
+                return false
+            }
+        }
+    }
+
+    /// Small, Sendable surface between the live Background Assets adapter and
+    /// the deterministic state machine used by tests.
+    enum DownloadEvent: Equatable, Sendable {
+        case began
+        case paused
+        case downloading(fraction: Double)
+        case finished
+        case failed(String)
+    }
+
+    struct Dependencies: Sendable {
+        let bundledCompiledModelURL: @Sendable () -> URL?
+        let assetPackCompiledModelURL: @Sendable () async -> URL?
+        let ensureLocalAvailability: @Sendable () async throws -> Void
+        let statusUpdates: @Sendable () -> AsyncStream<DownloadEvent>
+
+        nonisolated static var live: Dependencies {
+            Dependencies(
+                bundledCompiledModelURL: {
+                    AssetPackModelStore.bundledCompiledModelURL()
+                },
+                assetPackCompiledModelURL: {
+                    await AssetPackModelStore.probeAssetPack()
+                },
+                ensureLocalAvailability: {
+                    try await AssetPackModelStore.ensureLiveAvailability()
+                },
+                statusUpdates: {
+                    AssetPackModelStore.liveStatusUpdates()
+                }
+            )
+        }
+    }
+
     struct Unavailable: LocalizedError {
         let message: String
-        var errorDescription: String? { message }
-        /// True while a transfer is in flight — the caller can offer "try again"
-        /// rather than treating this as a hard failure.
         let isDownloading: Bool
+        var errorDescription: String? { message }
     }
 
-    private var downloadTask: Task<Void, Never>?
+    static let shared = AssetPackModelStore(dependencies: .live)
+
+    @Published private(set) var state: State = .checking
+
+    private let dependencies: Dependencies
+    private var resolvedModelURL: URL?
+    private var resolvedProvenance: Provenance?
+    private var nextGeneration: UInt64 = 0
+    private var activeGeneration: UInt64?
+    private var lastProgress: DownloadProgress?
+    private var ensureTask: Task<Void, Never>?
     private var progressTask: Task<Void, Never>?
 
-    private init() {}
-
-    // MARK: - Entry point
-
-    /// Returns a URL to a **compiled** Core ML model directory, or throws
-    /// `Unavailable` with a user-facing message. Idempotent and cheap after the
-    /// first success.
-    func resolveCompiledModelURL() async throws -> URL {
-        if let url = Self.bundledCompiledModelURL() {
-            state = .ready(.bundledCompiled)
-            return url
-        }
-        if let url = await Self.probeAssetPack() {
-            cancelProgressWatch()
-            state = .ready(.assetPackCompiled)
-            return url
-        }
-        throw startDownloadAndDescribe()
+    init(dependencies: Dependencies) {
+        self.dependencies = dependencies
     }
 
-    /// Same work as `resolveCompiledModelURL()` but the result is discarded —
-    /// call it as soon as the model is *plausibly* about to be needed so the
-    /// download has a head start. Logs the outcome; that log line is the only
-    /// way to tell a Simulator/dev build apart from a real pack load without a
-    /// debugger attached.
+    // MARK: - Entry points
+
+    /// Returns a URL to a precompiled Core ML model that is already local. A
+    /// missing model starts exactly one background attempt and throws promptly.
+    func resolveCompiledModelURL() async throws -> URL {
+        if let bundled = dependencies.bundledCompiledModelURL() {
+            finishWithoutAttempt(url: bundled, provenance: .bundledCompiled)
+            return bundled
+        }
+        if let resolvedModelURL {
+            return resolvedModelURL
+        }
+        let packed = await dependencies.assetPackCompiledModelURL()
+        // The actor is re-entrant across the probe. Another resolve/ensure may
+        // have published the authoritative URL while this older lookup was
+        // suspended; never let the stale continuation reopen an attempt or
+        // replace that ready state.
+        if let resolvedModelURL {
+            return resolvedModelURL
+        }
+        if let packed {
+            finishWithoutAttempt(url: packed, provenance: .assetPackCompiled)
+            return packed
+        }
+
+        if activeGeneration == nil {
+            // A terminal failure is stable until the user explicitly retries;
+            // repeated model-load calls must not manufacture concurrent work.
+            if case .unavailable(let reason) = state {
+                throw Unavailable(message: reason, isDownloading: false)
+            }
+            startAttempt()
+        }
+        throw unavailableForCurrentState()
+    }
+
+    /// Explicit retry after a terminal failure. Repeated taps are single-flight.
+    func retryDownload() async {
+        guard activeGeneration == nil else { return }
+
+        if let bundled = dependencies.bundledCompiledModelURL() {
+            finishWithoutAttempt(url: bundled, provenance: .bundledCompiled)
+            return
+        }
+        if resolvedModelURL != nil {
+            state = .ready(resolvedProvenance ?? .assetPackCompiled)
+            return
+        }
+        // `startAttempt` reserves the generation before synchronously moving
+        // off the old diagnostic to `.checking`. The system ensure call rejoins
+        // an existing transfer and returns promptly if it is already local, so
+        // a separate async pre-probe would only widen the double-tap race.
+        startAttempt()
+    }
+
     func beginPrefetch() async {
         do {
             _ = try await resolveCompiledModelURL()
@@ -124,147 +202,250 @@ final class AssetPackModelStore: ObservableObject {
         }
     }
 
-    /// Off the main actor: `AssetPackManager.url(for:)` is synchronous and hits
-    /// the filesystem / asset index, so probing it inline would block the UI.
-    /// (The sibling locate-anything-ios store hit exactly this.)
-    private nonisolated static func probeAssetPack() async -> URL? {
-        await Task.detached(priority: .userInitiated) { () -> URL? in
-            assetPackURL(for: compiledModelFileName)
-        }.value
+    // MARK: - Attempt state machine
+
+    private func startAttempt() {
+        guard activeGeneration == nil else { return }
+
+        nextGeneration &+= 1
+        let generation = nextGeneration
+        activeGeneration = generation
+        lastProgress = nil
+        state = .checking
+
+        let dependencies = dependencies
+        // Construct the per-pack sequence before starting `ensure`. The live
+        // Background Assets sequence subscribes at construction time, so a
+        // fast began/paused transition cannot happen in the gap between the
+        // request and observer installation.
+        let statusUpdates = dependencies.statusUpdates()
+        progressTask = Task { [weak self, statusUpdates] in
+            for await event in statusUpdates {
+                guard !Task.isCancelled, let self else { return }
+                self.apply(event, generation: generation)
+                guard self.activeGeneration == generation else { return }
+            }
+        }
+
+        ensureTask = Task { [weak self, dependencies] in
+            do {
+                try await dependencies.ensureLocalAvailability()
+                let compiledModel = await dependencies.assetPackCompiledModelURL()
+                guard let self else { return }
+                if let compiledModel {
+                    self.finishAttempt(
+                        generation: generation,
+                        state: .ready(.assetPackCompiled),
+                        resolvedURL: compiledModel
+                    )
+                } else {
+                    self.finishAttempt(
+                        generation: generation,
+                        state: .unavailable(Self.packMismatchMessage),
+                        resolvedURL: nil
+                    )
+                }
+            } catch {
+                guard let self else { return }
+                self.finishAttempt(
+                    generation: generation,
+                    state: .unavailable(Self.describe(error)),
+                    resolvedURL: nil
+                )
+            }
+        }
     }
 
-    // MARK: - App bundle (developer / Simulator path)
+    private func apply(_ event: DownloadEvent, generation: UInt64) {
+        guard activeGeneration == generation else { return }
+
+        switch event {
+        case .began:
+            state = .checking
+        case .downloading(let fraction):
+            let progress = DownloadProgress(fraction: fraction)
+            lastProgress = progress
+            state = .downloading(progress)
+        case .paused:
+            state = .paused(lastProgress)
+        case .finished:
+            // `finished` describes the transfer, not the contents. The matching
+            // ensure completion performs the authoritative leaf probe.
+            state = .checking
+        case .failed(let reason):
+            finishAttempt(
+                generation: generation,
+                state: .unavailable(reason),
+                resolvedURL: nil
+            )
+        }
+    }
+
+    /// The generation guard is the authority boundary: a cancelled attempt's
+    /// stream or checked continuation may complete later, but cannot touch B.
+    private func finishAttempt(
+        generation: UInt64,
+        state terminalState: State,
+        resolvedURL: URL?
+    ) {
+        guard activeGeneration == generation else { return }
+        activeGeneration = nil
+        lastProgress = nil
+        if let resolvedURL {
+            self.resolvedModelURL = resolvedURL
+            resolvedProvenance = .assetPackCompiled
+        }
+        progressTask?.cancel()
+        progressTask = nil
+        ensureTask?.cancel()
+        ensureTask = nil
+        state = terminalState
+    }
+
+    private func finishWithoutAttempt(url: URL, provenance: Provenance) {
+        activeGeneration = nil
+        lastProgress = nil
+        resolvedModelURL = url
+        resolvedProvenance = provenance
+        progressTask?.cancel()
+        progressTask = nil
+        ensureTask?.cancel()
+        ensureTask = nil
+        state = .ready(provenance)
+    }
+
+    private func unavailableForCurrentState() -> Unavailable {
+        switch state {
+        case .checking:
+            return Unavailable(
+                message: state.message ?? "Checking the pose model download…",
+                isDownloading: true
+            )
+        case .downloading:
+            return Unavailable(message: state.message ?? "Downloading the pose model…", isDownloading: true)
+        case .paused:
+            return Unavailable(message: state.message ?? "The pose model download is paused.", isDownloading: false)
+        case .unavailable(let reason):
+            return Unavailable(message: reason, isDownloading: false)
+        case .ready:
+            return Unavailable(
+                message: "The pose model became ready; try the load again.",
+                isDownloading: false
+            )
+        }
+    }
+
+    // MARK: - Live Background Assets adapter
+
+    /// Looks up a leaf known to exist in every compiled model, then recovers its
+    /// `.mlmodelc` parent directory. Background Assets also supports directory
+    /// lookups, but a pack can merge content from shared directories; resolving
+    /// the required leaf proves this particular model payload is present.
+    private nonisolated static func assetPackURL() -> URL? {
+        let leafPath = "\(compiledModelFileName)/\(compiledModelInteriorFileName)"
+        guard let leaf = try? AssetPackManager.shared.url(for: FilePath(leafPath)),
+              FileManager.default.fileExists(atPath: leaf.path) else {
+            return nil
+        }
+
+        let container = leaf.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: container.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue else {
+            return nil
+        }
+        return container
+    }
 
     private nonisolated static func bundledCompiledModelURL() -> URL? {
-        guard let url = Bundle.main.url(forResource: modelBaseName, withExtension: "mlmodelc") else { return nil }
+        guard let url = Bundle.main.url(
+            forResource: modelBaseName,
+            withExtension: "mlmodelc"
+        ) else {
+            return nil
+        }
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    // MARK: - Asset pack lookup
-
-    /// `AssetPackManager.url(for:)` is documented against files. `.mlmodelc` is a
-    /// *directory*, and `ba-package`'s directory selector does preserve it as a
-    /// directory entry (verified locally: the archive lists
-    /// `Contents/SAM3DBodyPose.mlmodelc` and its children). Asking for the
-    /// directory path directly is therefore the expected call — but it is the
-    /// one thing here that cannot be exercised without a device, because
-    /// Background Assets serves no packs in the Simulator. If it turns out the
-    /// manager only indexes leaf files, `coremldata.bin` recovers the directory
-    /// from a file that is guaranteed to exist inside every compiled model.
-    private nonisolated static func assetPackURL(for fileName: String) -> URL? {
-        if let direct = try? AssetPackManager.shared.url(for: FilePath(fileName)),
-           FileManager.default.fileExists(atPath: direct.path) {
-            return direct
-        }
-        guard let inner = try? AssetPackManager.shared.url(
-            for: FilePath("\(fileName)/\(compiledModelInteriorFileName)")
-        ) else { return nil }
-        let container = inner.deletingLastPathComponent()
-        return FileManager.default.fileExists(atPath: container.path) ? container : nil
+    private nonisolated static func probeAssetPack() async -> URL? {
+        await Task.detached(priority: .userInitiated) {
+            assetPackURL()
+        }.value
     }
 
-    // MARK: - Download
+    private nonisolated static func ensureLiveAvailability() async throws {
+        let manager = AssetPackManager.shared
+        let pack = try await manager.assetPack(withID: assetPackID)
+        if #available(iOS 26.4, *) {
+            try await manager.ensureLocalAvailability(
+                of: pack,
+                requireLatestVersion: false
+            )
+        } else {
+            // The labelled overload was introduced in 26.4. Shipping still
+            // supports iOS 26.0 through this deprecated-but-required fallback.
+            try await manager.ensureLocalAvailability(of: pack)
+        }
+    }
 
-    /// Starts (or joins) the pack download and returns the error to throw right
-    /// now. Never waits for the transfer.
-    private func startDownloadAndDescribe() -> Unavailable {
-        if downloadTask == nil {
-            startProgressWatch()
-            downloadTask = Task { [weak self] in
-                do {
-                    let pack = try await AssetPackManager.shared.assetPack(withID: Self.assetPackID)
-                    try await AssetPackManager.shared.ensureLocalAvailability(of: pack)
-                    // The OS now says the pack is local. If the model still is
-                    // not in it, the uploaded pack and this build disagree —
-                    // a permanent failure that must NOT keep reporting
-                    // "downloading…", which is what the user would otherwise
-                    // see forever.
-                    let compiledModel = await Self.probeAssetPack()
-                    await MainActor.run {
-                        self?.downloadTask = nil
-                        if compiledModel == nil {
-                            self?.cancelProgressWatch()
-                            self?.state = .unavailable(
-                                "The pose model pack downloaded but contains no \(Self.compiledModelFileName). "
-                                + "The uploaded asset pack and this app build disagree — repackage with "
-                                + "tools/assetpack/package.sh and re-upload.")
-                        }
-                    }
-                } catch {
-                    await MainActor.run {
-                        self?.downloadTask = nil
-                        self?.cancelProgressWatch()
-                        self?.state = .unavailable(Self.describe(error))
+    private nonisolated static func liveStatusUpdates() -> AsyncStream<DownloadEvent> {
+        let updates = AssetPackManager.shared.statusUpdates(
+            forAssetPackWithID: assetPackID
+        )
+        return AsyncStream { continuation in
+            let task = Task {
+                for await update in updates {
+                    if let event = liveEvent(update) {
+                        continuation.yield(event)
                     }
                 }
+                continuation.finish()
             }
-        }
-
-        switch state {
-        case .downloading(let fraction, let received, let total):
-            return Unavailable(message: Self.progressMessage(fraction: fraction, received: received, total: total),
-                               isDownloading: true)
-        case .unavailable(let reason):
-            return Unavailable(message: reason, isDownloading: false)
-        default:
-            // The request was only just issued — whether it becomes a download
-            // or an immediate failure is not known yet, and claiming
-            // "downloading" here would be a guess. (Observed in the Simulator:
-            // the lookup fails ~10 ms later with "No team ID was specified for
-            // the app", which the next attempt then reports accurately.)
-            return Unavailable(
-                message: "The 1.3 GB pose model isn't on this device yet — the download was just "
-                    + "requested. Try again in a moment for progress, or the reason it can't start.",
-                isDownloading: true)
-        }
-    }
-
-    private func startProgressWatch() {
-        guard progressTask == nil else { return }
-        progressTask = Task { [weak self] in
-            for await update in AssetPackManager.shared.statusUpdates(forAssetPackWithID: Self.assetPackID) {
-                guard let self else { return }
-                await MainActor.run { self.apply(update) }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
             }
         }
     }
 
-    private func cancelProgressWatch() {
-        progressTask?.cancel()
-        progressTask = nil
-    }
-
-    private func apply(_ update: AssetPackManager.DownloadStatusUpdate) {
+    private nonisolated static func liveEvent(
+        _ update: AssetPackManager.DownloadStatusUpdate
+    ) -> DownloadEvent? {
         switch update {
+        case .began:
+            return .began
+        case .paused:
+            return .paused
         case .downloading(_, let progress):
-            state = .downloading(fraction: progress.fractionCompleted,
-                                 receivedBytes: progress.completedUnitCount,
-                                 totalBytes: progress.totalUnitCount)
+            // `fractionCompleted` is the only documented normalized progress.
+            // The accompanying unit counts are ignored, not presented as bytes.
+            return .downloading(fraction: progress.fractionCompleted)
+        case .finished:
+            return .finished
         case .failed(_, let error):
-            state = .unavailable(Self.describe(error))
-        case .began, .paused, .finished:
-            break
+            return .failed(describe(error))
         @unknown default:
-            break
+            return nil
         }
     }
 
-    private nonisolated static func progressMessage(fraction: Double, received: Int64, total: Int64) -> String {
-        let percent = Int((fraction * 100).rounded())
-        if total > 0 {
-            let mb = { (b: Int64) in Int(Double(b) / 1_048_576.0) }
-            return "Downloading the pose model — \(percent)% (\(mb(received)) MB of \(mb(total)) MB). "
-                + "It keeps going in the background; try again when it finishes."
-        }
-        return "Downloading the pose model — \(percent)%. "
-            + "It keeps going in the background; try again when it finishes."
+    // MARK: - Messages
+
+    private nonisolated static func percent(_ fraction: Double) -> Int {
+        Int((DownloadProgress(fraction: fraction).fraction * 100).rounded())
     }
 
-    /// Turns a Background Assets error into something a user can act on. The
-    /// `assetPackNotFound` case is by far the most common and the most
-    /// misleading if left raw: it is what you get on the Simulator, on a build
-    /// whose asset pack has not finished processing in App Store Connect, and on
-    /// a sideloaded/dev build that never went through the store.
+    private nonisolated static func progressMessage(_ progress: DownloadProgress) -> String {
+        "Downloading the pose model — \(percent(progress.fraction))%. "
+            + "It continues in the background; Run becomes available when it is ready."
+    }
+
+    private nonisolated static let packMismatchMessage =
+        "The pose model pack downloaded but contains no \(compiledModelFileName). "
+        + "The uploaded asset pack and this app build disagree — repackage with "
+        + "tools/assetpack/package.sh and re-upload."
+
     private nonisolated static func describe(_ error: Error) -> String {
         if let managed = error as? ManagedBackgroundAssetsError {
             switch managed {
@@ -281,11 +462,6 @@ final class AssetPackModelStore: ObservableObject {
                 break
             }
         }
-        // Everything else arrives as a raw NSError whose text is written for a
-        // developer, not a user — e.g. the Simulator/locally-signed case is
-        // "No team ID was specified for the app with the bundle ID …"
-        // (observed 2026-08-07). Frame it rather than showing it bare.
         return "Couldn't get the pose model from the App Store: \(error.localizedDescription)"
     }
-
 }
