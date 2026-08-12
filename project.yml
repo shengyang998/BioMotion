@@ -152,6 +152,7 @@ targets:
             - "EIGEN_DONT_PARALLELIZE=1"
             - "EIGEN_MPL2_ONLY=1"
             - "BIOMOTION_TEST_DIAGNOSTICS=1"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) BIOMOTION_INTERNAL_UI"
         Release:
           # A release archive must be signed as an App Store distribution,
           # not with Xcode's default Apple Development identity. These two

@@ -185,7 +185,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   directly through its `#!/bin/bash -p` shebang or explicitly with
   `/bin/bash -p`. `bash script.sh` is unsupported and is not evidence because
   hostile `BASH_ENV` content can execute before the script reaches its own
-  guard or sanitizer. The adversarial dependency suite passes **79/79**. On the
+  guard or sanitizer. The adversarial dependency suite passes **83/83**. On the
   reviewed Asset Pack tree, the protected gate passes fast **652/652** and slow
   **1/1**, with zero failures, skips, expected failures, or test-host restarts;
   its structured receipts are under `/tmp/biomotion-tests.SbMAmG`. Hosted pack
@@ -209,6 +209,16 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   observations, but it is not a signature or a link-map/dependency-closure
   proof that every inspected source, header or archive member reached the
   executable.
+- **Release UI is a compile-time boundary.** The BioMotion target's Debug
+  configuration has exactly `$(inherited) BIOMOTION_INTERNAL_UI`; Release must
+  not define it, and `#if BIOMOTION_INTERNAL_UI && !DEBUG` is a compile error.
+  Internal panels, self-tests, backend/tool names, raw metrics and checksums must
+  live under the exact guard, never behind `UserDefaults`, `AppStorage`, a
+  server flag, or a bare `DEBUG` condition. Product views consume typed failures
+  with stable actionable copy; preserve raw framework/path detail only as an
+  internal diagnostic and never in shared export warnings. The source/project
+  gate verifies guard authority, the Release executable is scanned for reviewed
+  literals, and the adversarial resource harness passes **45/45**.
 - **Eigen version**: Nimble requires Eigen 3.x. Eigen 5.x (Homebrew default) has breaking API changes. Use vendored `third_party/eigen` (3.4.0).
 - **Marker names**: ARKit joints map to virtual markers at body node origins, NOT to the model's surface markers (RASI, LASI etc). See `NimbleBridge.mm` virtual marker registration.
 - **Stable joint id is not marker anatomy.** Live `hips_joint` resolves to `PELVIS`; MHR keeps the

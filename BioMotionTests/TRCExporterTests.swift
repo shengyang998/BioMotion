@@ -287,7 +287,7 @@ final class TRCExporterTests: XCTestCase {
         let motURL = directory.appendingPathComponent("motion.mot")
         let prepared = try ExportDisclosure.prepareShareURLs(
             successfulURLs: [motURL],
-            errors: ["TRC: marker source changed from MHR_ROOT to PELVIS"],
+            warnings: [.markerFileUnavailable],
             directory: directory
         )
 
@@ -298,11 +298,12 @@ final class TRCExporterTests: XCTestCase {
         XCTAssertEqual(warningURL.lastPathComponent, "BioMotion_export_warnings.txt")
         let warning = try String(contentsOf: warningURL, encoding: .utf8)
         XCTAssertTrue(warning.contains("Partial export"))
-        XCTAssertTrue(warning.contains("TRC: marker source changed from MHR_ROOT to PELVIS"))
+        XCTAssertTrue(warning.contains("marker-position file could not be produced"))
+        XCTAssertFalse(warning.contains("MHR_ROOT"))
 
         let blocked = try ExportDisclosure.prepareShareURLs(
             successfulURLs: [motURL],
-            errors: ["STO: unavailable — no validated foot-support mechanics"],
+            warnings: [.contactMechanicsUnavailable],
             hasValidatedFootContactSupport: false,
             directory: directory)
         let blockedWarning = try String(
@@ -356,7 +357,7 @@ final class TRCExporterTests: XCTestCase {
             CaptureExportWriter.export(snapshot: snapshot, directory: directory)
         }.value
 
-        XCTAssertNil(outcome.errorMessage)
+        XCTAssertNil(outcome.failure)
         XCTAssertTrue(outcome.hasMotionArtifact)
         XCTAssertEqual(Set(outcome.urls.map(\.pathExtension)), ["trc", "mot", "sto"])
         XCTAssertEqual(
@@ -392,7 +393,7 @@ final class TRCExporterTests: XCTestCase {
 
         let outcome = CaptureExportWriter.export(snapshot: snapshot, directory: directory)
 
-        XCTAssertNil(outcome.errorMessage)
+        XCTAssertNil(outcome.failure)
         XCTAssertFalse(outcome.hasMotionArtifact,
                        "sharing only a warning must keep the take protected from overwrite")
         XCTAssertEqual(outcome.urls.map(\.lastPathComponent),

@@ -617,6 +617,15 @@ load or inference error. Run is disabled until ready, but selection remains
 available; download completion never starts analysis without another explicit
 Run.
 
+Every user-visible failure in this path is typed at its boundary: asset-pack
+availability, picker ownership/copy, model loading, per-frame pose estimation,
+body plausibility and gait non-attempt. Views render only each type's stable
+`publicMessage`; framework `localizedDescription`, filesystem paths, domains and
+tooling names are internal diagnostics. The model self-test and per-frame
+engineering checksum are compiled only under the exact Debug-only
+`BIOMOTION_INTERNAL_UI` condition. There is no runtime preference or persisted
+override that can reveal them in Release.
+
 Each retry creates one generation and one observer/ensure pair; the observer is
 constructed before ensure can start. A late event or continuation from A cannot
 overwrite B, and a resolver returning from an older asynchronous probe rechecks

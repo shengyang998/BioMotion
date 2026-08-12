@@ -245,7 +245,7 @@ final class BodyPlausibilityTests: XCTestCase {
                                                              trunk: 0.25, neck: 0.05, skull: 0.10))
         store.append(OfflineResultStore.FrameResult(
             id: 0, sourceImage: UIImage(), timestamp: 0,
-            status: .implausibleBody(reason: v.reason ?? "", hipWidthMeters: v.hipWidthMeters,
+            status: .implausibleBody(failure: .hipWidthOutOfRange, hipWidthMeters: v.hipWidthMeters,
                                      statureMeters: v.statureMeters),
             usedFallbackBBox: false, camT: nil, modelChecksums: nil, bodyFrame: nil,
             ikResult: nil, idResult: nil, muscleResult: nil,
@@ -254,10 +254,10 @@ final class BodyPlausibilityTests: XCTestCase {
 
         XCTAssertEqual(store.implausibleBodyCount, 1)
         XCTAssertEqual(store.successCount, 0, "a rejected frame must not count as a success")
-        guard case .implausibleBody(let reason, let hip, let stature) = store.frames[0].status else {
+        guard case .implausibleBody(let failure, let hip, let stature) = store.frames[0].status else {
             XCTFail("status was not .implausibleBody"); return
         }
-        XCTAssertFalse(reason.isEmpty)
+        XCTAssertEqual(failure, .hipWidthOutOfRange)
         XCTAssertEqual(hip, 0.070, accuracy: 1e-6)
         XCTAssertTrue(stature > 0)
 
@@ -268,7 +268,7 @@ final class BodyPlausibilityTests: XCTestCase {
         print("PLAUS-METRIC badge=\(shown)")
         XCTAssertTrue(shown.contains("7 cm apart"), "hip width missing from the badge: \(shown)")
         XCTAssertTrue(shown.contains("0.84 m"), "stature missing from the badge: \(shown)")
-        XCTAssertTrue(shown.contains("hip width came out"), "reason missing from the badge: \(shown)")
+        XCTAssertTrue(shown.contains("pose estimate"), "typed reason missing from the badge: \(shown)")
         XCTAssertFalse(shown.contains("%"), "format string did not substitute: \(shown)")
     }
 
@@ -278,7 +278,7 @@ final class BodyPlausibilityTests: XCTestCase {
     func testOnlyImplausibleBodyHasARejectionSentence() {
         XCTAssertNil(OfflineResultStore.FrameStatus.success.implausibleBodyDescription)
         XCTAssertNil(OfflineResultStore.FrameStatus.nimbleFailure(.timedOut).implausibleBodyDescription)
-        XCTAssertNil(OfflineResultStore.FrameStatus.poseEstimationFailed("x").implausibleBodyDescription)
+        XCTAssertNil(OfflineResultStore.FrameStatus.poseEstimationFailed(.modelProcessing).implausibleBodyDescription)
     }
 
     // MARK: - Bounds provenance

@@ -6764,6 +6764,38 @@ fresh-DerivedData simulator build then completed with `** BUILD SUCCEEDED **`.
     scale. Native coverage pins every body scale plus representative bilateral neutral transforms.
     See [offline model scale](#offline-model-scale-is-lease-scoped-2026-08-12).
 
+## Release UI now carries product results, not engineering diagnostics (2026-08-12)
+
+The Release surface still publishes joint-angle trajectories, gait timing,
+posture findings, calibration quality and actionable model/import state. Raw
+joint-position/IK/torque panels, backend and self-test controls, frame checksums,
+solver metrics and developer tool paths now require the exact
+`BIOMOTION_INTERNAL_UI` compilation condition. Only the BioMotion Debug target
+defines it; a compile-time error rejects that condition outside Debug. No
+`UserDefaults`, `AppStorage` or runtime switch can enable this surface.
+
+Asset-pack, picker, run, pose, body-plausibility, gait and capture-export errors
+now cross UI boundaries as typed failures with fixed public messages. Raw
+framework/path details are separate internal diagnostics and cannot enter the
+shared partial-export warning file. Product-facing posture copy was also
+rewritten to describe observable landmark limitations rather than repository or
+geometry implementation terms.
+
+The TDD RED was a protected focused build that failed on the absent typed
+boundaries. GREEN is `ReleaseUIHygieneTests` **8/8** and the ten affected
+focused suites **172/172**, with zero failures, skips, expected failures or test
+host restarts. The dependency adversarial harness passes **83/83** and the
+source/Release-binary resource harness passes **45/45**, including wrong guard
+expressions and injected internal Release strings.
+After fresh XcodeGen regeneration, an unsigned generic-device Release build
+completed with `BUILD SUCCEEDED` in the private DerivedData directory
+`/tmp/biomotion-release-ui-build.Ts2mKz`; this is compile and binary-inspection
+input, not a signed archive or TestFlight receipt.
+This branch was cut immediately before the adjacent capture-clock privacy
+inventory commit `408839d`; its standalone privacy probe therefore reports that
+known inventory drift. Do not duplicate that patch here. The combined tree must
+pass the privacy probe and its adversarial harness after this commit is applied.
+
 ### Owner decisions still open
 
 - **How to resolve the arm licence**: negotiate MoBL-ARMS commercially, or adopt/convert the

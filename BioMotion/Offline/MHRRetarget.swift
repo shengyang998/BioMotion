@@ -488,10 +488,15 @@ enum MHRRetarget {
         /// `reason` is written for the user and always carries the measured
         /// number that failed, because "we threw your photo away" without the
         /// number is indistinguishable from a crash.
-        case implausible(reason: String, hipWidthMeters: Double, statureMeters: Double)
+        case implausible(failure: PlausibilityFailure,
+                         hipWidthMeters: Double,
+                         statureMeters: Double)
 
         var isPlausible: Bool { if case .plausible = self { return true }; return false }
-        var reason: String? { if case .implausible(let r, _, _) = self { return r }; return nil }
+        var reason: String? {
+            guard case .implausible(let failure, let hip, let stature) = self else { return nil }
+            return failure.publicDescription(hipWidthMeters: hip, statureMeters: stature)
+        }
         var hipWidthMeters: Double {
             switch self {
             case .plausible(let w, _), .implausible(_, let w, _): return w
@@ -500,6 +505,45 @@ enum MHRRetarget {
         var statureMeters: Double {
             switch self {
             case .plausible(_, let s), .implausible(_, _, let s): return s
+            }
+        }
+    }
+
+    enum PlausibilityFailure: Equatable {
+        case incompletePrediction
+        case invalidBodySize
+        case hipWidthOutOfRange
+        case statureOutOfRange
+
+        var publicDescription: String {
+            publicDescription(hipWidthMeters: .nan, statureMeters: .nan)
+        }
+
+        func publicDescription(
+            hipWidthMeters: Double,
+            statureMeters: Double
+        ) -> String {
+            switch self {
+            case .incompletePrediction:
+                return "The pose estimate did not include a complete full body. Keep the full body visible and try again."
+            case .invalidBodySize:
+                return "The full-body pose estimate could not produce a usable body size. Keep the full body visible and try again."
+            case .hipWidthOutOfRange:
+                return String(
+                    format: "Body size not measurable — the pose estimate placed the hips %.0f cm apart, outside the %.0f–%.0f cm this app can measure. Keep the full body visible and try again. Estimated height: %.2f m.",
+                    hipWidthMeters * 100,
+                    MHRRetarget.minHipWidthMeters * 100,
+                    MHRRetarget.maxHipWidthMeters * 100,
+                    statureMeters
+                )
+            case .statureOutOfRange:
+                return String(
+                    format: "Body size not measurable — the pose estimate placed height at %.2f m, outside the %.1f–%.1f m this app can measure. Keep the full body visible and try again. Estimated hip spacing: %.0f cm.",
+                    statureMeters,
+                    MHRRetarget.minStatureMeters,
+                    MHRRetarget.maxStatureMeters,
+                    hipWidthMeters * 100
+                )
             }
         }
     }
@@ -548,26 +592,24 @@ enum MHRRetarget {
     /// only on the calibration frame.
     static func plausibility(jointCoords: [SIMD3<Float>]) -> Plausibility {
         guard jointCoords.count >= MHR.jointCount else {
-            return .implausible(reason: "the pose model returned \(jointCoords.count) joints, not \(MHR.jointCount)",
+            return .implausible(failure: .incompletePrediction,
                                 hipWidthMeters: .nan, statureMeters: .nan)
         }
         let hip = hipWidthMeters(jointCoords: jointCoords)
         let stature = Double(estimatedStatureMeters(jointCoords: jointCoords))
 
         guard hip.isFinite, stature.isFinite else {
-            return .implausible(reason: "the pose model returned a non-finite body size",
+            return .implausible(failure: .invalidBodySize,
                                 hipWidthMeters: hip, statureMeters: stature)
         }
         if hip < minHipWidthMeters || hip > maxHipWidthMeters {
             return .implausible(
-                reason: String(format: "hip width came out %.0f cm, outside the %.0f–%.0f cm this app can measure — the person is probably too small in frame, or partly hidden",
-                               hip * 100, minHipWidthMeters * 100, maxHipWidthMeters * 100),
+                failure: .hipWidthOutOfRange,
                 hipWidthMeters: hip, statureMeters: stature)
         }
         if stature < minStatureMeters || stature > maxStatureMeters {
             return .implausible(
-                reason: String(format: "estimated height came out %.2f m, outside the %.1f–%.1f m this app can measure — the person is probably too small in frame, or partly hidden",
-                               stature, minStatureMeters, maxStatureMeters),
+                failure: .statureOutOfRange,
                 hipWidthMeters: hip, statureMeters: stature)
         }
         return .plausible(hipWidthMeters: hip, statureMeters: stature)

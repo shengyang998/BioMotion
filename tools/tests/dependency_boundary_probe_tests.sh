@@ -701,6 +701,32 @@ expect_failure project_preprocessor_drift \
   'project.yml BioMotion base preprocessor definitions changed'
 
 make_fixture
+sed -i '' \
+  's/$(inherited) BIOMOTION_INTERNAL_UI/$(inherited) DEBUG/' \
+  "$FIXTURE_ROOT/project.yml"
+expect_failure project_internal_ui_condition_drift \
+  'project.yml BioMotion Debug internal UI condition changed'
+
+make_fixture
+/usr/bin/python3 - "$FIXTURE_ROOT/project.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+needle = "        Release:\n"
+if text.count(needle) != 2:
+    raise SystemExit("fixture Release configuration inventory changed")
+replacement = needle + (
+    '          SWIFT_ACTIVE_COMPILATION_CONDITIONS: '
+    '"$(inherited) BIOMOTION_INTERNAL_UI"\n'
+)
+path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+PY
+expect_failure project_release_internal_ui \
+  'project.yml BioMotion must define the internal UI condition exactly once in Debug'
+
+make_fixture
 /usr/bin/python3 - "$FIXTURE_ROOT/project.yml" <<'PY'
 from pathlib import Path
 import sys
@@ -880,6 +906,46 @@ path.write_text(
 PY
 expect_failure generated_preprocessor_drift \
   'generated project BioMotion Debug preprocessor definitions changed'
+
+make_fixture
+sed -i '' \
+  's/$(inherited) BIOMOTION_INTERNAL_UI/$(inherited) DEBUG/' \
+  "$FIXTURE_ROOT/BioMotion.xcodeproj/project.pbxproj"
+expect_failure generated_internal_ui_condition_drift \
+  'generated project BioMotion Debug internal UI condition changed'
+
+make_fixture
+/usr/bin/python3 - "$FIXTURE_ROOT/BioMotion.xcodeproj/project.pbxproj" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+matches = list(re.finditer(
+    r'(^\t\t[0-9A-F]{24} /\* Release \*/ = \{\n'
+    r'.*?^\t\t\};$)',
+    text,
+    flags=re.MULTILINE | re.DOTALL,
+))
+app = next((match for match in matches if "PRODUCT_BUNDLE_IDENTIFIER = com.soleil.BioMotion;" in match.group(0)), None)
+if app is None:
+    raise SystemExit("fixture app Release configuration changed")
+block = app.group(0)
+needle = "\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = "
+position = block.find(needle)
+if position < 0:
+    raise SystemExit("fixture app Release Swift settings changed")
+block = (
+    block[:position]
+    + '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) BIOMOTION_INTERNAL_UI";\n'
+    + block[position:]
+)
+text = text[:app.start()] + block + text[app.end():]
+path.write_text(text, encoding="utf-8")
+PY
+expect_failure generated_release_internal_ui \
+  "generated project BioMotion Release build setting surface changed: unexpected=['SWIFT_ACTIVE_COMPILATION_CONDITIONS']"
 
 make_fixture
 /usr/bin/python3 - "$FIXTURE_ROOT/BioMotion.xcodeproj/project.pbxproj" <<'PY'
@@ -1599,7 +1665,7 @@ if [ "$status" -ne 0 ]; then
 fi
 pass_count=$((pass_count + 1))
 
-if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 79 ]; then
+if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 83 ]; then
   printf 'dependency-boundary suite count mismatch: %s/%s\n' \
     "$pass_count" "$total_count" >&2
   exit 1

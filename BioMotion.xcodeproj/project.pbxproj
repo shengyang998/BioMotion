@@ -33,6 +33,7 @@
 		3BD50F1DD2B09065EADEE2A6 /* GaitDynamicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4874B31C9C33272450AE6B44 /* GaitDynamicsTests.swift */; };
 		3F8D29499761B2980ABB6F3E /* FixtureScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB5E836348FD533923DAD62 /* FixtureScanner.swift */; };
 		41CA409DD6CBEBF78E2B0EEE /* GaitSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DD62C1285CC0A293F53014 /* GaitSignal.swift */; };
+		4258338D74042D0C43044ACB /* ReleaseUIHygieneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A3768E94EE93F3AA76DBB7 /* ReleaseUIHygieneTests.swift */; };
 		440AB016E47D178EFB6CA14F /* OfflineImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 809295CEBE3A3EE0C68051A9 /* OfflineImportView.swift */; };
 		469D5E7D0D00332AACFF1224 /* OpenSimReferenceFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BF52FB3C8BA65005EACE6F3 /* OpenSimReferenceFixture.swift */; };
 		472603D6720300F933498494 /* Rajagopal2016.osim in Resources */ = {isa = PBXBuildFile; fileRef = 0BE6D8732D8958953447293F /* Rajagopal2016.osim */; };
@@ -171,6 +172,7 @@
 		0C28EDD6674979DABB128FB8 /* ModelScalingTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ModelScalingTests.mm; sourceTree = "<group>"; };
 		1369BE0A94C795B81633F179 /* DecodedFrameMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodedFrameMemoryTests.swift; sourceTree = "<group>"; };
 		137569E8BB6168170913C1FE /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		13A3768E94EE93F3AA76DBB7 /* ReleaseUIHygieneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseUIHygieneTests.swift; sourceTree = "<group>"; };
 		1A767D05808B3936BB21DAB4 /* MomentArmWrapDiscontinuityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentArmWrapDiscontinuityTests.swift; sourceTree = "<group>"; };
 		1B380AE0D8895B17AF002FC4 /* OfflineSessionRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineSessionRunner.swift; sourceTree = "<group>"; };
 		1C84AF8B5E5E865A3939C9D2 /* GaitContactAgreementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GaitContactAgreementTests.swift; sourceTree = "<group>"; };
@@ -388,6 +390,7 @@
 				635955A3754AEA4532DD5F11 /* PersonBoxTests.swift */,
 				8CA8EDF03A71660632ECC367 /* PostureFindingsRealPoseTests.swift */,
 				08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */,
+				13A3768E94EE93F3AA76DBB7 /* ReleaseUIHygieneTests.swift */,
 				EE2B9AAD0354C5643CD4E31D /* RootTranslationTests.swift */,
 				59A522A69AB99AB11F8EB683 /* ShoulderRotMaskTests.swift */,
 				1F460BBF2CEB2DE7A1735390 /* ShoulderRotObservabilityTests.mm */,
@@ -835,6 +838,7 @@
 				E8CAC2BA9966EE9ED2E33E86 /* PersonBoxTests.swift in Sources */,
 				1D0C2C290242C2C96F04CF93 /* PostureFindingsRealPoseTests.swift in Sources */,
 				68975B28DCF3CD55E9EB1746 /* PostureFindingsTests.swift in Sources */,
+				4258338D74042D0C43044ACB /* ReleaseUIHygieneTests.swift in Sources */,
 				FCF85FDD27BCE3D45741E313 /* RootTranslationTests.swift in Sources */,
 				D5042C5568E0CC26BBB00D03 /* ShoulderRotMaskTests.swift in Sources */,
 				39898570C7128B9A2770FC21 /* ShoulderRotObservabilityTests.mm in Sources */,
@@ -968,6 +972,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.soleil.BioMotion;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) BIOMOTION_INTERNAL_UI";
 				SWIFT_OBJC_BRIDGING_HEADER = "BioMotion/Nimble/BioMotion-Bridging-Header.h";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";

@@ -144,7 +144,7 @@ enum PostureFindings {
                                  suppressed: [SuppressedFinding(
                                     id: "basis",
                                     title: "All posture findings",
-                                    reason: "the trunk axis and the hip line are degenerate or collinear in this frame, so no trunk reference frame can be built")],
+                                    reason: "the body landmarks in this frame do not form a reliable trunk reference; try a clearer full-body view")],
                                  view: ViewAssessment(orientation: .undetermined,
                                                       anteriorDepthFraction: nil,
                                                       lateralDepthFraction: nil,
@@ -254,7 +254,7 @@ enum PostureFindings {
                     positiveMeans: "upper back tipped further forward than the lower back",
                     negativeMeans: "upper back tipped further back than the lower back",
                     missingReason: "a spine marker is missing from this frame",
-                    caveat: "Whole-chain proxy over four markers — NOT a per-vertebra measurement. STATUS.md records that the solved per-intervertebral spine angles are priors, not measurements: at 8 mm marker noise no marker set beat the null model. The mid-spine marker is itself an interpolation between two levels 18 cm apart.")
+                    caveat: "This is a whole-back estimate from four landmarks, not a measurement of individual vertebrae. Small landmark changes can move the result, and the middle-spine landmark is estimated between two measured levels.")
 
         // MARK: Coronal findings (need the L/R axis in the image plane)
 
@@ -336,7 +336,7 @@ enum PostureFindings {
                         measuredBetween: "shoulder midpoint vs pelvis, across the leg axis, along the body's forward axis",
                         positiveMeans: "shoulders ahead of the pelvis",
                         negativeMeans: "shoulders behind the pelvis",
-                        missingReason: "the forward axis is degenerate against the leg axis in this frame")
+                        missingReason: "the body and leg landmarks do not separate forward lean reliably in this frame")
 
             builder.add(id: "trunk_lean_lateral",
                         title: "Trunk lean (sideways)",
@@ -346,7 +346,7 @@ enum PostureFindings {
                         measuredBetween: "shoulder midpoint vs pelvis, across the leg axis, along the body's sideways axis",
                         positiveMeans: "shoulders shifted to the subject's right",
                         negativeMeans: "shoulders shifted to the subject's left",
-                        missingReason: "the sideways axis is degenerate against the leg axis in this frame",
+                        missingReason: "the body and leg landmarks do not separate sideways lean reliably in this frame",
                         sideForPositive: .right)
 
             builder.add(id: "weight_shift",

@@ -310,8 +310,8 @@ struct OfflinePlaybackView: View {
                 }
             }
             return "Pose only (warming up)"
-        case .poseEstimationFailed(let reason):
-            return "Pose failed: \(reason)"
+        case .poseEstimationFailed(let failure):
+            return "Pose failed: \(failure.publicDescription)"
         case .implausibleBody:
             // The measured numbers go on screen, not just the verdict: this is
             // the whole difference between "we rejected your photo" and a
@@ -423,6 +423,7 @@ struct OfflinePlaybackView: View {
                     // comparison. Screenshot-readable because the phone is the
                     // only place the divergence appears and console logs are not
                     // reachable from a TestFlight install.
+                    #if BIOMOTION_INTERNAL_UI
                     if let c = resultStore.selectedFrame?.modelChecksums {
                         Text(String(format: "src %016llx\nbox %016llx  warp %016llx\nin  %016llx  out %016llx",
                                     c.source, c.bbox, c.warp, c.input, c.output))
@@ -430,6 +431,7 @@ struct OfflinePlaybackView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
+                    #endif
                 }
                 Spacer()
                 // Muscle anatomy only exists in the 3-D scene. It is a fixed

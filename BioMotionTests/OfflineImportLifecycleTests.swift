@@ -111,7 +111,7 @@ final class OfflineImportLifecycleTests: XCTestCase {
         let staleGeneration = state.beginLoading()
         _ = state.beginLoading()
 
-        XCTAssertFalse(state.fail("A failed", generation: staleGeneration))
+        XCTAssertFalse(state.fail(.selectionUnavailable, generation: staleGeneration))
         XCTAssertTrue(state.isLoading)
         XCTAssertNil(state.errorMessage)
     }
@@ -128,9 +128,12 @@ final class OfflineImportLifecycleTests: XCTestCase {
         XCTAssertTrue(state.commit(video: previous, generation: first))
 
         let failed = state.beginLoading()
-        XCTAssertTrue(state.fail("B failed", generation: failed))
+        XCTAssertTrue(state.fail(.videoUnavailable, generation: failed))
         XCTAssertTrue(state.selectedVideo === previous)
-        XCTAssertEqual(state.errorMessage, "B failed")
+        XCTAssertEqual(
+            state.errorMessage,
+            OfflineImportSelectionState.Failure.videoUnavailable.publicMessage
+        )
 
         let cancelled = state.beginLoading()
         XCTAssertTrue(state.cancel(generation: cancelled))

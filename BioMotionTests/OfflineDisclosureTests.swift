@@ -867,7 +867,7 @@ final class OfflineDisclosureTests: XCTestCase {
             showingSourceImage: true, anatomyEnabled: true, frame: poseOnly))
         XCTAssertFalse(OfflinePlaybackView.anatomyIsVisible(
             showingSourceImage: false, anatomyEnabled: false, frame: poseOnly))
-        XCTAssertFalse(frame(status: .poseEstimationFailed("no pose"), body: trackedBody)
+        XCTAssertFalse(frame(status: .poseEstimationFailed(.modelProcessing), body: trackedBody)
             .hasDrawableAnatomy)
         XCTAssertFalse(frame(status: .success, body: untrackedBody).hasDrawableAnatomy)
         XCTAssertFalse(frame(status: .success, body: nil).hasDrawableAnatomy)

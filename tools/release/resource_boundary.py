@@ -43,6 +43,27 @@ MAX_IPA_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 MAX_IPA_ENTRIES = 256
 MIN_SIGNING_VALIDITY = datetime.timedelta(days=30)
 TRUSTED_ENV = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+INTERNAL_UI_CONDITION = "BIOMOTION_INTERNAL_UI"
+INTERNAL_UI_BUILD_GUARD = "BIOMOTION_INTERNAL_UI && !DEBUG"
+INTERNAL_UI_SOURCE_LITERALS = (
+    "Run model self-test",
+    "Core ML backend",
+    "src %016llx",
+    "Joint Positions (m)",
+    "IK Joint Angles",
+    "IK Marker Error",
+    "Show Joint Torques",
+    "tools/assetpack/package.sh",
+    "IK %.1fms",
+    "marker RMS:",
+    "Avg IK Err",
+    "max |τ|/m",
+    "GRF sum",
+    "frame chk",
+)
+INTERNAL_UI_BINARY_LITERALS = tuple(
+    literal.encode("utf-8") for literal in INTERNAL_UI_SOURCE_LITERALS
+)
 
 REVIEWED_APP_CODE_IMAGES = {
     APP_EXECUTABLE,
@@ -179,6 +200,79 @@ FIXTURE_NAMES = {
 
 def fail(message: str) -> "NoReturn":
     raise SystemExit(message)
+
+
+def inspect_internal_ui_source(repo: Path) -> None:
+    """Require internal UI literals to live in the exact reviewed guard."""
+    source_root = repo / "BioMotion"
+    regular_directory(source_root, "BioMotion Swift source root")
+    saw_build_guard = False
+    for path in sorted(source_root.rglob("*.swift")):
+        regular_file(path, f"Swift source {path.relative_to(repo)}")
+        stack: list[str] = []
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            stripped = line.strip()
+            # Diagnostics named in documentation comments do not compile into
+            # the product. Scan executable/string-bearing source, not prose.
+            if stripped.startswith("//"):
+                continue
+            if stripped.startswith("#if "):
+                condition = stripped.removeprefix("#if ").strip()
+                if "BIOMOTION_INTERNAL_UI" in condition and condition not in {
+                    INTERNAL_UI_CONDITION,
+                    INTERNAL_UI_BUILD_GUARD,
+                }:
+                    fail(
+                        "internal UI source uses an unreviewed compilation "
+                        f"condition: {path.relative_to(repo)}:{line_number}"
+                    )
+                if condition == INTERNAL_UI_BUILD_GUARD:
+                    saw_build_guard = True
+                stack.append(condition)
+                continue
+            if stripped.startswith("#elseif"):
+                if stack and INTERNAL_UI_CONDITION in stack:
+                    fail(
+                        "internal UI source must not use #elseif: "
+                        f"{path.relative_to(repo)}:{line_number}"
+                    )
+                continue
+            if stripped == "#else":
+                if stack and stack[-1] == INTERNAL_UI_CONDITION:
+                    stack[-1] = "internal-ui-else"
+                continue
+            if stripped == "#endif":
+                if not stack:
+                    fail(
+                        f"unmatched Swift #endif: {path.relative_to(repo)}:{line_number}"
+                    )
+                stack.pop()
+                continue
+
+            for literal in INTERNAL_UI_SOURCE_LITERALS:
+                if literal in line and INTERNAL_UI_CONDITION not in stack:
+                    fail(
+                        "internal UI literal is not protected by the exact "
+                        f"Debug guard: {path.relative_to(repo)}:{line_number}: "
+                        f"{literal}"
+                    )
+        if stack:
+            fail(f"unterminated Swift compilation condition: {path.relative_to(repo)}")
+    if not saw_build_guard:
+        fail("internal UI Release compile-time guard is missing")
+
+
+def inspect_release_internal_ui_binary(path: Path, label: str) -> None:
+    data = path.read_bytes()
+    matches = [
+        literal.decode("utf-8")
+        for literal in INTERNAL_UI_BINARY_LITERALS
+        if literal in data
+    ]
+    if matches:
+        fail(f"release {label} contains internal UI literals: {matches}")
 
 
 def regular_file(path: Path, label: str) -> None:
@@ -499,6 +593,7 @@ def parse_project_resources(project: str, guard_text: str) -> None:
 
 
 def inspect_source_and_project(repo: Path) -> None:
+    inspect_internal_ui_source(repo)
     project_spec = repo / "project.yml"
     project_file = repo / "BioMotion.xcodeproj/project.pbxproj"
     export_options = repo / "tools/release/ExportOptions-TestFlight.plist"
@@ -2057,6 +2152,15 @@ def inspect_app(
         platform,
         "executable",
     )
+    if release:
+        inspect_release_internal_ui_binary(
+            app / APP_EXECUTABLE,
+            "app executable",
+        )
+        inspect_release_internal_ui_binary(
+            extension / EXTENSION_EXECUTABLE,
+            "extension executable",
+        )
     for relative in observed_optional:
         require_macho(
             app / relative,

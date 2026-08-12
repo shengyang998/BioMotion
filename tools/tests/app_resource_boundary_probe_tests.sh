@@ -19,6 +19,10 @@ mkdir -p \
   "$FIXTURE_ROOT/tools/tests" \
   "$FIXTURE_ROOT/tools/release" \
   "$FIXTURE_ROOT/BioMotion.xcodeproj" \
+  "$FIXTURE_ROOT/BioMotion/AssetPack" \
+  "$FIXTURE_ROOT/BioMotion/App" \
+  "$FIXTURE_ROOT/BioMotion/Nimble" \
+  "$FIXTURE_ROOT/BioMotion/Offline" \
   "$FIXTURE_ROOT/BioMotion/Resources" \
   "$FIXTURE_ROOT/BioMotionTests"
 cp "$REPO_ROOT/tools/tests/app_resource_boundary_probe.sh" \
@@ -36,6 +40,11 @@ cp "$REPO_ROOT/LICENSE" "$FIXTURE_ROOT/LICENSE"
 cp "$REPO_ROOT/NOTICE" "$FIXTURE_ROOT/NOTICE"
 cp "$REPO_ROOT/BioMotion/PrivacyInfo.xcprivacy" \
   "$FIXTURE_ROOT/BioMotion/PrivacyInfo.xcprivacy"
+find "$REPO_ROOT/BioMotion" -name '*.swift' -type f -print0 | while IFS= read -r -d '' source; do
+  relative="${source#$REPO_ROOT/}"
+  mkdir -p "$FIXTURE_ROOT/$(dirname "$relative")"
+  cp "$source" "$FIXTURE_ROOT/$relative"
+done
 cp -R "$REPO_ROOT/BioMotion/Assets.xcassets" \
   "$FIXTURE_ROOT/BioMotion/Assets.xcassets"
 cp -R "$REPO_ROOT/BioMotionTests/Fixtures" \
@@ -289,6 +298,23 @@ EOF
 
 expect_pass source_baseline
 expect_hostile_standalone_environment_pass
+
+cp "$FIXTURE_ROOT/BioMotion/Offline/OfflineImportView.swift" \
+  "$TEST_ROOT/OfflineImportView.original.swift"
+sed -i '' 's/#if BIOMOTION_INTERNAL_UI/#if DEBUG/' \
+  "$FIXTURE_ROOT/BioMotion/Offline/OfflineImportView.swift"
+expect_failure source_bare_debug_guard \
+  'internal UI literal is not protected by the exact Debug guard'
+cp "$TEST_ROOT/OfflineImportView.original.swift" \
+  "$FIXTURE_ROOT/BioMotion/Offline/OfflineImportView.swift"
+
+sed -i '' \
+  's/#if BIOMOTION_INTERNAL_UI/#if BIOMOTION_INTERNAL_UI || DEBUG/' \
+  "$FIXTURE_ROOT/BioMotion/Offline/OfflineImportView.swift"
+expect_failure source_or_debug_guard \
+  'internal UI source uses an unreviewed compilation condition'
+cp "$TEST_ROOT/OfflineImportView.original.swift" \
+  "$FIXTURE_ROOT/BioMotion/Offline/OfflineImportView.swift"
 
 /usr/bin/plutil -replace destination -string upload \
   "$FIXTURE_ROOT/tools/release/ExportOptions-TestFlight.plist"
@@ -704,6 +730,19 @@ cp "$ARCHIVE_APP/Info.plist" "$TEST_ROOT/archive-app-info.original.plist"
 expect_failure ad_hoc_release_archive_rejected \
   'asset-pack extension is not Apple Distribution signed' \
   --release-archive "$ARCHIVE"
+
+cp "$ARCHIVE_APP/BioMotion" "$TEST_ROOT/archive-app-binary.original"
+/usr/bin/python3 - "$ARCHIVE_APP/BioMotion" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+path.write_bytes(path.read_bytes() + b"Run model self-test\0")
+PY
+expect_failure release_internal_ui_literal \
+  'release app executable contains internal UI literals' \
+  --release-archive "$ARCHIVE"
+cp "$TEST_ROOT/archive-app-binary.original" "$ARCHIVE_APP/BioMotion"
 expect_failure positional_app_rejected 'usage: app_resource_boundary_probe.sh' \
   "$APP_BUNDLE"
 
@@ -892,7 +931,7 @@ expect_extractor_failure release_ipa_archive_comment \
   "$TEST_ROOT/archive-comment.ipa"
 expect_protected_nested_privacy_pass
 
-if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 42 ]; then
+if [ "$pass_count" -ne "$total_count" ] || [ "$total_count" -ne 45 ]; then
   printf 'app-resource boundary suite count mismatch: %s/%s\n' \
     "$pass_count" "$total_count" >&2
   exit 1

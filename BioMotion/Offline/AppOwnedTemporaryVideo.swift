@@ -53,6 +53,23 @@ final class AppOwnedTemporaryVideo: Sendable {
 /// retained selection.
 @MainActor
 struct OfflineImportSelectionState {
+    enum Failure: Equatable {
+        case photoUnavailable
+        case videoUnavailable
+        case selectionUnavailable
+
+        var publicMessage: String {
+            switch self {
+            case .photoUnavailable:
+                return "The selected photo could not be loaded. Choose it again or select another photo."
+            case .videoUnavailable:
+                return "The selected video could not be loaded. Choose it again or select another video."
+            case .selectionUnavailable:
+                return "The selected item could not be loaded. Choose it again or select another item."
+            }
+        }
+    }
+
     private(set) var selectedPhoto: UIImage?
     private(set) var selectedVideo: AppOwnedTemporaryVideo?
     private(set) var errorMessage: String?
@@ -93,11 +110,11 @@ struct OfflineImportSelectionState {
     }
 
     @discardableResult
-    mutating func fail(_ message: String, generation: UInt64) -> Bool {
+    mutating func fail(_ failure: Failure, generation: UInt64) -> Bool {
         guard accepts(generation) else { return false }
 
         isLoading = false
-        errorMessage = message
+        errorMessage = failure.publicMessage
         return true
     }
 

@@ -202,7 +202,22 @@ struct CaptureExportSnapshot: Sendable {
 
 struct CaptureExportOutcome: Sendable {
     let urls: [URL]
-    let errorMessage: String?
+    enum Failure: Equatable, Sendable {
+        case noFiles
+        case writeFailed
+
+        var publicMessage: String {
+            switch self {
+            case .noFiles:
+                return "No export files were produced. Record for a few seconds, then try again."
+            case .writeFailed:
+                return "BioMotion could not write the export files. Check that the device has free storage, then try again."
+            }
+        }
+    }
+
+    let failure: Failure?
+    let internalDiagnostic: String?
     /// True only when at least one motion-data artifact (TRC, MOT, or STO)
     /// was written. A warning text file alone must not unlock replacement of
     /// the protected take.
@@ -222,10 +237,13 @@ enum CaptureExportWriter {
             )
             let basename = "BioMotion_capture_\(snapshot.epoch.id)"
             var urls: [URL] = []
-            var errors: [String] = []
+            var warnings: [ExportDisclosure.Warning] = []
+            #if BIOMOTION_INTERNAL_UI
+            var internalDiagnostics: [String] = []
+            #endif
 
             if snapshot.frames.isEmpty {
-                errors.append("No recording data")
+                warnings.append(.noRecordingData)
             } else {
                 do {
                     let content = try TRCExporter(
@@ -236,7 +254,10 @@ enum CaptureExportWriter {
                     try content.write(to: url, atomically: true, encoding: .utf8)
                     urls.append(url)
                 } catch {
-                    errors.append("TRC: \(error.localizedDescription)")
+                    warnings.append(.markerFileUnavailable)
+                    #if BIOMOTION_INTERNAL_UI
+                    internalDiagnostics.append("TRC: \(error.localizedDescription)")
+                    #endif
                 }
             }
 
@@ -250,12 +271,11 @@ enum CaptureExportWriter {
                 try content.write(to: url, atomically: true, encoding: .utf8)
                 urls.append(url)
             } catch {
-                errors.append("MOT: no IK data")
+                warnings.append(.jointAngleFileUnavailable)
             }
 
             if snapshot.isModelLoaded && !snapshot.hasValidatedFootContactSupport {
-                errors.append("STO: unavailable — this model and solver have no validated "
-                              + "foot-support mechanics; refilming cannot enable joint torque")
+                warnings.append(.contactMechanicsUnavailable)
             } else {
                 do {
                     let content = try NimbleEngine.generateSTO(
@@ -267,13 +287,13 @@ enum CaptureExportWriter {
                     try content.write(to: url, atomically: true, encoding: .utf8)
                     urls.append(url)
                 } catch {
-                    errors.append("STO: no validated inverse-dynamics data")
+                    warnings.append(.jointTorqueFileUnavailable)
                 }
             }
 
             let prepared = try ExportDisclosure.prepareShareURLs(
                 successfulURLs: urls,
-                errors: errors,
+                warnings: warnings,
                 hasValidatedFootContactSupport: snapshot.isModelLoaded
                     ? snapshot.hasValidatedFootContactSupport
                     : nil,
@@ -282,19 +302,30 @@ enum CaptureExportWriter {
             guard !prepared.isEmpty else {
                 return CaptureExportOutcome(
                     urls: [],
-                    errorMessage: "No export files were produced.",
+                    failure: .noFiles,
+                    internalDiagnostic: "ExportDisclosure returned no share URLs",
                     hasMotionArtifact: false
                 )
             }
             return CaptureExportOutcome(
                 urls: prepared,
-                errorMessage: nil,
+                failure: nil,
+                internalDiagnostic: {
+                    #if BIOMOTION_INTERNAL_UI
+                    internalDiagnostics.isEmpty
+                        ? nil
+                        : internalDiagnostics.joined(separator: "\n")
+                    #else
+                    nil
+                    #endif
+                }(),
                 hasMotionArtifact: !urls.isEmpty
             )
         } catch {
             return CaptureExportOutcome(
                 urls: [],
-                errorMessage: error.localizedDescription,
+                failure: .writeFailed,
+                internalDiagnostic: String(describing: error),
                 hasMotionArtifact: false
             )
         }

@@ -170,6 +170,26 @@ struct OfflineRunOwnership: Equatable, Sendable {
 @MainActor
 final class OfflineSessionRunner: ObservableObject {
 
+    enum RunFailure: Equatable {
+        case poseModelLoad
+        case musculoskeletalModelLoad
+        case selectionRead
+        case noFrames
+
+        var publicMessage: String {
+            switch self {
+            case .poseModelLoad:
+                return "The pose model could not be opened. Update BioMotion, then try again."
+            case .musculoskeletalModelLoad:
+                return "The motion model is not ready. Wait a moment, then try again."
+            case .selectionRead:
+                return "The selected photo or video could not be read. Choose it again or select another item."
+            case .noFrames:
+                return "No usable images could be read from the selection. Choose another photo or video."
+            }
+        }
+    }
+
     nonisolated let objectWillChange = ObservableObjectPublisher()
 
     enum RunSource {
@@ -187,7 +207,7 @@ final class OfflineSessionRunner: ObservableObject {
         case decodingFrames
         case running(current: Int, total: Int, etaSeconds: Double?)
         case finished(processed: Int, failed: Int, cancelled: Bool)
-        case failed(String)
+        case failed(RunFailure)
     }
 
     // These two UI fields commit before their one explicit notification.
@@ -528,7 +548,7 @@ final class OfflineSessionRunner: ObservableObject {
                 return
             }
             setPhase(
-                .failed("Couldn't load the pose model: \(error.localizedDescription)"),
+                .failed(.poseModelLoad),
                 for: token
             )
             return
@@ -556,7 +576,7 @@ final class OfflineSessionRunner: ObservableObject {
             return
         }
         guard nimbleLoaded else {
-            setPhase(.failed("Musculoskeletal model isn't loaded — FullBody.osim may be missing from the bundle, or is still loading. Try again in a moment."),
+            setPhase(.failed(.musculoskeletalModelLoad),
                      for: token)
             return
         }
@@ -646,7 +666,7 @@ final class OfflineSessionRunner: ObservableObject {
                 finishCancelledIfCurrent(token, processed: 0, failed: 0)
                 return
             }
-            setPhase(.failed(error.localizedDescription), for: token)
+            setPhase(.failed(.selectionRead), for: token)
             return
         }
         guard isRunActive(token) else {
@@ -655,7 +675,7 @@ final class OfflineSessionRunner: ObservableObject {
         }
         let decoded = batch.frames
         guard !decoded.isEmpty else {
-            setPhase(.failed("No frames could be decoded from the selection."),
+            setPhase(.failed(.noFrames),
                      for: token)
             return
         }
@@ -804,9 +824,10 @@ final class OfflineSessionRunner: ObservableObject {
     ) async {
         guard isRunActive(token) else { return }
         guard usableBodyFrames.count >= GaitSignal.minimumFrames else {
-            resultStore.setGait(.notAttempted(reason: usableBodyFrames.isEmpty
-                                              ? "no usable frames"
-                                              : "\(usableBodyFrames.count) usable frames; a stride needs at least \(GaitSignal.minimumFrames)"))
+            resultStore.setGait(.notAttempted(failure: .insufficientFrames(
+                usable: usableBodyFrames.count,
+                required: GaitSignal.minimumFrames
+            )))
             return
         }
 
@@ -814,7 +835,7 @@ final class OfflineSessionRunner: ObservableObject {
         do {
             report = try GaitAnalysis.analyse(frames: usableBodyFrames)
         } catch {
-            resultStore.setGait(.notAttempted(reason: "\(error)"))
+            resultStore.setGait(.notAttempted(failure: .analysisFailed))
             return
         }
 
@@ -1063,7 +1084,7 @@ final class OfflineSessionRunner: ObservableObject {
             }
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
-                status: .poseEstimationFailed(error.localizedDescription), usedFallbackBBox: false,
+                status: .poseEstimationFailed(.modelProcessing), usedFallbackBBox: false,
                 camT: nil,
                 modelChecksums: nil,
                 bodyFrame: nil, ikResult: nil, idResult: nil, muscleResult: nil,
@@ -1127,13 +1148,13 @@ final class OfflineSessionRunner: ObservableObject {
         // skeleton and the measured numbers, so the user sees WHY — dropping it
         // silently is what made the original case invisible.
         let plausibility = MHRRetarget.plausibility(jointCoords: estimate.jointCoords)
-        if case .implausible(let reason, let hip, let stature) = plausibility {
+        if case .implausible(let failure, let hip, let stature) = plausibility {
             guard endTemporalSegment(token: token, engineLease: engineLease) else {
                 return false
             }
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
-                status: .implausibleBody(reason: reason, hipWidthMeters: hip, statureMeters: stature),
+                status: .implausibleBody(failure: failure, hipWidthMeters: hip, statureMeters: stature),
                 usedFallbackBBox: estimate.usedFallbackBBox,
                 camT: estimate.camT,
                 modelChecksums: (estimate.inputChecksum, estimate.outputChecksum,
@@ -1150,7 +1171,7 @@ final class OfflineSessionRunner: ObservableObject {
             }
             resultStore.append(OfflineResultStore.FrameResult(
                 id: frameIndex, sourceImage: frame.image, timestamp: frame.timestamp,
-                status: .poseEstimationFailed("retarget produced no usable joints"), usedFallbackBBox: estimate.usedFallbackBBox,
+                status: .poseEstimationFailed(.noUsableJoints), usedFallbackBBox: estimate.usedFallbackBBox,
                 camT: estimate.camT,
                 modelChecksums: (estimate.inputChecksum, estimate.outputChecksum,
                                  estimate.sourceHash, estimate.bboxHash, estimate.warpHash),

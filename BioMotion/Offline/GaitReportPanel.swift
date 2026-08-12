@@ -53,9 +53,9 @@ struct GaitReportPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 switch outcome {
-                case .notAttempted(let reason):
+                case .notAttempted(let failure):
                     header("Not analysed as running")
-                    Text(reason)
+                    Text(failure.publicMessage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(NimbleEngine.MotionVerdict.gaitRefused.advice)

@@ -7,25 +7,49 @@ import SwiftUI
 enum ExportDisclosure {
     static let warningFilename = "BioMotion_export_warnings.txt"
 
+    enum Warning: Equatable, Sendable {
+        case noRecordingData
+        case markerFileUnavailable
+        case jointAngleFileUnavailable
+        case contactMechanicsUnavailable
+        case jointTorqueFileUnavailable
+
+        var publicMessage: String {
+            switch self {
+            case .noRecordingData:
+                return "No marker recording data was available."
+            case .markerFileUnavailable:
+                return "The marker-position file could not be produced."
+            case .jointAngleFileUnavailable:
+                return "The joint-angle file could not be produced."
+            case .contactMechanicsUnavailable:
+                return "The joint-torque file is unavailable because this model and solver have no validated foot-support mechanics."
+            case .jointTorqueFileUnavailable:
+                return "The joint-torque file could not be produced."
+            }
+        }
+    }
+
     static func prepareShareURLs(successfulURLs: [URL],
-                                 errors: [String],
+                                 warnings: [Warning],
                                  hasValidatedFootContactSupport: Bool? = nil,
                                  directory: URL = FileManager.default.temporaryDirectory) throws
         -> [URL] {
-        guard !errors.isEmpty else { return successfulURLs }
+        guard !warnings.isEmpty else { return successfulURLs }
 
         let outcome = successfulURLs.isEmpty ? "No data available" : "Partial export"
         let exported = successfulURLs.isEmpty
             ? "None"
             : successfulURLs.map(\.lastPathComponent).joined(separator: "\n")
         var tips: [String] = []
-        if errors.contains(where: {
-            $0 == "No recording data" || $0.hasPrefix("TRC:") || $0.hasPrefix("MOT:")
-        }) {
+        if warnings.contains(.noRecordingData)
+            || warnings.contains(.markerFileUnavailable)
+            || warnings.contains(.jointAngleFileUnavailable) {
             tips.append("For missing marker or joint-angle files, record for at least a few "
                         + "seconds with body tracking active.")
         }
-        if errors.contains(where: { $0.hasPrefix("STO:") }) {
+        if warnings.contains(.contactMechanicsUnavailable)
+            || warnings.contains(.jointTorqueFileUnavailable) {
             if hasValidatedFootContactSupport == false {
                 tips.append("Joint-torque STO export is permanently unavailable for this "
                             + "model/solver pair; recording longer, refilming, or reloading the "
@@ -45,7 +69,7 @@ enum ExportDisclosure {
         \(exported)
 
         Warnings:
-        \(errors.joined(separator: "\n"))\(tipsSection)
+        \(warnings.map(\.publicMessage).joined(separator: "\n"))\(tipsSection)
         """
         let warningURL = directory.appendingPathComponent(warningFilename)
         try summary.write(to: warningURL, atomically: true, encoding: .utf8)
@@ -230,9 +254,11 @@ struct ContentView: View {
                 // === TOP BAR ===
                 HStack {
                     StatusBadge(text: bodyTracking.trackingMessage, isActive: bodyTracking.isTracking)
+                    #if BIOMOTION_INTERNAL_UI
                     if nimble.isModelLoaded && nimble.lastIKResult != nil {
                         StatusBadge(text: String(format: "IK %.1fms", nimble.ikSolveTimeMs), isActive: true)
                     }
+                    #endif
                     Spacer()
                     Button {
                         showOfflineImport = true
@@ -244,10 +270,12 @@ struct ContentView: View {
                     }
                     .accessibilityLabel("Import motion from photos or video")
                     .accessibilityHint("Stops live recording and opens offline analysis")
+                    #if BIOMOTION_INTERNAL_UI
                     if let frame = bodyTracking.currentFrame {
                         let tracked = frame.joints.filter(\.isTracked).count
                         StatusBadge(text: "\(tracked)/\(frame.joints.count)", isActive: tracked > 0)
                     }
+                    #endif
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
@@ -262,6 +290,7 @@ struct ContentView: View {
                 //   |τ|/m    ≈ 1–3 Nm/kg for walking/squat (physiological)
                 //   L+R load ≈ 1.0 ± 0.1 in stance (weight supported by feet)
                 //   root res ≈ < 0.5 Nm/kg (GRF consistent with kinematics)
+                #if BIOMOTION_INTERNAL_UI
                 if nimble.isModelLoaded && bodyTracking.isTracking && nimble.lastIKResult != nil {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
@@ -369,6 +398,7 @@ struct ContentView: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 2)
                 }
+                #endif
 
                 // === PUSH EVERYTHING ELSE DOWN ===
                 Spacer()
@@ -409,6 +439,7 @@ struct ContentView: View {
                         .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                         .padding(.horizontal, 12)
                 }
+                #if BIOMOTION_INTERNAL_UI
                 if showIKPanel, let ik = nimble.lastIKResult {
                     IKReadoutPanel(ikResult: ik,
                                    idResult: nimble.lastIDResult,
@@ -419,11 +450,13 @@ struct ContentView: View {
                 } else if bodyTracking.isTracking, let frame = bodyTracking.currentFrame {
                     JointReadoutPanel(frame: frame).padding(.horizontal, 12)
                 }
+                #endif
 
                 // Toggle buttons
                 if (nimble.isModelLoaded && bodyTracking.isTracking)
                     || liveAnatomyPresentation.showsControl {
                     HStack(spacing: 8) {
+                        #if BIOMOTION_INTERNAL_UI
                         if nimble.isModelLoaded && bodyTracking.isTracking {
                             Button { withAnimation { showIKPanel.toggle() } } label: {
                                 Text(showIKPanel ? "Positions" : "IK details")
@@ -432,6 +465,7 @@ struct ContentView: View {
                                     .background(.black.opacity(0.5), in: Capsule())
                             }
                         }
+                        #endif
                         if liveAnatomyPresentation.showsControl {
                             // "Muscles ON" promised a muscle reading. The layer
                             // is anatomy — where they are — so the control says so.
@@ -562,11 +596,15 @@ struct ContentView: View {
             }.value
             isExporting = false
 
-            if let internalError = outcome.errorMessage {
-                print("BioMotion capture export failed: \(internalError)")
+            if let failure = outcome.failure {
+                #if BIOMOTION_INTERNAL_UI
+                if let internalDiagnostic = outcome.internalDiagnostic {
+                    print("BioMotion capture export failed: \(internalDiagnostic)")
+                }
+                #endif
                 cleanupExportFiles()
                 exportErrorTitle = "Export unavailable"
-                exportErrorMessage = "BioMotion could not write the export files. Check that the device has free storage, then try again."
+                exportErrorMessage = failure.publicMessage
                 showExportError = true
                 return
             }
@@ -652,6 +690,7 @@ struct StatusBadge: View {
 }
 
 /// Compact label+value pill used for precision diagnostics in the HUD.
+#if BIOMOTION_INTERNAL_UI
 struct AccuracyBadge: View {
     let label: String
     let value: String
@@ -782,6 +821,7 @@ struct IKReadoutPanel: View {
            .capitalized
     }
 }
+#endif
 
 // `MuscleActivationBar` stood here until 2026-08-08. See the comment at its
 // call site in `trackingView` for why a chart of twelve muscles' activations,

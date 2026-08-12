@@ -106,10 +106,12 @@ final class NimbleEngine: ObservableObject {
     /// Rendered under the badge on exactly the same condition that draws it, so
     /// the number cannot appear without it — the live path already shipped one
     /// picture whose caption had a different gate.
+    #if BIOMOTION_INTERNAL_UI
     static let footLoadSplitIsNotMeasuredNote =
         "GRF sum is a consistency check on the contact solve, not a balance score. How the load "
         + "splits between your two feet is NOT measured: standing on both feet, that split is "
         + "not determined by the pose at all, and the solver starts from a 50/50 assumption."
+    #endif
     /// Linear-momentum residual after the GRF solve, in NEWTONS per kg:
     /// ‖ΣF_contact + m·g − m·a_com‖ / m. A correct pipeline reports ~0 every
     /// frame — it is a consistency check on the contact-wrench readback, not a
@@ -1270,9 +1272,9 @@ final class NimbleEngine: ObservableObject {
                         resetsBridgeIKWarmStart: false,
                         resetsMuscleSession: false
                     )
-                    // Recording may remain armed across the asynchronous load,
-                    // but an export must never mix model generations or retain
-                    // torque rows after switching to an unsupported model.
+                    // The reset above disarms result recording. Clearing both
+                    // histories makes the model-generation boundary explicit
+                    // even when no capture was armed.
                     self.ikHistory.removeAll(keepingCapacity: false)
                     self.idHistory.removeAll(keepingCapacity: false)
                 }

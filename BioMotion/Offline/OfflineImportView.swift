@@ -29,8 +29,10 @@ struct OfflineImportView: View {
     @State private var useNativeWindow = true
     @State private var fps: Double = OfflineImportView.defaultFPS
     @State private var showPlayback = false
+    #if BIOMOTION_INTERNAL_UI
     @State private var selfTest: String?
     @State private var selfTestRunning = false
+    #endif
 
     static let defaultFPS = 2.0
 
@@ -50,7 +52,8 @@ struct OfflineImportView: View {
                     samplingSection
                     runSection
                 }
-                if case .failed(let message) = runner.phase {
+                if case .failed(let failure) = runner.phase {
+                    #if BIOMOTION_INTERNAL_UI
                     Section {
                     // Runs the model on a synthetic tensor any machine can
                     // reproduce bit-exactly. Matching input checksums with
@@ -85,9 +88,10 @@ struct OfflineImportView: View {
                 } footer: {
                     Text("Compares this device's Core ML backend against the reference machine on a fixed synthetic input. Downloads the model if it isn't present yet.")
                 }
+                    #endif
 
                 Section("Error") {
-                        Text(message).foregroundStyle(.red)
+                        Text(failure.publicMessage).foregroundStyle(.red)
                     }
                 }
             }
@@ -117,7 +121,7 @@ struct OfflineImportView: View {
                             try Task.checkCancellation()
                             guard let movie else {
                                 _ = selection.fail(
-                                    "Couldn't load the selected video.",
+                                    .videoUnavailable,
                                     generation: generation
                                 )
                                 return
@@ -130,14 +134,14 @@ struct OfflineImportView: View {
                             try Task.checkCancellation()
                             guard let data else {
                                 _ = selection.fail(
-                                    "Couldn't load the selected photo.",
+                                    .photoUnavailable,
                                     generation: generation
                                 )
                                 return
                             }
                             guard let image = UIImage(data: data) else {
                                 _ = selection.fail(
-                                    "Couldn't load the selected photo.",
+                                    .photoUnavailable,
                                     generation: generation
                                 )
                                 return
@@ -148,7 +152,7 @@ struct OfflineImportView: View {
                         _ = selection.cancel(generation: generation)
                     } catch {
                         _ = selection.fail(
-                            "Couldn't load the selection: \(error.localizedDescription)",
+                            .selectionUnavailable,
                             generation: generation
                         )
                     }
@@ -219,9 +223,9 @@ struct OfflineImportView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        case .unavailable(let message):
+        case .unavailable(let failure):
             Section("Pose Model") {
-                Text(message)
+                Text(failure.publicMessage)
                     .foregroundStyle(.red)
                 Button("Retry") {
                     Task { await modelStore.retryDownload() }

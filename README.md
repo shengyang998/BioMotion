@@ -14,6 +14,23 @@ the public header and every Release binary. A Debug-host diagnostics category,
 declared only to XCTest, retains the older numbers solely for unvalidated
 engineering characterization; Release-configuration tests do not support it.
 
+## Release UI boundary
+
+Release builds expose the scientific product outputs: joint-angle trajectories,
+gait timing, posture findings, calibration quality, and actionable model/import
+state. Engineering panels, backend names, self-tests, frame checksums, raw solver
+metrics, unsupported torque controls, and internal file/tool paths are compiled
+only when the BioMotion target has the exact `BIOMOTION_INTERNAL_UI` condition.
+That condition exists only in Debug; a compile-time guard rejects it outside
+Debug. It is not a preference, `UserDefaults`, or remotely switchable feature.
+
+Failures cross view boundaries as typed product failures with fixed public copy.
+Underlying framework errors remain optional internal diagnostics and are never
+written into a shared export warning. The resource gate checks the Swift guard
+shape and scans the Release Mach-O for the reviewed internal literals, while the
+dependency gate pins the Debug-only build-setting surface in both `project.yml`
+and the generated project.
+
 ## Live recording and export
 
 A live take is one atomic capture, not three independent buffers. Pressing the
@@ -357,7 +374,7 @@ Protected shell gates must be executed directly (using their `#!/bin/bash -p`
 shebang) or with `/bin/bash -p` as shown. An unprotected `bash script.sh`
 invocation is unsupported and is not evidence: an inherited `BASH_ENV` can run
 before the script starts, so the script may never reach its own rejection or
-sanitization. The dependency boundary suite is green **79/79**, and the runner's
+sanitization. The dependency boundary suite is green **83/83**, and the runner's
 independent gate-policy harness is green **53/53**. On the reviewed Asset Pack
 tree, the exact protected gate passed fast **652/652** and slow **1/1**, with
 zero failures, skips, expected failures, or test-host restarts; both structured
@@ -527,6 +544,9 @@ extracts the locally re-signed package; it then repeats those checks and permits
 signature/profile bytes to differ from the reviewed archive. Simulator apps and test
 bundles have separate smoke modes and are not accepted as release evidence; see
 [`docs/app-resource-boundary.md`](./docs/app-resource-boundary.md).
+The resource boundary's source/binary adversarial harness is green **45/45**;
+its negatives include weaker Debug guards and an injected internal literal in
+an otherwise valid Release executable.
 
 ## Architecture & gotchas
 

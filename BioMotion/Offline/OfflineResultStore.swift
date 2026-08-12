@@ -20,6 +20,20 @@ final class OfflineResultStore: ObservableObject {
     nonisolated let objectWillChange = ObservableObjectPublisher()
 
     enum FrameStatus: Equatable {
+        enum PoseFailure: Equatable {
+            case modelProcessing
+            case noUsableJoints
+
+            var publicDescription: String {
+                switch self {
+                case .modelProcessing:
+                    return "The pose could not be estimated for this frame. Try a clearer, full-body view."
+                case .noUsableJoints:
+                    return "No usable body joints were found in this frame. Keep the full body visible and try again."
+                }
+            }
+        }
+
         enum SolverFailure: Error, Equatable {
             /// An accepted solve exceeded the explicit per-frame liveness
             /// budget and its exact receipt was superseded.
@@ -53,13 +67,15 @@ final class OfflineResultStore: ObservableObject {
         }
 
         case success
-        case poseEstimationFailed(String)
+        case poseEstimationFailed(PoseFailure)
         /// The pose model returned a full skeleton, but one whose BODY SIZE is
         /// not a person's — see `MHRRetarget.plausibility`. Rejected before it
         /// could scale the musculoskeletal model, and reported with the measured
         /// number rather than dropped, because a frame that vanishes without a
         /// reason is indistinguishable from a crash.
-        case implausibleBody(reason: String, hipWidthMeters: Double, statureMeters: Double)
+        case implausibleBody(failure: MHRRetarget.PlausibilityFailure,
+                             hipWidthMeters: Double,
+                             statureMeters: Double)
         /// The pose existed but the musculoskeletal solve did not publish.
         /// Preserve the exact terminal cause so a deterministic IK failure,
         /// admission refusal, busy engine, reset and real timeout never collapse
@@ -73,12 +89,14 @@ final class OfflineResultStore: ObservableObject {
         /// thing the user gets when a frame is rejected, and a frame that
         /// disappears without a number is indistinguishable from a crash.
         var implausibleBodyDescription: String? {
-            guard case .implausibleBody(let reason, let hip, let stature) = self else { return nil }
+            guard case .implausibleBody(let failure, let hip, let stature) = self else { return nil }
             // BOTH measurements are shown whichever bound tripped, so the user
             // can see the whole prediction rather than the one number that
             // happened to fail first.
-            return String(format: "Body size not measurable — %@. Measured: hips %.0f cm apart, height %.2f m.",
-                          reason, hip * 100, stature)
+            return failure.publicDescription(
+                hipWidthMeters: hip,
+                statureMeters: stature
+            )
         }
     }
 
@@ -405,10 +423,24 @@ final class OfflineResultStore: ObservableObject {
     private(set) var cameraReferenceState: CameraReferenceState = .unmeasured
 
     /// What `GaitAnalysis` concluded about this clip.
+    enum GaitAttemptFailure: Equatable {
+        case insufficientFrames(usable: Int, required: Int)
+        case analysisFailed
+
+        var publicMessage: String {
+            switch self {
+            case .insufficientFrames(let usable, let required):
+                return "This clip has \(usable) usable frames; running analysis needs at least \(required). Record a longer, clear running clip."
+            case .analysisFailed:
+                return "Running could not be analysed from this clip. Try a clear running clip with the full body visible."
+            }
+        }
+    }
+
     enum GaitOutcome {
-        /// Not a run, or not enough of one to try. The reason is the analysis's
-        /// own error text.
-        case notAttempted(reason: String)
+        /// Not a run, or not enough of one to try. The typed failure exposes
+        /// stable actionable copy without carrying an analysis error string.
+        case notAttempted(failure: GaitAttemptFailure)
         /// A run, but the clip's own model refused it. Every refusal carries the
         /// number that produced it.
         case refused(report: GaitTimingReport)

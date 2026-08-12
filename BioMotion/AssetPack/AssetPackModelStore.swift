@@ -14,6 +14,10 @@ import System
 @MainActor
 final class AssetPackModelStore: ObservableObject {
 
+    #if BIOMOTION_INTERNAL_UI && !DEBUG
+    #error("BIOMOTION_INTERNAL_UI must never be enabled outside Debug")
+    #endif
+
     nonisolated static let assetPackID = "sam3d-body-pose"
     nonisolated static let modelBaseName = "SAM3DBodyPose"
     nonisolated static let compiledModelFileName = "SAM3DBodyPose.mlmodelc"
@@ -48,7 +52,7 @@ final class AssetPackModelStore: ObservableObject {
         /// message does not claim that a paused transfer is still advancing.
         case paused(DownloadProgress?)
         case ready(Provenance)
-        case unavailable(String)
+        case unavailable(Failure)
 
         var message: String? {
             switch self {
@@ -64,8 +68,8 @@ final class AssetPackModelStore: ObservableObject {
                     + "It will resume when system conditions allow."
             case .ready:
                 return nil
-            case .unavailable(let reason):
-                return reason
+            case .unavailable(let failure):
+                return failure.publicMessage
             }
         }
 
@@ -88,7 +92,7 @@ final class AssetPackModelStore: ObservableObject {
         case paused
         case downloading(fraction: Double)
         case finished
-        case failed(String)
+        case failed(Failure)
     }
 
     struct Dependencies: Sendable {
@@ -119,6 +123,31 @@ final class AssetPackModelStore: ObservableObject {
         let message: String
         let isDownloading: Bool
         var errorDescription: String? { message }
+    }
+
+    /// Stable product copy is deliberately separated from the system's error
+    /// object, file paths and pack-generation details. Internal diagnostics may
+    /// be inspected in Debug, but are never interpolated into `publicMessage`.
+    struct Failure: Equatable, Sendable {
+        enum Kind: Equatable, Sendable {
+            case temporary
+            case updateRequired
+            case download
+        }
+
+        let kind: Kind
+        let internalDiagnostic: String
+
+        var publicMessage: String {
+            switch kind {
+            case .temporary:
+                return "The pose model is temporarily unavailable. Check your connection, wait a moment, then tap Retry."
+            case .updateRequired:
+                return "This pose model does not match this version of BioMotion. Please update BioMotion and try again."
+            case .download:
+                return "The pose model could not be downloaded. Check your connection and available storage, then tap Retry."
+            }
+        }
     }
 
     static let shared = AssetPackModelStore(dependencies: .live)
@@ -166,8 +195,8 @@ final class AssetPackModelStore: ObservableObject {
         if activeGeneration == nil {
             // A terminal failure is stable until the user explicitly retries;
             // repeated model-load calls must not manufacture concurrent work.
-            if case .unavailable(let reason) = state {
-                throw Unavailable(message: reason, isDownloading: false)
+            if case .unavailable(let failure) = state {
+                throw Unavailable(message: failure.publicMessage, isDownloading: false)
             }
             startAttempt()
         }
@@ -196,9 +225,13 @@ final class AssetPackModelStore: ObservableObject {
     func beginPrefetch() async {
         do {
             _ = try await resolveCompiledModelURL()
+            #if BIOMOTION_INTERNAL_UI
             NSLog("[AssetPack] pose model ready via %@", String(describing: state))
+            #endif
         } catch {
+            #if BIOMOTION_INTERNAL_UI
             NSLog("[AssetPack] pose model not ready: %@", error.localizedDescription)
+            #endif
         }
     }
 
@@ -241,7 +274,7 @@ final class AssetPackModelStore: ObservableObject {
                 } else {
                     self.finishAttempt(
                         generation: generation,
-                        state: .unavailable(Self.packMismatchMessage),
+                        state: .unavailable(Self.packMismatchFailure),
                         resolvedURL: nil
                     )
                 }
@@ -249,7 +282,7 @@ final class AssetPackModelStore: ObservableObject {
                 guard let self else { return }
                 self.finishAttempt(
                     generation: generation,
-                    state: .unavailable(Self.describe(error)),
+                    state: .unavailable(Self.failure(for: error)),
                     resolvedURL: nil
                 )
             }
@@ -272,10 +305,10 @@ final class AssetPackModelStore: ObservableObject {
             // `finished` describes the transfer, not the contents. The matching
             // ensure completion performs the authoritative leaf probe.
             state = .checking
-        case .failed(let reason):
+        case .failed(let failure):
             finishAttempt(
                 generation: generation,
-                state: .unavailable(reason),
+                state: .unavailable(failure),
                 resolvedURL: nil
             )
         }
@@ -325,8 +358,8 @@ final class AssetPackModelStore: ObservableObject {
             return Unavailable(message: state.message ?? "Downloading the pose model…", isDownloading: true)
         case .paused:
             return Unavailable(message: state.message ?? "The pose model download is paused.", isDownloading: false)
-        case .unavailable(let reason):
-            return Unavailable(message: reason, isDownloading: false)
+        case .unavailable(let failure):
+            return Unavailable(message: failure.publicMessage, isDownloading: false)
         case .ready:
             return Unavailable(
                 message: "The pose model became ready; try the load again.",
@@ -424,7 +457,7 @@ final class AssetPackModelStore: ObservableObject {
         case .finished:
             return .finished
         case .failed(_, let error):
-            return .failed(describe(error))
+            return .failed(failure(for: error))
         @unknown default:
             return nil
         }
@@ -441,27 +474,31 @@ final class AssetPackModelStore: ObservableObject {
             + "It continues in the background; Run becomes available when it is ready."
     }
 
-    private nonisolated static let packMismatchMessage =
-        "The pose model pack downloaded but contains no \(compiledModelFileName). "
-        + "The uploaded asset pack and this app build disagree — repackage with "
-        + "tools/assetpack/package.sh and re-upload."
+    private nonisolated static let packMismatchFailure = Failure(
+        kind: .updateRequired,
+        internalDiagnostic: "Downloaded pack has no compiled model leaf"
+    )
 
-    private nonisolated static func describe(_ error: Error) -> String {
+    private nonisolated static func failure(for error: Error) -> Failure {
         if let managed = error as? ManagedBackgroundAssetsError {
             switch managed {
             case .assetPackNotFound:
-                return "The pose model isn't available to this build. Managed Background Assets only serves "
-                    + "packs to App Store / TestFlight installs on a real device — the Simulator and locally "
-                    + "signed builds get nothing. If this build did come from TestFlight, the asset pack may "
-                    + "still be processing; try again in a few minutes."
+                return Failure(
+                    kind: .temporary,
+                    internalDiagnostic: String(describing: error)
+                )
             case .fileNotFound(let path):
-                return "The pose model pack downloaded but doesn't contain \(path). "
-                    + "The packaged asset pack and this app build disagree — repackage with "
-                    + "tools/assetpack/package.sh."
+                return Failure(
+                    kind: .updateRequired,
+                    internalDiagnostic: "Missing asset-pack file: \(path)"
+                )
             @unknown default:
                 break
             }
         }
-        return "Couldn't get the pose model from the App Store: \(error.localizedDescription)"
+        return Failure(
+            kind: .download,
+            internalDiagnostic: String(describing: error)
+        )
     }
 }

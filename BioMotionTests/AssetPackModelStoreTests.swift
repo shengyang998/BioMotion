@@ -234,9 +234,13 @@ final class AssetPackModelStoreTests: XCTestCase {
             driver.statusStreamCount == 1 && driver.ensureCallCount == 1
         }
 
-        driver.yield(.failed("A failed"), attempt: 0)
+        let failureA = AssetPackModelStore.Failure(
+            kind: .download,
+            internalDiagnostic: "A failed"
+        )
+        driver.yield(.failed(failureA), attempt: 0)
         await eventually("attempt A failure") {
-            store.state == .unavailable("A failed")
+            store.state == .unavailable(failureA)
         }
         XCTAssertFalse(store.state.allowsModelLoadAttempt,
                        "a hard failure is recovered only through explicit Retry")
@@ -258,7 +262,10 @@ final class AssetPackModelStoreTests: XCTestCase {
             return false
         }
 
-        driver.yield(.failed("late A failure"), attempt: 0)
+        driver.yield(.failed(.init(
+            kind: .download,
+            internalDiagnostic: "late A failure"
+        )), attempt: 0)
         driver.yield(.downloading(fraction: 0.01), attempt: 0)
         for _ in 0..<20 { await Task.yield() }
         guard case .downloading(let progress) = store.state else {
@@ -296,7 +303,10 @@ final class AssetPackModelStoreTests: XCTestCase {
         await eventually("automatic ready state") {
             store.state == .ready(.assetPackCompiled)
         }
-        driver.yield(.failed("late terminal event"), attempt: 0)
+        driver.yield(.failed(.init(
+            kind: .download,
+            internalDiagnostic: "late terminal event"
+        )), attempt: 0)
         for _ in 0..<20 { await Task.yield() }
         XCTAssertEqual(store.state, .ready(.assetPackCompiled))
         XCTAssertTrue(store.state.allowsModelLoadAttempt)

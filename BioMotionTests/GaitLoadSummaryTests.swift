@@ -59,7 +59,7 @@ final class GaitLoadSummaryTests: XCTestCase {
     /// keep its posture findings, not be handed a screen about strides.
     func testDecliningToAnalyseAClipDoesNotTurnItIntoAGaitScreen() throws {
         XCTAssertFalse(OfflineResultStore.GaitOutcome
-            .notAttempted(reason: "1 usable frame").isAboutRunning)
+            .notAttempted(failure: .insufficientFrames(usable: 1, required: 9)).isAboutRunning)
         let report = try Self.usableReport()
         let timing = GaitTimingReport(report: report)
         XCTAssertTrue(OfflineResultStore.GaitOutcome.refused(report: timing).isAboutRunning)
@@ -969,7 +969,7 @@ final class GaitLoadSummaryTests: XCTestCase {
         let report = try Self.usableReport()
         let timing = GaitTimingReport(report: report)
         XCTAssertFalse(OfflineResultStore.GaitOutcome
-            .notAttempted(reason: "1 usable frame").replacesPostureFindings)
+            .notAttempted(failure: .insufficientFrames(usable: 1, required: 9)).replacesPostureFindings)
         XCTAssertFalse(OfflineResultStore.GaitOutcome.refused(report: timing)
             .replacesPostureFindings,
             "a refused run has nothing to put in the findings' place")

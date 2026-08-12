@@ -57,6 +57,7 @@ struct SessionChartsView: View {
                     }
 
                     // Toggle torques
+                    #if BIOMOTION_INTERNAL_UI
                     if nimble.hasPublishableIDHistory {
                         Toggle("Show Joint Torques", isOn: $showTorques)
                             .padding(.horizontal)
@@ -66,12 +67,15 @@ struct SessionChartsView: View {
                                 .padding(.horizontal)
                         }
                     }
+                    #endif
 
                     // IK error chart
+                    #if BIOMOTION_INTERNAL_UI
                     if !nimble.ikHistory.isEmpty {
                         ikErrorChart
                             .padding(.horizontal)
                     }
+                    #endif
                 }
                 .padding(.vertical)
             }
@@ -99,10 +103,12 @@ struct SessionChartsView: View {
             SummaryStat(label: "Duration", value: String(format: "%.1fs", recorder.duration))
             SummaryStat(label: "Frames", value: "\(recorder.recordedFrameCount)")
             SummaryStat(label: "FPS", value: String(format: "%.0f", recorder.averageFPS))
+            #if BIOMOTION_INTERNAL_UI
             if !nimble.ikHistory.isEmpty {
                 let avgError = nimble.ikHistory.map(\.markerRMSMeters).reduce(0, +) / Double(nimble.ikHistory.count)
                 SummaryStat(label: "Avg IK Err", value: String(format: "%.1f mm", avgError * 1000))
             }
+            #endif
         }
         .padding()
         .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 12))
@@ -175,6 +181,7 @@ struct SessionChartsView: View {
         }
     }
 
+    #if BIOMOTION_INTERNAL_UI
     private var ikErrorChart: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("IK Marker Error")
@@ -203,6 +210,7 @@ struct SessionChartsView: View {
             .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 8))
         }
     }
+    #endif
 
     // MARK: - Helpers
 

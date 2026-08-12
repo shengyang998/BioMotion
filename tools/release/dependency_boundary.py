@@ -718,6 +718,22 @@ def yaml_list_setting(
     return values
 
 
+def yaml_scalar_setting(
+    lines: list[str], key: str, label: str, indent: int = 10
+) -> str:
+    prefix = f"{' ' * indent}{key}: "
+    values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
+    if len(values) != 1:
+        raise BoundaryError(f"{label} must be defined exactly once")
+    try:
+        value = json.loads(values[0])
+    except json.JSONDecodeError as error:
+        raise BoundaryError(f"{label} contains a non-JSON YAML scalar") from error
+    if not isinstance(value, str):
+        raise BoundaryError(f"{label} must be a string")
+    return value
+
+
 def yaml_config_lines(lines: list[str], config: str, label: str) -> list[str]:
     marker = f"        {config}:"
     indices = [index for index, line in enumerate(lines) if line == marker]
@@ -909,6 +925,17 @@ def pbx_scalar_setting(body: str, key: str, label: str) -> str:
 def pbx_string_setting(body: str, key: str, label: str) -> str:
     encoded = pbx_scalar_setting(body, key, label)
     return decode_setting_name(encoded, label)
+
+
+def pbx_build_string_setting(body: str, key: str, label: str) -> str:
+    pattern = re.compile(
+        rf"^\t\t\t\t{re.escape(key)} = (?P<value>[^;\n]+);$",
+        re.MULTILINE,
+    )
+    values = [match.group("value") for match in pattern.finditer(body)]
+    if len(values) != 1:
+        raise BoundaryError(f"{label} must define {key} exactly once")
+    return decode_setting_name(values[0], label)
 
 
 def pbx_identifier_setting(body: str, key: str, label: str) -> str:
@@ -1276,6 +1303,7 @@ def inspect_generated_project_graph(
     app_release_definitions: list[str],
     test_definitions: list[str],
 ) -> dict:
+    internal_ui_condition = "$(inherited) BIOMOTION_INTERNAL_UI"
     objects, root_identifier = parse_generated_project(generated, generated_text)
     raw_objects = pbx_objects(generated_text)
     strict_multiline_isas = {
@@ -1573,7 +1601,8 @@ def inspect_generated_project_graph(
     }
     target_setting_names = {
         "BioMotion": {
-            "Debug": app_common_setting_names,
+            "Debug": app_common_setting_names
+            | {"SWIFT_ACTIVE_COMPILATION_CONDITIONS"},
             "Release": app_common_setting_names
             | {
                 "CODE_SIGN_IDENTITY[sdk=iphoneos*]",
@@ -1663,6 +1692,20 @@ def inspect_generated_project_graph(
                     f"generated project {target_name} {configuration} "
                     "preprocessor definitions changed"
                 )
+            expected_internal_ui = (
+                internal_ui_condition
+                if target_name == "BioMotion" and configuration == "Debug"
+                else None
+            )
+            if settings.get("SWIFT_ACTIVE_COMPILATION_CONDITIONS") != expected_internal_ui:
+                if not (
+                    expected_internal_ui is None
+                    and "SWIFT_ACTIVE_COMPILATION_CONDITIONS" not in settings
+                ):
+                    raise BoundaryError(
+                        f"generated project {target_name} {configuration} "
+                        "internal UI condition changed"
+                    )
             for key, expected_value in pinned.items():
                 if settings.get(key) != expected_value:
                     raise BoundaryError(
@@ -1670,6 +1713,7 @@ def inspect_generated_project_graph(
                     )
             normalized_target_settings[target_name][configuration] = {
                 "definitions": definitions[configuration],
+                "swiftConditions": expected_internal_ui,
                 "pinned": pinned,
                 "settings": json_settings,
             }
@@ -2181,6 +2225,7 @@ def inspect_project_linkage(repo_root: Path, dependency_lock: dict) -> dict[str,
     app_debug_definitions = app_release_definitions + [
         "BIOMOTION_TEST_DIAGNOSTICS=1"
     ]
+    internal_ui_condition = "$(inherited) BIOMOTION_INTERNAL_UI"
     test_definitions = ["$(inherited)"] + app_release_definitions
     yaml_keys = {
         "device header search paths": '"HEADER_SEARCH_PATHS[sdk=iphoneos*]"',
@@ -2233,6 +2278,36 @@ def inspect_project_linkage(repo_root: Path, dependency_lock: dict) -> dict[str,
                 "project.yml BioMotion Debug preprocessor definitions",
                 indent=10,
             )
+            release_lines = yaml_config_lines(
+                target_lines, "Release", "project.yml BioMotion"
+            )
+            condition_key = "SWIFT_ACTIVE_COMPILATION_CONDITIONS"
+            condition_lines = [
+                line for line in target_lines
+                if line.lstrip().startswith(f"{condition_key}:")
+            ]
+            if len(condition_lines) != 1:
+                raise BoundaryError(
+                    "project.yml BioMotion must define the internal UI "
+                    "condition exactly once in Debug"
+                )
+            debug_internal_ui = yaml_scalar_setting(
+                debug_lines,
+                condition_key,
+                "project.yml BioMotion Debug internal UI condition",
+            )
+            if debug_internal_ui != internal_ui_condition:
+                raise BoundaryError(
+                    "project.yml BioMotion Debug internal UI condition changed: "
+                    f"{debug_internal_ui!r}"
+                )
+            if any(
+                line.lstrip().startswith(f"{condition_key}:")
+                for line in release_lines
+            ):
+                raise BoundaryError(
+                    "project.yml BioMotion Release must not enable internal UI"
+                )
             if base_definitions != app_release_definitions:
                 raise BoundaryError(
                     f"project.yml BioMotion base preprocessor definitions changed: "
@@ -2246,6 +2321,10 @@ def inspect_project_linkage(repo_root: Path, dependency_lock: dict) -> dict[str,
             definitions = {
                 "Debug": debug_definitions,
                 "Release": base_definitions,
+            }
+            swift_conditions = {
+                "Debug": debug_internal_ui,
+                "Release": None,
             }
         else:
             base_definitions = yaml_list_setting(
@@ -2262,9 +2341,11 @@ def inspect_project_linkage(repo_root: Path, dependency_lock: dict) -> dict[str,
                 "Debug": base_definitions,
                 "Release": base_definitions,
             }
+            swift_conditions = {"Debug": None, "Release": None}
         normalized_yaml[target] = {
             "dependencies": actual_dependencies,
             "definitions": definitions,
+            "swiftConditions": swift_conditions,
             "settings": settings,
         }
 
@@ -2402,8 +2483,35 @@ def inspect_project_linkage(repo_root: Path, dependency_lock: dict) -> dict[str,
                     f"generated project {target} {configuration} preprocessor "
                     f"definitions changed: {definitions}"
                 )
+            condition_key = "SWIFT_ACTIVE_COMPILATION_CONDITIONS"
+            setting_names = pbx_setting_names(
+                settings_body,
+                f"generated project {target} {configuration}",
+            )
+            expected_internal_ui = (
+                internal_ui_condition
+                if target == "BioMotion" and configuration == "Debug"
+                else None
+            )
+            if expected_internal_ui is not None:
+                internal_ui = pbx_build_string_setting(
+                    settings_body,
+                    condition_key,
+                    f"generated project {target} {configuration}",
+                )
+                if internal_ui != expected_internal_ui:
+                    raise BoundaryError(
+                        f"generated project {target} {configuration} "
+                        "internal UI condition changed"
+                    )
+            elif condition_key in setting_names:
+                raise BoundaryError(
+                    f"generated project {target} {configuration} must not "
+                    "enable internal UI"
+                )
             normalized_pbx[target][configuration] = {
                 "definitions": definitions,
+                "swiftConditions": expected_internal_ui,
                 "settings": settings,
             }
 

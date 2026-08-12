@@ -313,8 +313,10 @@ final class PostureFindingsTests: XCTestCase {
         XCTAssertEqual(f.sideMeaning, "upper back tipped further forward than the lower back")
 
         let caveat = try XCTUnwrap(f.caveat)
-        XCTAssertTrue(caveat.contains("NOT a per-vertebra"),
-                      "the kyphosis proxy must state it is not a per-vertebra measurement — STATUS.md records those as priors, not measurements")
+        XCTAssertTrue(caveat.contains("not a measurement of individual vertebrae"),
+                      "the upper-back estimate must state its user-facing limitation")
+        XCTAssertFalse(caveat.contains("STATUS.md"))
+        XCTAssertFalse(caveat.contains("null model"))
     }
 
     func testTransverseRotationReportsAKnownTwistWithItsNoiseGain() throws {
