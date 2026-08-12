@@ -247,19 +247,26 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   not two interchangeable RMS values. Preserve `opensimMarkerNameOverride` through every filter/copy. TRC
   must fail if one id changes marker alias across frames or two ids collapse to one marker.
 - **C++ exceptions**: Always use C++ `try/catch`, never ObjC `@try/@catch` — ObjC exceptions don't catch `std::exception` or SIGSEGV.
-- **Build number**: The checked-in value is 30, but its reuse has not been
-  confirmed in App Store Connect. Before each TestFlight upload, choose a
+- **Build number**: The checked-in value is 32 and build 32 is already `VALID`
+  in App Store Connect. Before each TestFlight upload, choose a
   strictly unused ASC build number, set both target-level
   `CURRENT_PROJECT_VERSION` entries in `project.yml` to that same value, then run
   XcodeGen before the source/archive gates.
+- **Default unattended TestFlight path**: use
+  `docs/unattended-testflight.md`; no Xcode Organizer, Transporter, browser, or
+  UI click is part of the normal release. The guarded wrapper requires explicit
+  `--upload`, but after all local gates it reads the stable ASC Key ID and
+  Issuer references from the current user's macOS Keychain when one-run
+  environment overrides are absent. Keep the `.p8` and persistent signing
+  material owner-only and out of Git. Do not create a replacement API key just
+  because a shell variable is absent.
 - **Local completion is not App Store readiness.** A passing current 698+1 gate
   plus an unsigned Release build can close the integrated local-MVP code/test
-  boundary only. Commercial rights for the 42 MoBL-ARMS-derived muscles, the
-  replacement Asset Pack upload, a final TestFlight/device product smoke
+  boundary only. The hosted Asset Pack v2 and build 32 are uploaded; commercial
+  rights for the 42 MoBL-ARMS-derived muscles, a final TestFlight/device product smoke
   covering hosted load/inference plus real photo/video, Photos-provider, Vision,
-  memory/performance and cancellation behavior, a current controlled signed
-  archive/receipt/IPA, an unused ASC build number, owner-only ASC credential
-  permissions, and required ASC product/privacy/review metadata remain separate
+  memory/performance and cancellation behavior, and required ASC
+  product/privacy/review metadata remain separate
   distribution gates. The Asset Pack tests prove the app-side state/UI contract,
   not CDN or relaunch behavior.
 - **Library search paths**: Conditional on SDK — `[sdk=iphoneos*]` for device, `[sdk=iphonesimulator*]` for simulator.

@@ -15,8 +15,10 @@ contract, live-calibration integrity, capture-atomic recording/frozen export,
 and Release UI isolation.
 
 The replacement Apple-hosted `sam3d-body-pose` Asset Pack version 2 is
-**READY_FOR_TESTING**, and BioMotion 1.0.0 build 31 was validated and uploaded
-to App Store Connect on 2026-08-12. The uploaded IPA is only 1,541,663 bytes;
+**READY_FOR_TESTING**, and BioMotion 1.0.0 build 32 reached TestFlight state
+**VALID** on 2026-08-12. Build 32 fixes the build-31 device failure that asked
+Background Assets for one compiled-model leaf and then tried to open its parent
+package without package-wide access. The uploaded IPA is only 1,542,789 bytes;
 the 1,096,258,817-byte model remains a separately hosted asset and is not in
 the main app bundle. This does **not** mean App Store distribution is ready.
 Commercial rights for the MoBL-ARMS-derived upper-limb material, a full
@@ -483,16 +485,47 @@ owner obtains written commercial permission or replaces/removes that material. S
 
 A passing current **698+1** protected gate can establish integrated local-MVP
 code/test completion; it cannot establish App Store readiness. Distribution
-remains separately blocked by the arm-material rights decision; upload of the
-locally verified replacement Asset Pack; a final TestFlight/device product
+remains separately blocked by the arm-material rights decision; a final
+TestFlight/device product
 smoke covering hosted delivery/load/inference, real photo/video workflows,
 Photos-provider lifecycle, Vision behavior, performance/memory, and
-cancellation; and a current controlled signed archive/receipt/IPA plus an
-explicitly authorized App Store Connect transaction.
+cancellation; and the required App Store Connect product/review metadata. The
+hosted Asset Pack v2 and current build-32 archive/IPA/upload receipts now exist.
 
 ## TestFlight upload
 
-### Build 31 upload receipt (2026-08-12)
+### Build 32 recovery receipt (2026-08-12)
+
+Build 31 installed, but a cellular-device Run failed with `The pose model could
+not be opened. Update BioMotion, then try again.` The network was not the root
+cause. `AssetPackModelStore` requested only
+`SAM3DBodyPose.mlmodelc/coremldata.bin`, discarded the last path component, and
+then gave Core ML that parent URL. The Background Assets URL authorized the
+leaf, not necessarily sibling files such as `weights/weight.bin` that Core ML
+needs to open the package. Build 32 requests the complete
+`SAM3DBodyPose.mlmodelc` package directly and verifies its required metadata
+leaf before loading it. The runtime source gate rejects the former leaf/parent
+pattern.
+
+BioMotion 1.0.0 build 32 was validated and uploaded without errors. App Store
+Connect then reported `VALID`, `APP_STORE_ELIGIBLE`, `expired=false`, minimum
+OS 26.0, and no non-exempt encryption. Delivery UUID:
+`5b42b98a-d315-41de-ad29-05aafc7f38af`. The exact IPA is 1,542,789 bytes at
+SHA-256
+`60bbe6fa2633c0226a611fa07e4f1e80ec1987f25ca90ef4a6de8121a0f6b8a6`.
+The signed archive, dependency receipt, IPA, and private SHA receipt are under
+`build/releases/32/` and remain untracked. The already-hosted 1.096 GB Asset
+Pack v2 was not re-uploaded and remains outside the IPA.
+
+The workstation's stable ASC key references now live in macOS Keychain; the
+private `.p8` remains in its owner-only standard directory. `--upload` keeps
+its explicit transaction boundary, but no longer requires transient shell
+variables: after all local gates pass, the wrapper uses explicit environment
+values when supplied and otherwise reads the Key ID and Issuer from Keychain.
+See [`docs/unattended-testflight.md`](./docs/unattended-testflight.md). The
+guarded wrapper regression suite is **16/16**.
+
+### Build 31 upload receipt (historical, superseded on devices)
 
 BioMotion 1.0.0 build 31 was validated by Apple with no errors, then the exact
 same byte-pinned IPA was uploaded with no errors. The upload delivery UUID is
@@ -506,7 +539,7 @@ The 1.096 GB model is not an On-Demand Resources tag and is not in that IPA.
 It is the separately uploaded Apple-hosted Managed Background Asset Pack
 `sam3d-body-pose` version 2, whose App Store Connect state reached
 `READY_FOR_TESTING` before the app upload. A physical-device TestFlight smoke
-must still prove download progress, relaunch recovery, hosted leaf lookup,
+must still prove download progress, relaunch recovery, complete-package lookup,
 `MLModel(contentsOf:)`, and one real inference.
 
 The Release configuration uses manual App Store signing. At the 2026-08-12
@@ -519,7 +552,7 @@ id, certificate, entitlement set, development/ad-hoc signing, or a profile/
 certificate with less than 30 days of remaining validity.
 
 ```bash
-# Build 31 is already used by the 2026-08-12 TestFlight upload. For the next
+# Build 32 is already used by the 2026-08-12 TestFlight upload. For the next
 # upload, choose a number greater than every ASC build, then set BOTH target-level
 # CURRENT_PROJECT_VERSION entries in project.yml to that same number.
 # Regenerate only after the bump; the source gate rejects a stale pbxproj.
@@ -549,7 +582,9 @@ and `destination=export`; export never requests an upload implicitly. The real
 not a claim of universal network isolation. To authorize an App Store Connect
 validation without upload, add `--validate`. To authorize the complete
 validate-then-upload transaction for the same private byte-pinned IPA, add
-`--upload` and provide `ASC_API_KEY_ID` and `ASC_API_ISSUER`. The wrapper passes
+`--upload`. `ASC_API_KEY_ID` and `ASC_API_ISSUER` remain optional per-run
+overrides; when absent, the wrapper reads the workstation's stable references
+from macOS Keychain after every local gate has passed. The wrapper passes
 the current user's exact
 `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8` path to `altool`; both key
 directories must be physical, current-user-owned and owner-only (0700 is the
@@ -559,12 +594,11 @@ the wrappers. `BioMotion.xcarchive.dependency-receipt.json` is part of the
 archive handoff; copying or renaming an archive without its adjacent receipt is
 fail-closed.
 
-At the 2026-08-12 review, both local ASC key directories were mode 0755, the
-`.p8` was mode 0644, and `ASC_API_KEY_ID` / `ASC_API_ISSUER` were unset. The
-TestFlight wrapper therefore correctly fails closed until the directories are
-owner-only, the key is mode 0600, identifiers are supplied for an explicitly
-authorized validation/upload, and the confirmed unused build number has been
-regenerated into the project.
+At the 2026-08-12 build-32 release, both ASC key directories were owner-only,
+the `.p8` was mode 0600, the Key ID and Issuer were verified against the
+BioMotion App Store Connect record, and their stable references were saved in
+Keychain. A missing/revoked key, invalid reference, unsafe permission, or
+reused build number still fails closed.
 
 Before review submission, the owner must also complete and verify Apple's
 current [required App Store Connect properties](https://developer.apple.com/help/app-store-connect/reference/app-information/required-localizable-and-editable-properties):
@@ -608,7 +642,7 @@ passwd-derived HOME. After the post-build snapshot matches, the wrapper passes
 the exact initial snapshot to the receipt sealer explicitly on standard input,
 so sealing cannot silently substitute a fresh ambient observation. The
 dependency-receipt suite is green **38/38**, the archive-wrapper suite
-**14/14**, and the TestFlight-wrapper suite **15/15**. These
+**14/14**, and the TestFlight-wrapper suite **16/16**. These
 controls assume a trusted, quiescent same-user build machine. They make ordinary
 dependency drift and inherited shell/Xcode/Python environment pollution fail
 closed, but they are not a defence against malicious code already executing as

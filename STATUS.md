@@ -19,8 +19,9 @@ biggest links were **not** where the effort had been going.
 - **It is not App Store ready.** Commercial rights for the upper-limb material,
   a full TestFlight/device product smoke, the upper-limb rights decision, and
   required product/privacy/review metadata remain explicit distribution gates
-  below. The compliant hosted-model version 2 is ready for testing and build 31
-  has been validated and uploaded to TestFlight.
+  below. The compliant hosted-model version 2 is ready for testing and build 32
+  has reached TestFlight state `VALID` with the build-31 package-access failure
+  fixed.
 
 - Five implementation defects were found, fixed, and pinned with tests. The test target
   **did not even compile** before this work, so the project had no regression net at all.
@@ -6842,6 +6843,47 @@ TestFlight receipt.
 
 ### Local MVP complete; App Store readiness remains separate
 
+### Build 32 fixes device model-package access and is VALID (2026-08-12)
+
+A physical iOS 27 device running TestFlight build 31 over cellular reached the
+hosted model but failed Run with `The pose model could not be opened. Update
+BioMotion, then try again.` This was not a cellular-network defect. The app had
+requested the leaf
+`SAM3DBodyPose.mlmodelc/coremldata.bin`, removed the final component, and passed
+the resulting parent to Core ML. A Background Assets URL can scope access to
+the requested leaf, leaving Core ML unable to read sibling package data such as
+`weights/weight.bin`. Commit `8a0e758` changed the store to request the complete
+`SAM3DBodyPose.mlmodelc` package directly and verify its metadata leaf. The
+runtime precompiled-model gate now requires the package path and rejects the
+former leaf plus `deletingLastPathComponent()` pattern.
+
+The fix passed the targeted 9/9 model-store tests, the runtime/package source
+gate, privacy/resource gates, and the complete protected **698/698 + 1/1** test
+run. Build number 32 was committed in `70eb852`; the exact signed IPA is
+1,542,789 bytes at SHA-256
+`60bbe6fa2633c0226a611fa07e4f1e80ec1987f25ca90ef4a6de8121a0f6b8a6`.
+Apple validation and upload both completed without errors under delivery UUID
+`5b42b98a-d315-41de-ad29-05aafc7f38af`. Final `altool --build-status` reported
+build/import status `VALID`, audience `APP_STORE_ELIGIBLE`, `expired=false`,
+minimum OS 26.0, and no non-exempt encryption.
+
+The upload's formerly transient Key ID and Issuer references were recovered
+from the prior successful release, verified against the BioMotion account, and
+saved in the current user's macOS Keychain. Commit `b883046` makes the guarded
+TestFlight wrapper use explicit environment overrides when supplied and
+otherwise read those references from Keychain only after all local gates have
+passed. Its fail-closed regression suite is now **16/16**. The signing key,
+certificate, app/extension profiles, and pinned signing tool remain in the
+owner-only unattended release directory. The full default sequence is recorded
+in `docs/unattended-testflight.md`; no Xcode/Transporter/browser click is needed
+for the next release unless a credential or profile actually expires or is
+revoked.
+
+Build 32 still needs the external device receipt: install it, let the separately
+hosted 1.096 GB Managed Background Asset Pack download, press Run, and prove
+complete-package open plus one real inference. The model is not ODR and is not
+inside the 1.54 MB IPA.
+
 ### TestFlight build 31 and hosted Asset Pack v2 uploaded (2026-08-12)
 
 The checked-in build number was advanced from 30 to 31 and pushed to `main` at
@@ -6890,30 +6932,24 @@ code/test completion. Distribution remains a separate boundary:
 - Commercial rights for the 42 MoBL-ARMS-derived upper-limb muscles remain
   unresolved; App Store distribution of `FullBody.osim` stays blocked until the
   owner obtains written permission or replaces/removes that material.
-- The locally verified compliant AAR is 1,096,258,817 bytes at SHA-256
-  `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`, but it
-  has not been uploaded. Hosted version 1 remains obsolete, and real TestFlight
-  progress/pause/relaunch, hosted leaf resolution, `MLModel(contentsOf:)`, and
-  one inference still lack a device receipt.
+- The compliant AAR is 1,096,258,817 bytes at SHA-256
+  `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db` and was
+  uploaded as hosted version 2 (`READY_FOR_TESTING`). Real TestFlight
+  progress/pause/relaunch, complete-package resolution, `MLModel(contentsOf:)`,
+  and one inference still lack the final build-32 device receipt.
 - A final TestFlight/device product smoke remains wider than hosted model load:
   physical Photos-provider and force-kill residue, Vision behavior, peak
   memory/runtime and cancellation latency, Release-device timing, findings on
   deliberate real photos, and the complete offline path on real video still
   lack a final device receipt. These are external product/UX/performance gates,
   not missing local unit-test implementation.
-- At the 2026-08-12 workstation review, a valid Apple Distribution identity and
-  both named App Store profiles were installed and expire on 2027-08-06. No
-  current controlled signed archive with its adjacent dependency receipt, IPA,
-  App Store validation, or upload is claimed.
-- Both target-level `CURRENT_PROJECT_VERSION` values remain 30. Reuse of 30 has
-  not been checked in App Store Connect; the owner must select a strictly unused
-  number, update both values in `project.yml`, and regenerate the project before
-  the source/archive gates.
-- The local `.appstoreconnect` and `private_keys` directories were mode 0755 and
-  the `.p8` was mode 0644; `ASC_API_KEY_ID` and `ASC_API_ISSUER` were unset. The
-  TestFlight wrapper correctly fails closed until both directories are
-  owner-only, the key is mode 0600, the identifiers are supplied, and validation
-  or upload is explicitly authorized.
+- Build 32 now supplies the current signed archive/dependency receipt, gated
+  IPA, validation, upload, and final processing receipts. The next upload must
+  still select a strictly unused build number greater than 32.
+- The ASC directories/key are owner-only; stable Key ID and Issuer references
+  are in macOS Keychain and the private `.p8` remains mode 0600. The wrapper
+  still requires explicit `--validate` or `--upload`, and fails closed on
+  missing, invalid, revoked, or broadly readable credentials.
 - No completed App Store listing/review-metadata receipt is claimed. Before
   submission, the owner must complete and verify Apple's current
   [required properties](https://developer.apple.com/help/app-store-connect/reference/app-information/required-localizable-and-editable-properties),

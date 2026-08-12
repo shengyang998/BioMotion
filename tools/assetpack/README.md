@@ -485,17 +485,17 @@ Verified on this machine (2026-08-07 through 2026-08-11):
   1,096,258,817-byte AAR has SHA-256
   `910ba2f3c1578810d0202de782412ac8f52e5f3f13529f70acd7747a7f29d7db`
   and includes both the lock and full license. This Apple-hosted Managed
-  Background Asset Pack remains outside the 1,541,663-byte TestFlight build 31
+  Background Asset Pack remains outside the 1,542,789-byte TestFlight build 32
   IPA; real-device download/load/inference is still a separate smoke gate.
 
 **Not** verified, and only verifiable once a TestFlight build carrying these
 Info.plist keys is installed on a real device:
 
-* Delivery and lookup of the required Apple-hosted leaf
-  `SAM3DBodyPose.mlmodelc/coremldata.bin`, recovery of its parent directory, and
-  `MLModel(contentsOf:)` loading that pack copy. The SDK documents directory and
-  package URLs, but this runtime deliberately resolves the required leaf first
-  so a merged directory alone cannot masquerade as the expected model.
+* Delivery and lookup of the complete Apple-hosted package
+  `SAM3DBodyPose.mlmodelc`, verification of its required `coremldata.bin`, and
+  `MLModel(contentsOf:)` loading that package copy. Build 31 requested only the
+  leaf and then tried to open its parent, which did not retain package-wide
+  access on a physical device; build 32 requests the package directly.
 * Real progress/pause/resume events, relaunch while partially downloaded, and
   the resulting percentage on a device. The local tests prove event mapping,
   single-flight retry and stale-attempt fencing with an injected client; they do

@@ -169,7 +169,7 @@ phases, or archive layout changes:
 ```
 
 The resource suite is green **45/45**; the TestFlight wrapper suite is green
-**15/15**. The resource suite constructs accepted source, arm64 iOS Simulator app, and test-bundle
+**16/16**. The resource suite constructs accepted source, arm64 iOS Simulator app, and test-bundle
 fixtures plus an ad-hoc arm64 device archive that must be rejected, then mutates one
 boundary at a time. Its negative cases cover
 wrong target membership, stale or weaker internal-UI guards, changed source identities, nested/renamed
