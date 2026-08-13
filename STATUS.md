@@ -294,10 +294,16 @@ Do not re-litigate these; they are settled inputs.
 |---|---|
 | Real-time required? | **No.** Offline / batch after capture is acceptable. |
 | Where does processing run? | **On the phone.** Not a Mac companion, not cloud. |
-| Muscle activation: qualitative or quantitative? | Owner wants **quantitative**. See the hard limits below — this is only partly achievable. |
+| Muscle activation: qualitative or quantitative? | **Coarse QUALITATIVE relative only** (owner restated 2026-08-13, superseding the earlier "quantitative"): which muscles are working, which are resisting while lengthening (往外撑) and which are shortening (往内收). Explicitly NOT wanted: newtons, percentages, fine per-muscle numbers. |
 | Target user | **Ordinary consumers**, not clinicians or researchers. |
-| Product goal | Show muscle loading of the user's **current posture**; tell them **specifically** what is wrong. |
+| Product goal | (Owner restated 2026-08-13.) Analyse a recorded movement video (e.g. running): find the form deviations (**"歪歪扭扭"**), read the coarse muscle working pattern, relate the two (did the posture break the loading or the loading break the posture), and give training advice that prevents injury. The owner's two exploration axes: (1) how much accuracy this model chain can reach, (2) whether it can run sustainably on the phone without overheating. |
 | Upper limb | **Required.** This rules out Rajagopal2016 (lower-extremity only). |
+
+The 2026-08-13 goal restatement changes which future claims matter: the retired fine-grained
+per-muscle left/right percentage was never the product need, so next-steps 36-38 (R9, the bar
+question, the lineage question) are re-scoped to "only if a coarse claim ever needs them". The
+viable coarse claims — muscle-GROUP-level loading and per-muscle lengthening/shortening MODE — each
+still require their own pre-registered gate before any screen shows them.
 
 ---
 
