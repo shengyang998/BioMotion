@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-12.
+Last updated: 2026-08-13.
 
 ---
 
@@ -256,6 +256,25 @@ biggest links were **not** where the effort had been going.
   original fixed 1 mm resolution, while ellipsoid direction also has a fixed 1 mm causal A/B gate
   in which a zero actual effect fails. No claim is reopened. See
   [MovingPathPoint semantics](#movingpathpoint-uses-exact-simmspline-semantics-2026-08-10).
+- **R1 WAS RE-REGISTERED AGAINST ONE TRUTH, AND THE CLAIM STAYS RETIRED FOR A NEW REASON**
+  (2026-08-13). The registration was frozen before any number was read, predicted FAIL, and got it.
+  Truth is now OpenSim's analytic column alone; the population became the full
+  `loading × truth` 2×2 so no v1 leg was deleted, and `V1-CONT` reproduced 123.0833 / 0.6571 /
+  108.5576 to the last digit, which is what proves an axis was added rather than the old cells
+  perturbed. R1 reads **25.6982 pp** (15.9× the 1.617 pp bar) and R2 **32.5869 pp**; R1-M, R3
+  (**1.4022 pp**, the first post-SimmSpline reading), R4, R5 (**168.86 pp**), R6 (**584** cells) and
+  a strengthened R7 (`min(gated, v1)` = **62.48**) pass. The binding half is the one never computed
+  before — CD-derived torques against analytic truth. **The tail then localised to ONE arm and most
+  of it is the reference's**: `gasmed` alone carries 95.4 % of R1, and at `gasmed_r` knee 0° ours is
+  20.714 mm against analytic 21.761 mm while the reconciled construction from OpenSim's own reported
+  points reads 20.985 mm — so **74.2 %** of the gap this gate charges to BioMotion is the registered
+  truth's own, and we sit 2.87× closer to that witness. Not an acquittal: 76 of 584 gated cells are
+  already at or over the bar, clearing it needs every arm 16× more accurate, and **R8 fired
+  falsifier 7** — perturbing `semimem` moves `recfem`'s printed figure by **5.656 pp**, 3.5× the bar,
+  so "validate a path, then trust its row" is measurably invalid. The truth column was chosen with
+  both candidate values known, so this instrument may tighten a verdict and may never reopen a claim;
+  a new loud test says so. `perMuscleLeftRightClaimIsSupported` stays `false`. See
+  [R1 v2](#r1-v2-one-truth-twice-the-population-and-a-tail-that-belongs-mostly-to-the-reference-2026-08-13).
 - **"The skeleton doesn't match" is solved** (2026-08-07): `VNDetectHumanRectanglesRequest`
   defaults to `upperBodyOnly = true`, so the offline path was cropping the model's input to the
   torso and the legs were never in frame. Leg error 9.0% → 4.6% of subject height, torso unchanged.
@@ -6397,6 +6416,286 @@ fresh-DerivedData simulator build then completed with `** BUILD SUCCEEDED **`.
 
 ---
 
+## R1 v2: one truth, twice the population, and a tail that belongs mostly to the reference (2026-08-13)
+
+The owner directive after the 2026-08-09 leak re-run was to settle the moment-arm truth definition
+FIRST and re-register R1 SECOND. This is that round. The registration was frozen in full before any
+new number was read — the truth definition, the population, the bar, every gate and instrument, every
+numeric falsifier trigger, and a written **predicted verdict of FAIL** — and it is embedded verbatim
+as §0–§8 of `WrappedMomentArmLeakTests`' type doc. Nothing in it was edited after the run started.
+
+Next-step 33's warning was **accepted rather than rebutted**. The analytic column was chosen with
+BOTH candidate values already known (**123.0833 pp** pooled against **3.6932 pp** analytic-only), so
+by this repo's own standard the new reference is not pre-registered in the strict sense. The
+consequence is registered as a mechanism, not a promise: this instrument may **tighten** a verdict
+and may never **reopen** a claim.
+
+### The answer, with the number
+
+**`perMuscleLeftRightClaimIsSupported` stays `false`.** No row came back, no floor moved, no gate was
+weakened, and `testTheShippedFlagMatchesWhatTheMeasurementSupports` prints `supported=false
+shipped_flag=false`. The bar is unchanged at `floor × 0.2` with `floor` read live —
+**8.086253369272214 %**, so **1.6172506738544428 pp** — and both are printed beside every verdict.
+
+| Gate | Requires | Measured | |
+|---|---|---|---|
+| R1 | moment-arm leak < 1.617 pp | **25.6982 pp** (median 0.345) on `recfem` | ❌ |
+| R2 | printed-number leak < 1.617 pp | **32.5869 pp** (median 0.389) on `bflh140` | ❌ |
+| R1-M | median < control/3 AND < 1.617 pp | 0.345 against 11.080/3 | ✅ |
+| R3 | three-muscle rig at the measured residual < 1.617 pp | **1.4022 pp** | ✅ |
+| R4 | 0 unmodelled `PathWrap`s, none displayed | 0 / 0 | ✅ |
+| R5 | straight-line CONTROL leaks > the FULL floor | **168.8593 pp**, 349/541 cells over it | ✅ |
+| R6 | ≥20 screened bases at the worst cell, ≥30 cells | 22, **584** | ✅ |
+| R7 | `min(gated, v1)` of spread / printed error > 4 | **62.48** | ✅ |
+
+R1's binding cell is `recfem_r` at `grid_h030_k000_a+00`, loading `centralDifference`, truth
+`analytic`, shape `hip0.80_knee1.00`, effort 0.9. R2's is `bflh140_r` at `grid_h090_k000_a+00` on the
+same loading and truth, where `leakExact` is 22.5840 and the solver's own slack is 10.0029 — they add
+to 32.5869 exactly, so R2 is still R1 with the sharing step applied and not an independent failure.
+Instruments: R1-P **126.4356 pp** (78× the bar, 582 paired cells, `MultiWrapReferenceTests` 6/6),
+I1 worst KKT **9.734e-13**, I2 median **4.3261e-05** / p90 **0.1312** / max 21.9820, I3 all
+preconditions green.
+
+### The instrument changed shape, and V1-CONT proves it changed nothing else
+
+`sweep()` used ONE `reference` variable for three different jobs — the τ source, the truth solve, and
+the subject exclusion — so filtering it to one column would have silently deleted a whole loading
+family and re-keyed every instrument built on the old population. The registration therefore split it
+into independent axes: `loading ∈ {analytic, centralDifference} × truth ∈ {analytic,
+centralDifference}`, with `subject != truth` preserved verbatim. The v1 population survives
+byte-for-byte as the diagonal, and the v1 gate quantity stays computed and printed as `V1-CONT`.
+
+It reproduced to the last stored digit, which is what makes the re-registration auditable rather than
+asserted:
+
+| quantity | recorded | this run |
+|---|---:|---:|
+| v1 pooled R1 maximum | 123.0833 | **123.08330106536997** |
+| v1 pooled R1 median | 0.6571 | **0.6571495108855441** |
+| v1 pooled R2 maximum | 108.5576 | **108.55756538381263** |
+| v1 analytic-half maximum (`glmax2` @ `grid_h090_k000_a+00`) | 3.6932 | **3.69320799445608** |
+| R1-P worst reference self-disagreement | 126.44 | **126.4355919838206** |
+| v1 straight-line control | 66.8824 | **66.8824128835621** |
+
+So the 2×2 ADDED an axis instead of perturbing the existing cells, and falsifier 4 (the run is void)
+does not fire. One implementation note that is not a registration change: `solve` is a pure function
+of `(pose, source, τ)` on a fresh `MuscleSolver`, so within a pose the four quadrants share their
+solves and the 2×2 cost the same QP count as v1 rather than the budgeted double.
+
+### Why R1 v2 reads 25.70 and not 3.69
+
+The per-quadrant split is the whole story, and the gated half that had never been computed is the one
+that binds:
+
+| loading | truth | worst `leakExact` | cells | gated? |
+|---|---|---:|---:|:--:|
+| analytic | analytic | 3.6932 | 295 | ✅ |
+| centralDifference | analytic | **25.6982** | 289 | ✅ |
+| analytic | centralDifference | 33.6440 | — | — |
+| centralDifference | centralDifference | 123.0833 | — | — |
+
+The registration predicted only "R1 ≥ 3.6932, and the CD-loading half can only raise the max; no
+upper bound is stated". It raised it 7×. The mechanism is visible in the activations: the CD loading
+builds τ from arms the registration itself declares defective (`gasmed` knee **4.890 mm** against
+analytic **21.761 mm**), which drives the QP to an operating point where `recfem`'s mean exact
+activation is 0.093–0.116 against `a_min = 0.02`. The absolute activation change there is only
+**0.022–0.023** — a two-percentage-point force change divided by a small mean is what reads as
+25.7 pp.
+
+### The tail localises to ONE arm, and 74 % of that arm is the reference
+
+Added AFTER the verdict. The freeze rule's letter authorises only "pin a defect RED, fix it, re-run
+the same gates"; a purely additive localisation is outside that letter and is recorded here rather
+than silently. It ran to decide whether there IS a defect to fix; it gates nothing, asserts no
+threshold, and no gate, bar, statistic or population was touched
+(`testWhatCarriesTheTailAndHowMuchArmAccuracyWouldRemoveIt`).
+
+Neither binding cell's carrier has a wrong path. `recfem_r`'s four moment arms are identical in all
+four sources to **0.00035 mm**, and `bflh140_r`'s to **0.00038 mm**. Starting from the TRUTH matrix
+and swapping in this build's rows one base at a time, **`gasmed` alone reproduces 24.5092 of R1's
+25.6982 (95.4 %)**; run in reverse, restoring `gasmed` alone drops R1 to **0.8038 pp** and R2 to
+**1.0340 pp**, both under the bar, where the next-best single fix leaves R1 at 24.586.
+
+It reduces to one number — `gasmed_r`'s knee moment arm at knee 0° — and the third construction this
+repo already owns says most of that number is the reference's:
+
+| construction | `gasmed_r` knee arm at 0° | distance to the witness |
+|---|---:|---:|
+| reconciled (OpenSim's OWN reported tangent points, shortest helix between them) | 20.9845 mm | — |
+| **ours** | 20.7142 mm | **0.2703 mm** |
+| **analytic — the REGISTERED TRUTH** | 21.7609 mm | **0.7764 mm** |
+
+So **74.2 %** of the 1.0467 mm that R1 charges wholly to BioMotion is the registered truth's own
+departure from the witness, and this port sits **2.87× closer** to that witness than the truth column
+does. Priced through the same rig, the truth column's error ALONE is worth ≈**17 pp** (the
+`gasmed`-only α ladder brackets the reconciled crossing at α = 0.7418 between 16.006 pp at α = 0.70
+and 17.343 pp at α = 0.75) — **10.5× the bar, with zero BioMotion error anywhere in the matrix**.
+
+It is a mechanism, not a coincidence. Over the 440 sampled multi-wrap stencil groups,
+`|analytic − reconciled|` correlates **0.890** with the reference's own negative slack — Pearson
+against `max(0, −slack)`; `|slack|` gives 0.8757 and signed slack −0.8724, so the reading is strong
+under every definition. In the 358 groups whose three stencil samples are not all slack-negative the
+two constructions differ by at most **0.0420 mm**; in the 82 groups where all three are (88 of the
+1,320 rows — the M4 count), by up to **0.7764 mm** — 18.5×
+larger, and both class maxima hold under every classification tried. Both binding cells sit on the
+single worst such row, slack **−7.2957 mm**. This file recorded
+`|port − analytic|` and `|port − reconciled|` before; `|analytic − reconciled|` had never been
+measured, and it is 0.7764 mm exactly where R1 binds.
+
+**None of this is an acquittal, and it was not treated as one.** This build's own 0.2703 mm residual
+against the same witness is still worth ≈**5.4 pp** — 3.3× the bar — by the same bracketing
+interpolation the 17 pp figure uses (`tail_dominant_ladder` reads 5.1943 pp at α = 0.25 and
+10.9437 pp at α = 0.50; 0.2703/1.046689 puts it at α = 0.2582); the whole-matrix α
+ladder is flat (`leak/α` 25.70 → 20.60 across 128× of α, so no active-set cliff) and gives a
+**required accuracy factor of 16×**, i.e. 0.065 mm on `gasmed`; and **76 of the 584 gated cells
+already sit at or over the bar** (31/295 analytic-loading, 45/289 CD-loading) — measured WITH
+`gasmed`'s error present. Whether the MAX re-binds elsewhere with `gasmed` exact is an INFERENCE
+from those 76, not a measurement: only the two binding cells were recomputed with `gasmed` exact
+(R1 → 0.8038 pp, R2 → 1.0340 pp), and some of the 76 are plausibly `gasmed`-driven themselves (the
+analytic-half worst cell, `glmax2`, also carries `gasmed` 1.047 mm as its largest arm discrepancy).
+Two muscles were attributed; 74 cells were not. Neither reference
+resolves this row at the scale the gate asks about, so the residual is unattributable **at this
+instrument** — which is the state a retirement is for, and it is why no RED test was written and no
+fix was made.
+
+### R8: the sharing step's coupling is a measurement now, and it fires falsifier 7
+
+Next-step 35 said the QP's per-muscle amplification is unbounded and nothing measures it. Something
+does now. Perturbing `semimem`'s arms bilaterally by the same p99 relative residual R3 uses
+(0.011139737155262905) and re-solving the exact QP moves **`recfem`'s** printed left/right figure by
+**5.6563 pp at R1's own binding cell — 3.50× the bar**, with 22 bases perturbed and
+`coupling_bounded_by_the_bar=false`.
+
+That fires registered falsifier 7: "validate a muscle's path, then trust its row" is now measurably
+invalid at this rig's coupling, so no amount of moment-arm accuracy can support a per-muscle claim.
+R8 is a diagnostic and did not move the flag; what it moves is what the NEXT stage is allowed to
+conclude.
+
+### What did NOT fire, and what was NOT run
+
+**M1 did not fire.** `|analytic − centralDifference|` over the rig's own screened single-wrap rows
+(n = 1643) reads median **0.00064 mm**, p99 **0.3809 mm**, max **2.2094 mm** (`glmax1_r` /
+`hip_rotation_r` at `hip_sweep_+120`) against registered triggers of 1.047 mm and 10.43 mm. The
+confinement of the finite-difference bookkeeping defect to the multi-wrap class survives its own
+registered falsifier. M6 independently re-read **1.046688 mm** worst, unchanged, so falsifier 1's M6
+leg does not fire either.
+
+**M1's `worst_cell_smoothness` is not derivable from the stored fixtures, and it printed that rather
+than an approximation.** `opensim_moment_arms_fd.txt` stores the DERIVATIVE, not `L(q±ε)`, and no
+fixture carries OpenSim's wrap-point count off-grid. Both fields print
+`NOT_AVAILABLE_FROM_STORED_FIXTURES` with `marginal_wrap_explanation_admissible=false` — the strict
+direction, because the anti-narration rule is "admissible ONLY IF", so missing evidence makes the
+marginal-wrap excuse inadmissible rather than assumed. What IS available at `q` is informative: at
+both binding cells the reference's and our own wrap-point counts are 0 and the lengths agree to nine
+digits.
+
+**D2 was NOT RUN**, and is reported as not run rather than as absence of the defect.
+`dump_multiwrap.py`'s slack machinery is specialised to multi-wrap muscles with a driver coordinate,
+so the all-wrapped-muscle version is a new generator plus an OpenSim regeneration pass — not the
+"cheap" case the registration conditioned on, and `needs_fixture_regen` was registered false. This
+round RAISES its value: since `|analytic − reconciled|` is 0.890-correlated with negative slack, a
+single-wrap muscle with negative slack would put the same reference-side term across the whole rig.
+**R9 was NOT BUILT**, as registered.
+
+### Prediction accounting, stated plainly
+
+R1 FAIL: predicted, and the superset argument held. R2 FAIL: predicted, but the value landed at
+**32.587 pp, ABOVE the predicted [≈3.7, ≈25.7] pp band** — that band was derived from an assumed
+R1 ≈ 3.69 plus the v1 slack max, and with R1 v2's actual 25.698 the triangle bound becomes ≈47.7,
+which R2's worst cell satisfies as an equality. The band was wrong; the direction was right. R3's
+flagged uncertainty is resolved: the first POST-SimmSpline reading exists now and is **1.4022 pp**,
+identical to the pre-fix value, with the registered population confirmed (`pairs=13617`,
+`excluded_below_20mm=12543`, i.e. `minimumReferenceMetres = 0.020`). R1-M and R5, both unrecorded
+before this run, pass.
+
+One honest delta: I2 reads median **4.3261e-05** / p90 **0.1312** against the registration's
+"recorded v1 values" of 4.4994e-05 / 0.0471. Those recorded figures are PRE-SimmSpline —
+`solverSlack` is a `.ours`-only quantity and the endpoint fix changed our arms above 120° knee — the
+max 21.98197 is unchanged, and I2 carries no continuity requirement; only V1-CONT and R1-P do, and
+both reproduced. Both of I2's registered pass conditions hold.
+
+### The fast lane's exact count was wrong by two, and its own pin caught it
+
+The verdict round added `testReopeningThisClaimNeedsAnInstrumentChosenBeforeItsNumbersWereRead` and
+R8's `testTheSharingStepsPerMuscleCouplingIsMeasuredAndNotAssumed` without registering either in
+`tools/test_gate.sh`; the tail round then bumped the number by +1 for its own test alone. The
+arithmetic comment therefore named ONE test while THREE had been added, and `tools/run_tests.sh fast`
+would have failed its exact-count check with 701 executed against 699 expected. Corrected to **701**
+in `tools/test_gate.sh`, in the paired self-test that exists precisely so a silent bump fails
+(observed RED at 52/53 before the pin was updated, 53/53 after), and in `CLAUDE.md`'s live lane
+sentence. Historical run receipts recording 698/698 were NOT rewritten. The inventory rule is written
+into the comment: `func test…(` in `BioMotionTests/*.swift` plus `- (void)test…` in
+`BioMotionTests/*.{mm,m}`, minus the one E1 method the fast lane skips — a rule that reproduces the
+reviewed 698 exactly at the 2026-08-12 tree, which is what licenses 701.
+
+### What this did NOT do
+
+* **No gate was weakened and none was touched.** `registeredTruth`, `reopenFractionOfFloor`,
+  `minimumScreenedBases`, `minimumCells`, `minimumInformationToLeakRatio` and `interiorMargin` are
+  byte-unchanged; R1/R2 stayed a MAX over cells; no percentile, trimmed max, per-cell noise
+  allowance or reference-uncertainty budget was introduced. R7 was STRENGTHENED to
+  `min(gated, v1)` and the `min` is wired into `supported` itself, not merely printed.
+* **The flag pin stays bidirectional.** The prior draft's fix for the "chosen after the numbers"
+  problem — a constant-`false` conjunct in `supported` — was withdrawn by the registration as itself
+  a defect: it would have degraded `XCTAssertEqual(flag, supported)` to `XCTAssertEqual(false,
+  false)`, and R1's and R2's MAX thresholds are asserted nowhere else in the suite. The no-silent-
+  reopen rule is a SEPARATE loud test instead. If the measured gates ever all pass while the flag is
+  false, BOTH go RED — that is the surfacing mechanism, and it forces an owner decision rather than
+  flipping a product flag automatically.
+* **No pinning test was deleted, weakened or made conditional**, and no expected number was
+  hardcoded into any test — V1-CONT's continuity check is a review step performed against printed
+  output.
+* **Nothing a user sees changed.** LOCK B is untouched: `NimbleBridge.mm` still returns
+  `hasValidatedFootContactSupport = NO` for any parsed model, so no frame reaches `arePublishable`
+  and no screen could print a muscle row whatever this flag said. The overlay stays anatomy-only.
+* **The product-facing prose was corrected with MEASURED values, after the verdict, comment-only.**
+  `GaitLoadSummary.swift`'s stale readings (the 42.46 pp passage, the 0.977 median, the 466-of-582
+  count) are replaced; the v1 registered 123.0833 pp is retained under its own name, so is the
+  126.44 pp column-vs-column disagreement, and so is the explicit statement that the figure is
+  unattributed at the individual-muscle level. One sentence written straight after the verdict —
+  "the re-registration made the failure this repository's own" — was itself refuted by the tail
+  round and is corrected in the same file rather than left standing.
+
+### Receipts
+
+```text
+verdict run    /tmp/biomotion-tests.cXavsz/subset/xcodebuild.log
+               ** TEST SUCCEEDED **  31/31, 0 failures / 0 skips / 0 expected failures / 0 restarts
+               657.187 s  (WrappedMomentArmLeakTests 14 tests / 98.377 s; R3 measurement 554.6 s)
+tail round     /tmp/biomotion-tests.YIIze5/subset/xcodebuild.log
+               ** TEST SUCCEEDED **  32/32, every registered gate value bit-identical to the verdict run
+final          /tmp/biomotion-tests.xHVqxw/subset/xcodebuild.log
+               ** TEST SUCCEEDED **  86/86, 0 failures / 0 skips / 0 expected failures / 0 restarts
+               700 s; WrappedMomentArmLeakTests + MomentArmErrorCancellationTests +
+               MultiWrapReferenceTests + ClaimSurfaceTests + MuscleOverlayClaimTests +
+               GaitLoadSummaryTests in ONE invocation, after the prose corrections
+LEAK-METRIC decision supported=false exact_pp=25.698237309306435 shipped_pp=32.58687764475865
+  threshold_pp=1.6172506738544428 floor_percent=8.086253369272214 control_pp=168.8592647393981
+  cells=584 median_spread_over_error=62.48360378628948 truth=analytic shipped_flag=false
+LEAK-METRIC reopen_authority measured_gates_supported=false shipped_flag=false
+  registered_truth=analytic truth_chosen_after_both_candidates_were_read=true
+  reopening_requires=[R9-lineage instrument, explicit owner commit]
+```
+
+Stored fixtures only; `needs_fixture_regen` was registered false and no fixture was regenerated.
+Every gate and instrument number above is `grep 'LEAK-METRIC'` (plus `MOMENT-ARM-METRIC`,
+`SIMMSPLINE-METRIC` and `MULTIWRAP`) from those logs. The tail-attribution block is the one
+exception: no test prints per-row reconciled values, so its numbers are offline arithmetic on
+`BioMotionTests/Fixtures/opensim_multiwrap.txt` — at `gasmed_r` knee 0°: reconciled arm
+= −(plus.reconciled − minus.reconciled)/(2·1e-4) = 20.98448 mm, analytic 21.760920 mm, ours
+= 21.760920 − 1.046689 = 20.714231 mm; hence |analytic − reconciled| = 0.776440 mm,
+|ours − reconciled| = 0.270249 mm, 0.776440/1.046689 = 74.18 %, 0.776440/0.270249 = 2.87×. The
+358/82 split, the 0.0420 mm class maximum, 18.5× and the 0.890 correlation are recomputed from the
+same fixture under the definitions stated at their use above; an independent audit re-derived every
+one of them from the fixture before this entry was accepted. `tools/run_tests.sh all` — the commit
+gate — has not been run for this change set.
+
+**`perMuscleLeftRightClaimIsSupported` stays `false`, and the reason it stays false is now a
+different one: not that the reference is maximised over two columns that disagree, but that the one
+column the gate names is itself unresolved at the row carrying 95 % of the tail, while the QP's
+per-muscle coupling is measured at 3.5× the bar.**
+
+
 ## Next steps (ordered)
 
 ### Immediate — unblocked, no licence exposure
@@ -6703,7 +7002,12 @@ fresh-DerivedData simulator build then completed with `** BUILD SUCCEEDED **`.
     argument from the code path, not a measurement over the single-wrap class. The cheap check is to
     add `min(stored arc − chord)` to `dump_reference.py` for ALL 66 wrapped muscles and assert it is
     non-negative; if any single-wrap muscle comes back negative, C1/C2/C5's bars are measuring the
-    same artefact at a smaller size.
+    same artefact at a smaller size. **Still open, and worth more than it was**: the 2026-08-13 round
+    measured `|analytic − reconciled|` at **0.890** correlation with exactly this negative slack
+    (max 0.0420 mm where slack ≥ 0, 0.7764 mm where it is not), so this check now also scopes how far
+    the REFERENCE-side term reaches. It was registered as D2 and reported NOT RUN — it is a new
+    generator plus a regeneration pass, not the cheap case. Its muscle count needs settling first
+    (item 39).
 31. **The ellipsoid spirals are unreconciled by construction.** `CalcDistanceOnEllipsoid` sums
     chords rather than evaluating a closed form, so "the shortest surface path between the reported
     tangent points" has no cheap expression. It did not matter here — the ellipsoid slack is
@@ -6719,14 +7023,18 @@ fresh-DerivedData simulator build then completed with `** BUILD SUCCEEDED **`.
 
 ### Newly opened by the 2026-08-09 leak re-run (eleventh round)
 
-33. **R1 needs ONE reference, and the repo now knows how to build it.** The gate is maximised over
-    two OpenSim columns that disagree by 126.44 pp on this rig, so it cannot certify anything about
-    `MomentArmComputer`. `MultiWrapReferenceTests`' reconciled column is the model: recompute the
-    reference's total from its OWN reported tangent points. Extending it past the 8 multi-wrap
-    muscles is next-step 30's cheap check; a `WrapValidationHarness` sample carrying a
-    `reconciled` field beside `wrapOn`/`centralDifference` would let R1 be re-registered against a
-    single defensible truth. **Do not re-register it quietly** — R1's current value would change,
-    and a gate whose reference is chosen after a number is read is not pre-registered.
+33. ~~**R1 needs ONE reference, and the repo now knows how to build it.**~~ **DONE 2026-08-13 — but
+    the warning attached to it was honoured, not waived.** R1 v2 registers
+    `WrappedMomentArmLeakTests.registeredTruth = .analytic` and re-parameterises the sweep into the
+    full `loading × truth` 2×2 so no v1 leg is deleted; R1 reads **25.6982 pp** against the unchanged
+    1.617 pp bar. The column WAS chosen after both candidate values were known (123.0833 vs 3.6932),
+    which is exactly what this item said is not pre-registration — so the registration granted the
+    new instrument **no reopening authority**: it may tighten a verdict and may never reopen a claim,
+    `supported` stays a live function of the six measured gates so the flag pin remains
+    bidirectional, and `testReopeningThisClaimNeedsAnInstrumentChosenBeforeItsNumbersWereRead` is a
+    separate loud test that goes RED with the pin if the gates ever all pass. The strictly
+    pre-registered version — the `reconciled` field on the shared 173-pose grid — is item 36. See
+    [R1 v2](#r1-v2-one-truth-twice-the-population-and-a-tail-that-belongs-mostly-to-the-reference-2026-08-13).
 34. ~~**Localise and explain the 42.46 pp ANALYTIC tail.**~~ **DONE 2026-08-09.** The 24-row dump
     first rejected the neighbour hypothesis: at `run_4_mid_swing`, `bflh140_r` itself carried knee
     **16.059 vs 13.713 mm (+2.346 mm)** and a −42.462 pp figure movement. The kinematic seam then
@@ -6736,14 +7044,61 @@ fresh-DerivedData simulator build then completed with `** BUILD SUCCEEDED **`.
     analytic maximum is now **3.6932 pp** (p99 3.3322, median 0.3121), still 2.28× the gate; the
     separate registered-reference tail remains. Tracked patch and full account are in the
     endpoint-extrapolation section.
-35. **The sharing step's amplification is unbounded per muscle and nothing measures it.** At the
-    separate central-difference cell, a muscle with an exact row took 126 pp from its neighbours.
-    That is a property of the QP's coupling and
-    it applies to every per-muscle statement this product could ever make, not just to this gate —
-    so "validate a muscle's path, then trust its row" is not a valid inference and no future
-    per-muscle claim may rest on it. The measurable form: the sensitivity of muscle `i`'s left/right
-    figure to a perturbation of muscle `j`'s moment arm, which is one Jacobian of the QP solution
-    map and is cheap on the exact solver.
+35. ~~**The sharing step's amplification is unbounded per muscle and nothing measures it.**~~
+    **MEASURED 2026-08-13, and it came back OVER the bar.**
+    `testTheSharingStepsPerMuscleCouplingIsMeasuredAndNotAssumed` (R8) perturbs muscle `j`'s arms
+    bilaterally by the same p99 relative residual R3 uses and re-solves the exact QP: at R1's own
+    binding cell, perturbing `semimem` moves **`recfem`'s** printed left/right figure by
+    **5.6563 pp — 3.50× the 1.617 pp bar**, `coupling_bounded_by_the_bar=false`. That fires
+    registered falsifier 7: "validate a muscle's path, then trust its row" is not merely unproven, it
+    is measurably invalid at this rig's coupling, so no amount of moment-arm accuracy can support a
+    per-muscle claim. R8 is a diagnostic and is deliberately NOT a conjunct in `supported`; it did
+    not move the flag, it constrains what the next stage may conclude. See
+    [R1 v2](#r1-v2-one-truth-twice-the-population-and-a-tail-that-belongs-mostly-to-the-reference-2026-08-13).
+
+### Newly opened by the 2026-08-13 R1 v2 re-registration (twelfth round)
+
+36. **R9 — the reconciled truth on the SHARED grid — is the only registered instrument that could
+    reopen this claim, and building it is now an owner call rather than an obvious next step.** It
+    needs `WrapValidationHarness.Sample.reconciled` beside `wrapOn`/`centralDifference` on the
+    173-pose grid (fixture regeneration; OpenSim 4.6 from PyPI via `uv pip install opensim`, never
+    conda; record provenance) and is blocked for ellipsoid-wrapping muscles by item 31. The
+    registration said R9 becomes the next thing worth building **if R8 came back below the bar**.
+    R8 came back **above** it, so on the registration's own logic R9's answer would be secondary to a
+    coupling result that already invalidates per-muscle attribution. Decide: schedule R9 anyway, or
+    re-scope the next stage onto the coupling.
+37. **R1's bar is now known to sit BELOW the reference's own resolution at the row that binds it.**
+    R1 demands agreement with the analytic column to 0.065 mm on `gasmed` (16× better than the
+    1.0467 mm observed), while that column is **0.7764 mm** from the only other OpenSim-derived
+    construction at the same row — 12× the tolerance the gate demands. Nothing was touched under the
+    freeze rule, and the FAIL verdict stands on its own. But a gate whose bar is finer than any
+    available reference can only ever return FAIL, so the honest options are owner-level: keep it as
+    a permanent refusal, or build a reference that resolves the row (item 36) before the bar means
+    anything.
+38. **The shared-lineage question is still open and no step has been taken on it.** BioMotion's wrap
+    solver is an Apache-2.0 port of the same `opensim-core` routines that produce the analytic
+    column, so agreement is partial rather than independent corroboration — and R9 does not fix this,
+    since it too is arithmetic on OpenSim's own reported points. Does a reference wholly outside the
+    OpenSim lineage have to exist before the per-muscle claim may reopen at all? Moot today (R1 and
+    R2 both fail), and the loud no-silent-reopen test carries the question into any future run where
+    the measured gates pass.
+39. **D2 was NOT RUN, and item 30's own muscle count is internally inconsistent.** `min(stored arc −
+    chord) ≥ 0` across the wrapped muscles needs a new generator plus an OpenSim regeneration pass,
+    so it was reported as NOT RUN rather than treated as absence of the defect. Its value went UP
+    this round: `|analytic − reconciled|` is **0.890**-correlated with negative slack, so a
+    single-wrap muscle with negative slack would put the same reference-side term across the whole
+    rig rather than just the 8 multi-wrap muscles. Also flag rather than silently pick: item 30 says
+    "the other 62 wrapped muscles" while its own body says "ALL 66", `opensim_moment_arms_fd.txt`'s
+    header declares `muscles 66`, and `opensim_multiwrap.txt` covers 8 INSTANCES (`gasmed_r/l`,
+    `gaslat140_r/l`, `TRIlong_r/l`, `BIClong_r/l`) — which gives 58, not 62. 62 follows from counting
+    4 base NAMES. Which count scopes D2 and R9's coverage claim?
+40. **R3 is enforced across two files and is not in the pinned boolean.** `supported` is built from
+    R1, R2, R4, R5, R6 and R7; R3 lives in `MomentArmErrorCancellationTests` with its own
+    `XCTAssertLessThan` and is enforced only by the requirement that a verdict commit carry a green
+    `tools/run_tests.sh all`. R1 v2 deliberately did not change this, because adding a cross-file
+    term to the pinned boolean is a change to the pin. Fold it in later via a shared helper, or keep
+    the cross-file green-run requirement as the intended enforcement? Currently moot — R1 and R2 fail
+    regardless.
 
 ### Newly opened by the cam_t measurement (2026-08-07)
 

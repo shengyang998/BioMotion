@@ -239,17 +239,18 @@ struct GaitTimingReport: Equatable {
 /// wrapping (the remaining 12), so all 76 are solved and
 /// `musclesWithUnmodelledPaths` is empty.
 ///
-/// `WrappedMomentArmLeakTests` then re-ran the experiment on real geometry: the
-/// median moment-arm leak is **0.977 pp** where the straight line's was
-/// **7.939 pp** on the identical rig, and the three-muscle rig at the MEASURED
+/// `WrappedMomentArmLeakTests` then re-ran the experiment on real geometry, and
+/// on 2026-08-13 re-registered its own truth definition (R1 v2) and re-ran it
+/// again. Current readings, all against a reopening bar of `floor/5 = 1.617 pp`:
+/// the median moment-arm leak is **0.345 pp** where the straight line's is
+/// **11.080 pp** on the identical rig, and the three-muscle rig at the MEASURED
 /// residual reads **1.4022 pp** where it read 9.92 pp. The moment arms are no
 /// longer the reason for the TYPICAL muscle. ONE thing still blocks the claim,
-/// and it is measured: the moment-arm TAIL is 42–123 pp at the worst cell, and
-/// OpenSim's own two reference columns disagree by more than the gate allows, so
-/// its attribution is open. A second cause — the shipping solver's own
-/// termination slack, a median of 14.88 pp of a published left/right figure with
-/// the geometry held fixed — was removed on 2026-08-09 by `scaling = 0` and
-/// `polishing = 1` in `MuscleSolver.mm`; it now reads **4.4994e-05 pp**. See
+/// and it is measured: the moment-arm TAIL is **25.698 pp** at the worst cell,
+/// **15.9× the bar**. A second cause — the shipping solver's own termination
+/// slack, a median of 14.88 pp of a published left/right figure with the
+/// geometry held fixed — was removed on 2026-08-09 by `scaling = 0` and
+/// `polishing = 1` in `MuscleSolver.mm`; it now reads **4.33e-05 pp**. See
 /// `BoxQP`, which solves the same objective to machine precision, which is how
 /// the two causes were separated and how the second was shown to be gone.
 ///
@@ -304,7 +305,7 @@ struct GaitTimingReport: Equatable {
 /// and it is now HISTORICAL: it measured a `×0.6` stand-in for a straight-line
 /// path, and paths are wrapped since. The same rig at the residual this build
 /// leaves reads **1.4022 pp**. What the product would print today is out by a
-/// median of **1.045 pp** and a worst case of 108.58 pp — see
+/// median of **0.389 pp** and a worst case of **32.587 pp** — see
 /// `perMuscleLeftRightClaimIsSupported`.
 ///
 /// # Why there is no headline newton figure here, and never will be
@@ -665,13 +666,16 @@ struct GaitLoadSummary {
     /// joint torques, so where the two legs' torques are proportional every
     /// muscle reads the same figure (no per-muscle information); and where they
     /// are not, the number this panel would print is out by a median of
-    /// **1.045 pp** and a maximum of **108.58 pp** against the exact minimiser of
+    /// **0.389 pp** and a maximum of **32.587 pp** against the exact minimiser of
     /// the app's own objective. Since 2026-08-09 essentially none of that is the
     /// SOLVER — with the geometry held fixed it contributes a median of
-    /// **4.4994e-05 pp** (was 14.88) — so what is left is the moment arms: a
-    /// typical 0.977 pp and a thin tail reaching 123.10 pp. It lands on muscles
+    /// **4.33e-05 pp** median on the v1 diagonal (was 14.88) — so what is left is the moment arms: a
+    /// typical 0.345 pp and a tail reaching **25.698 pp**. It lands on muscles
     /// whose own path is modelled correctly, because the QP redistributes load
-    /// between synergists.
+    /// between synergists — which since 2026-08-13 is a MEASUREMENT and not an
+    /// inference: perturbing one muscle's arms by the residual this build leaves
+    /// moves a DIFFERENT muscle's printed figure by **5.656 pp**, 3.5× the bar
+    /// (`testTheSharingStepsPerMuscleCouplingIsMeasuredAndNotAssumed`).
     ///
     /// # ⚠️ What would flip it back — the GATES, not this comment
     ///
@@ -695,57 +699,100 @@ struct GaitLoadSummary {
     /// TWO gates fail, both against the reopening bar `floor/5 = 1.617 pp`
     /// (`floor` = 8.086 %, the smallest `resolvableAsymmetryPercent` any usable
     /// pinned clip achieves; a fifth because the floor is a 95 % half-width on
-    /// RANDOM error and a leak is a BIAS):
+    /// RANDOM error and a leak is a BIAS). **Both readings are R1 v2's, measured
+    /// 2026-08-13 against ONE truth — OpenSim's analytic column — over 584 gated
+    /// cells spanning both loading families:**
     ///
-    /// * **R1** — moment-arm leak, worst **123.10 pp** (median 0.977), on
-    ///   `bflh140` at `grid_h060_k000_a+00`.
-    /// * **R2** — the printed number, worst **108.58 pp** (median **1.045**, i.e.
-    ///   inside the bar). Same cell and same muscle as R1's worst, with 14.52 pp
-    ///   of solver slack there — so R2 is now R1 with the sharing step applied,
-    ///   not an independent failure.
+    /// * **R1** — moment-arm leak, worst **25.698 pp** (median 0.345), on
+    ///   `recfem` at `grid_h030_k000_a+00`. **15.9× the bar.**
+    /// * **R2** — the printed number, worst **32.587 pp** (median **0.389**, i.e.
+    ///   inside the bar), on `bflh140` at `grid_h090_k000_a+00`, where R1's own
+    ///   quantity is 22.584 pp and the solver contributes 10.003 pp — so R2 is
+    ///   still R1 with the sharing step applied, not an independent failure.
     ///
-    /// # R1's attribution, settled 2026-08-09: the tail is not this build's, and
-    /// the gate cannot be passed as registered
+    /// # What R1 v2 changed, and what it did not
     ///
-    /// R1 is maximised over BOTH definitions of `truth`, so it is a statement
-    /// about this codebase only while the two agree. Measured on the identical
-    /// rig with OpenSim's other column in the SUBJECT slot: they disagree by
-    /// **126.44 pp** worst — MORE than R1's own worst and 78× this bar — with a
-    /// paired median of **5.28 pp** against our **0.977 pp**, and our leak is the
-    /// smaller of the two in **466 of 582 cells**.
+    /// **Until 2026-08-13 R1 was maximised over BOTH of OpenSim's definitions of
+    /// `truth`, and that registration is retired.** Under it R1 read
+    /// **123.0833 pp** (median 0.6571) and R2 **108.5576 pp** — but the two
+    /// columns disagree with EACH OTHER by **126.44 pp** worst (paired median
+    /// 5.28 pp), i.e. more than R1's own worst and 78× this bar, so the gate's
+    /// binding term contained no BioMotion geometry and could not be passed by
+    /// any work on `MomentArmComputer`. Both quantities are still computed and
+    /// printed — as `V1-CONT` and
+    /// `testTheReferenceDisagreesWithItselfByMoreThanTheGateAllows` — and both
+    /// reproduced to the last stored digit under the new parameterisation, which
+    /// is how the re-registration is auditable rather than asserted.
     ///
-    /// And R1's worst muscle, `bflh140`, carries no `PathWrap`, no
-    /// `MovingPathPoint` and no row in the finite-difference fixture — so its own
-    /// moment arm is the SAME NUMBER in both reference matrices, and it still
-    /// moves 126 pp between them. What moves it is this class: the sharing step
-    /// couples every muscle that crosses a joint, so a neighbour's moment-arm
-    /// error lands on a muscle whose own path is exact. `bflh140` shares the knee
-    /// with `gasmed`/`gaslat140`, the two muscles `MultiWrapReferenceTests` shows
-    /// the central-difference column is wrong about by 10-11 mm.
+    /// **The re-registration removed the term that contained no BioMotion
+    /// geometry. It did NOT make the residual this repository's own** — that was
+    /// this comment's first reading of the verdict and the localisation below
+    /// refutes it. Against the analytic column at v1's loading the worst is
+    /// 3.693 pp; R1 v2 additionally drives the same rig with the OTHER column's
+    /// joint torques — a loading family that had never been computed — and there
+    /// the worst is 25.698 pp. The bar did not move.
     ///
-    /// **That does not reopen the claim, and the number says why**: against
-    /// OpenSim's better-founded analytic column alone, our own worst is still
-    /// **42.46 pp**, 26× the bar. The largest remaining term is the reference;
-    /// the largest term this repository owns is that 42.46 pp; neither is under
-    /// 1.617.
+    /// # The tail is UNATTRIBUTED at the individual-muscle level
+    ///
+    /// At R1's worst cell `recfem_r`'s own four moment arms are **identical in
+    /// all four sources** (48.056 / −15.305 / −2.155 / −50.205 mm), and the same
+    /// is true of `bflh140_r` at R2's worst cell. Neither figure moves because
+    /// that muscle's path is wrong. What moves it is this class: the sharing step
+    /// couples every muscle that crosses a joint. Since 2026-08-13 that is
+    /// measured rather than inferred — perturbing `semimem`'s arms bilaterally by
+    /// the p99 residual this build leaves moves `recfem`'s printed figure by
+    /// **5.656 pp**, 3.5× the bar. So "validate a muscle's path, then trust its
+    /// row" is not a valid inference, and no per-muscle claim may rest on it.
+    ///
+    /// The arm BEHIND it belongs to a third muscle, and most of that arm's error
+    /// belongs to the reference. Swapping this build's rows into the truth matrix
+    /// one base at a time, `gasmed` alone reproduces **24.509 pp of R1's
+    /// 25.698** (95.4 %); restoring `gasmed` alone drops R1 to **0.804 pp** and
+    /// R2 to **1.034 pp**, both under the bar, where no other single muscle gets
+    /// R1 below 24.586. It reduces to ONE number — `gasmed_r`'s knee moment arm
+    /// at knee 0°, ours **20.714 mm** against the analytic column's
+    /// **21.761 mm**. A third construction exists for exactly that muscle,
+    /// OpenSim's own reported tangent points with each stored spiral replaced by
+    /// the shortest helix between them, and it reads **20.985 mm**. So **74.2 %**
+    /// of the 1.047 mm this gate charges to BioMotion is the registered truth's
+    /// own departure from that witness, this build sits **2.87×** closer to it,
+    /// and the truth column's error ALONE is worth ≈**17 pp** through the same
+    /// rig — 10.5× the bar. It is also the row where OpenSim's stored arc is
+    /// **7.296 mm shorter than the chord between its own reported points**, and
+    /// over the 440 sampled multi-wrap stencil groups `|analytic − reconciled|`
+    /// correlates **0.890** with exactly that self-inconsistency (Pearson against
+    /// `max(0, −slack)`; strong under every definition tried).
+    ///
+    /// None of which is an acquittal. This build's own **0.270 mm** residual
+    /// against the same witness is still worth ≈**5.4 pp** — 3.3× the bar — by the
+    /// ladder's own bracketing interpolation; clearing the bar would need every
+    /// moment arm **16×** more accurate (0.065 mm on `gasmed`); and **76 of the
+    /// 584 gated cells** already sit at or over the bar, measured WITH `gasmed`'s
+    /// error present — whether the maximum re-binds elsewhere with `gasmed` exact
+    /// is an inference from those 76, not a measurement (only the two binding
+    /// cells were recomputed exact). Neither reference resolves this row at the scale
+    /// the gate asks about. That is what UNATTRIBUTED means here, and it is why
+    /// the answer is a retirement and not a fix.
     ///
     /// R3 (**1.4022 pp** — it passes by 13 %, not by the 65 % the pre-fix
     /// reading of 0.568 pp suggested; that reading was the old solver's slack
     /// cancelling between two noisy solves, and the exact solver reveals the
     /// true value), R4 (0 unmodelled `PathWrap`s), R5 (the straight-line control
-    /// leaks 66.88 pp, so the rig can detect a leak at all), R6 (582 cells, 21
-    /// muscles at the worst) and — since 2026-08-09 — **R7 (47.52 against a
-    /// required 4, up from 2.90)** pass.
+    /// leaks **168.86 pp**, so the rig can detect a leak at all), R6 (**584**
+    /// cells, 22 muscles at the worst), R1-M (median 0.345 pp against the
+    /// control's 11.080 pp and the 1.617 pp bar) and **R7 (62.48 against a
+    /// required 4)** pass.
     ///
     /// So the binding constraint is the MOMENT-ARM TAIL, and it is the only one
     /// left. `MuscleSolver` ran OSQP with Ruiz scaling on, polishing off and a
     /// 200-iteration cap, which was worth a median of 14.88 pp of a published
-    /// figure; with `scaling = 0` and `polishing = 1` that is 4.4994e-05 pp and
+    /// figure; with `scaling = 0` and `polishing = 1` that is 4.33e-05 pp (median,
+    /// v1 diagonal) and
     /// R7 flipped from fail to pass. What did not move is R1: a thin set of
-    /// muscle-pose cells where this build's `−dL/dq` and OpenSim's own two
-    /// columns disagree by more than the whole comparison is worth, and where the
-    /// two OpenSim columns also disagree with each other. Nothing a user can film
-    /// moves any of this — the leak is a bias, not scatter.
+    /// muscle-pose cells where this build's `−dL/dq` and OpenSim's analytic
+    /// column disagree by more than the whole comparison is worth, on muscles
+    /// whose own rows are exact. Nothing a user can film moves any of this — the
+    /// leak is a bias, not scatter.
     static let perMuscleLeftRightClaimIsSupported = false
 
     /// What fraction of the claimed stance frames survived every per-frame
@@ -885,13 +932,13 @@ struct GaitLoadSummary {
     ///
     /// The modelling leak is deliberately NOT a fourth term here, and since
     /// 2026-08-09 the reason is no longer "nothing measures it". It IS measured,
-    /// on real geometry, 582 readable cells (`WrappedMomentArmLeakTests`): the
-    /// moment-arm leak is median 0.977 pp / worst 123.10 pp against a
-    /// straight-line control of 7.939 pp, and the QP's own termination slack —
-    /// 14.88 pp until `scaling = 0` and `polishing = 1`, 4.4994e-05 pp after — is
+    /// on real geometry, 584 gated cells (`WrappedMomentArmLeakTests`): the
+    /// moment-arm leak is median 0.345 pp / worst 25.698 pp against a
+    /// straight-line control of 11.080 pp, and the QP's own termination slack —
+    /// 14.88 pp until `scaling = 0` and `polishing = 1`, 4.33e-05 pp after — is
     /// measured too. Neither belongs in this sum. Every term here is a half-width
     /// on RANDOM error and both of those are BIASES, so adding them would misstate
-    /// what the interval means; and at 123.10 pp against an 8.086 % floor the sum
+    /// what the interval means; and at 25.698 pp against an 8.086 % floor the sum
     /// would be dominated by a term that is not about this clip at all. An error
     /// of that size is
     /// handled where it belongs — as a flat refusal,
@@ -950,12 +997,26 @@ struct GaitLoadSummary {
     /// What withholds the rows now is the MOMENT ARMS AGAIN, but a different part
     /// of them: not a missing solver, a residual disagreement with OpenSim 4.6 on
     /// a thin set of muscle-and-joint-angle combinations. Median moment-arm leak
-    /// **0.977 pp**, worst **123.10 pp**; the number the panel would print is out
-    /// by a median of **1.045 pp** — inside the 1.617 pp bar — and a maximum of
-    /// **108.58 pp**, against an 8.086 % publication floor
-    /// (`WrappedMomentArmLeakTests`). And the disagreement is not attributed:
-    /// OpenSim's own analytic and finite-difference columns differ from EACH OTHER
-    /// by more than the bar at exactly those cells.
+    /// **0.345 pp**, worst **25.698 pp**; the number the panel would print is out
+    /// by a median of **0.389 pp** — inside the 1.617 pp bar — and a maximum of
+    /// **32.587 pp**, against an 8.086 % publication floor
+    /// (`WrappedMomentArmLeakTests`, R1 v2, 2026-08-13). And the disagreement is
+    /// still not attributed at the individual-muscle level: the muscles carrying
+    /// both worst cells have moment arms identical in all four sources, so what
+    /// moves their figures is the sharing step — measured at 5.656 pp of induced
+    /// change from ONE neighbour, 3.5× the bar. Separately, OpenSim's own
+    /// analytic and finite-difference columns still differ from EACH OTHER by
+    /// 126.44 pp worst, which is why the gate now names one of them.
+    ///
+    /// Naming one column did not end the reference dispute, which is why the
+    /// sentence's "disagrees with itself" clause is still the TRUE one rather
+    /// than a leftover. At the row carrying 95 % of R1's tail — `gasmed_r` at
+    /// knee 0° — the named column sits **0.776 mm** from the construction built
+    /// from OpenSim's OWN reported tangent points, against this build's
+    /// **0.270 mm**, and OpenSim's stored arc there is **7.296 mm** shorter than
+    /// the chord between those same points, which is impossible for any curve.
+    /// `ClaimSurfaceTests` pins that clause positively for this reason; it may
+    /// only be removed when a reference resolves that row.
     ///
     /// So the sentence says the typical muscle is fine and some are not, and that
     /// the app cannot currently tell which — which is why no row is shown rather

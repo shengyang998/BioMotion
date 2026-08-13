@@ -189,7 +189,7 @@ expect_output 'fast owns the E1 exclusion selector' \
 expect_output 'slow owns the exact E1 selector' \
   '-only-testing:BioMotionTests/E1MarkerSetComparisonTests/testE1RunAll' \
   test_gate_lane_selector slow
-expect_output 'fast exact count is reviewed independently of slow' 698 \
+expect_output 'fast exact count is reviewed independently of slow' 701 \
   test_gate_expected_count fast
 expect_output 'slow exact count is one E1 method' 1 \
   test_gate_expected_count slow

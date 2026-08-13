@@ -191,7 +191,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   **652/652** and slow **1/1**, with zero failures, skips, expected failures, or
   test-host restarts; its structured receipts are under
   `/tmp/biomotion-tests.SbMAmG`. That is slice-specific evidence, not the current
-  698+1 inventory. Hosted pack delivery remains separate TestFlight/device
+  701+1 inventory. Hosted pack delivery remains separate TestFlight/device
   evidence.
   On the final integrated tree, the direct dependency, app-resource and privacy
   probes pass, the privacy adversarial harness passes **41/41**, and a fresh
@@ -262,7 +262,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   environment overrides are absent. Keep the `.p8` and persistent signing
   material owner-only and out of Git. Do not create a replacement API key just
   because a shell variable is absent.
-- **Local completion is not App Store readiness.** A passing current 698+1 gate
+- **Local completion is not App Store readiness.** A passing current 701+1 gate
   plus an unsigned Release build can close the integrated local-MVP code/test
   boundary only. The hosted Asset Pack v2 and build 32 are uploaded; commercial
   rights for the 42 MoBL-ARMS-derived muscles, a final TestFlight/device product smoke
@@ -476,7 +476,11 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 698 non-E1 tests, `slow` is exactly the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 701 non-E1 tests (698 through 2026-08-12, +3 for
+  the 2026-08-13 R1 v2 round — the no-silent-reopen assertion, the R8 coupling diagnostic and the
+  tail-attribution diagnostic; the arithmetic is in `tools/test_gate.sh` and pinned again in its
+  self-test, so a silent bump fails, and it did: that line read 699 for one round because two of the
+  three were added without registering them), `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`
@@ -709,7 +713,24 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   while it is taken that way. NOT a way out of the retirement: after fixing the repository-owned
   endpoint-extrapolation bug, the better-founded analytic column alone is still **3.693 pp** worst
   (median 0.312), 2.28× the bar. Register a gate against ONE reference you can defend, or the gate
-  measures the reference.
+  measures the reference. **Done on 2026-08-13, and the sequel is the sharper lesson: naming one
+  column does not give you a defensible reference, it only tells you which one is unresolved.**
+  R1 v2 registers `truth = .analytic`, re-parameterises the sweep into the full `loading × truth`
+  2×2 so no v1 leg is deleted (`V1-CONT` reproduces 123.0833 / 0.6571 / 108.5576 to the last digit),
+  and reads **25.6982 pp** — because the never-before-computed half, central-difference torques
+  against analytic truth, is 7× worse than the analytic-only 3.693. Then the localisation:
+  **`gasmed` alone carries 95.4 %** of that maximum, and at `gasmed_r` knee 0° ours is 20.714 mm,
+  analytic 21.761 mm, and the reconciled construction from OpenSim's OWN reported points 20.985 mm —
+  so **74.2 %** of the gap the gate charges to this port belongs to the column the gate now names,
+  which is 12× the tolerance the same gate demands. Not an acquittal: this build's own 0.270 mm on
+  the same row is still worth ≈5.4 pp (3.3× the bar) by the ladder's own bracketing interpolation,
+  76 of 584 gated cells sit at or over the bar measured WITH `gasmed`'s error present (only the two
+  binding cells were recomputed with it exact), and closing R1 v2 on accuracy alone needs 16×.
+  Corollary for any future gate: MEASURE the reference's own spread at the row that will bind the
+  gate BEFORE registering it; if the bar sits below that spread, the honest moves are a better
+  reference or a pre-registered refusal — never a post-hoc bar raise (for THIS gate the frozen
+  registration forbids one; whether a future instrument may carry a different bar is owner
+  next-step 37).
 - **ONE MAXIMUM PROVED SHARING; A DIFFERENT MAXIMUM FOUND A SIMMSPLINE BUG.** At R1's
   central-difference worst cell, `bflh140` — three fixed points, no `PathWrap` or `MovingPathPoint` —
   has exactly the same four arms in every source (`−57.249 / 16.044 / −5.762 / 29.526 mm`) and its
@@ -722,7 +743,12 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   analytic maximum falls to **3.693 pp** on `glmax2`; its cell's largest arm discrepancy is actually
   `gasmed` at 1.047 mm, another direct example of sharing. The central cell still means a future
   per-muscle claim needs the QP coupling sensitivity measured; validating one row never bounds its
-  output error.
+  output error. **Measured 2026-08-13, and it is worse than "unbounded in principle": perturbing
+  `semimem`'s arms by the p99 residual this build leaves moves `recfem`'s printed figure by
+  5.656 pp — 3.50× the 1.617 pp bar — at R1 v2's own binding cell** (`R8`,
+  `testTheSharingStepsPerMuscleCouplingIsMeasuredAndNotAssumed`). "Validate a muscle's path, then
+  trust its row" is now measurably invalid, not merely unproven, so no per-muscle claim can be
+  rescued by moment-arm accuracy alone.
 - **A KKT RESIDUAL NORMALISED BY THE GRADIENT READS 1.0 AT A PERFECT ANSWER.** At an interior optimum
   every gradient component is at rounding level, so dividing the worst violation by `max|∇f|` divides
   noise by noise. `BoxQP` normalises by the largest TERM entering the gradient

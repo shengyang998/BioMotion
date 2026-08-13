@@ -78,9 +78,32 @@ test_gate_lane_selector() {
   esac
 }
 
+# The fast lane's count is an EXACT reviewed number, not a floor: a lane passes
+# only when this many tests ran. Adding a test therefore has to be registered
+# here AND in tools/tests/run_tests_gate_tests.sh, which pins the same number so
+# a silent bump fails its own self-test. Arithmetic:
+#   698 baseline (the 2026-08-12 reviewed inventory)
+#   + 1 WrappedMomentArmLeakTests.testReopeningThisClaimNeedsAnInstrumentChosenBeforeItsNumbersWereRead
+#       (2026-08-13 R1 v2: the loud no-silent-reopen assertion)
+#   + 1 WrappedMomentArmLeakTests.testTheSharingStepsPerMuscleCouplingIsMeasuredAndNotAssumed
+#       (2026-08-13 R8 attribution diagnostic, gates nothing)
+#   + 1 WrappedMomentArmLeakTests.testWhatCarriesTheTailAndHowMuchArmAccuracyWouldRemoveIt
+#       (2026-08-13 tail attribution: localises R1 v2's binding cell, gates nothing)
+#   = 701
+#
+# ⚠️ This number read 699 for one round, and the mechanism is worth recording:
+# the R1 v2 verdict round added the first TWO of those tests without touching
+# this line, and the tail round then bumped it by +1 for its own test alone — so
+# the arithmetic above named one test while three had been added, and the fast
+# lane would have failed its exact-count check with 701 executed against 699
+# expected. Deriving the number from a comment is not the same as deriving it
+# from the target. The inventory is `func test…(` in BioMotionTests/*.swift plus
+# `- (void)test…` in BioMotionTests/*.{mm,m}, minus the one E1 method the fast
+# lane skips; that rule reproduces the reviewed 698 exactly at the 2026-08-12
+# tree, which is what licenses 701 here.
 test_gate_expected_count() {
   case "${1-}" in
-    fast) printf '%s\n' 698 ;;
+    fast) printf '%s\n' 701 ;;
     slow) printf '%s\n' 1 ;;
     subset) printf '%s\n' 1 ;;
     *)
