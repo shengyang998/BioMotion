@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-13.
+Last updated: 2026-08-14.
 
 ---
 
@@ -9,6 +9,32 @@ Last updated: 2026-08-13.
 
 The app's inaccuracy was diagnosed to root cause. It was never one bug — it is a chain, and the
 biggest links were **not** where the effort had been going.
+
+- **LENGTH MODE IS MEASURED AND DOES NOT SHIP (2026-08-14).** The per-muscle muscle-tendon
+  length-change layer was built, gated against its frozen pre-registration, and **FAILED**. The
+  identity itself is clean — **1.000000** sign agreement on both G1 faces (476/476 headline,
+  112/112 multi-wrap, zero errors above 10× the deadband) and **258/258** on G9's mirrored pairs.
+  What stops it is the DRIVE: the two pinned clips carry four moving markers about a pelvis whose
+  range is exactly **0.000000000** on all three axes, so the fail-closed identifiability verdict
+  suppresses **all 24** resolvable capsules on both clips and G2/G7/G8 have nothing to measure
+  (G7 joint-clearing frames **0** against a floor of 500). That outcome has a closed form, and the
+  registration under-stated its own bound: with 149 identically-zero columns and a 15-row Jacobian,
+  the RMS `nullFraction` over the 20 lower-limb coordinates is **≥ 0.500000 exactly**, so the
+  registered *identified iff ≤ 0.5* boundary sits AT OR BELOW the population RMS for any 5-marker
+  drive — the inequality direction IS the finding, and markers change that, constants cannot. Two fixture-face gates failed on their own merits: G3(v)
+  (knee `nullFraction` **0.832149** at `neutral`, identified at both running poses) and G4(a)
+  (triceps **0.866667**, all four disagreements in the last 15° of the elbow sweep) — and G4's
+  attribution is now MEASURED, not argued: the OpenSim fixture's own length and analytic columns
+  both show `TRIlong/TRImed/TRIlat` **shortening** past 130° (arm flips `−0.023011` → `+0.007399`,
+  the two columns agreeing to **0.65 %**, wrap points stable at 2), so the shipped model contradicts
+  the frozen textbook anchor and the port reproduces the model.
+  **No UI was wired, no pin was relaxed, `perMuscleLeftRightClaimIsSupported` is untouched.**
+  The seven gate methods that asserted unmet bars were converted on 2026-08-14, under an explicit
+  owner authorisation, into MEASURED-OUTCOME PINS plus a machine-checked `NOT_SHIPPED` coherence
+  test — **no bar moved and no verdict changed**, so the battery is green while every gate above
+  still reads FAIL. The commit gate itself (`tools/run_tests.sh all`) has still not been run.
+  See
+  [Length mode: every registered population reproduced](#length-mode-every-registered-population-reproduced-and-the-mask-admits-nothing-on-the-only-two-real-clips-2026-08-14).
 
 - **Current integrated status (2026-08-12): the local MVP code/test boundary is
   complete.** The final protected runner passed **698/698** fast tests plus the
@@ -6702,6 +6728,494 @@ column the gate names is itself unresolved at the row carrying 95 % of the tail,
 per-muscle coupling is measured at 3.5× the bar.**
 
 
+---
+
+## Length mode: every registered population reproduced, and the mask admits NOTHING on the only two real clips (2026-08-14)
+
+### The answer, with the numbers
+
+**VERDICT: FAIL. The offline length-mode UI does not ship.** No view was wired, no
+pin was relaxed, `perMuscleLeftRightClaimIsSupported` is untouched, and the live screen is
+byte-identical. The compute layer, the derived mask and the whole pre-registered gate battery are
+in the tree and measured.
+
+The registration was frozen before any number was read and lives **verbatim** in the primary doc
+comment of `BioMotion/Muscle/MuscleLengthMode.swift`. It is not restated here; what follows is what
+it measured.
+
+Two independent things failed, and they are worth separating:
+
+1. **The drive cannot support the picture.** The two pinned clips supply FOUR moving markers about a
+   pelvis that is exactly constant across all 122 frames of both. Under the registered fail-closed
+   clip verdict the mask suppresses **every one of the 24 resolvable capsules on both clips** — not
+   12, not 20, all of them — so G2, G7 and G8 have no population at all. That is the registration's
+   own stated most-likely outcome, and the registered response was to report it rather than switch
+   the mask to per-frame or drop `sigma_visible`. Neither was done.
+2. **Two fixture-face gates failed on their own merits**, independent of the clip drive: G3(v) (the
+   knee is NOT identified under the 5-marker drive at the `neutral` pose) and G4(a) (the triceps
+   direction fails on 4 of 30 elbow steps).
+
+Set against that, the parts that did hold are strong: **G1 reads 1.000000 sign agreement on both
+faces** — 476/476 headline cells against OpenSim's own `lengthWrapOn`, and 112/112 multi-wrap cells
+against the analytic column — at zero disagreements above 10× the deadband and 100 % coverage.
+**G9(a) reads 258/258** mirrored steps with zero disagreements. The identity, the sign convention
+and the port's own bilateral coherence are not what is stopping this.
+
+### The pre-registered gates, and how they landed
+
+| Gate | Bar | Measured | |
+|---|---|---|---|
+| **G1** headline | ≥99.0 %; 0 strong errors, n≥250 and ≥25 %; coverage ≥60 % | **1.000000** (476/476), strong 476, **0** errors, coverage **1.000000** | PASS |
+| **G1** multi-wrap | ≥99.0 %; 0 strong errors, n≥40; coverage ≥60 % | **1.000000** (112/112), strong 112, **0** errors, coverage **1.000000** | PASS |
+| **G2(a)** flicker | ≤1.0 % | 0 centres / **0 denominator** — vacuous, no admitted capsule | FAIL (via b–f) |
+| **G2(b)** directional | ≥40 % | **0.000000** | FAIL |
+| **G2(c)** per capsule | ≥10 % each | **0** (no capsule) | FAIL |
+| **G2(d)** defined | ≥90 % | **0.000000** | FAIL |
+| **G2(e)** grey transitions | ≤2.0 % | 0 / **0 denominator** — vacuous | FAIL (via b–f) |
+| **G2(f)** power floor | ≥300 defined muscle-frames | **0** per clip | FAIL |
+| **G3(i)** derived mechanism | forbidden strings absent, receipt ≥1, σ_visible<0.0343 | 4 files scanned, **0** muscle-name hits, receipt **1**, σ_visible **0.010000** | PASS |
+| **G3(ii)** 20-marker consistency | all 72 unidentified; hip/knee/ankle identified | **0/72** misclassified; hip 0.033071, knee 0.001426, ankle 0.134757 | PASS |
+| **G3(iii)** span pinning | runtime == fixture-declared, all 32 | displayed **32**, mismatches **0** | PASS |
+| **G3(iv-a)** mask non-empty | non-empty at EVERY warmed frame | **0** empty frames on both clips (114 warmed each) | PASS |
+| **G3(iv-b)** hip capsules | all 12 suppressed | **12/12** suppressed on both clips | PASS |
+| **G3(v)** knee non-degeneracy | identified at 3 named poses | `neutral` **0.832149** (>0.5, NOT identified); `run_1_midstance` 0.297860/0.113131; `run_4_mid_swing` 0.113131/0.297860 | **FAIL** |
+| **G3(vi)** census | 18/6/2/0, 24 resolved, 32 displayed | **18/6/2/0**, resolved **24**, displayed **32**, unresolved = the two trunk capsules | PASS |
+| **G4(a)** physiology | ≥95 % per anchor | worst **0.866667** — triceps ×3 at 132.5/137.5/142.5/147.5° | **FAIL** |
+| **G4(b)** majority-wrong | zero | **0** | PASS |
+| **G4(c)** mapping check | ≥99 % third state | **1.000000** (1602/1602) | PASS |
+| **G4(d)** discrimination | both controls must FAIL (a) | sign-inverted worst **0.000000**; name-rotated worst **0.000000** | PASS |
+| **G5** perf receipt | numbers exist, scoped, and a lane receipt | (a)–(c) below; (d) has no fast-lane receipt | **FAIL** on (d) |
+| **G7(a)** two witnesses | ≥99.0 % over ≥500 joint frames | **0** joint frames (ceiling 0) | **FAIL** (under-power) |
+| **G7(b)** stale-pose sentinel | range >1e-6 m; re-impose ≤1e-9 m | cannot run — 0 admitted muscles; re-impose delta **0.000e+00** | FAIL |
+| **G8(a)** drift screen | ≤30 % all; ≤20 % for ≥90 % | **0** muscles scored | FAIL |
+| **G8(b)** foot-segment receipt | exists | exists — see below | PASS |
+| **G9(a)** mirror coherence | 100 % over 16 pairs | **258 scored, 0 disagreements**, 270 excluded | PASS |
+| **G9(b)** discrimination | the perturbed re-run must FAIL (a) | **0 disagreements** — the registered control is inert by construction | **FAIL** |
+| **G6(i)** count discipline | re-derived from the target | **724** (registration said 730) | PASS, divergence recorded |
+| **G6(a)–(h)** | UI pins | NOT EVALUATED — no UI was wired | deferred |
+
+### The mask is the finding, and it is not a bug
+
+`hips_joint` has range `x = y = z = 0.000000000` across all 122 frames of BOTH clips, so the
+effective drive is four moving markers about a pinned pelvis. Rule 1's fail-closed clip verdict then
+leaves these lower-limb coordinates UNIDENTIFIED on `video_012`: `hip_flexion`, `hip_adduction`,
+`hip_rotation`, `knee_angle`, `ankle_angle`, `subtalar_angle`, `mtp_angle` (both sides),
+`pelvis_tilt`, `pelvis_list`, `pelvis_rotation` — 17 of the 20. `video_015` is the same list minus
+`ankle_angle_l` — 16 of 20. Every capsule spans at least one of them, so **the admitted set is
+empty**, and G2/G7/G8 fail for want of anything to measure.
+
+The registered a-priori predictions landed exactly: the 12 hip-spanning capsules are suppressed
+(12/12, both clips), the unidentified set is non-empty at every warmed frame (0 empty frames), and
+the eight ankle/subtalar capsules — registered as UNDECIDED — were suppressed too. What the
+registration got wrong is the four knee-only capsules: it expected them to survive, and they do NOT,
+because a running clip passes through near-knee-extension where `d(hip→ankle distance)/d(knee_angle)
+→ 0` and one warmed frame is enough to grey the coordinate for the whole clip. That interaction is
+exactly what splitting G3 into (iv) and (v) was designed to make legible, and it is legible: (v)
+reads 0.297860/0.113131 at both running poses — comfortably identified — and 0.832149 at `neutral`,
+where the leg is straight.
+
+**G3(v) therefore fails at `neutral` and passes at both running poses.** The registered response
+applies verbatim: report it, do NOT widen `sigma_visible` after seeing the number. The constant's
+upper bound is measured (below the 0.0343 m/rad column the repo proved must not be masked) and its
+lower bound is argued; neither moved.
+
+### The empty mask has a CLOSED FORM, and the registration under-stated its own bound
+
+The registration derived that at least ONE lower-limb coordinate must sit at or above the crossover:
+`max_j nullFraction_j ≥ sqrt(5/20) = 0.500000`. That is true but weak, and it is not what happened.
+The full statement, from the same premises:
+
+    Σ over ALL 169 coordinates of nullFraction_j²  =  trace(P_N)  =  dim N
+    149 columns are identically zero (no marker sits above the pelvis) ⇒ each contributes exactly 1
+    ⇒ Σ over the 20 lower-limb coordinates  =  dim N − 149  ≥  169 − rank(J) − 149  =  20 − rank(J)
+    J is 15×169 (5 submitted markers × 3 rows) ⇒ rank(J) ≤ 15 ⇒ Σ over the 20  ≥  5
+    ⇒ RMS over those 20  ≥  sqrt(5/20)  =  0.500000   EXACTLY
+      (equality needs BOTH rank(J) = 15 AND no singular value below sigma_visible)
+
+So the registered decision boundary — *identified iff `nullFraction ≤ 0.5`* — sits **at or below the
+population RMS of the very coordinates it classifies**, by construction, for ANY 15-row drive. Not
+"at least one is at the crossover": *on average* they are, and any coordinate carrying less than its
+share pushes another above. Add the fail-closed clip verdict over 114 warmed frames and a coordinate
+needs to stay under 0.5 at every one of them, so the measured 17/20 (`video_012`) and 16/20
+(`video_015`) is what the algebra predicts rather than a surprise. The bound is `≥` and not `=`
+because `N` is the span of singular vectors below `sigma_visible`, which can only be larger than the
+exact null space — so the inequality runs in the direction of MORE suppression, never less.
+
+This is a property of the criterion meeting a 6-row-per-leg drive against 7 leg DOF about a pelvis
+marker that never moves. It is not a coding error and it is not repairable by tuning: dropping
+`sigma_visible` cannot move an exactly-zero column out of the null space, and moving the 0.5
+crossover is forbidden post-freeze and would in any case be moving a threshold to sit under a
+population RMS that is fixed by the marker count. **What changes the answer is markers, not
+constants** — which is why the shipping question is a new clip fixture with hip and knee markers,
+and why no per-frame-mask escape hatch was taken.
+
+### G4's triceps failure is at ONE end of ONE sweep — and the MODEL agrees with the port there
+
+All 26 anchors cleared the deadband on every pair. Twenty-two read 1.000000 (22 + 3 + 1 = 26).
+`bfsh140_r` reads
+0.964286 with its single disagreement at knee 137.5°, i.e. 2.5° from the model's own 140° limit.
+`TRIlong_r`, `TRImed_r` and `TRIlat_r` all read 0.866667 with the SAME four disagreements —
+132.5, 137.5, 142.5 and 147.5° — i.e. the last four steps of a sweep whose registered endpoint is
+150° against a model range that ends at 150.0004°. The bar is 95 % and it was frozen, so **G4(a)
+FAILS. The sweep range was NOT shortened to recover it.** The step size (5°) was never registered
+and is recorded here for reproducibility.
+
+**The first write-up of this called it "a boundary reading, not a signal that is wrong". That was an
+INFERENCE, and inference is not what this repo accepts.** It has now been checked against the
+external oracle, and the oracle contradicts the frozen anchor rather than the port. Reading
+`opensim_moment_arms.txt` — which G4 never consults, its sweeps being constructed — across the
+elbow grid:
+
+| pose | `TRIlong_r` `lengthWrapOn` | `dL` | `R[elbow_flex_r]` (`momentArmsWrapOn`) | wrap pts |
+|---|---|---|---|---|
+| `elbow_sweep_110` | 0.332313689 | +0.004093924 | **−0.023400090** | 2 |
+| `elbow_sweep_120` | 0.336366745 | +0.004053056 | **−0.023010994** | 2 |
+| `elbow_sweep_130` | 0.339841539 | +0.003474794 | **+0.007398886** | 2 |
+| `elbow_sweep_140` | 0.338658668 | **−0.001182871** | **+0.006244025** | 2 |
+| `elbow_sweep_150` | 0.337631843 | **−0.001026825** | **+0.005592603** | 2 |
+
+The muscle-tendon path **gets shorter** past 130°, and the reference's INDEPENDENT analytic column
+flips sign in the same place — under `R = −dL/dq` a positive arm IS shortening. The two columns
+agree with each other to **0.65 %** (`−R_mean·dq = −0.001190` m against the stored `dL` of
+`−0.001183` m over 130→140°; computed exactly, `0.651 %` — not truncated to 0.6),
+`wrapPoints` is a stable **2** from 100° to 150° so this is not a
+wrap engage/disengage artefact, and `TRImed_r`/`TRIlat_r` reproduce it to the digit. `BIClong_r` is
+the clean control on the same rows: monotonically shortening, arm positive throughout, no reversal.
+`bfsh140_r` is the same story at the knee — its arm flips `+0.005138895` (130°) →
+`−0.000706661` (135°) and its length turns UP over 135→140° (`+0.000359810`), which is exactly the
+one midpoint (137.5°) it disagrees at.
+
+CLAUDE.md's multi-wrap entry names `TRIlong`/`BIClong` as the CONTROL class that agrees with the
+reported column to **0.0000 mm**, so the reference is trustworthy precisely on these rows. The
+attribution is therefore measured, not argued: **`FullBody.osim`'s elbow geometry reverses the
+triceps moment arm at ~125-130°, and the port reproduces its model faithfully.** Either the
+registered anchor set or the registered 0→150° endpoint is wrong for this model, or the model's
+elbow wrap geometry is defective at extreme flexion. All three are outside a frozen registration and
+outside this workflow, so **G4(a) stands at FAIL** and the choice is owner-level. This is an
+attribution, not an absolution: a gate that fails because its frozen anchor disagrees with the
+shipped model is still a gate that failed.
+
+### G9(b) is a defect in the REGISTRATION, and the arithmetic is on the record
+
+G9(a) passes 258/258. G9(b) requires the same run under "a one-sided perturbation applied to one
+leg's moment-arm row at the measured p99 relative residual (1.114 %)" to FAIL. It does not, and it
+provably cannot: multiplying a row by `1 + 0.01114` scales `−Rᵀdq` and `s_m` by the SAME factor, so
+both the sign of the value and the comparison `|v| > D` are exactly invariant. A positive scalar
+multiple is inert against a sign-only classifier. Reported beside it, ungated: `1.114 %` applied
+ADDITIVELY — `sign(x)·0.01114·‖row‖₂` per ENTRY — produces **271 disagreements out of 528 scored
+steps**, so the mirror check IS sensitive to a one-sided error whose form can change an answer. The
+gate was left at its registered form and reads FAIL; the repair is a registration question, not a
+code question.
+
+⚠️ **Two things that companion is NOT, both measured rather than argued.** (1) It is **not the same
+1.114 %**: the shift is applied to every entry of the row, so the row moves by `√n · 1.114 %` of its
+own L2 norm — on the **6-coordinate** right-side span union that is `√6 = 2.449×` the registered
+relative size, i.e. **2.7287 %** of the row norm (`MODE-METRIC g9diag span_union=6 …
+row_norm_rel=0.027287 factor_vs_registered=2.449`). (2) Its **528 steps are not G9(a)'s 258**: the
+perturbed left row is directional almost everywhere, so it scores G9(a)'s scored population PLUS
+G9(a)'s excluded one, and the split is now measured rather than inferred from two totals —
+**270 of the 271 disagreements land on steps G9(a) EXCLUDES**, exactly 1 inside G9(a)'s own
+population (`MODE-METRIC g9diag … disagree_on_g9a_scored_steps=1
+disagree_on_g9a_excluded_steps=270`, pinned in `testG9MirrorCheckIsSensitiveToAOneSidedError`).
+So the companion demonstrates that SOME one-sided error form can move this classifier; it does not
+demonstrate anything about the 258 steps G9(a) actually scores, and it stays UNGATED.
+
+### Receipts
+
+⚠️ **This block splices TWO runs, so every line names the log it is grep-able from.** They are
+different rounds, not a rerun: `[A]` is the measurement round, taken BEFORE the G1 pose-ordering fix
+(its own `g1 face=headline` therefore reads the pre-fix `agreement=0.960084`, recorded under "Two
+defects" below, and is deliberately NOT quoted here); `[B]` is the post-fix verification subset,
+which also carries `DerivativeWindowTests`. `[A=B]` means both logs contain that line byte-identical.
+The only lines that DIFFER between the two runs are the `g1` headline and the `g5` wall-clock
+figures.
+
+```text
+grep 'MODE-METRIC' — Debug, iOS Simulator, subset lane
+[A]   /tmp/biomotion-tests.WURbhI/subset/xcodebuild.log   (22 tests, pre-G1-fix measurement round)
+[B]   /tmp/biomotion-tests.BoBjif/subset/xcodebuild.log   (32 tests, post-fix verification subset)
+
+[B]   g1 face=headline  muscles=14 spanning=476 scored=476 agree=476 agreement=1.000000
+                        strong=476 strong_disagree=0 coverage=1.000000 right_cells=476 left_cells=0
+[A=B] g1 face=multiwrap muscles=2  spanning=112 scored=112 agree=112 agreement=1.000000
+                        strong=112 strong_disagree=0 coverage=1.000000 right_cells=112 left_cells=0
+[A=B] g3vi  capsules=26 exact=18 alias=6 zero=2 multi=0 resolved=24 displayed=32
+[A=B] g3iii displayed=32 mismatches=0
+[A=B] g3ii  unreachable=72 misclassified=0  hip_flexion_r=0.033071 knee_angle_r=0.001426
+            ankle_angle_r=0.134757  shoulder_rot_r=0.027878 (reported, not gated)
+[A=B] g3iv  video_012 warmed=114 empty_frames=0 hip_capsules=12 hip_suppressed=12 admitted=[]
+            video_015 warmed=114 empty_frames=0 hip_capsules=12 hip_suppressed=12 admitted=[]
+[A=B] g3v   neutral knee_r=knee_l=0.832149 | run_1_midstance 0.297860/0.113131
+            | run_4_mid_swing 0.113131/0.297860
+[A=B] g4a   anchors=26 scored=26 worst=0.866667 (TRIlong/TRImed/TRIlat @132.5,137.5,142.5,147.5deg)
+[A=B] g4c   pairs=1602 third_state=1602 rate=1.000000
+[A=B] g4d   sign_inverted worst=0.000000 | name_rotated worst=0.000000
+[A]   g5    video_012 measured_set=displayed displayed=32 admitted_muscles=0 coordinates=12
+            stencil=coordinate-block ms_per_frame_mode=286.422 ms_per_frame_identifiability=10.928
+            traversal_wall_s=37.760 build=Debug host=iOS-Simulator
+            video_015 ... ms_per_frame_mode=294.903 ms_per_frame_identifiability=10.890
+            traversal_wall_s=38.775
+[B]   g5    video_012 ... ms_per_frame_mode=286.570 ms_per_frame_identifiability=10.948
+            traversal_wall_s=37.783
+            video_015 ... ms_per_frame_mode=294.848 ms_per_frame_identifiability=10.879
+            traversal_wall_s=38.780
+[A=B] g5    full_pairs=87880 block_pairs=384 ratio=228.9
+[A=B] g7a   video_012/015 joint_clearing=0 agree=0 agreement=0.000000 rule3_excluded=0
+            signature_changes=0 ceiling=0
+[A=B] g8b   video_012 left_foot  n=121 median_delta_m=0.001439273 p95_delta_m=0.006268188
+            median_speed_mps=0.043178201
+            video_012 right_foot n=121 median_delta_m=0.001991451 p95_delta_m=0.006374717
+            median_speed_mps=0.059743524
+            video_015 left_foot  n=121 median_delta_m=0.001258582 p95_delta_m=0.003459439
+            median_speed_mps=0.037757456
+            video_015 right_foot n=121 median_delta_m=0.001987562 p95_delta_m=0.005127892
+            median_speed_mps=0.059626848
+[A=B] g9a   pairs=16 scored=258 disagree=0 excluded=270
+[A=B] g9b   form=multiplicative pairs=16 scored=258 disagree=0
+[A=B] g9diag form=additive_relative_row_norm rel=0.01114 scored=528 disagree=271
+[A=B] deadband k=3.0 g_vel=0.338139 c0=0.255411255 sqrt2c0=0.714718 shrinkage=1.158888802
+            floor=1.0e-08
+[A=B] fixture video_012/015 frames=122 dofs=169 markers=5 taps=9 dt_values=1 dt=0.033333
+            span=4.033333
+[B]   FILTER-METRIC velocity_noise_gain taps9=0.338139 taps7=0.188982 taps5=0.316228 taps3=0.707107
+```
+
+### Perf (G5), and what it is NOT
+
+`ms_per_frame_mode = 286.4 / 294.9` **on run `[A]`** (`286.6 / 294.8` on run `[B]`) is the per-frame
+cost of the length-mode block for the
+**DISPLAYED** set — 32 muscles × 12 coordinates through the new subset stencil — plus that frame's
+`L_MT` vector. **Debug, iOS Simulator, no Release and no device measurement**, and it must not be
+added to any other stage's receipt. The identifiability step (unweighted marker Jacobian + app-side
+`15×15` Gram eigendecomposition + null-projection over 169 coordinates) is **10.93 / 10.89 ms per
+frame** on `[A]` (`10.95 / 10.88` on `[B]`). One whole-clip traversal — 114 warmed frames, both
+passes, no subsampling — is **37.8 / 38.8 s** on both runs.
+
+**G5's own verdict is FAIL, on clause (d).** Clauses (a)–(c) have receipts — the numbers exist, they
+name WHICH set (`measured_set=displayed`) and WHICH stencil form (`stencil=coordinate-block`), and
+the structural ratio is recomputed rather than quoted. Clause (d) asks for a FAST-LANE receipt. At
+measurement time there was none — every run behind this entry is a `subset` lane — so G5's verdict
+at the frozen registration is recorded as FAIL. The owner session then ran the commit gate twice
+(see the post-conversion receipt section): the first `all` attempt was REJECTED by the count
+discipline (726 executed against 724 reviewed — the runner joined the fast lane's two
+`-skip-testing` directives into ONE xcodebuild argument, which matches no test identifier and
+silently skips nothing, so E1 and the fixture generator both ran), the consumer defect was fixed in
+`tools/run_tests.sh`, and the re-run passed: fast **724/724** (wall 1497 s) + slow **1/1** (wall
+6074 s), `ALL GATE PASS`, artifacts `/tmp/biomotion-tests.tqOEXO`. That receipt is post-conversion
+evidence that the tree is green; it does not retroactively flip G5's measurement-time verdict.
+
+The structural ratio that motivated the subset stencil is 87,880 pairs against 384, i.e. **228.9×**
+on the registered 32-muscle basis (305.1× on the 24-capsule basis the owner decision names, 976.4×
+on the 90-pair per-muscle-span basis). ⚠️ The MEASURED cost does not scale with that ratio: 286 ms
+against the 6,049 ms full-pass Debug anchor is only 21×, not 229×. The block is chosen for the
+displayed muscles, several of which carry ellipsoid wraps costing 130–450× a cylinder solve, while
+the 87,880-pair anchor is dominated by cheap wrap-free muscles. **A pair count is not a cost model
+here**, and the ratio must not be quoted as a speed-up.
+
+### Two defects, both caught BY a registered gate, both fixed RED-first
+
+- **Rule 0's `.osim` scan never closed a muscle block.** A muscle opened at depth `d` leaves the
+  scanner at `d+1`, so its own closing tag returns the depth TO `d`, not below it; the `<` test
+  therefore never fired and every one of the 520 muscles' path points was attributed to the first
+  muscle in the file. G3(vi) read **EXACT 0 / ALIAS 24 / displayed 24** instead of 18/6/32 and went
+  red on it. Fixed to `<=`. This is the exact silent-degradation mode G3(vi) was gated for: every
+  downstream population shrank WITH the bug rather than failing ON it.
+- **G1 fed the fixture's pose vector in the FIXTURE's coordinate order** while labelling it with the
+  live model's DOF names, which differ in **160 of 169** positions. The symptom was a moment arm
+  that did not vary with the swept angle at all (`ours = 1.526 mm` identical across 40° of hip
+  flexion), and G1 read 0.960084 with 19 disagreements on `glmed1_r`/`glmed2_r`. With the pose
+  re-indexed by name, G1 reads **1.000000 on both faces**. Both figures are recorded so the pre-fix
+  number cannot be mistaken for a finding about the port.
+
+### Test-count discipline (G6i)
+
+Re-derived from the target, not from the registration's arithmetic: **667** `func test…(` in
+`BioMotionTests/*.swift` (643 before this round, +22 in `MuscleLengthModeTests`, +1 in
+`DerivativeWindowTests`, +1 generator) plus **59** `- (void)test…` in `*.mm`, minus the one E1
+method and minus the one solved-pose GENERATOR method, both skipped as whole classes in the fast
+lane: `667 + 59 − 1 − 1 =` **724**. The registration's own table said 730, on 29 new methods including six UI pins in
+`MuscleOverlayClaimTests`; those six were NOT added because no UI was wired, and pinning a legend
+and a colour table that do not exist would be a test of nothing. The registration's tie-break is
+explicit — the derived count wins — and the divergence is this paragraph. `tools/test_gate.sh`, its
+self-test (53/53) and all three `CLAUDE.md` sites moved together.
+
+`SolvedPoseFixtureGeneratorTests` is registered as a second skipped class beside E1: it is a tool
+that writes a checked-in artifact and decides nothing. Its cost is quoted ONE way everywhere
+(here, in the exclusion note below, and in `tools/test_gate.sh`): **test case 372.119 s**, whole
+subset run **408.9 s** wall, receipt `/tmp/biomotion-tests.7UkBp9`.
+
+### What shipped in code, and what did not
+
+Added, app-side: `MuscleLengthMode.swift` (the frozen registration + the classifier and its three
+deadband faces), `MuscleObservabilityMask.swift` (Rules 0–4, including the path-point-prefix
+derivation, family expansion by the model's own naming, and an app-side Jacobi eigensolver for the
+null-projection), `NimbleBridge.markerPositionJacobianForMarkerNames:` (the unweighted marker
+Jacobian, which previously existed only as a weight-scaled local inside the IK loop),
+`MomentArmComputer`'s two registered subset methods, and
+`WindowedDerivativeFilter.velocityNoiseGain(taps:)` (**0.338139** at 9 taps, the registered value).
+New fixtures `solved_pose_video_{012,015}.txt` with a gated staleness guard on the live model's
+SHA-256, DOF count and DOF name order.
+
+NOT done, deliberately: no `MuscleOverlay` change, no `update(joints:modes:)`, no legend, no
+`lengthModeNote`, no colour table, no suppression panel, no `NimbleEngine` hook. The eager
+`SolveRecord → BiomechanicsPayload → FrameResult` threading the registration describes is NOT
+built — nothing consumes length mode in the app. `testEveryCapsuleIsDrawnInTheSameColour` was NOT
+relaxed. `perMuscleLeftRightClaimIsSupported` stays false and untouched.
+
+### Finalize pass: what was re-checked rather than accepted
+
+The FAIL verdict means the finalize step ships no UI, so what it owed instead was proof that the
+layer is genuinely inert and that the count discipline is real. Each of these was re-derived here,
+not carried over:
+
+- **The layer is unreachable from the app.** `grep` over `BioMotion/` for `MuscleLengthMode`,
+  `MuscleObservabilityMask`, `markerPositionJacobianForMarkerNames`, `muscleLengthsForIndices` and
+  `velocityNoiseGain` returns ONLY the declarations and definitions themselves — **zero call
+  sites** in shipping code. `MuscleLengthMode.swift` and `MuscleObservabilityMask.swift` are
+  referenced by nothing outside their own files and the test target. The two new
+  `MomentArmComputer` selectors and the new `NimbleBridge` accessor are declared and implemented
+  and called only from tests. So the compute layer is test-only by construction, not by
+  convention, and there is no dead branch waiting to be switched on. **Since the 2026-08-14
+  conversion this is no longer a one-off grep**: the same census runs inside
+  `testG7TwoWitnessAgreementOnTheProductionPath` over comment-stripped shipping source, pinned to an
+  exact symbol→file map, so a future call site fails the suite (`MODE-VERDICT coherence
+  layer=NOT_SHIPPED app_side_call_sites=0`).
+- **`MuscleOverlay` and every claim pin are byte-unchanged.** `git status` lists no modification to
+  `BioMotion/ARKit/MuscleOverlay.swift`, `BioMotionTests/MuscleOverlayClaimTests.swift`,
+  `BioMotionTests/ClaimSurfaceTests.swift`, `BioMotionTests/WrappedMomentArmLeakTests.swift` or
+  anything under `BioMotion/Offline/`.
+- **The count was re-derived from the target, independently of the arithmetic comment.** `667`
+  `func test…(` in `BioMotionTests/*.swift` + `59` `- (void)test…` in `BioMotionTests/*.mm` = 726;
+  `E1MarkerSetComparisonTests` holds exactly **1** method and `SolvedPoseFixtureGeneratorTests`
+  exactly **1**, both skipped as whole classes, so `726 − 2 =` **724**, matching
+  `tools/test_gate.sh` and its self-test. That is the rule test_gate.sh's own comment states, run
+  against the tree rather than against the comment — which is the distinction that caught the 699
+  error.
+- **`tools/tests/run_tests_gate_tests.sh` passes 53/53**, including the two selectors and both
+  exact counts.
+- **No stale `701` survives in `CLAUDE.md`** — all three sites moved.
+
+**One deliberate exclusion, disclosed.** The verification subset covers `MuscleLengthModeTests` and
+`DerivativeWindowTests`, the two touched classes that carry gate content. It does NOT run
+`SolvedPoseFixtureGeneratorTests`: that class REGENERATES `solved_pose_video_{012,015}.txt`, i.e. it
+would rewrite the very fixtures the battery just consumed, for **372.119 s** of Debug IK in the test
+case (408.9 s whole-run wall, `/tmp/biomotion-tests.7UkBp9`), while deciding nothing. Running a generator as verification would mean re-measuring against inputs the run itself
+produced. It compiles as part of the same target build, so the subset still proves it builds.
+
+### The verification subset, and why the lane read FAIL before the conversion
+
+```text
+PRE-CONVERSION — the battery as written, asserting its registered bars
+/bin/bash -p tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/MuscleLengthModeTests \
+  -only-testing:BioMotionTests/DerivativeWindowTests
+
+log:      /tmp/biomotion-tests.BoBjif/subset/xcodebuild.log
+xcresult: /tmp/biomotion-tests.BoBjif/subset/result.xcresult
+execution window: 170.4 s (summary.json startTime -> finishTime; the runner's own
+          wall-clock stdout line was not persisted, so the recoverable number is this one)
+          xcodebuild rc: 65      xcresult result: Failed
+total/passed: 32/25      failed/skipped: 7/0    expected failures: 0    restarts: 0
+verdict:  ** TEST FAILED **        GATE FAIL -- do not treat this run as evidence
+```
+
+32 = the 22 `MuscleLengthModeTests` methods + the 10 in `DerivativeWindowTests`. **All 10
+`DerivativeWindowTests` pass**, including the new `velocityNoiseGain` pin
+(`taps9=0.338139 taps7=0.188982 taps5=0.316228 taps3=0.707107`). **Seven of the 22 fail, and they
+are exactly the seven gates this entry records as FAIL** — `testG2NonDegeneracyOnThePinnedClips`,
+`testG3KneeIsIdentifiedUnderTheFiveMarkerDriveAtFixturePoses`,
+`testG4PhysiologyDirectionsOnConstructedSweeps`, `testG7TwoWitnessAgreementOnTheProductionPath`,
+`testG7StalePoseSentinel`, `testG8SecularDriftScreen`,
+`testG9MirrorCheckIsSensitiveToAOneSidedError`. `testG2TemporalStabilityOnThePinnedClips` PASSES,
+vacuously, on empty flicker denominators — which is precisely why G2(b)-(f) exist. Every headline
+number in this entry reproduced on this run; the perf receipts move in the FIRST and SECOND decimal,
+not the third — `ms_per_frame_mode` 286.422 → 286.570 is **0.148 ms** (the tenths digit) and
+294.903 → 294.848 is **0.055 ms** (hundredths). Both are under 0.2 ms, which is the substantive
+point: a wall-clock measurement repeated on the same host moves by less than a fifth of a
+millisecond per frame here, and neither figure is a Release or device number.
+
+**So the lane gate read FAIL, and that was the honest state of the tree at that moment.** It was not
+a defect and not evidence of a broken layer: the battery ASSERTED the registered bars, so a FAIL
+verdict necessarily left those seven methods red — and `tools/run_tests.sh all`, the commit gate,
+was red with them.
+
+### The conversion, and the post-conversion receipt
+
+**Resolved 2026-08-14 under an explicit owner authorisation — next-step 41 option (a).** Three
+earlier phases escalated rather than acting, and they were right to: rewriting
+`XCTAssertGreaterThanOrEqual(worst, 0.95)` into an equality on `0.866667` would **weaken a gate so
+that it passes**, **hardcode an expected number**, and **edit a gate definition after its numbers
+were read**. Option (a) is a different move, and the repo already has the precedent
+(`WrappedMomentArmLeakTests.testTheShippedFlagMatchesWhatTheMeasurementSupports`: compute the gates
+from live measurement, pin the measured values, assert coherence with the shipped decision — green
+suite, retired claim). The seven methods now RECORD their outcome instead of demanding it:
+
+- **The registered bar is unchanged and still ASSERTED**, through the new
+  `MuscleLengthModeTests.RegisteredBar`, so a silent bar edit still breaks the test. G3(v)'s bar is
+  asserted against the SHIPPED constant — `MuscleObservabilityMask.identifiedNullFractionCeiling`,
+  i.e. `PostureFindings.depthSuppressionFraction` = 0.5 — not against a copy of it.
+- **The measured outcome is PINNED** to the receipts above, with the log line cited in each method's
+  comment block. Empty populations are pinned as EXACTLY zero, and the vacuous readings are recorded
+  AS vacuous, never as satisfied bars: G2(a)/(e)'s `0/0` denominators, G7(b)'s re-impose probe (the
+  traversal returns before it when the admitted set is empty, so its `0.000e+00` is an untouched
+  initial value), and G8(a)'s empty excursion set.
+- **The verdict is asserted and printed**: `MODE-VERDICT gate=… outcome=FAILED_AGAINST_REGISTERED_BAR
+  measured=[…] registered_bar=[…] layer=NOT_SHIPPED ui_wired=false
+  reopening_requires=[production-grade 20-marker solved-pose clip fixture + fresh adjudication]`.
+- **Decision coherence is machine-checked**, in `testG7TwoWitnessAgreementOnTheProductionPath`: the
+  admitted set is 0 on BOTH pinned clips, AND a comment-stripped census over every shipping source
+  file finds the layer's five symbols only in the files that declare or define them — **zero
+  app-side call sites**. "NOT SHIPPED" is a test now, not a sentence.
+
+**The pins are directional in BOTH senses, which is the point.** A number that drifts and a number
+that IMPROVES past its pin both turn the file red, so admitting one capsule — or any change to the
+mask, the fixtures, the classifier or the model — forces a fresh adjudication instead of a silent
+re-baseline. No bar moved, no gate verdict changed, no UI was wired, `MuscleOverlay` and every claim
+pin are still byte-unchanged, and the gate table above still reads FAIL exactly where it read FAIL.
+
+```text
+POST-CONVERSION
+/bin/bash -p tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/MuscleLengthModeTests \
+  -only-testing:BioMotionTests/DerivativeWindowTests
+
+log:      /tmp/biomotion-tests.bvbZBY/subset/xcodebuild.log
+xcresult: /tmp/biomotion-tests.bvbZBY/subset/result.xcresult
+wall:     158 s (runner)     execution window: 156.6 s (summary.json)
+          xcodebuild rc: 0   xcresult result: Passed
+total/passed: 32/32      failed/skipped: 0/0    expected failures: 0    restarts: 0
+verdict:  ** TEST SUCCEEDED **      SUBSET PASS -- debugging evidence only, not a commit gate
+18 MODE-VERDICT lines: 7 converted gates + the vacuity records + the NOT_SHIPPED coherence line
+
+/bin/bash -p tools/tests/run_tests_gate_tests.sh   ->   53 passed, 0 failed
+```
+
+The battery's own numbers are unchanged by the conversion: `grep 'MODE-METRIC'` on that log
+reproduces every figure in this entry, plus the two new receipts the conversion added —
+`g9diag … disagree_on_g9a_scored_steps=1 disagree_on_g9a_excluded_steps=270` and
+`g9diag span_union=6 … row_norm_rel=0.027287 factor_vs_registered=2.449`.
+
+The commit gate ran twice on 2026-08-14. Attempt 1 FAILED exactly as the discipline is built to
+fail: all **726** executed tests passed, but 726 ≠ 724 — `run_tests_invoke_xcodebuild` appended the
+fast lane's newline-joined selector block as ONE argument, xcodebuild matched no test identifier
+and silently skipped nothing, and E1 (6020 s) plus the fixture generator (373 s) ran inside the
+fast lane. The consumer now expands selector lines into separate arguments (`tools/run_tests.sh`,
+mechanism stated beside the code); the producer was already pinned by the gate self-test (two
+`-skip-testing` lines, 53/53 green). Attempt 2 PASSED clean: fast **724/724** (wall 1497 s) +
+slow E1 **1/1** (wall 6074 s), `ALL GATE PASS`, artifacts `/tmp/biomotion-tests.tqOEXO`. G5's
+measurement-time verdict stays FAIL on clause (d) as registered; this receipt is the
+post-conversion evidence the entry owed.
+
+### Registered limitations that a green gate does NOT retire
+
+The clip gates no longer exercise IK at all. The deadband bounds the HIGH-FREQUENCY band only —
+stride-band and motion-correlated pose bias remain uncovered, and G8 screens gross secular drift
+alone (and screened nothing here, having no population). G9 does not bound the antiphase
+same-error-at-two-poses class. G1's oracle evidence is RIGHT-SIDE ONLY: all 111 sweep pairs move a
+right-side coordinate, so all 16 left-side displayed muscles score **zero** cells and their only
+evidence is G9's mirror coherence, which is the port against itself. Production 20-marker mask
+behaviour is UNMEASURED — no such clip exists in the tree.
+
 ## Next steps (ordered)
 
 ### Immediate — unblocked, no licence exposure
@@ -7106,6 +7620,62 @@ per-muscle coupling is measured at 3.5× the bar.**
     the cross-file green-run requirement as the intended enforcement? Currently moot — R1 and R2 fail
     regardless.
 
+### Newly opened by the 2026-08-14 length-mode measurement (thirteenth round)
+
+41. ~~**THE COMMIT GATE IS RED, and clearing it is the one decision that blocks everything else on
+    this line.**~~ **DECIDED 2026-08-14 — option (a), owner-authorised.** Seven
+    `MuscleLengthModeTests` methods asserted registered bars the measurement did not meet, so
+    `tools/run_tests.sh all` could not pass while the battery stood as written; three phases
+    escalated rather than acted. The owner authorised option (a): the seven were converted into
+    MEASURED-OUTCOME PINS plus decision coherence, following
+    `WrappedMomentArmLeakTests.testTheShippedFlagMatchesWhatTheMeasurementSupports`. No bar moved
+    (they are asserted through `MuscleLengthModeTests.RegisteredBar`, and G3(v)'s is asserted
+    against the SHIPPED constant), no gate verdict changed, no UI was wired, and the pins are
+    bidirectional so an improvement re-opens the adjudication instead of passing quietly. See
+    [The conversion, and the post-conversion receipt](#the-conversion-and-the-post-conversion-receipt).
+    **CLOSED 2026-08-14:** `tools/run_tests.sh all` passed — fast **724/724** + slow **1/1**,
+    `ALL GATE PASS` (`/tmp/biomotion-tests.tqOEXO`) — after the count discipline rejected a first
+    attempt at 726 and thereby caught the runner's silent multi-skip join defect (fixed in
+    `tools/run_tests.sh`). G5's measurement-time verdict stays FAIL on clause (d) as registered;
+    the owed receipt now exists.
+42. **G4's frozen anchors disagree with the shipped model, and the fix is a registration question,
+    not a code one.** `FullBody.osim`'s triceps moment arm reverses sign at ~125-130° of elbow
+    flexion, confirmed in BOTH of the oracle's independent columns with wrap points stable — so the
+    registered "triceps LENGTHEN through elbow flexion" anchor is false for this model over the last
+    ~20° of its own range, and `bfsh140_r` is the same at the knee over the last ~5°. **Decide:**
+    re-register the sweep endpoints inside the monotonic region (and say so, since shortening a
+    sweep after seeing a failure is exactly the laundering move the exclusion list was frozen to
+    prevent — it is only legitimate as a NEW pre-registration), re-register the anchor set, or
+    investigate whether the model's elbow wrap geometry is defective at extreme flexion. The step
+    size (5°) was never registered either and should be, whichever way this goes.
+43. **G9(b)'s control is inert by construction and can never fail.** Multiplying one leg's
+    moment-arm row by `1 + 0.01114` scales `−Rᵀdq` and `s_m` by the same positive factor, so both
+    the sign and `|v| > D` are exactly invariant against a sign-only classifier. The gate stands at
+    FAIL on a control that cannot discriminate. The ungated companion measured here — `1.114 %`
+    applied ADDITIVELY as `sign(x)·0.01114·‖row‖₂` per ENTRY — produces **271 disagreements of 528
+    scored steps**, i.e. the mirror check IS sensitive to a one-sided error whose form can change an
+    answer. ⚠️ Two caveats bind any repair that reuses it, both measured: it is **2.449×** the
+    registered relative size (`√6` on the 6-coordinate span union, 2.7287 % of the row norm), not
+    "the same 1.114 %"; and **270 of its 271 disagreements land on steps G9(a) excludes**, so its
+    number is not comparable with G9(a)'s. **Decide:** adopt the additive form (at a registered
+    size, stated per-entry or per-row), or replace the control with a sign flip on one leg's row.
+    Either is a registration edit.
+44. **G3(v) put the knee non-degeneracy anchor at the one pose where a knee is unobservable.**
+    `neutral` is a straight leg, and with no knee marker in the drive, hip flexion and knee flexion
+    displace the ankle marker along parallel directions. The measurement behaves exactly as a
+    correct pose-dependent criterion should — `0.832149` at `neutral`, `0.297860/0.113131` at
+    `run_1_midstance` and the exact mirror `0.113131/0.297860` at `run_4_mid_swing`. `sigma_visible`
+    and the 0.5 crossover were NOT touched. **Decide:** whether a straight-leg pose belongs in a
+    knee-identifiability guard for a 5-marker drive at all.
+45. **The product question the battery actually answered: this drive cannot support this picture,
+    and no constant fixes that.** The RMS `nullFraction` over the 20 lower-limb coordinates is
+    `≥ 0.500000` for ANY 15-row drive, so the registered crossover sits at the population RMS by
+    construction. Shipping a per-muscle length-mode picture needs **markers, not thresholds** — a
+    new clip fixture carrying hip and knee markers (`LHJC/RHJC/LKJC/RKJC`, `BodyJoint.swift:158-161`),
+    which does not exist in the tree. The 20-marker production prediction (hip capsules identified
+    and coloured) remains a derived argument with nothing in the repo able to check it. **Decide:**
+    capture and check in such a clip before any further length-mode work, or close the line.
+
 ### Newly opened by the cam_t measurement (2026-08-07)
 
 15. **EXTERNAL EVIDENCE — activate offline root translation only through the typed admission.**
@@ -7334,6 +7904,14 @@ code/test completion. Distribution remains a separate boundary:
   *absence* of shoulder muscles; FullBody's own shoulder weld defect has already been repaired.
   A proper survey of externally-sourced commercial-safe full-body models **has not been done** —
   one research agent silently returned placeholder output and that gap was never filled.
+- **How to clear the red commit gate left by the length-mode FAIL (2026-08-14).** Seven
+  `MuscleLengthModeTests` methods assert registered bars the measurement did not meet, so
+  `tools/run_tests.sh all` is red. Converting them into passing pins on the measured numbers is the
+  repo's own precedent for a retired claim, but it weakens gates so they pass and hardcodes expected
+  numbers, so three phases escalated rather than acted. See next step 41 for the three options.
+- **Whether to capture a 20-marker clip fixture before any further length-mode work.** The measured
+  verdict is that a four-moving-marker drive about a pinned pelvis cannot support a per-muscle
+  length-mode picture, and the algebra says no threshold change alters that. Next step 45.
 
 ---
 

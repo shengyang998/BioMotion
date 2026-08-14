@@ -915,6 +915,35 @@ static double modelMHRTrunkReferenceLength(
     return names;
 }
 
+- (nullable NSArray<NSNumber *> *)markerPositionJacobianForMarkerNames:
+    (NSArray<NSString *> *)markerNames {
+    if (!_modelLoaded || !_skeleton) return nil;
+    if (markerNames.count == 0) return nil;
+
+    std::vector<std::pair<dynamics::BodyNode*, Eigen::Vector3s>> markerList;
+    markerList.reserve(markerNames.count);
+    for (NSString *name in markerNames) {
+        auto it = _markers.find(std::string([name UTF8String]));
+        if (it == _markers.end() || it->second.first == nullptr) return nil;
+        markerList.push_back(it->second);
+    }
+
+    Eigen::MatrixXs jacobian =
+        _skeleton->getMarkerWorldPositionsJacobianWrtJointPositions(markerList);
+    const NSInteger rows = (NSInteger)jacobian.rows();
+    const NSInteger cols = (NSInteger)jacobian.cols();
+    if (rows != (NSInteger)(3 * markerNames.count)) return nil;
+
+    NSMutableArray<NSNumber *> *flat =
+        [NSMutableArray arrayWithCapacity:(NSUInteger)(rows * cols)];
+    for (NSInteger r = 0; r < rows; r++) {
+        for (NSInteger c = 0; c < cols; c++) {
+            [flat addObject:@((double)jacobian(r, c))];
+        }
+    }
+    return flat;
+}
+
 - (BOOL)scaleModelWithHeight:(double)height
              markerPositions:(NSArray<NSNumber *> *)markerPositions
                  markerNames:(NSArray<NSString *> *)markerNames {

@@ -2650,6 +2650,26 @@ final class WindowedDerivativeFilter {
         return c.reduce(0) { $0 + $1 * $1 }.squareRoot()
     }
 
+    /// White-noise gain of the FIRST-derivative coefficients, `‖c_vel‖`. For
+    /// input samples with standard deviation σ the returned velocity has
+    /// standard deviation `σ·gain/dt`.
+    ///
+    /// Same L2-norm technique as `accelerationNoiseGain(taps:)`, over the same
+    /// derived `coefficients(taps:order:derivative:)`. That construction
+    /// reproduces all four of the acceleration gains this type's documentation
+    /// pins (9 taps 0.113961, 7 0.218218, 5 0.534522, 3 2.449490), which is what
+    /// licenses treating the velocity value as a property of the filter rather
+    /// than as an outcome of whatever consumes it.
+    ///
+    /// Exact value at the production window (asserted in
+    /// `DerivativeWindowTests`): 9 taps / order 3 = **0.338139**. It is the `g`
+    /// in the length-mode deadband `D = k·g·√(Σⱼ R[m,j]²·σ̂ⱼ²)`.
+    static func velocityNoiseGain(taps: Int) -> Double {
+        let t = admissibleTaps(taps)
+        let c = coefficients(taps: t, order: order(forTaps: t), derivative: 1)
+        return c.reduce(0) { $0 + $1 * $1 }.squareRoot()
+    }
+
     /// `accelerationNoiseGain(taps:)` relative to the 9-tap window the live
     /// camera path uses — the number the gait screen shows, because it is the
     /// price paid for a window that fits inside a contact.

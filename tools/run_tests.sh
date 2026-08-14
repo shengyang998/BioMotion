@@ -5,7 +5,10 @@
 #
 # Usage:
 #   tools/run_tests.sh fast
-#       All reviewed tests except the >1-hour E1 experiment. Exact count: 698.
+#       All reviewed tests except the >1-hour E1 experiment and the
+#       SolvedPoseFixtureGeneratorTests fixture generator. The exact reviewed
+#       count lives in tools/test_gate.sh (724 as of 2026-08-14); this header
+#       does not restate it.
 #
 #   tools/run_tests.sh slow
 #       E1MarkerSetComparisonTests/testE1RunAll only. Exact count: 1.
@@ -210,8 +213,19 @@ run_tests_invoke_xcodebuild() {
     -derivedDataPath "$RUN_OUTPUT_DIR/DerivedData"
     -resultBundlePath "$result_path"
   )
+  # SELECTOR may carry MULTIPLE newline-separated directives (the fast lane owns
+  # two -skip-testing lines since 2026-08-14). Each line must reach xcodebuild as
+  # its OWN argument: joined into one, xcodebuild matches no test identifier and
+  # silently skips nothing — measured 2026-08-14, when the fast lane executed 726
+  # tests (E1 + the fixture generator included) against a reviewed count of 724
+  # and the count discipline caught it.
   if [ -n "$selector" ]; then
-    xcodebuild_args+=("$selector")
+    local selector_line
+    while IFS= read -r selector_line; do
+      if [ -n "$selector_line" ]; then
+        xcodebuild_args+=("$selector_line")
+      fi
+    done <<<"$selector"
   fi
   xcodebuild_args+=("$@" test)
   run_tests_trusted_user_tool "$RUN_TESTS_XCODEBUILD" \

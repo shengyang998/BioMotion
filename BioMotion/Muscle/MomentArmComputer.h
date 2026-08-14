@@ -177,11 +177,56 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSArray<NSNumber *> *)computeMomentArmsWithJointAngles:(NSArray<NSNumber *> *)jointAngles
                                                           dofNames:(NSArray<NSString *> *)dofNames;
 
+/// The SAME computation restricted to a named block of muscles × coordinates.
+///
+/// Registered by the 2026-08-13 length-mode pre-registration, whose whole
+/// compute argument is this reduction: a full pass is 520 × 169 = 87,880
+/// (muscle, coordinate) pairs and about 176,000 `solveWrappedPathLength` calls
+/// (`MusclePathWrap.h`), while the 32 displayed muscles span exactly twelve
+/// coordinates between them — 32 × 12 = 384 pairs, a 228.9× reduction on the
+/// registered basis.
+///
+/// It reuses the SAME signature-aware stencil as
+/// `computeMomentArmsWithJointAngles:dofNames:` (centred where the wrap state
+/// agrees on both sides, one-sided where it does not, up to 8× step-halving at
+/// a switch), and updates the same `lastCentredDifferenceSamples` /
+/// `lastOneSidedDifferenceSamples` / `lastUnresolvedDiscontinuitySamples`
+/// counters — over the requested block only, so they sum to
+/// `muscleIndices.count × coordinateIndices.count`.
+///
+/// @param jointAngles       Pose, parallel to `dofNames`.
+/// @param dofNames          DOF names for `jointAngles`.
+/// @param muscleIndices     Indices into `muscleNames`.
+/// @param coordinateIndices Indices into `dofNames` (NOT into the skeleton).
+/// @return Flat row-major `[muscleIndices.count × coordinateIndices.count]`
+///         block of `R = -dL/dq`, or nil on failure or an out-of-range index.
+- (nullable NSArray<NSNumber *> *)computeMomentArmsWithJointAngles:(NSArray<NSNumber *> *)jointAngles
+                                                          dofNames:(NSArray<NSString *> *)dofNames
+                                                     muscleIndices:(NSArray<NSNumber *> *)muscleIndices
+                                                 coordinateIndices:(NSArray<NSNumber *> *)coordinateIndices;
+
 /// Current musculotendon path lengths L_MT(q) for all parsed muscles, at the
 /// skeleton's CURRENT pose (as left by the most recent call to
 /// computeMomentArmsWithJointAngles:dofNames:). Lengths are in meters.
 /// Returns an array of size numMuscles.
 @property (nonatomic, readonly) NSArray<NSNumber *> *currentMuscleLengths;
+
+/// `currentMuscleLengths` for a named subset, PLUS the wrap-topology signature
+/// that `currentMuscleLengths` discards by calling the private primitive with
+/// `signature = nullptr`.
+///
+/// The signature is the only way a caller differencing two frames' lengths can
+/// tell a real length change from a change of wrap branch — the failure this
+/// repo has a constructed receipt for (a raw centred difference reading
+/// −19.62 m against a shipped-safe −0.033693 m). Signatures are returned as
+/// unsigned 64-bit values boxed in `NSNumber`; 0 means the muscle carries no
+/// solvable wrap.
+///
+/// @param muscleIndices Indices into `muscleNames`.
+/// @param outSignatures Optional out-parameter for the parallel signature array.
+/// @return Lengths in metres, parallel to `muscleIndices`, or nil on failure.
+- (nullable NSArray<NSNumber *> *)muscleLengthsForIndices:(NSArray<NSNumber *> *)muscleIndices
+                                               signatures:(NSArray<NSNumber *> * _Nullable * _Nullable)outSignatures;
 
 /// Maximum isometric force F_max for each parsed muscle, in newtons.
 /// Array of size numMuscles, in the same order as currentMuscleLengths.

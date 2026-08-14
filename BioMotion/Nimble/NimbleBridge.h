@@ -292,6 +292,34 @@ typedef NS_ENUM(NSInteger, NimbleGroundHeightSource) {
 /// Names of the currently masked coordinates. Empty when no mask is active.
 @property (nonatomic, readonly) NSArray<NSString *> *maskedDOFNames;
 
+/// The UNWEIGHTED marker-position Jacobian at the skeleton's CURRENT pose, for
+/// exactly the markers named — the sensitivity of every marker component to
+/// every coordinate, in metres per radian.
+///
+/// This is the same matrix IK differentiates
+/// (`Skeleton::getMarkerWorldPositionsJacobianWrtJointPositions`), which until
+/// now existed in shipping code only as a local inside the IK iteration loop,
+/// immediately column-sliced and weight-scaled and never returned. It is
+/// returned RAW here on purpose: marker weights are an IK conditioning choice,
+/// and multiplying by them would make an identifiability statement about the
+/// solver's preferences rather than about what the camera actually constrained.
+///
+/// Registered by the 2026-08-13 length-mode pre-registration as the input to
+/// its drive-aware identifiability rule, which takes the SVD app-side and asks
+/// how much of each coordinate's unit direction lies in the numerical null
+/// space of THIS clip's marker set. A per-column norm cannot answer that: a
+/// rank-deficient null DIRECTION can be a combination of individually large
+/// columns, and every column norm is then large.
+///
+/// Rows are `3 × markerNames.count` in the order given (x, y, z per marker),
+/// columns are `numDOFs` in `dofNames` order, flattened ROW-MAJOR. A name that
+/// does not resolve to a registered marker makes the whole call fail rather
+/// than silently shrinking the drive.
+///
+/// @return `nil` when no model is loaded or any name is unknown.
+- (nullable NSArray<NSNumber *> *)markerPositionJacobianForMarkerNames:
+    (NSArray<NSString *> *)markerNames;
+
 /// Whether a model is currently loaded.
 @property (nonatomic, readonly) BOOL isModelLoaded;
 

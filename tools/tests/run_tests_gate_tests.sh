@@ -183,13 +183,14 @@ printf '%s\n' '{"totalTestCount":698}' > "$MALFORMED"
 expect_status 'missing structured fields fail closed' 1 \
   evaluate_gate fast 698 0 "$GOOD_LOG" "$MALFORMED"
 
-expect_output 'fast owns the E1 exclusion selector' \
-  '-skip-testing:BioMotionTests/E1MarkerSetComparisonTests' \
+expect_output 'fast owns the E1 and generator exclusion selectors' \
+  '-skip-testing:BioMotionTests/E1MarkerSetComparisonTests
+-skip-testing:BioMotionTests/SolvedPoseFixtureGeneratorTests' \
   test_gate_lane_selector fast
 expect_output 'slow owns the exact E1 selector' \
   '-only-testing:BioMotionTests/E1MarkerSetComparisonTests/testE1RunAll' \
   test_gate_lane_selector slow
-expect_output 'fast exact count is reviewed independently of slow' 701 \
+expect_output 'fast exact count is reviewed independently of slow' 724 \
   test_gate_expected_count fast
 expect_output 'slow exact count is one E1 method' 1 \
   test_gate_expected_count slow

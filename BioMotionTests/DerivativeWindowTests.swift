@@ -230,4 +230,43 @@ final class DerivativeWindowTests: XCTestCase {
         XCTAssertEqual(five.posCoefficients.reduce(0, +), 1.0, accuracy: 1e-12,
                        "a smoothing window still preserves a constant")
     }
+
+    /// The FIRST-derivative white-noise gain, `‖c_vel‖`, by the same L2-norm
+    /// technique over the same derived coefficients.
+    ///
+    /// It is the `g` in the length-mode deadband `D = k·g·√(Σⱼ R[m,j]²·σ̂ⱼ²)`, so
+    /// it has to be a property of the FILTER rather than an outcome of whatever
+    /// consumes it. What licenses that: the identical construction already
+    /// reproduces all four pinned ACCELERATION gains exactly, and the closed
+    /// form for a cubic/quadratic SG first derivative on a uniform grid is
+    /// `√(3/(h(h+1)(2h+1)))` for the quadratic case — checked here against the
+    /// derived coefficients at 7, 5 and 3 taps, which is an independent witness
+    /// rather than a transcription of the same table.
+    func testTheVelocityNoiseGainOfEveryWindowLength() {
+        for taps in [7, 5, 3] {
+            let h = Double(taps / 2)
+            let closedForm = (3.0 / (h * (h + 1) * (2 * h + 1))).squareRoot()
+            XCTAssertEqual(WindowedDerivativeFilter.velocityNoiseGain(taps: taps), closedForm,
+                           accuracy: 1e-12,
+                           "\(taps) taps: the quadratic first-derivative gain is not the closed form")
+        }
+        // 9 taps runs a CUBIC fit, whose first-derivative row is not the
+        // quadratic one, so it gets its own measured value rather than the
+        // closed form above.
+        let nine = WindowedDerivativeFilter.velocityNoiseGain(taps: 9)
+        let coefficients = WindowedDerivativeFilter.coefficients(taps: 9, order: 3, derivative: 1)
+        XCTAssertEqual(nine, coefficients.reduce(0) { $0 + $1 * $1 }.squareRoot(), accuracy: 1e-15)
+        XCTAssertEqual(nine, 0.338139, accuracy: 1e-6,
+                       "the registered g_vel at the production window")
+        // A first-derivative window must annihilate a constant and return 1 on a
+        // unit ramp — the two properties that make it a derivative at all.
+        XCTAssertEqual(coefficients.reduce(0, +), 0, accuracy: 1e-12)
+        let ramp = (0..<9).map { Double($0 - 4) }
+        XCTAssertEqual(zip(coefficients, ramp).reduce(0) { $0 + $1.0 * $1.1 }, 1.0, accuracy: 1e-12)
+        print(String(format: "FILTER-METRIC velocity_noise_gain taps9=%.6f taps7=%.6f "
+                     + "taps5=%.6f taps3=%.6f", nine,
+                     WindowedDerivativeFilter.velocityNoiseGain(taps: 7),
+                     WindowedDerivativeFilter.velocityNoiseGain(taps: 5),
+                     WindowedDerivativeFilter.velocityNoiseGain(taps: 3)))
+    }
 }

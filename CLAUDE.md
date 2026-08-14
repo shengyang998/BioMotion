@@ -191,7 +191,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   **652/652** and slow **1/1**, with zero failures, skips, expected failures, or
   test-host restarts; its structured receipts are under
   `/tmp/biomotion-tests.SbMAmG`. That is slice-specific evidence, not the current
-  701+1 inventory. Hosted pack delivery remains separate TestFlight/device
+  724+1 inventory. Hosted pack delivery remains separate TestFlight/device
   evidence.
   On the final integrated tree, the direct dependency, app-resource and privacy
   probes pass, the privacy adversarial harness passes **41/41**, and a fresh
@@ -262,7 +262,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   environment overrides are absent. Keep the `.p8` and persistent signing
   material owner-only and out of Git. Do not create a replacement API key just
   because a shell variable is absent.
-- **Local completion is not App Store readiness.** A passing current 701+1 gate
+- **Local completion is not App Store readiness.** A passing current 724+1 gate
   plus an unsigned Release build can close the integrated local-MVP code/test
   boundary only. The hosted Asset Pack v2 and build 32 are uploaded; commercial
   rights for the 42 MoBL-ARMS-derived muscles, a final TestFlight/device product smoke
@@ -476,11 +476,16 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 701 non-E1 tests (698 through 2026-08-12, +3 for
-  the 2026-08-13 R1 v2 round — the no-silent-reopen assertion, the R8 coupling diagnostic and the
-  tail-attribution diagnostic; the arithmetic is in `tools/test_gate.sh` and pinned again in its
+  lanes in `tools/run_tests.sh`: `fast` is exactly 724 tests — every test method EXCEPT the one E1
+  method and the one solved-pose fixture GENERATOR method, both skipped as whole classes (698
+  through 2026-08-12, +3 for the 2026-08-13 R1 v2 round — the no-silent-reopen assertion, the R8
+  coupling diagnostic and the tail-attribution diagnostic; +23 for the 2026-08-14 length-mode
+  battery — 22 in `MuscleLengthModeTests` and the SG velocity-noise-gain pin in
+  `DerivativeWindowTests`; the arithmetic is in `tools/test_gate.sh` and pinned again in its
   self-test, so a silent bump fails, and it did: that line read 699 for one round because two of the
-  three were added without registering them), `slow` is exactly the one E1
+  three were added without registering them; and on 2026-08-14 the fast lane executed 726 against
+  724 because the runner passed its two `-skip-testing` lines as ONE joined argument that
+  xcodebuild silently matched to nothing — every test passed, the COUNT was what caught it), `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

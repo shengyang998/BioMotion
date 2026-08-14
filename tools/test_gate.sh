@@ -24,6 +24,14 @@ fi
 
 TEST_GATE_E1_CLASS='BioMotionTests/E1MarkerSetComparisonTests'
 TEST_GATE_E1_TEST="${TEST_GATE_E1_CLASS}/testE1RunAll"
+# A GENERATOR, not a gate: it writes the checked-in solved-pose fixtures by
+# running Debug IK over the two scored clips, and it decides nothing. Measured
+# once, 2026-08-14, and quoted the same way everywhere (STATUS uses these exact
+# numbers): test case 372.119 s, whole subset run 408.9 s wall, receipt
+# /tmp/biomotion-tests.7UkBp9. Skipped in the fast lane for the same reason E1 is, and therefore
+# excluded from the fast lane's exact count. Driven by
+# tools/pose_fixture/regenerate_solved_pose_fixtures.sh.
+TEST_GATE_FIXTURE_CLASS='BioMotionTests/SolvedPoseFixtureGeneratorTests'
 TEST_GATE_PYTHON='/usr/bin/python3'
 TEST_GATE_GREP='/usr/bin/grep'
 TEST_GATE_TAIL='/usr/bin/tail'
@@ -65,6 +73,7 @@ test_gate_lane_selector() {
   case "${1-}" in
     fast)
       printf '%s\n' "-skip-testing:${TEST_GATE_E1_CLASS}"
+      printf '%s\n' "-skip-testing:${TEST_GATE_FIXTURE_CLASS}"
       ;;
     slow)
       printf '%s\n' "-only-testing:${TEST_GATE_E1_TEST}"
@@ -90,6 +99,43 @@ test_gate_lane_selector() {
 #   + 1 WrappedMomentArmLeakTests.testWhatCarriesTheTailAndHowMuchArmAccuracyWouldRemoveIt
 #       (2026-08-13 tail attribution: localises R1 v2's binding cell, gates nothing)
 #   = 701
+#   + 22 MuscleLengthModeTests (2026-08-14, the frozen length-mode gate battery):
+#       G1  testG1SignAgreementAgainstTheOpenSimLengthOracle
+#       G1  testG1MultiWrapSignAgreementAgainstTheAnalyticColumn
+#       G2  testG2TemporalStabilityOnThePinnedClips
+#       G2  testG2NonDegeneracyOnThePinnedClips
+#       G3  testG3MaskMechanismIsDerivedNotAHandPickedList
+#       G3  testG3CriterionConsistencyAtTheFullMarkerSet
+#       G3  testG3RuntimeSpansReproduceTheFixtureDeclaredSpans
+#       G3  testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips
+#       G3  testG3KneeIsIdentifiedUnderTheFiveMarkerDriveAtFixturePoses
+#       G3  testG3TheCapsuleCensusIsExactlyTheRegisteredDerivation
+#       G4  testG4PhysiologyDirectionsOnConstructedSweeps
+#       G4  testG4NonSpanningMusclesReadTheThirdState
+#       G4  testG4DiscriminationControlsMustFail
+#       G5  testG5PerFrameCostAndLaneReceipt
+#       G7  testG7TwoWitnessAgreementOnTheProductionPath
+#       G7  testG7StalePoseSentinel
+#       G8  testG8SecularDriftScreen
+#       G8  testG8FootSegmentNoiseReceipt
+#       G9  testG9BilateralMirrorCoherence
+#       G9  testG9MirrorCheckIsSensitiveToAOneSidedError
+#           testTheDeadbandFormulaIsDimensionallyWhatItClaims
+#           testTheSolvedPoseFixtureMatchesTheLiveModel
+#   + 1 DerivativeWindowTests.testTheVelocityNoiseGainOfEveryWindowLength
+#       (the SG first-derivative white-noise gain the deadband is built from)
+#   = 724
+#
+# The registration's own arithmetic said 730, on 29 new methods including six
+# UI pins in MuscleOverlayClaimTests. Those six were NOT added: the UI is not
+# wired in this phase, so pinning a legend and a colour table that do not exist
+# would be a test of nothing. The registration's tie-break applies verbatim —
+# "the count is RE-DERIVED from the target, and if it differs the derived count
+# wins" — and the divergence is recorded in STATUS.
+#
+# SolvedPoseFixtureGeneratorTests is a GENERATOR, skipped as a class in the fast
+# lane exactly like E1, so its one method is subtracted from the inventory below
+# in the same way E1's is.
 #
 # ⚠️ This number read 699 for one round, and the mechanism is worth recording:
 # the R1 v2 verdict round added the first TWO of those tests without touching
@@ -98,12 +144,12 @@ test_gate_lane_selector() {
 # lane would have failed its exact-count check with 701 executed against 699
 # expected. Deriving the number from a comment is not the same as deriving it
 # from the target. The inventory is `func test…(` in BioMotionTests/*.swift plus
-# `- (void)test…` in BioMotionTests/*.{mm,m}, minus the one E1 method the fast
-# lane skips; that rule reproduces the reviewed 698 exactly at the 2026-08-12
-# tree, which is what licenses 701 here.
+# `- (void)test…` in BioMotionTests/*.{mm,m}, minus the one E1 method and the
+# one generator method the fast lane skips; that rule reproduces the reviewed
+# 698 exactly at the 2026-08-12 tree, which is what licenses 724 here.
 test_gate_expected_count() {
   case "${1-}" in
-    fast) printf '%s\n' 701 ;;
+    fast) printf '%s\n' 724 ;;
     slow) printf '%s\n' 1 ;;
     subset) printf '%s\n' 1 ;;
     *)

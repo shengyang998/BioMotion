@@ -1277,6 +1277,161 @@ NS_ASSUME_NONNULL_END
     return -(forwardLength - baseLength) / step;
 }
 
+- (nullable NSArray<NSNumber *> *)computeMomentArmsWithJointAngles:(NSArray<NSNumber *> *)jointAngles
+                                                          dofNames:(NSArray<NSString *> *)dofNames
+                                                     muscleIndices:(NSArray<NSNumber *> *)muscleIndices
+                                                 coordinateIndices:(NSArray<NSNumber *> *)coordinateIndices {
+    if (!_loaded || !_skeleton) return nil;
+
+    const NSInteger nMusclesTotal = (NSInteger)_musclePaths.size();
+    const NSInteger nDOFs = (NSInteger)dofNames.count;
+    const NSInteger mCount = (NSInteger)muscleIndices.count;
+    const NSInteger cCount = (NSInteger)coordinateIndices.count;
+    if (jointAngles.count != dofNames.count) return nil;
+
+    std::vector<NSInteger> muscles(mCount);
+    for (NSInteger i = 0; i < mCount; i++) {
+        const NSInteger idx = [muscleIndices[i] integerValue];
+        if (idx < 0 || idx >= nMusclesTotal) return nil;
+        muscles[i] = idx;
+    }
+    std::vector<NSInteger> coords(cCount);
+    for (NSInteger i = 0; i < cCount; i++) {
+        const NSInteger idx = [coordinateIndices[i] integerValue];
+        if (idx < 0 || idx >= nDOFs) return nil;
+        coords[i] = idx;
+    }
+
+    Eigen::VectorXs q = _skeleton->getPositions();
+    std::map<std::string, int> dofToSkeletonIdx;
+    for (size_t i = 0; i < _skeleton->getNumDofs(); i++) {
+        dofToSkeletonIdx[_skeleton->getDof(i)->getName()] = (int)i;
+    }
+    for (NSInteger i = 0; i < nDOFs; i++) {
+        std::string dofName([dofNames[i] UTF8String]);
+        auto it = dofToSkeletonIdx.find(dofName);
+        if (it != dofToSkeletonIdx.end()) {
+            q(it->second) = [jointAngles[i] doubleValue];
+        }
+    }
+    _skeleton->setPositions(q);
+
+    [self refreshConditionalPathPointActivity];
+    [self refreshWrapBodyTransforms];
+
+    std::vector<double> baselineLengths((size_t)mCount);
+    std::vector<std::uint64_t> baselineSignatures((size_t)mCount);
+    _ellipsoidNumericalRefusals = 0;
+    for (NSInteger i = 0; i < mCount; i++) {
+        baselineLengths[(size_t)i] = [self computeMuscleLengthForIndex:muscles[(size_t)i]
+                                                             signature:&baselineSignatures[(size_t)i]
+                                                            wrapPoints:nullptr];
+    }
+
+    const double eps = 1e-4;  // radians — the same step the full pass uses.
+    NSMutableArray<NSNumber *> *momentArms =
+        [NSMutableArray arrayWithCapacity:(NSUInteger)(mCount * cCount)];
+    for (NSInteger i = 0; i < mCount * cCount; i++) [momentArms addObject:@(0.0)];
+
+    _lastCentredDifferenceSamples = 0;
+    _lastOneSidedDifferenceSamples = 0;
+    _lastUnresolvedDiscontinuitySamples = 0;
+
+    std::vector<double> lengthsPlus((size_t)mCount), lengthsMinus((size_t)mCount);
+    std::vector<std::uint64_t> signaturesPlus((size_t)mCount), signaturesMinus((size_t)mCount);
+
+    for (NSInteger c = 0; c < cCount; c++) {
+        std::string dofName([dofNames[coords[(size_t)c]] UTF8String]);
+        auto it = dofToSkeletonIdx.find(dofName);
+        if (it == dofToSkeletonIdx.end()) continue;
+        const int skelIdx = it->second;
+
+        Eigen::VectorXs qPlus = q;
+        qPlus(skelIdx) += eps;
+        _skeleton->setPositions(qPlus);
+        [self refreshWrapBodyTransforms];
+        for (NSInteger i = 0; i < mCount; i++) {
+            lengthsPlus[(size_t)i] = [self computeMuscleLengthForIndex:muscles[(size_t)i]
+                                                             signature:&signaturesPlus[(size_t)i]
+                                                            wrapPoints:nullptr];
+        }
+
+        Eigen::VectorXs qMinus = q;
+        qMinus(skelIdx) -= eps;
+        _skeleton->setPositions(qMinus);
+        [self refreshWrapBodyTransforms];
+        for (NSInteger i = 0; i < mCount; i++) {
+            lengthsMinus[(size_t)i] = [self computeMuscleLengthForIndex:muscles[(size_t)i]
+                                                              signature:&signaturesMinus[(size_t)i]
+                                                             wrapPoints:nullptr];
+        }
+
+        for (NSInteger i = 0; i < mCount; i++) {
+            const std::uint64_t s0 = baselineSignatures[(size_t)i];
+            const bool plusAgrees = signaturesPlus[(size_t)i] == s0;
+            const bool minusAgrees = signaturesMinus[(size_t)i] == s0;
+            double r = 0.0;
+            if (plusAgrees && minusAgrees) {
+                r = -(lengthsPlus[(size_t)i] - lengthsMinus[(size_t)i]) / (2.0 * eps);
+                _lastCentredDifferenceSamples++;
+            } else if (plusAgrees) {
+                r = -(lengthsPlus[(size_t)i] - baselineLengths[(size_t)i]) / eps;
+                _lastOneSidedDifferenceSamples++;
+            } else if (minusAgrees) {
+                r = -(baselineLengths[(size_t)i] - lengthsMinus[(size_t)i]) / eps;
+                _lastOneSidedDifferenceSamples++;
+            } else {
+                bool resolved = false;
+                r = [self derivativeAcrossWrapSwitchForMuscle:muscles[(size_t)i]
+                                                 skeletonDOF:skelIdx
+                                                    basePose:q
+                                                  baseLength:baselineLengths[(size_t)i]
+                                               baseSignature:s0
+                                                 initialStep:eps
+                                                    resolved:&resolved];
+                if (resolved) {
+                    _lastOneSidedDifferenceSamples++;
+                } else {
+                    _lastUnresolvedDiscontinuitySamples++;
+                }
+            }
+            momentArms[i * cCount + c] = @(r);
+        }
+    }
+
+    _skeleton->setPositions(q);
+    [self refreshWrapBodyTransforms];
+
+    return momentArms;
+}
+
+- (nullable NSArray<NSNumber *> *)muscleLengthsForIndices:(NSArray<NSNumber *> *)muscleIndices
+                                               signatures:(NSArray<NSNumber *> * _Nullable * _Nullable)outSignatures {
+    if (outSignatures) *outSignatures = nil;
+    if (!_loaded || !_skeleton) return nil;
+
+    const NSInteger nMusclesTotal = (NSInteger)_musclePaths.size();
+    [self refreshConditionalPathPointActivity];
+    [self refreshWrapBodyTransforms];
+
+    NSMutableArray<NSNumber *> *lengths =
+        [NSMutableArray arrayWithCapacity:muscleIndices.count];
+    NSMutableArray<NSNumber *> *signatures =
+        [NSMutableArray arrayWithCapacity:muscleIndices.count];
+    for (NSNumber *boxed in muscleIndices) {
+        const NSInteger idx = [boxed integerValue];
+        if (idx < 0 || idx >= nMusclesTotal) return nil;
+        std::uint64_t signature = 0;
+        const double length = [self computeMuscleLengthForIndex:idx
+                                                      signature:&signature
+                                                     wrapPoints:nullptr];
+        [lengths addObject:@(length)];
+        [signatures addObject:@(signature)];
+    }
+    if (outSignatures) *outSignatures = signatures;
+    return lengths;
+}
+
 - (NSArray<NSNumber *> *)currentMuscleLengths {
     if (!_loaded || !_skeleton) return @[];
     [self refreshConditionalPathPointActivity];
