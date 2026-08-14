@@ -477,7 +477,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
   lanes in `tools/run_tests.sh`: `fast` is exactly 724 tests — every test method EXCEPT the one E1
-  method and the one solved-pose fixture GENERATOR method, both skipped as whole classes (698
+  method and the TWO solved-pose fixture GENERATOR methods, all skipped as whole classes (698
   through 2026-08-12, +3 for the 2026-08-13 R1 v2 round — the no-silent-reopen assertion, the R8
   coupling diagnostic and the tail-attribution diagnostic; +23 for the 2026-08-14 length-mode
   battery — 22 in `MuscleLengthModeTests` and the SG velocity-noise-gain pin in
@@ -485,7 +485,11 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   self-test, so a silent bump fails, and it did: that line read 699 for one round because two of the
   three were added without registering them; and on 2026-08-14 the fast lane executed 726 against
   724 because the runner passed its two `-skip-testing` lines as ONE joined argument that
-  xcodebuild silently matched to nothing — every test passed, the COUNT was what caught it), `slow` is exactly the one E1
+  xcodebuild silently matched to nothing — every test passed, the COUNT was what caught it; the
+  2026-08-14 20-marker re-adjudication then added a SECOND method to the already-class-skipped
+  `SolvedPoseFixtureGeneratorTests`, so the swift inventory went 667 → 668 and the subtraction
+  −1 → −2 and 668 + 59 − 1 − 2 = 724 did not move — the inventory changed and the executed count
+  did not, which is the case this arithmetic exists to make visible), `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`

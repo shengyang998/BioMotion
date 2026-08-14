@@ -7216,6 +7216,306 @@ right-side coordinate, so all 16 left-side displayed muscles score **zero** cell
 evidence is G9's mirror coherence, which is the port against itself. Production 20-marker mask
 behaviour is UNMEASURED — no such clip exists in the tree.
 
+## The 20-marker re-adjudication is BLOCKED: Vision's person box returns NOTHING inside the iOS Simulator, and the identical request finds a person on 12 of 12 frames on the host (2026-08-14)
+
+### The answer, with the numbers
+
+**VERDICT: BLOCKED, not FAIL.** No fixture byte was written, no gate was scored on new data, no pin
+was moved, and no UI was wired. `solved_pose_video_{012,015}.txt` are byte-identical to their
+2026-08-13 selves, so every number in the entry above still stands exactly as measured. BLOCKED is
+the outcome the frozen registration pre-registered for this precondition, and it is a complete
+deliverable, not a partial one.
+
+The production offline path was built end to end and run on `video_012`; the BLOCKED guard returns
+out of the generator before `video_015` is ever decoded (both clips were read and SHA-256'd by the
+opening plumbing probe, but only `video_012` reached Vision). It stopped at the
+FIRST stage: **`VNDetectHumanRectanglesRequest` produced no usable person box on 120 of 120 sampled
+frames of `video_012` inside the iOS Simulator test host.** Production's
+`SAM3DPoseEstimator.detectPersonBBox` answers that case with *(whole image, `usedFallback: true`)*
+and `OfflineTemporalPolicy.exclusion` turns every such frame into a temporal segment break, so the
+retained contiguous run was **0 frames against a registered adequacy floor of
+`ceil(2.5 × 30.0) = 75`**. The generator refused to write a fixture and said so.
+
+**That is an ENVIRONMENT limitation, not a property of the footage, and the discriminator is
+measured rather than argued.** A host-side probe built for this question
+(`/tmp/visionprobe/probe.swift`) runs the SAME configuration production uses — a bare
+`VNDetectHumanRectanglesRequest` with `upperBodyOnly = false` and NO revision pin — over the SAME
+centred 4 s window, on macOS instead of the Simulator. It finds exactly one person on **12 of 12**
+sampled frames of **both** clips — the load-bearing count — at printed confidence **0.651–0.722**
+(`video_012`) and **0.752–0.808** (`video_015`); the tool prints only its first six frames
+(`best.prefix(6)`), so those ranges cover six of the twelve, with boxes that track the runner across
+frame (`video_012` x-origin 0.303 → 0.101, width 0.334 → 0.704). Log: `/tmp/visionprobe/run.log`
+(2026-08-14 re-run in the owner session; reproduced the workflow-time numbers exactly). The clips contain a plainly detectable person; the Simulator's Vision stack
+does not report it.
+
+**And the Simulator half is now direct evidence rather than an inference from the macOS half.** A
+second probe, built for `arm64-apple-ios26.0-simulator` and `simctl spawn`-ed INTO the runner's own
+`BioMotion-CI` device, decodes through `FrameSource.VideoDecoder`'s exact generator settings and then
+runs the same request (log: `/tmp/simvisionprobe/run.log`, 2026-08-14 owner-session re-run,
+reproduced exactly). It does not "find nothing" — it **throws**, on 12 of 12 frames, with
+`com.apple.Vision Code=9 "Could not create inference context"`, at `zero_observations = 0`. Two
+control requests throw identically, and `supportedRevisions` still reports `humanRect=2 / faceRect=3
+/ bodyPose=1`: the APIs are linked and the inference backend behind them is not. The same probe
+proves the decode is fine in that runtime — `576x1024`, 32 bpp, luminance mean 102.75–110.11 and sd
+38.00–41.38 across the window, i.e. real image content — which rules out the four ways this could
+have been ours: the decode path, the `maximumSize` cap (it resolves to a 1024-square and does not
+bind on a 576×1024 clip), orientation (both paths set `appliesPreferredTrackTransform`), and the
+request configuration. No change to this repository can unblock the round.
+
+Two things follow, and they are worth separating:
+
+1. **The pipeline itself is not the blocker.** Decode, sampling, Core ML and the retarget all ran.
+   The 1.3 GiB `SAM3DBodyPose.mlmodelc` loaded (**14,748 ms** cold) and completed **120 of 120**
+   Core ML calls without throwing at **4,768 ms/frame** mean (`poseFailed` never appears in the
+   exclusion list; "127 joints" is the source constant `SAM3DPoseEstimator.swift:194`, not a
+   per-frame receipt — the generator prints no per-frame joint count). `FrameSource.sampleTimestamps`
+   resolved the registered plan exactly as derived before the run: `fps 30.0`, `wanted 120`,
+   `available 308`, `count = min(wanted, available) = 120` — **not** the old fixtures' 122, which
+   came from a different extraction entirely. (The log line `Marker matches: 20/20` is
+   `NimbleEngine.swift:1295-1296` — a static intersection of the 20-name `JointMapping.primary`
+   table against the loaded model's marker names, printed once at model load. It says nothing about
+   the video: E1 refused every frame BEFORE IK, so the 20-marker drive never reached the solver.)
+2. **E1 being a hard gate rather than a receipt is what stopped a bad fixture.** Had the registered
+   chain treated the whole-image fallback as a logged statistic instead of a required exclusion, 120
+   degraded near-mean-pose frames would have been IK-solved into `solved_pose_video_012.txt` and
+   then scored by the frozen battery, and every downstream number would have been a measurement of
+   Vision's absence. The registration named this as risk #1 before any data existed, and it is the
+   risk that fired.
+
+### The preconditions, and how they landed
+
+| # | Precondition | Measured | |
+|---|---|---|---|
+| **P1** | model dev-bundled | `dev_bundle_model.sh on` → `MODEL_LOCK_VERIFY_PASS mode=receipt`, `DEV_BUNDLE_MODEL_PASS`; `xcodegen generate` re-run in BOTH directions | PASS |
+| **P2** | dependency boundary still passes with the developer model attached | `DEPENDENCY_BOUNDARY_PASS nimble=0ecf26a1 osqp=1572ae06`; adversarial suite **83/83** | PASS |
+| **P3** | env plumbing reaches the host | registered mechanism **FALSIFIED**; repaired RED-first (below) | PASS after repair |
+| **P4** | videos materialised | 7,125,980 B / 21,269,080 B, `flags=-`, blocks match size — fully local, no iCloud placeholder | PASS |
+| **P5** | *(unregistered, discovered)* the production person-box stage functions in the XCTest host | **120/120 frames returned the whole-image fallback** | **BLOCKED** |
+
+No gate in G1–G9 was scored against a new fixture, because no new fixture exists. The battery was
+re-run on the UNCHANGED fixtures purely as a coherence receipt for the tooling edits: **32/32
+passed**, so the instrument's own numbers are provably undisturbed by this round.
+
+### P3's registered mechanism was falsified, and the repair was RED-first
+
+The registration named `TEST_RUNNER_BIOMOTION_FIXTURE_VIDEO_012=<path>` as an xcodebuild ARGUMENT,
+"reasoned from source, not executed", and pre-registered the FIRST generator invocation as the
+plumbing probe. The probe fired. Measured on Xcode 26.4 (`17E192`) / iPhoneSimulator 26.4: the seven
+tokens ARE accepted — they appear in xcodebuild's own "Build settings from command line" block — and
+are NOT forwarded to the test host, so the generator failed on its own absent-variable message
+(`/tmp/biomotion-tests.uaoLdr`, `xcodebuild rc 65`). `man xcodebuild` forwards `TEST_RUNNER_`-prefixed
+ENVIRONMENT VARIABLES of the xcodebuild PROCESS, which `tools/run_tests.sh`'s `/usr/bin/env -i` scrub
+deletes; a build-setting override is a different thing wearing the same prefix.
+
+The repair is a **closed list of seven literal names** (`RUN_TESTS_FORWARDED_ENV_NAMES`), forwarded
+through the same scrub by a new `run_tests_trusted_user_tool_with_forwarded_env`. It is deliberately
+NOT a `TEST_RUNNER_*` glob: a glob would let `TEST_RUNNER_DYLD_INSERT_LIBRARIES` reach the test host,
+which is exactly what the `env -i` and the `unset` block exist to prevent. **This changes no bar, no
+gate definition, no pin, no count and no assertion** — the acid test for "weakening" is whether a
+change makes a failing assertion pass, and this one only makes data exist. Both self-tests were
+re-run after it: `run_tests_gate_tests.sh` **53/53** (its fake xcodebuild still asserts the scrub) and
+`dependency_boundary_probe_tests.sh` **83/83**.
+
+A second, quieter defect was fixed in the same pass and is worth recording because it fails SILENTLY:
+`regenerate_solved_pose_fixtures.sh` grepped its own `tee` log for the generator's `path=` marker, but
+`run_tests_one_lane` redirects xcodebuild's entire stdout into the LANE log and prints only its own
+summary. The grep could never match; it would have reported "generator did not report a written file"
+regardless of how well the run went. The script now reads the lane-log path out of the runner's `log:`
+line and greps that.
+
+### A third stall, and why it is recorded rather than hidden
+
+The first plumbed run hung for **57 minutes** with the test host at 27 % of one core. Sampling it put
+the stack in `Data.init(contentsOf:)` → `open` at the generator's own line 208 — the source-video
+read — with `UserNotificationCenter.app` alive: a **TCC consent prompt for iCloud Drive with nobody
+to answer it**. The files were not cloud placeholders (`flags=-`, allocated blocks matching size);
+the Simulator app process simply cannot read `~/Library/Mobile Documents/` unattended. The clips were
+staged to a mode-0700 scratch directory OUTSIDE the repository and re-read from there, and the
+staging is byte-verified rather than assumed: `shasum -a 256` matches the originals exactly for both.
+The fixture header would have recorded those same hashes, so provenance is unaffected by the path.
+**Nothing was copied into the repository at any point**, and the new preflight probe now proves that
+mechanically on every lane.
+
+### What shipped in code, and what did not
+
+Added:
+
+- `BioMotionTests/SolvedPoseFixtureGeneratorTests.testRegenerateVideoDrivenSolvedPoseFixtures` — the
+  full production offline path (`FrameSource.VideoDecoder` → `.nativeWindow(4.0)` → `decodeFrame` →
+  one shared `SAM3DPoseEstimator` → `MHRRetarget.makeBodyFrame` with `camT` omitted and
+  `frameNumber = frame.index` → per-frame `NimbleBridge.solveIK` on one warm-started instance), with
+  all four of production's segment breaks reproduced in production's order (E1 whole-image fallback
+  FIRST, E2 body-size gate, E3 no-usable-joints, E4 decode-drop hole) plus a fifth, `poseFailed`, for
+  a Core ML throw. It writes `solved_pose_videodriven_<clip>.txt` and prints
+  `SOLVED-POSE-FIXTURE-VIDEO`, both DISTINCT from the 5-marker generator's filename and marker —
+  otherwise, run in one host, the 5-marker output would silently overwrite the video-driven one and
+  only alphabetical ordering would save the `tail -n 1` parse.
+- `tools/tests/no_source_video_probe.sh`, invoked from `run_tests.sh`'s preflight immediately after
+  `dependency_boundary_probe.sh`. A SHELL probe, not an XCTest: it runs on EVERY lane including
+  `subset`, fails before `xcodebuild` starts, and does not perturb the fast lane's exact count.
+  Verified bidirectionally — `NO_SOURCE_VIDEO_PASS` on the clean tree, and a planted
+  `_probe_negative_test.mp4` produced `NO_SOURCE_VIDEO_FAIL` naming the offender. `.gitignore` gained
+  the same six extensions as a second layer, which alone could not stop `git add -f`.
+- `--video` mode in `tools/pose_fixture/regenerate_solved_pose_fixtures.sh`, which exports the seven
+  `TEST_RUNNER_` variables, refuses to start without `build/DevBundledModel`, and records host-side
+  receipts the Simulator cannot compute for itself.
+
+`BioMotionTests/SolvedPoseFixture.swift` gained exactly what the containment rule permits: two new
+`case` arms in the header `switch key` (`sampling_policy`, `sampling_branch`, parsed inline into
+`[String: String]`) and two new stored properties on `Fixture`. The receipt is hunk-level —
+`git diff -U0` reports hunks ending at old line **150** / new line **167**, all strictly BELOW
+`buildTraversal`'s old `:177`. **`buildTraversal` and everything downstream of the `dt` read is
+byte-unchanged**, which is what makes the 32/32 re-run meaningful.
+
+A **third defect, found in the finalize pass**, is the same class as P3 and is recorded because it
+would have cost the next operator a full run: the generator's own absent-variable `XCTFail` message
+still taught the **falsified** mechanism, instructing the reader to append
+`TEST_RUNNER_…=/path/to.mov` AFTER the lane as an xcodebuild ARGUMENT — the exact form measured in
+this round to become a build-setting override that never reaches the test host. The message was
+written before its own falsification and not revisited after. It now teaches the environment-variable
+PREFIX form that `RUN_TESTS_FORWARDED_ENV_NAMES` actually forwards, and carries the measured
+counter-example so nobody re-derives it. This is operator-facing prose inside an already-failing
+branch: **it changes no bar, no gate, no pin, no count and no assertion**, and it cannot make a
+failing assertion pass — the `XCTFail` fires exactly as before. It was deliberately NOT given a new
+pinning test, because the registration budgets exactly one new Swift method and a second would move
+the inventory arithmetic to protect a string.
+
+NOT done, deliberately: no fixture replaced, no pin edited, no bar touched, no
+`Self.reopeningRequirement` change (it still says what reopening costs, and it is still true), no UI
+file, no `MuscleOverlayClaimTests` change, no `lengthModeDeclaringFiles` change, and no commit.
+
+### The UI could not have shipped this round even on perfect data, and that was registered BEFORE any measurement
+
+The wire condition is unanimous: the offline layer ships **if and only if every evaluable registered
+gate passes on BOTH new fixtures in one run**, a partial pass ships nothing, and a bar met by an
+empty population is tagged `VACUOUS_*` rather than counted. That condition was **unreachable this
+round by construction**, and saying so up front is what stops a blocked run from being re-described
+afterwards as "we were close". **Three gates stand at FAIL for reasons no fixture can move:**
+
+| # | Blocker | Why no fixture can move it | Status |
+|---|---|---|---|
+| 1 | **G4(a)** — the registered "triceps LENGTHEN through elbow flexion" anchor | `FullBody.osim`'s OWN triceps wrap geometry reverses sign at ~125–130° of elbow flexion (`bfsh140_r` likewise over the knee's last ~5°), confirmed in both of the oracle's independent columns. G4 builds constructed sweeps off the STATIC OpenSim reference pose and never reads a clip fixture. | next step 42, OPEN |
+| 2 | **G9(b)** — the one-sided-error control | Multiplying one leg's moment-arm row by `1 + 0.01114` scales `−Rᵀdq` and `s_m` by the same POSITIVE factor, so sign and `\|v\| > D` are exactly invariant: the control is provably inert against a sign-only classifier. Also built off the static reference pose. | next step 43, OPEN |
+| 3 | **G5(d)** — the fast-lane receipt clause | Asks for a receipt that only the `fast` lane can produce. This workflow is permitted `subset` lanes only, so its measurement-time verdict stands at FAIL regardless of data; the owed receipt exists post-conversion (`/tmp/biomotion-tests.tqOEXO`) and is explicitly **non-retroactive**. | recorded at next step 41 |
+
+Blockers 1 and 2 are **registration defects, not fixture defects** — which is exactly why a
+20-marker clip could never have closed them, and why neither was touched here. So the UI branch was
+**dead code before the first byte was read**, not abandoned after a disappointing result. The
+deliverable this round owed was therefore the evidence plus the blocker list, and that is what it
+is. The loose `> 0` assertions at G5's cost receipt must never be read as "G5 passed".
+
+For completeness, the structurally available path to a full pass — should 42 and 43 ever close — is
+unchanged and still unverified: non-hip capsules admitted, giving G2/G7/G8 real populations, while
+the 12 hip-spanning capsules stay suppressed. Nothing in the tree can check that until a fixture
+exists.
+
+### Test-count discipline (G6i)
+
+Re-derived from the target, not from a comment: **668** `func test…(` in `BioMotionTests/*.swift`
+(667 before, +1 for the video-driven generator) plus **59** `- (void)test…` in `*.mm`, minus the one
+E1 method and minus the **two** solved-pose GENERATOR methods, all skipped as whole CLASSES in the
+fast lane: `668 + 59 − 1 − 2 =` **724**. The executed count did not move while the inventory did,
+which is precisely the case this arithmetic exists to make visible. The no-video guard is a shell
+probe and correctly enters no inventory. `tools/test_gate.sh` (both the "one method" comments) and
+the two `CLAUDE.md` sites moved together; `tools/tests/run_tests_gate_tests.sh` re-run **53/53**.
+
+### Receipts
+
+```
+# generator, BLOCKED run -- /tmp/biomotion-tests.Fc9ClU/subset/xcodebuild.log
+grep 'SOLVED-POSE-FIXTURE-VIDEO-SOURCE'
+  clip=video_012 bytes=7125980  sha256=794f044668670c137c31afa6f30e941cc977b232c5157af04e67e51178b4a838
+  clip=video_015 bytes=21269080 sha256=ca476fff48174065c31ac6303a78933ca4a6142ccd89e1bb93b45951cbec03c5
+grep 'SOLVED-POSE-FIXTURE-VIDEO-MODEL'
+  cold_load_ms=14748.2                        # 1.3 GiB mlmodelc, .cpuAndGPU, Debug iOS Simulator
+grep 'SOLVED-POSE-FIXTURE-VIDEO-PROGRESS .* sam frame=119'
+  video_012 sam frame=119/120 mean_ms=4768    # 120 Core ML calls, Debug iOS Simulator
+grep 'SOLVED-POSE-FIXTURE-VIDEO-PLAN'
+  clip=video_012 duration_s=10.266667 fps=30.0 wanted=120 available=308 sampled=120
+  survivors=0 runs=0 retained=0 branch=B adequacy_floor=75
+  excluded=[0:fallbackBBox … 119:fallbackBBox]          # ALL 120, one kind, no other break fired
+grep 'BLOCKED: video_012'
+  retained 0 contiguous frames against ceil(2.5 x 30.0) = 75; no fixture was written
+runner: wall 654 s; xcodebuild rc 65; total/passed 1/0; GATE FAIL -- not evidence of a pass
+IK ms/frame: UNMEASURED. No frame ever reached the solver.
+
+# P3 falsification -- /tmp/biomotion-tests.uaoLdr/subset/xcodebuild.log
+  "Build settings from command line" lists all seven TEST_RUNNER_BIOMOTION_FIXTURE_* tokens
+  SolvedPoseFixtureGeneratorTests.swift:190: failed - missing environment variable
+    BIOMOTION_FIXTURE_VIDEO_012              # accepted as a build setting, not forwarded
+  xcodebuild rc 65
+
+# host-side Vision discriminator -- /tmp/visionprobe/probe.swift (macOS, NOT a gate)
+# log: /tmp/visionprobe/run.log (2026-08-14 owner-session re-run; workflow-time numbers reproduced
+# exactly; conf ranges span the six frames the tool prints, person_found spans all twelve)
+  video=video_012.mov duration=10.266667 fps=30.0 count=120 sampled_every_10=12
+    person_found=12 no_observation=0   conf 0.651-0.722
+  video=video_015.mov duration=37.633333 fps=30.0 count=120 sampled_every_10=12
+    person_found=12 no_observation=0   conf 0.752-0.808
+
+# SIMULATOR-side cause split -- /tmp/simvisionprobe/simprobe.swift (NOT a gate; answers 46(c))
+# log: /tmp/simvisionprobe/run.log (2026-08-14 owner-session re-run; reproduced exactly)
+# Built for arm64-apple-ios26.0-simulator, run via `xcrun simctl spawn` INSIDE the runner's own
+# BioMotion-CI device (iOS 26.4), decoding through FrameSource.VideoDecoder's exact generator
+# settings (appliesPreferredTrackTransform, .zero tolerances, maximumSize 1024-square).
+  SUMMARY person_found=0 zero_observations=0 perform_threw=12 decode_failed=0
+          control_face_found=0 control_bodypose_found=0
+  VNDetectHumanRectanglesRequest -> Error Domain=com.apple.Vision Code=9
+    "Could not create inference context"                     # 12 of 12 frames, THREW
+  VNDetectFaceRectanglesRequest  -> Code=9 "Could not create inference context"      # control
+  VNDetectHumanBodyPoseRequest   -> Code=9 "Unable to setup request in
+    VNDetectHumanBodyPoseRequest"                                                    # control
+  supportedRevisions humanRect=2 faceRect=3 bodyPose=1        # the APIs are present; inference is not
+  decode is GOOD in the Simulator: decoded=576x1024 bpp=32 on every frame,
+    lum_mean 102.75-110.11  lum_sd 38.00-41.38                # real content, not black, not garbage
+
+# staging byte-identity (personal footage, read in place, never in the repo)
+  video_012 orig==staged 794f0446…b4a838   7125980 B
+  video_015 orig==staged ca476fff…ec03c5  21269080 B
+
+# tree coherence after the tooling edits
+/bin/bash -p tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/MuscleLengthModeTests \
+  -only-testing:BioMotionTests/DerivativeWindowTests
+  -> /tmp/biomotion-tests.eda2BV  wall 161 s  xcodebuild rc 0  xcresult Passed
+     total/passed 32/32  failed/skipped 0/0  expected failures 0  restarts 0
+     ** TEST SUCCEEDED **   unchanged fixtures, instrument numbers undisturbed
+/bin/bash -p tools/tests/run_tests_gate_tests.sh          -> 53 passed, 0 failed
+/bin/bash -p tools/tests/dependency_boundary_probe_tests.sh -> DEPENDENCY_BOUNDARY_TESTS_PASS 83/83
+/bin/bash -p tools/tests/no_source_video_probe.sh         -> NO_SOURCE_VIDEO_PASS (and FAIL on a planted .mp4)
+
+# FINALIZE pass -- re-verified independently after the blocker-list and message repairs above
+/bin/bash -p tools/run_tests.sh subset \
+  -only-testing:BioMotionTests/MuscleLengthModeTests \
+  -only-testing:BioMotionTests/DerivativeWindowTests
+  preflight  DEPENDENCY_BOUNDARY_PASS nimble=0ecf26a1 osqp=1572ae06
+  preflight  NO_SOURCE_VIDEO_PASS
+  -> /tmp/biomotion-tests.b3EKnn  wall 159 s  xcodebuild rc 0  xcresulttool rc 0
+     xcresult Passed  total/passed 32/32  failed/skipped 0/0
+     expected failures 0  restarts 0   ** TEST SUCCEEDED **
+     MuscleLengthModeTests 22/22 (119.762 s) + DerivativeWindowTests 10/10 (0.032 s)
+     0 compile errors; SolvedPoseFixtureGeneratorTests.swift compiled clean as part of the target
+count re-derived from the target (finalize):  668 + 59 - 1 - 2 = 724, matches test_gate fast
+```
+
+### Registered limitations this round does NOT retire, and one it adds
+
+Everything the 2026-08-14 entry listed still stands verbatim, because nothing was re-measured: the
+deadband still bounds the high-frequency band only, G8 still screens gross secular drift alone, G9
+still does not reach the antiphase same-error-at-two-poses class, and G1's oracle evidence is still
+right-side only. **Production 20-marker mask behaviour remains UNMEASURED** — the reason has changed
+from "no such clip exists in the tree" to "the person-box stage does not function in the only host
+this repo's test law permits", which is a strictly more specific and more actionable statement, but
+it is not progress on the question itself.
+
+Added: **the offline pose path has never been exercised end to end inside the XCTest host, and now we
+know why it could not be.** `PersonBoxTests` asserts configuration flags and never performs a request
+against a real image; this round is the first time anything did, and the answer — as the generator
+sees it through `detectPersonBBox`'s collapsing tuple — was the whole-image fallback on 120
+consecutive frames (the sim probe splits the cause: Vision `perform` THREW `Code=9` on every frame;
+`zero_observations=0`). Any future claim that the offline path "works" on the strength of a
+Simulator test must clear that bar first.
+
 ## Next steps (ordered)
 
 ### Immediate — unblocked, no licence exposure
@@ -7638,6 +7938,13 @@ behaviour is UNMEASURED — no such clip exists in the tree.
     attempt at 726 and thereby caught the runner's silent multi-skip join defect (fixed in
     `tools/run_tests.sh`). G5's measurement-time verdict stays FAIL on clause (d) as registered;
     the owed receipt now exists.
+    **Still closed after the 2026-08-14 20-marker round, and the reason is worth recording:** that
+    round moved the test INVENTORY (swift `667 → 668`) without moving the executed count, because
+    the added method went into the already-class-skipped generator and the subtraction went
+    `−1 → −2`. `668 + 59 − 1 − 2 = 724` re-derives from the target, so this closure's `fast 724/724`
+    receipt still describes the tree. No gating-lane content changed. G5(d)'s verdict is likewise
+    untouched: the 20-marker round ran `subset` lanes only, which is the very thing clause (d)
+    refuses as a receipt.
 42. **G4's frozen anchors disagree with the shipped model, and the fix is a registration question,
     not a code one.** `FullBody.osim`'s triceps moment arm reverses sign at ~125-130° of elbow
     flexion, confirmed in BOTH of the oracle's independent columns with wrap points stable — so the
@@ -7648,6 +7955,12 @@ behaviour is UNMEASURED — no such clip exists in the tree.
     prevent — it is only legitimate as a NEW pre-registration), re-register the anchor set, or
     investigate whether the model's elbow wrap geometry is defective at extreme flexion. The step
     size (5°) was never registered either and should be, whichever way this goes.
+    **Re-examined 2026-08-14 (20-marker round), unchanged and now load-bearing for the product:**
+    G4 builds constructed sweeps off the STATIC OpenSim reference pose and never reads a clip
+    fixture, so this is a REGISTRATION defect that no fixture can close — confirmed by tracing the
+    data path, not assumed. It is therefore blocker #1 of the three that made the offline-UI wire
+    condition unreachable before any 20-marker byte was read, and it was deliberately not touched.
+    Closing it is a separate preregistered round.
 43. **G9(b)'s control is inert by construction and can never fail.** Multiplying one leg's
     moment-arm row by `1 + 0.01114` scales `−Rᵀdq` and `s_m` by the same positive factor, so both
     the sign and `|v| > D` are exactly invariant against a sign-only classifier. The gate stands at
@@ -7660,6 +7973,10 @@ behaviour is UNMEASURED — no such clip exists in the tree.
     number is not comparable with G9(a)'s. **Decide:** adopt the additive form (at a registered
     size, stated per-entry or per-row), or replace the control with a sign flip on one leg's row.
     Either is a registration edit.
+    **Re-examined 2026-08-14 (20-marker round), unchanged and now load-bearing for the product:**
+    like G4, G9's sweeps come off the STATIC reference pose and never read a clip fixture, so a
+    better drive cannot rescue a control that is inert by algebra. Blocker #2 of the three that made
+    the offline-UI wire condition unreachable before any measurement, and deliberately not touched.
 44. **G3(v) put the knee non-degeneracy anchor at the one pose where a knee is unobservable.**
     `neutral` is a straight leg, and with no knee marker in the drive, hip flexion and knee flexion
     displace the ankle marker along parallel directions. The measurement behaves exactly as a
@@ -7675,6 +7992,58 @@ behaviour is UNMEASURED — no such clip exists in the tree.
     which does not exist in the tree. The 20-marker production prediction (hip capsules identified
     and coloured) remains a derived argument with nothing in the repo able to check it. **Decide:**
     capture and check in such a clip before any further length-mode work, or close the line.
+    **DECIDED 2026-08-14 — generate it from the two real clips through the full production offline
+    path. ATTEMPTED AND BLOCKED, not closed:** the generator exists and ran, and the person-box stage
+    returned the whole-image fallback on 120 of 120 frames inside the iOS Simulator while the
+    identical request finds a person on 12 of 12 frames on the macOS host. No fixture was written;
+    the 20-marker prediction is still unchecked. Receipts: `/tmp/biomotion-tests.Fc9ClU`,
+    `/tmp/visionprobe/probe.swift`. Superseded by next step 46.
+
+### Newly opened by the 2026-08-14 20-marker re-adjudication (fourteenth round)
+
+46. **Vision's ML inference stack does not run in the iOS Simulator at all, and the repo's test law
+    admits no other host.** This is the single gate between the tree and a 20-marker fixture: decode,
+    Core ML (4,768 ms/frame, cold load 14,748 ms) and the per-frame retarget all work; only the
+    person box is dead in that host. (The 20-marker drive itself has still never reached the solver:
+    E1 refuses before IK, and `Marker matches: 20/20` in the log is a static model-load intersection,
+    `NimbleEngine.swift:1295-1296`, not frame evidence.)
+    **Clause (c) below is ANSWERED — measured 2026-08-14 and no longer something to preregister.**
+    `SAM3DPoseEstimator.detectPersonBBox` collapses "threw" and "no observation" into one `fallback`
+    tuple, so the cause was split OUTSIDE the repo instead: a throwaway binary built for
+    `arm64-apple-ios26.0-simulator` and `simctl spawn`-ed into the runner's own `BioMotion-CI`
+    device, decoding through `FrameSource.VideoDecoder`'s exact generator settings. It **THREW** on
+    12 of 12 frames — `com.apple.Vision Code=9 "Could not create inference context"` — with
+    `zero_observations=0`. Two controls throw the same way (`VNDetectFaceRectanglesRequest`
+    identically; `VNDetectHumanBodyPoseRequest` with "Unable to setup request"), while
+    `supportedRevisions` reports `humanRect=2 / faceRect=3 / bodyPose=1`: the APIs are present and
+    the inference backend is not. Decode in the Simulator is simultaneously proven GOOD — `576x1024`,
+    32 bpp, luminance mean 102.75–110.11 / sd 38.00–41.38 on every frame — so "no person" is not the
+    decode path, not the `maximumSize` cap (natural size, no downscale), not orientation (both paths
+    set `appliesPreferredTrackTransform`), and not the request configuration. **This is an
+    environment limitation, not a defect in the generator, the plumbing or a stale assumption, and
+    no code change in this repository can unblock it.** Receipt: `/tmp/simvisionprobe/simprobe.swift`.
+    What remains is genuinely owner-level, and neither may be taken without a preregistration:
+    (a) add a device lane to `tools/run_tests.sh` and run the generator on hardware, accepting that
+    the runner grows a second host class; (b) preregister a HOST-SIDE generator (macOS command-line
+    tool driving the same Swift sources) and record explicitly that the fixture then carries a macOS
+    Vision provenance rather than an iOS one. ~~(c) preregister an instrumented split of
+    `detectPersonBBox`'s two failure causes first~~ — **ANSWERED above, at no cost to the tree.**
+    Worth noting for whichever branch wins: instrumenting that tuple is still a defensible small
+    production change on its own merits, but it is now an ergonomics improvement rather than a
+    diagnostic prerequisite.
+47. **Adopt production first-usable-frame scaling into the instrument, or record permanently that
+    the fixtures are unscaled.** The generator deliberately does NOT call `scaleModelWithHeight`
+    (DEVIATION A), because the gate battery's `ModelContext` loads the generic `FullBody.osim` and
+    never scales, and the `modelSHA256` staleness guard hashes the FILE and provably cannot detect an
+    in-memory geometry change. Adopting scaling means moving `ModelContext`, the fixture header and
+    the loader together. **Decide** after 46, since an unscaled-IK residual receipt does not exist
+    yet — no frame reached the solver.
+48. **The future UI round must enumerate its six pins against clauses (a)–(h) BEFORE writing them.**
+    The results table above labels the UI gate `G6(a)–(h)` (8 sub-clauses) while the prose commits to
+    "six UI pins in `MuscleOverlayClaimTests`" (29 registered − 23 landed). Both readings are in the
+    tree and nothing reconciles them; `git log` shows one commit on `MuscleLengthMode.swift`, so
+    there is no earlier draft to recover. **U = 6 METHODS is authoritative for count arithmetic**
+    (724 + 6 = 730) and the labels are sub-clauses. This is a report fix, not an instrument change.
 
 ### Newly opened by the cam_t measurement (2026-08-07)
 

@@ -100,6 +100,57 @@ run_tests_trusted_user_tool() {
     "$@"
 }
 
+# The ONLY variables this runner forwards into `xcodebuild`'s environment, and
+# therefore the only ones `xcodebuild` re-injects into the XCTest host after
+# stripping the `TEST_RUNNER_` prefix.
+#
+# WHY THIS EXISTS. The 2026-08-14 20-marker fixture round registered a different
+# mechanism -- `TEST_RUNNER_<NAME>=<value>` as an xcodebuild ARGUMENT -- reasoned
+# from source and never executed. It is FALSIFIED: measured on Xcode 26.4
+# (17E192) / iPhoneSimulator 26.4, the tokens are accepted as build-setting
+# overrides ("Build settings from command line" lists all seven) and are NOT
+# forwarded to the test host, so the generator failed on its own absent-variable
+# message (receipt: /tmp/biomotion-tests.uaoLdr, xcodebuild rc 65). `man
+# xcodebuild` forwards `TEST_RUNNER_`-prefixed ENVIRONMENT VARIABLES of the
+# xcodebuild PROCESS, which `env -i` above deletes.
+#
+# WHY IT IS A CLOSED LIST OF LITERAL NAMES, not a `TEST_RUNNER_*` glob. A glob
+# would let `TEST_RUNNER_DYLD_INSERT_LIBRARIES` reach the test host, which is
+# exactly what `env -i` and the `unset` block above exist to prevent. These
+# seven names carry a source-video path or a host-side provenance receipt; none
+# can influence compilation, linking, the toolchain, the SDK, the simulator, or
+# any assertion. Adding a name here is a reviewed change, not a convenience.
+RUN_TESTS_FORWARDED_ENV_NAMES='TEST_RUNNER_BIOMOTION_FIXTURE_VIDEO_012
+TEST_RUNNER_BIOMOTION_FIXTURE_VIDEO_015
+TEST_RUNNER_BIOMOTION_FIXTURE_MACOS_PRODUCT
+TEST_RUNNER_BIOMOTION_FIXTURE_MACOS_BUILD
+TEST_RUNNER_BIOMOTION_FIXTURE_XCODE_VERSION
+TEST_RUNNER_BIOMOTION_FIXTURE_MODEL_LOCK_SHA256
+TEST_RUNNER_BIOMOTION_FIXTURE_DEPS_LOCK_SHA256'
+
+# Same `env -i` scrub, plus only those of the seven names that are actually set.
+run_tests_trusted_user_tool_with_forwarded_env() {
+  local forwarded=()
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    eval "local value=\${$name-}"
+    [ -n "$value" ] || continue
+    forwarded+=("$name=$value")
+  done <<EOF
+$RUN_TESTS_FORWARDED_ENV_NAMES
+EOF
+  "$RUN_TESTS_ENV" -i \
+    PATH="$RUN_TESTS_PATH" \
+    HOME="$RUN_TESTS_TRUSTED_HOME" \
+    USER="$RUN_TESTS_TRUSTED_USER" \
+    LOGNAME="$RUN_TESTS_TRUSTED_USER" \
+    LANG=C \
+    LC_ALL=C \
+    ${forwarded[@]+"${forwarded[@]}"} \
+    "$@"
+}
+
 set -u
 
 RUN_TESTS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -228,7 +279,7 @@ run_tests_invoke_xcodebuild() {
     done <<<"$selector"
   fi
   xcodebuild_args+=("$@" test)
-  run_tests_trusted_user_tool "$RUN_TESTS_XCODEBUILD" \
+  run_tests_trusted_user_tool_with_forwarded_env "$RUN_TESTS_XCODEBUILD" \
     "${xcodebuild_args[@]}"
 }
 
@@ -334,6 +385,13 @@ run_tests_main() {
   run_tests_hermetic_tool \
     "$RUN_TESTS_BASH" -p \
     "$RUN_TESTS_SCRIPT_DIR/tests/dependency_boundary_probe.sh" || return 1
+  # The two 20-marker fixture clips are personal footage OUTSIDE this
+  # repository; the generator reads them in place through
+  # BIOMOTION_FIXTURE_VIDEO_* and records only their SHA-256 and byte size.
+  # Runs on EVERY lane, before xcodebuild starts.
+  run_tests_hermetic_tool \
+    "$RUN_TESTS_BASH" -p \
+    "$RUN_TESTS_SCRIPT_DIR/tests/no_source_video_probe.sh" || return 1
   test_gate_assert_no_xctskip "$REPO_ROOT/BioMotionTests" || return 1
   run_tests_acquire_lock || return $?
   run_tests_resolve_device || return 1

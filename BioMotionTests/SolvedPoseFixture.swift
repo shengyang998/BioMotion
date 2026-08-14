@@ -27,6 +27,11 @@ enum SolvedPoseFixture {
         /// `frames[i][j]` is coordinate `j` at frame `i`, radians (metres for the
         /// pelvis translations).
         let frames: [[Double]]
+        /// `key=value` tokens of the `sampling_policy` header, empty for a
+        /// fixture written before the 2026-08-14 video-driven generator.
+        var samplingPolicy: [String: String] = [:]
+        /// `key=value` tokens of the `sampling_branch` header, same vintage.
+        var samplingBranch: [String: String] = [:]
 
         /// Distinct sample intervals, rounded to the microsecond. The registered
         /// clips have exactly one.
@@ -93,6 +98,8 @@ enum SolvedPoseFixture {
         var frameNumbers: [Int] = []
         var timestamps: [Double] = []
         var frames: [[Double]] = []
+        var samplingPolicy: [String: String] = [:]
+        var samplingBranch: [String: String] = [:]
 
         for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = String(rawLine)
@@ -107,6 +114,16 @@ enum SolvedPoseFixture {
             case "markers": markerNames = Array(fields.dropFirst())
             case "sg_taps": taps = fields.count > 1 ? Int(fields[1]) : nil
             case "frames": declaredFrames = fields.count > 1 ? Int(fields[1]) : nil
+            case "sampling_policy", "sampling_branch":
+                // Added 2026-08-14 with the video-driven generator. Every value
+                // token is space-free by construction, so the plain field split
+                // above already isolates them.
+                var kv: [String: String] = [:]
+                for token in fields.dropFirst() {
+                    let parts = token.split(separator: "=", maxSplits: 1).map(String.init)
+                    if parts.count == 2 { kv[parts[0]] = parts[1] }
+                }
+                if key == "sampling_policy" { samplingPolicy = kv } else { samplingBranch = kv }
             case "generator", "commit", "model", "dofs":
                 continue
             default:
@@ -147,7 +164,8 @@ enum SolvedPoseFixture {
 
         return Fixture(formatId: format, clip: clipId, modelSHA256: sha, dofNames: dofNames,
                        markerNames: markerNames, sgTaps: taps, frameNumbers: frameNumbers,
-                       timestamps: timestamps, frames: frames)
+                       timestamps: timestamps, frames: frames,
+                       samplingPolicy: samplingPolicy, samplingBranch: samplingBranch)
     }
 
     /// Stricter than `Double(_:)`, which accepts `nan`, `inf` and hex floats —

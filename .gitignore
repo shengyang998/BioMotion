@@ -27,3 +27,15 @@ tools/opensim_ref/.venv/
 # Python bytecode from tools/
 __pycache__/
 *.pyc
+
+# Source VIDEO of any kind. The two clips the 20-marker solved-pose fixtures are
+# generated from are personal footage that lives OUTSIDE this repository; the
+# generator reads them in place through BIOMOTION_FIXTURE_VIDEO_* and records
+# only their SHA-256 and byte size. This layer alone cannot stop `git add -f`,
+# which is why tools/tests/no_source_video_probe.sh runs on every test lane.
+*.mov
+*.mp4
+*.m4v
+*.avi
+*.mkv
+*.hevc

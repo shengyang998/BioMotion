@@ -134,8 +134,18 @@ test_gate_lane_selector() {
 # wins" — and the divergence is recorded in STATUS.
 #
 # SolvedPoseFixtureGeneratorTests is a GENERATOR, skipped as a class in the fast
-# lane exactly like E1, so its one method is subtracted from the inventory below
-# in the same way E1's is.
+# lane exactly like E1, so its TWO METHODS are subtracted from the inventory
+# below in the same way E1's one is. It carried ONE method until 2026-08-14,
+# when the 20-marker re-adjudication added
+# `testRegenerateVideoDrivenSolvedPoseFixtures` — the full production offline
+# path (video decode -> Vision -> SAM3DBodyPose Core ML -> MHRRetarget -> IK)
+# beside the original GaitClipFixture-driven 5-marker method. Because the skip
+# is BY CLASS, the fast lane's executed count did not move: the swift inventory
+# went 667 -> 668 and the subtraction went -1 -> -2, so 668 + 59 - 1 - 2 = 724
+# exactly as before. The no-source-video guard added in the same round is a
+# SHELL PROBE (tools/tests/no_source_video_probe.sh, run from run_tests.sh's
+# preflight on every lane), not an XCTest method, so it does not enter this
+# inventory either.
 #
 # ⚠️ This number read 699 for one round, and the mechanism is worth recording:
 # the R1 v2 verdict round added the first TWO of those tests without touching
@@ -145,8 +155,10 @@ test_gate_lane_selector() {
 # expected. Deriving the number from a comment is not the same as deriving it
 # from the target. The inventory is `func test…(` in BioMotionTests/*.swift plus
 # `- (void)test…` in BioMotionTests/*.{mm,m}, minus the one E1 method and the
-# one generator method the fast lane skips; that rule reproduces the reviewed
-# 698 exactly at the 2026-08-12 tree, which is what licenses 724 here.
+# TWO generator methods the fast lane skips; that rule reproduces the reviewed
+# 698 exactly at the 2026-08-12 tree, which is what licenses 724 here. At the
+# 2026-08-14 20-marker tree it re-derives as 668 + 59 - 1 - 2 = 724 — the
+# inventory moved and the executed count did not.
 test_gate_expected_count() {
   case "${1-}" in
     fast) printf '%s\n' 724 ;;
