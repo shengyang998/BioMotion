@@ -125,6 +125,14 @@ test_gate_lane_selector() {
 #   + 1 DerivativeWindowTests.testTheVelocityNoiseGainOfEveryWindowLength
 #       (the SG first-derivative white-noise gain the deadband is built from)
 #   = 724
+#   + 1 PersonBoxTests.testAnInjectedPersonBoxIsConsumedVerbatimWithoutVision
+#       (2026-08-14 fifteenth round, the person-box sidecar amendment: the
+#        production-facing seam that lets an EXTERNAL box be consumed verbatim
+#        without Vision, plus the sidecar comparator's convention-refusal path.
+#        Registered as a COUNT TRANSITION, 724 -> 725, not drift: it is the one
+#        assertion that has to run in the only lane that gates anything, because
+#        SolvedPoseFixtureGeneratorTests is whole-class-skipped here.)
+#   = 725
 #
 # The registration's own arithmetic said 730, on 29 new methods including six
 # UI pins in MuscleOverlayClaimTests. Those six were NOT added: the UI is not
@@ -147,6 +155,17 @@ test_gate_lane_selector() {
 # preflight on every lane), not an XCTest method, so it does not enter this
 # inventory either.
 #
+# ⚠️ The paragraph above is a DATED 2026-08-14 measurement narrative and is left
+# byte-identical on purpose; one clause in it has since gone stale and is
+# corrected HERE rather than through it. That generator no longer runs "the full
+# production offline path": since the 2026-08-14 person-box sidecar amendment
+# the person box comes from a macOS HOST tool, because the iOS Simulator has no
+# Vision ML inference backend (VNDetectHumanRectanglesRequest.perform THREW on
+# 12/12 sampled frames, com.apple.Vision Code=9). The path is
+# `video decode -> person box via macOS-host sidecar (macOS Vision, INTERIM
+# provenance) -> SAM3DBodyPose Core ML -> MHRRetarget -> IK`, and the fixtures it
+# writes record `bbox_source macos_vision INTERIM`.
+#
 # ⚠️ This number read 699 for one round, and the mechanism is worth recording:
 # the R1 v2 verdict round added the first TWO of those tests without touching
 # this line, and the tail round then bumped it by +1 for its own test alone — so
@@ -159,9 +178,14 @@ test_gate_lane_selector() {
 # 698 exactly at the 2026-08-12 tree, which is what licenses 724 here. At the
 # 2026-08-14 20-marker tree it re-derives as 668 + 59 - 1 - 2 = 724 — the
 # inventory moved and the executed count did not.
+#
+# 2026-08-14, fifteenth round (person-box sidecar amendment). The seam pin lands
+# in PersonBoxTests, which is NOT skipped, so this time BOTH move: the swift
+# inventory goes 668 -> 669 and the executed count 724 -> 725. Re-derived from
+# the target: 669 + 59 - 1 - 2 = 725.
 test_gate_expected_count() {
   case "${1-}" in
-    fast) printf '%s\n' 724 ;;
+    fast) printf '%s\n' 725 ;;
     slow) printf '%s\n' 1 ;;
     subset) printf '%s\n' 1 ;;
     *)

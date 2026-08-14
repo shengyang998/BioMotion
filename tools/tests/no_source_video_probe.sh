@@ -1,12 +1,20 @@
 #!/bin/bash -p
 #
-# Refuses any source VIDEO inside the repository working tree.
+# Refuses any PERSONAL-FOOTAGE DERIVATIVE inside the repository working tree:
+# a source VIDEO of any kind, and (since 2026-08-14) a person-box SIDECAR.
 #
 # The two clips the 2026-08-14 20-marker fixtures are generated from are
 # PERSONAL FOOTAGE that lives outside this repository. The generator reads them
 # in place through an environment variable and records only their SHA-256 and
 # byte size in the fixture header; nothing may ever copy, stage, or commit the
 # bytes themselves.
+#
+# The SIDECARS are the same class of artefact one derivation later. The iOS
+# Simulator has no Vision ML inference backend, so a macOS host tool computes the
+# person box per sampled frame and writes one JSON per clip; that JSON contains
+# per-frame boxes and per-frame source-pixel hashes of personal footage. It is
+# derived FROM the footage, so it is governed BY the footage's rule. Matching by
+# EXTENSION alone would have let it through, because a `.json` is not a video.
 #
 # This is a PREFLIGHT probe rather than an XCTest method for three reasons:
 #   1. It is strictly stronger. `tools/run_tests.sh` runs the preflight on EVERY
@@ -58,21 +66,23 @@ while IFS= read -r candidate; do
 $PRUNED
 EOF
   [ "$skip" -eq 0 ] || continue
-  printf 'NO_SOURCE_VIDEO_FAIL: a source video is inside the repository: %s\n' \
+  printf 'NO_SOURCE_VIDEO_FAIL: a personal-footage derivative is inside the repository: %s\n' \
     "$candidate" >&2
   FOUND=$((FOUND + 1))
 done <<EOF
 $(/usr/bin/find . \
     \( -iname '*.mov' -o -iname '*.mp4' -o -iname '*.m4v' \
-       -o -iname '*.avi' -o -iname '*.mkv' -o -iname '*.hevc' \) \
+       -o -iname '*.avi' -o -iname '*.mkv' -o -iname '*.hevc' \
+       -o -iname 'person_box_sidecar_*.json' \) \
     -type f -print 2>/dev/null)
 EOF
 
 if [ "$FOUND" -ne 0 ]; then
-  printf 'NO_SOURCE_VIDEO_FAIL: %d video file(s) in the tree. Source clips are\n' \
+  printf 'NO_SOURCE_VIDEO_FAIL: %d personal-footage derivative(s) in the tree.\n' \
     "$FOUND" >&2
-  printf 'personal footage and are read IN PLACE through BIOMOTION_FIXTURE_VIDEO_*;\n' >&2
-  printf 'they are never copied, staged, or committed.\n' >&2
+  printf 'Source clips are read IN PLACE through BIOMOTION_FIXTURE_VIDEO_* and their\n' >&2
+  printf 'person-box sidecars through BIOMOTION_FIXTURE_BOX_SIDECAR_*; neither is ever\n' >&2
+  printf 'copied, staged, or committed.\n' >&2
   exit 1
 fi
 

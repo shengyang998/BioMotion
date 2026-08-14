@@ -39,3 +39,10 @@ __pycache__/
 *.avi
 *.mkv
 *.hevc
+
+# Person-box SIDECARS. Derivatives of the same personal footage: one JSON per
+# clip, produced by tools/pose_fixture/person_box_sidecar.swift on macOS because
+# the iOS Simulator has no Vision ML inference backend. The host tool refuses an
+# output directory inside this repository and the generator refuses any other
+# basename, which is what makes this line and the probe's glob binding.
+person_box_sidecar_*.json

@@ -190,7 +190,7 @@ expect_output 'fast owns the E1 and generator exclusion selectors' \
 expect_output 'slow owns the exact E1 selector' \
   '-only-testing:BioMotionTests/E1MarkerSetComparisonTests/testE1RunAll' \
   test_gate_lane_selector slow
-expect_output 'fast exact count is reviewed independently of slow' 724 \
+expect_output 'fast exact count is reviewed independently of slow' 725 \
   test_gate_expected_count fast
 expect_output 'slow exact count is one E1 method' 1 \
   test_gate_expected_count slow
@@ -327,6 +327,30 @@ SUBSET_INVOCATION=$(printf '%s\n' \
   test)
 expect_output 'subset builds argv without expanding an empty Bash 3.2 array' \
   "$SUBSET_INVOCATION" capture_subset_xcodebuild_invocation
+
+# The forwarded-environment allowlist, pinned POSITIVELY. Until 2026-08-14 this
+# file asserted only the NEGATIVE (the fake xcodebuild above rejects BASH_ENV,
+# DYLD_INSERT_LIBRARIES and friends), so "growing the allowlist means updating
+# its self-test" was aspirational: nothing here mentioned
+# RUN_TESTS_FORWARDED_ENV_NAMES at all. Both halves are asserted now — the exact
+# list and its count — so a name added without review fails here.
+print_forwarded_env_names() { printf '%s\n' "$RUN_TESTS_FORWARDED_ENV_NAMES"; }
+count_forwarded_env_names() {
+  printf '%s\n' "$RUN_TESTS_FORWARDED_ENV_NAMES" | /usr/bin/grep -c .
+}
+expect_output 'forwarded env allowlist is exactly the nine reviewed names' \
+  'TEST_RUNNER_BIOMOTION_FIXTURE_VIDEO_012
+TEST_RUNNER_BIOMOTION_FIXTURE_VIDEO_015
+TEST_RUNNER_BIOMOTION_FIXTURE_BOX_SIDECAR_012
+TEST_RUNNER_BIOMOTION_FIXTURE_BOX_SIDECAR_015
+TEST_RUNNER_BIOMOTION_FIXTURE_MACOS_PRODUCT
+TEST_RUNNER_BIOMOTION_FIXTURE_MACOS_BUILD
+TEST_RUNNER_BIOMOTION_FIXTURE_XCODE_VERSION
+TEST_RUNNER_BIOMOTION_FIXTURE_MODEL_LOCK_SHA256
+TEST_RUNNER_BIOMOTION_FIXTURE_DEPS_LOCK_SHA256' \
+  print_forwarded_env_names
+expect_output 'forwarded env allowlist holds exactly nine names' 9 \
+  count_forwarded_env_names
 
 expect_status 'current XCTest source contains no runtime skips' 0 \
   test_gate_assert_no_xctskip "$REPO_ROOT/BioMotionTests"

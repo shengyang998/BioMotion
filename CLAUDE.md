@@ -191,7 +191,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   **652/652** and slow **1/1**, with zero failures, skips, expected failures, or
   test-host restarts; its structured receipts are under
   `/tmp/biomotion-tests.SbMAmG`. That is slice-specific evidence, not the current
-  724+1 inventory. Hosted pack delivery remains separate TestFlight/device
+  725+1 inventory. Hosted pack delivery remains separate TestFlight/device
   evidence.
   On the final integrated tree, the direct dependency, app-resource and privacy
   probes pass, the privacy adversarial harness passes **41/41**, and a fresh
@@ -262,7 +262,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   environment overrides are absent. Keep the `.p8` and persistent signing
   material owner-only and out of Git. Do not create a replacement API key just
   because a shell variable is absent.
-- **Local completion is not App Store readiness.** A passing current 724+1 gate
+- **Local completion is not App Store readiness.** A passing current 725+1 gate
   plus an unsigned Release build can close the integrated local-MVP code/test
   boundary only. The hosted Asset Pack v2 and build 32 are uploaded; commercial
   rights for the 42 MoBL-ARMS-derived muscles, a final TestFlight/device product smoke
@@ -476,7 +476,7 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   19-test selection that reads `Executed 19 tests` / 0 restarts / `** TEST SUCCEEDED **` when run
   alone on a private device. Naming a simulator (`name=iPhone 17`) instead of a UDID you own is the
   whole mechanism, and it is why three reviewers got three answers on 2026-08-07. Run the named
-  lanes in `tools/run_tests.sh`: `fast` is exactly 724 tests — every test method EXCEPT the one E1
+  lanes in `tools/run_tests.sh`: `fast` is exactly 725 tests — every test method EXCEPT the one E1
   method and the TWO solved-pose fixture GENERATOR methods, all skipped as whole classes (698
   through 2026-08-12, +3 for the 2026-08-13 R1 v2 round — the no-silent-reopen assertion, the R8
   coupling diagnostic and the tail-attribution diagnostic; +23 for the 2026-08-14 length-mode
@@ -489,7 +489,10 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
   2026-08-14 20-marker re-adjudication then added a SECOND method to the already-class-skipped
   `SolvedPoseFixtureGeneratorTests`, so the swift inventory went 667 → 668 and the subtraction
   −1 → −2 and 668 + 59 − 1 − 2 = 724 did not move — the inventory changed and the executed count
-  did not, which is the case this arithmetic exists to make visible), `slow` is exactly the one E1
+  did not, which is the case this arithmetic exists to make visible; the 2026-08-14 person-box
+  sidecar amendment then registered a count TRANSITION 724 → 725 for
+  `PersonBoxTests.testAnInjectedPersonBoxIsConsumedVerbatimWithoutVision`, which is NOT
+  class-skipped, so this time both moved: 669 + 59 − 1 − 2 = 725), `slow` is exactly the one E1
   test, and `all` runs both and is the commit gate. A lane passes only when `xcodebuild` exits 0,
   the final log verdict is `TEST SUCCEEDED`, the xcresult summary is readable, the executed count
   is exact, and failures, skips, expected failures, and crash restarts are all zero. `subset`
@@ -908,4 +911,31 @@ audit, pinned-baseline replay, and reverse-checks. Grep the fork for
 - **A visible skeleton says nothing about dynamics.** The skeleton and fixed-colour anatomy are
   drawn from `BodyFrame.joints`. Muscle output would require validated foot support plus the whole
   IK → SG → ID → moment-arm → QP chain; the bundled path stops before ID.
+- **THE SAME NUMBER CAN BE A MEASUREMENT OR AN INITIAL VALUE, and only the control flow tells you
+  which.** G7(b)'s stale-pose sentinel printed `reimpose_max_delta = 0.000e+00` on the 5-marker
+  fixtures and printed the byte-identical `0.000e+00` on the 20-marker ones. The first was
+  meaningless: `SolvedPoseFixture.buildTraversal` returns EARLY when the admitted muscle set is
+  empty, so the field never left its initialiser and a `<= 1e-9 m` bar "passed" against a variable
+  nobody had written to. The second is real — 18 and 32 admitted muscles, the early return not
+  taken, every `L_MT` reproduced bit for bit after re-imposing a stored mid-clip pose. The whole
+  family behaves this way: `flickerRate` and `greyTransitionRate` return the `0` of an EMPTY RATIO
+  and clear their bars without measuring (G2(a)/(e) read 0/0 and "passed" for two rounds, then read
+  4.83 % and 3.06 % on real denominators of 1,347 and 2,322 the moment a population existed);
+  `sortedResiduals.last ?? 0` reports a max of 0 for a clip where nothing was ever usable. The rule
+  that survives: **assert the POPULATION is non-empty before you read the bar**, in the same test,
+  and tag anything else `VACUOUS_*` rather than counting it. A bar met on an empty set is not a
+  pass, and the receipt has to say so in the line a grep will find.
+- **Vision's ML inference backend does not exist in the iOS Simulator, and the failure wears a
+  plausible disguise.** Measured 2026-08-14: `VNDetectHumanRectanglesRequest.perform` THROWS
+  `com.apple.Vision Code=9 "Could not create inference context"` on every frame (face-rect and
+  body-pose controls throw their own distinct messages), while `supportedRevisions` still reports
+  `humanRect=2 / faceRect=3 / bodyPose=1` and decode in the same host is perfectly healthy
+  (576×1024, 32 bpp, real luminance). `SAM3DPoseEstimator.detectPersonBBox` collapses *threw* and
+  *no observation* into one `(whole image, usedFallback: true)` tuple, so a whole fixture round read
+  it as "the footage has no detectable person" — 120 of 120 frames. The same request on macOS finds
+  a person on 120 of 120 frames of both clips. Since 2026-08-14 the fixture generator consumes a
+  macOS-host person-box SIDECAR (`tools/pose_fixture/person_box_sidecar.swift`) behind a
+  zero-tolerance timestamp gate, and the fixtures record `bbox_source macos_vision INTERIM` — macOS
+  Vision provenance is NOT iOS Vision provenance, and no number derived from those fixtures is
+  device-grade.
 - **A well-drawn torso says nothing about the legs.** A monocular pose model that cannot see a limb does not fail loudly — it returns its mean pose for that limb, which looks like a plausible standing leg. `VNDetectHumanRectanglesRequest.upperBodyOnly` defaulting to `true` hid behind this for a day (fixed 2026-08-07, `PersonBoxTests`). Score limbs separately against an independent estimator; an aggregate that mixes torso and legs dilutes a 3× leg error into noise.

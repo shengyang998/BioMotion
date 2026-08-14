@@ -106,6 +106,46 @@ final class MuscleLengthModeTests: XCTestCase {
         static let g9RequiredDisagreements = 1
     }
 
+    /// G2's MEASURED-OUTCOME pins, transitioned 2026-08-14 (fifteenth round,
+    /// person-box sidecar amendment) from the 5-marker lineage's all-zero
+    /// population to the 20-marker video-driven fixtures' real one. Receipt:
+    /// `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`,
+    /// `grep 'MODE-METRIC g2bcdf'`.
+    ///
+    /// Bidirectional in BOTH senses, exactly as the 2026-08-13 conversion
+    /// declared: a figure that drifts and a figure that improves past its pin
+    /// both turn this file red, because either means the mask, the fixtures, the
+    /// classifier or the model moved and the verdict has to be re-adjudicated
+    /// rather than silently re-baselined.
+    ///
+    /// PROVENANCE: these fixtures carry a **macOS-Vision INTERIM** person box
+    /// (`bbox_source macos_vision INTERIM`). Nothing pinned here is device-grade.
+    static let g2Pins: [String: (admitted: Int, defined: Int, total: Int,
+                                 directional: Double, definedFraction: Double,
+                                 minimumCapsule: Double, weakestCapsule: String)] = [
+        "video_012": (14, 1456, 1568, 0.4230769230769231, 0.9285714285714286,
+                      0.008928571428571428, "gaslat_r"),
+        "video_015": (24, 2565, 2688, 0.5235867446393763, 0.9542410714285714,
+                      0.2, "glmed1_r"),
+    ]
+
+    /// G7/G8's MEASURED-OUTCOME pins, transitioned 2026-08-14 in the same round
+    /// and from the same receipt as `g2Pins`.
+    static let g7Pins: [String: (admittedMuscles: Int, admittedCapsules: Int, jointFrames: Int,
+                                 agreements: Int, signatureChanges: Int, ceiling: Int,
+                                 minimumLengthRange: Double)] = [
+        "video_012": (18, 14, 316, 316, 152, 1998, 0.016395450722704985),
+        "video_015": (32, 24, 398, 398, 218, 3552, 0.022493320704742137),
+    ]
+
+    /// G8(a)'s MEASURED-OUTCOME pins. `over20` is the count of scored muscles
+    /// whose trend excursion exceeds the 20 % SECONDARY bar; the registered
+    /// allowance is 10 % of the scored set.
+    static let g8Pins: [String: (muscles: Int, worst: Double, worstMuscle: String, over20: Int)] = [
+        "video_012": (18, 0.29705270786412913, "gasmed_r", 7),
+        "video_015": (32, 0.1529278437872824, "glmax3_l", 0),
+    ]
+
     /// What reopening this layer costs, stated once and printed by every
     /// converted gate so no single receipt can be read as a partial pass.
     static let reopeningRequirement =
@@ -550,7 +590,35 @@ final class MuscleLengthModeTests: XCTestCase {
     /// lower-limb set must be NON-EMPTY at every warmed frame, and all 12
     /// hip-spanning capsules must be suppressed by the fail-closed clip verdict.
     /// "Fires on 0" is DISPROOF.
+    ///
+    /// ─── TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+    /// amendment) ───
+    /// **(iv-a) still PASSES and (iv-b) now FAILS, and that split is the
+    /// finding.** Under the 20-marker video-driven fixtures the drive-aware mask
+    /// still fires at every warmed frame — `empty_frames = 0` on both clips, so
+    /// the mask has never fired on nothing — but the hip block is no longer
+    /// suppressed: **6 of 12** hip capsules survive on `video_012` and **12 of
+    /// 12** survive on `video_015` (`hip_suppressed = 6` and `0`).
+    ///
+    /// **This is a REGISTRATION-CONDITIONAL clause, not a repairable defect, and
+    /// it is recorded as a FAIL rather than reinterpreted.** (iv-b) was written
+    /// against the 5-marker drive, where `hips_joint` never moved and the
+    /// fail-closed verdict suppressed the whole hip block by construction. With
+    /// twenty markers the hip coordinates ARE identified, so admitting them is
+    /// the mask behaving correctly and the clause failing. Reopening it requires
+    /// a SUCCESSOR preregistration in the same class as next-steps 42 and 43 —
+    /// a corrected instrument, RED-first, with the old clause named
+    /// SUPERSEDED-NOT-ERASED. Nothing here weakens it.
+    ///
+    /// Receipt: `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`,
+    /// `grep 'MODE-METRIC g3iv'`. PROVENANCE: macOS Vision, INTERIM.
     func testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips() throws {
+        // The MEASURED outcome, pinned to the receipt.
+        let pinned: [String: (warmed: Int, emptyFrames: Int, hipCapsules: Int,
+                              hipSuppressed: Int, admitted: Int)] = [
+            "video_012": (112, 0, 12, 6, 14),
+            "video_015": (112, 0, 12, 0, 24),
+        ]
         for clip in Self.scoredClips {
             let traversal = try Self.traversal(clip: clip, context: context())
             print("MODE-METRIC g3iv clip=\(clip) warmed=\(traversal.warmedCount) "
@@ -559,10 +627,37 @@ final class MuscleLengthModeTests: XCTestCase {
                   + "hip_capsules=\(traversal.hipCapsules.count) "
                   + "hip_suppressed=\(traversal.suppressedHipCapsules.count) "
                   + "admitted=\(traversal.admittedCapsules.sorted())")
-            XCTAssertEqual(traversal.framesWithEmptyUnidentifiedLowerLimb, 0,
+
+            let pin = try XCTUnwrap(pinned[clip])
+            XCTAssertEqual(traversal.warmedCount, pin.warmed, "G3(iv) pin on \(clip)")
+            XCTAssertEqual(traversal.hipCapsules.count, pin.hipCapsules, "G3(iv) pin on \(clip)")
+            XCTAssertEqual(traversal.suppressedHipCapsules.count, pin.hipSuppressed,
+                           "G3(iv-b) pin on \(clip)")
+            XCTAssertEqual(traversal.admittedCapsules.count, pin.admitted, "G3(iv) pin on \(clip)")
+
+            // (iv-a): UNCHANGED and still PASSING, on a non-empty population.
+            XCTAssertGreaterThan(traversal.warmedCount, 0,
+                                 "G3(iv-a) on \(clip) must not be scored on an empty traversal")
+            XCTAssertEqual(traversal.framesWithEmptyUnidentifiedLowerLimb, pin.emptyFrames,
                 "G3(iv-a): the drive-aware mask fired on nothing at some warmed frame of \(clip)")
-            XCTAssertEqual(traversal.suppressedHipCapsules.count, traversal.hipCapsules.count,
-                "G3(iv-b): a hip-spanning capsule survived the fail-closed clip verdict on \(clip)")
+            print("MODE-VERDICT gate=G3(iv-a) clip=\(clip) outcome=PASS_NON_VACUOUS "
+                  + "empty_frames=\(traversal.framesWithEmptyUnidentifiedLowerLimb)"
+                  + "/\(traversal.warmedCount) bbox_source=macos_vision INTERIM")
+
+            // (iv-b): the clause is NOT met. Recorded, never weakened.
+            XCTAssertLessThan(traversal.suppressedHipCapsules.count, traversal.hipCapsules.count,
+                "G3(iv-b) is recorded as FAILED on \(clip)")
+            recordFailedGate("G3(iv-b)", clip: clip,
+                             measured: "hip_suppressed=\(traversal.suppressedHipCapsules.count)"
+                                       + "/\(traversal.hipCapsules.count)",
+                             bar: "all \(traversal.hipCapsules.count) hip-spanning capsules "
+                                  + "suppressed by the fail-closed clip verdict",
+                             why: "the clause was registered against the 5-marker drive, where "
+                                  + "`hips_joint` never moved; the 20-marker drive identifies the "
+                                  + "hip coordinates, so the mask correctly admits them and the "
+                                  + "clause correctly fails. A corrected clause is a SUCCESSOR "
+                                  + "preregistration, in the class of next-steps 42/43; "
+                                  + "bbox_source=macos_vision INTERIM")
         }
     }
 
@@ -582,10 +677,30 @@ final class MuscleLengthModeTests: XCTestCase {
     /// a change to the mask, the fixtures, the classifier or the model moves
     /// these six numbers and turns this test RED in EITHER direction, which
     /// forces a fresh adjudication instead of a silent re-baseline.
-    /// VERDICT: G3(v) FAILED against its registered bar (`neutral` reads
-    /// 0.832149 > 0.5 on both knees). The layer is NOT SHIPPED. Reopening needs
-    /// richer fixtures — a production-grade 20-marker solved-pose clip — plus a
-    /// fresh adjudication.
+    /// VERDICT (2026-08-13, 5-marker lineage): G3(v) FAILED against its
+    /// registered bar (`neutral` read 0.832149 > 0.5 on both knees). Reopening
+    /// needed richer fixtures — a production-grade 20-marker solved-pose clip —
+    /// plus a fresh adjudication.
+    ///
+    /// ─── TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+    /// amendment) ─── **The richer fixture arrived and the verdict FLIPPED to
+    /// PASS.** The bar is untouched (`identified iff null_fraction <= 0.5`, read
+    /// from the SHIPPED `MuscleObservabilityMask.identifiedNullFractionCeiling`);
+    /// what moved is the DRIVE. Reading the marker set out of the 20-marker
+    /// fixture, `neutral` falls from **0.832149 to 0.000688** on both knees —
+    /// three orders of magnitude — and every one of the six measured null
+    /// fractions is now ≤ 0.000812. The failing pose is identified; `failures`
+    /// is empty. Receipt: `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`,
+    /// `grep 'MODE-METRIC g3v'`.
+    ///
+    /// ⚠️ **THE METHOD NAME IS NOW STALE and is deliberately not renamed.** It
+    /// says "UnderTheFiveMarkerDrive"; since this round the drive it reads is
+    /// the TWENTY-marker one. The MODE instrument is frozen for this round, so
+    /// the correction is recorded here rather than applied silently; renaming it
+    /// is a successor-round item.
+    ///
+    /// PROVENANCE: macOS Vision, INTERIM. The knee being identified is a
+    /// statement about the MARKER SET, not about the phone.
     func testG3KneeIsIdentifiedUnderTheFiveMarkerDriveAtFixturePoses() throws {
         let ctx = try context()
         let markers = try Self.clipMarkerNames(clip: Self.scoredClips[0], context: ctx)
@@ -612,14 +727,15 @@ final class MuscleLengthModeTests: XCTestCase {
                        RegisteredBar.g3IdentifiedNullFractionCeiling,
                        "G3(v)'s crossover moved: the registered decision boundary is 0.5")
 
-        // The MEASURED outcome, pinned to the receipt.
+        // The MEASURED outcome, pinned to the receipt. TRANSITIONED 2026-08-14
+        // from the 5-marker lineage's 0.832149 / 0.297860 / 0.113131 set.
         let pinned: [String: Double] = [
-            "neutral/knee_angle_r": 0.832149,
-            "neutral/knee_angle_l": 0.832149,
-            "run_1_midstance/knee_angle_r": 0.297860,
-            "run_1_midstance/knee_angle_l": 0.113131,
-            "run_4_mid_swing/knee_angle_r": 0.113131,
-            "run_4_mid_swing/knee_angle_l": 0.297860,
+            "neutral/knee_angle_r": 0.000688,
+            "neutral/knee_angle_l": 0.000688,
+            "run_1_midstance/knee_angle_r": 0.000460,
+            "run_1_midstance/knee_angle_l": 0.000812,
+            "run_4_mid_swing/knee_angle_r": 0.000812,
+            "run_4_mid_swing/knee_angle_l": 0.000461,
         ]
         XCTAssertEqual(Set(measured.keys), Set(pinned.keys),
                        "the G3(v) population itself moved")
@@ -629,26 +745,35 @@ final class MuscleLengthModeTests: XCTestCase {
                            "G3(v) pin \(key): the measured null fraction moved off its receipt")
         }
 
-        // The VERDICT: the gate failed, and it failed at exactly one pose.
-        XCTAssertEqual(failures, ["neutral/knee_angle_r", "neutral/knee_angle_l"],
-            "G3(v) FAILED at `neutral` and only at `neutral`; both running poses are identified")
-        for running in ["run_1_midstance", "run_4_mid_swing"] {
+        // NON-VACUITY: the bar is read against SIX measured fractions from a
+        // resolved marker Jacobian, not against an empty set.
+        XCTAssertEqual(markers.count, 20,
+                       "G3(v) now reads the TWENTY-marker drive; the method's name is stale and "
+                       + "the correction is recorded in its doc comment rather than applied "
+                       + "silently while the MODE instrument is frozen")
+        XCTAssertEqual(measured.count, 6, "G3(v) must score six coordinate/pose cells")
+
+        // The VERDICT: the gate PASSES. Every pose is identified, including the
+        // straight-leg `neutral` that failed under the 5-marker drive.
+        XCTAssertEqual(failures, [],
+            "G3(v) PASSES: with twenty markers every scored pose is identified, including the "
+            + "straight-leg `neutral` that read 0.832149 under the 5-marker drive")
+        for pose in ["neutral", "run_1_midstance", "run_4_mid_swing"] {
             for name in ["knee_angle_r", "knee_angle_l"] {
-                let value = try XCTUnwrap(measured["\(running)/\(name)"])
+                let value = try XCTUnwrap(measured["\(pose)/\(name)"])
                 XCTAssertTrue(MuscleObservabilityMask.isIdentified(nullFraction: value),
-                              "\(running)/\(name) must stay identified")
+                              "\(pose)/\(name) must be identified")
+                XCTAssertLessThan(value, RegisteredBar.g3IdentifiedNullFractionCeiling,
+                                  "\(pose)/\(name) must sit BELOW the crossover")
             }
         }
         let neutral = try XCTUnwrap(measured["neutral/knee_angle_r"])
-        XCTAssertGreaterThan(neutral, RegisteredBar.g3IdentifiedNullFractionCeiling,
-            "G3(v) is recorded as FAILED: the straight-leg pose sits ABOVE the crossover")
-        recordFailedGate("G3(v)",
-                         measured: String(format: "neutral=%.6f both knees; "
-                                          + "run_1_midstance=0.297860/0.113131; "
-                                          + "run_4_mid_swing=0.113131/0.297860", neutral),
-                         bar: "identified iff null_fraction <= "
-                              + "\(RegisteredBar.g3IdentifiedNullFractionCeiling)",
-                         why: "a straight leg with no knee marker in the 5-marker drive")
+        print(String(format: "MODE-VERDICT gate=G3(v) outcome=PASS_NON_VACUOUS "
+                     + "neutral=%.6f worst=%.6f bar=<= %.1f markers=%d "
+                     + "bbox_source=macos_vision INTERIM "
+                     + "note=the BAR did not move; the DRIVE did. 0.832149 -> %.6f at `neutral`.",
+                     neutral, measured.values.max() ?? 0,
+                     RegisteredBar.g3IdentifiedNullFractionCeiling, markers.count, neutral))
     }
 
     /// G3(vi). The Rule-0 census, gated because the alias bug degrades SILENTLY:
@@ -1278,7 +1403,16 @@ final class MuscleLengthModeTests: XCTestCase {
             XCTAssertEqual(fixture.dofNames, ctx.dofNames, "DOF name order changed under the fixture")
             XCTAssertEqual(fixture.dofNames.count, ctx.dofNames.count)
             XCTAssertEqual(fixture.sgTaps, MuscleLengthModeClassifier.taps)
-            XCTAssertEqual(fixture.frames.count, 122)
+            // TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+            // amendment): 122 -> 120. The 5-marker `GaitClipFixture` lineage
+            // carried 122 frames; the video-driven 20-marker lineage samples
+            // `.nativeWindow(4.0)` at 30 fps, i.e. `min(120, available)` = 120,
+            // and retained ALL of them on both clips (branch A, `excluded=[]`).
+            // Provenance: the person box is macOS-Vision INTERIM (see the
+            // fixture header's `bbox_source`), so this is an interim substrate.
+            XCTAssertEqual(fixture.frames.count, 120)
+            XCTAssertEqual(fixture.markerNames.count, 20,
+                           "the 20-marker MHR drive is what this lineage exists for")
             XCTAssertEqual(fixture.distinctIntervals.count, 1,
                            "the clip is not uniformly sampled")
         }
@@ -1289,15 +1423,41 @@ final class MuscleLengthModeTests: XCTestCase {
     /// G2(a)+(e). Flicker `<= 1.0 %`, grey-transition `<= 2.0 %`, scored
     /// SEPARATELY per clip.
     ///
-    /// ⚠️ **This method is GREEN VACUOUSLY and that is not a satisfied stability
-    /// bar.** Both denominators are 0 on both pinned clips because no capsule is
-    /// admitted, so `flickerRate` and `greyTransitionRate` return the `0` of an
-    /// empty ratio and clear their bars without measuring anything. The vacuity
-    /// is asserted and recorded — as vacuity — in
-    /// `testG2NonDegeneracyOnThePinnedClips`, which is exactly the degenerate
-    /// case clauses (b)–(f) were registered to catch. Do not read this method's
-    /// pass as evidence about temporal stability.
+    /// ⚠️ **This method WAS GREEN VACUOUSLY on the 5-marker fixtures, and that
+    /// was never a satisfied stability bar.** Both denominators were 0 because no
+    /// capsule was admitted, so `flickerRate` and `greyTransitionRate` returned
+    /// the `0` of an empty ratio and cleared their bars without measuring
+    /// anything. That vacuity was asserted and recorded — as vacuity — in
+    /// `testG2NonDegeneracyOnThePinnedClips`.
+    ///
+    /// ─── TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+    /// amendment; STATUS next-step 41 (a) discipline) ───
+    /// **Both denominators are now NON-EMPTY and both clauses FAIL on real
+    /// measurements.** The 20-marker video-driven fixtures admit 14 capsules on
+    /// `video_012` and 24 on `video_015`, so the empty-ratio escape is gone and
+    /// what was vacuous green is now a measured red. BOTH BARS ARE UNCHANGED and
+    /// still read out of `RegisteredBar`; the assertions below record the
+    /// measured outcome instead of demanding the bar, and the `MODE-VERDICT`
+    /// line states the failure. Receipt:
+    /// `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`, `grep 'MODE-METRIC g2a'`.
+    ///
+    /// PROVENANCE: the person box in these fixtures is **macOS Vision, INTERIM**
+    /// (`bbox_source macos_vision INTERIM` in the fixture header). Nothing
+    /// recorded here is quotable as device-grade.
     func testG2TemporalStabilityOnThePinnedClips() throws {
+        // The registered bars, asserted where the gate reads them.
+        XCTAssertEqual(RegisteredBar.g2FlickerRate, 0.01, "G2(a)'s registered bar")
+        XCTAssertEqual(RegisteredBar.g2GreyTransitionRate, 0.02, "G2(e)'s registered bar")
+
+        // The MEASURED outcome, pinned to the receipt. Bidirectional: a number
+        // that drifts AND a number that improves past its pin both turn this
+        // red, because either means the mask, the fixtures, the classifier or
+        // the model moved and the verdict must be re-adjudicated.
+        let pinned: [String: (flickerCentres: Int, flickerDenominator: Int,
+                              greyTransitions: Int, greyDenominator: Int)] = [
+            "video_012": (65, 1347, 67, 1554),
+            "video_015": (71, 2322, 150, 2664),
+        ]
         for clip in Self.scoredClips {
             let t = try Self.traversal(clip: clip, context: context())
             print("MODE-METRIC g2a clip=\(clip) flicker_centres=\(t.flickerCentres) "
@@ -1305,8 +1465,36 @@ final class MuscleLengthModeTests: XCTestCase {
                   + String(format: "flicker_rate=%.6f", t.flickerRate)
                   + " grey_transitions=\(t.greyTransitions) grey_denominator=\(t.greyDenominator) "
                   + String(format: "grey_rate=%.6f", t.greyTransitionRate))
-            XCTAssertLessThanOrEqual(t.flickerRate, 0.01, "G2(a) on \(clip)")
-            XCTAssertLessThanOrEqual(t.greyTransitionRate, 0.02, "G2(e) on \(clip)")
+
+            let pin = try XCTUnwrap(pinned[clip])
+            XCTAssertEqual(t.flickerCentres, pin.flickerCentres, "G2(a) pin on \(clip)")
+            XCTAssertEqual(t.flickerDenominator, pin.flickerDenominator, "G2(a) pin on \(clip)")
+            XCTAssertEqual(t.greyTransitions, pin.greyTransitions, "G2(e) pin on \(clip)")
+            XCTAssertEqual(t.greyDenominator, pin.greyDenominator, "G2(e) pin on \(clip)")
+
+            // NON-VACUITY, asserted BEFORE the verdict: an empty denominator
+            // would make either rate a 0 that clears its bar without measuring.
+            XCTAssertGreaterThan(t.flickerDenominator, 0,
+                                 "G2(a) on \(clip) must not be scored on an empty denominator")
+            XCTAssertGreaterThan(t.greyDenominator, 0,
+                                 "G2(e) on \(clip) must not be scored on an empty denominator")
+
+            // The VERDICT.
+            XCTAssertGreaterThan(t.flickerRate, RegisteredBar.g2FlickerRate,
+                                 "G2(a) is recorded as FAILED on \(clip)")
+            XCTAssertGreaterThan(t.greyTransitionRate, RegisteredBar.g2GreyTransitionRate,
+                                 "G2(e) is recorded as FAILED on \(clip)")
+            recordFailedGate("G2(a)+G2(e)", clip: clip,
+                             measured: String(format: "flicker=%d/%d=%.6f grey=%d/%d=%.6f "
+                                              + "(NON-VACUOUS: both denominators are populated)",
+                                              t.flickerCentres, t.flickerDenominator, t.flickerRate,
+                                              t.greyTransitions, t.greyDenominator,
+                                              t.greyTransitionRate),
+                             bar: "flicker <= \(RegisteredBar.g2FlickerRate), "
+                                  + "grey <= \(RegisteredBar.g2GreyTransitionRate)",
+                             why: "the 20-marker drive finally produces a capsule population, and "
+                                  + "on it the per-frame mode is not temporally stable at the "
+                                  + "registered rates; bbox_source=macos_vision INTERIM")
         }
     }
 
@@ -1317,24 +1505,34 @@ final class MuscleLengthModeTests: XCTestCase {
     ///
     /// ─── CONVERTED 2026-08-14 (owner-authorised, STATUS next-step 41 (a)) ───
     /// All four bars are UNCHANGED and still asserted through `RegisteredBar`.
-    /// What changed is that the method now RECORDS the empty population instead
-    /// of demanding a non-empty one. Pins from
-    /// `/tmp/biomotion-tests.BoBjif/subset/xcodebuild.log` lines 8126 and 8158
-    /// (`grep 'MODE-METRIC g2bcdf'`) plus 8165-8166 (`g2a`): every population is
-    /// EXACTLY ZERO on both clips — 0 admitted capsules, 0 defined samples, 0
-    /// total samples, no per-capsule entry at all. Bidirectional: the day a
-    /// capsule IS admitted these pins go red, which is the intended way to force
-    /// a fresh adjudication instead of letting a new population slide in under
-    /// an old verdict.
+    /// The 2026-08-13 conversion RECORDED an empty population: on the 5-marker
+    /// fixtures every figure was EXACTLY ZERO on both clips — 0 admitted
+    /// capsules, 0 defined samples, 0 total samples, no per-capsule entry — and
+    /// G2(a)/(e) were vacuous by empty denominator. Those pins were declared
+    /// bidirectional precisely so that "the day a capsule IS admitted these pins
+    /// go red".
     ///
-    /// It also records G2(a)/(e)'s vacuity explicitly: `flicker 0/0` and
-    /// `grey 0/0` are EMPTY DENOMINATORS, not satisfied stability bars, and
-    /// `testG2TemporalStabilityOnThePinnedClips` passes only because an empty
-    /// ratio returns 0.
-    /// VERDICT: G2(b), (c), (d) and (f) all FAILED against their registered
-    /// bars, and (a)/(e) are vacuous. The layer is NOT SHIPPED. Reopening needs
-    /// richer fixtures — a production-grade 20-marker solved-pose clip — plus a
-    /// fresh adjudication.
+    /// ─── TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+    /// amendment) ─── **That day arrived, and the pins went red as designed.**
+    /// The 20-marker video-driven fixtures admit **14** capsules on `video_012`
+    /// and **24** on `video_015`. Three of the four clauses now clear their
+    /// registered bars on a NON-EMPTY population, and one does not:
+    ///
+    /// * **G2(b) PASSES** — directional `0.423077` (012) / `0.523587` (015) vs `>= 0.40`
+    /// * **G2(d) PASSES** — defined fraction `0.928571` / `0.954241` vs `>= 0.90`
+    /// * **G2(f) PASSES** — defined samples `1456` / `2565` vs `>= 300`
+    /// * **G2(c) FAILS on `video_012`** — the weakest capsule is `gaslat_r` /
+    ///   `gasmed_r` at `0.008929`, an order of magnitude under the `>= 0.10`
+    ///   bar; on `video_015` the weakest is `glmed1_r` at `0.200000` and the
+    ///   clause passes. A clause met on one clip and missed on the other is a
+    ///   FAIL for the round: the registered wire condition is BOTH clips.
+    ///
+    /// Receipt: `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`,
+    /// `grep 'MODE-METRIC g2bcdf'`. Bars untouched; only the measured-outcome
+    /// pins moved.
+    ///
+    /// PROVENANCE: **macOS Vision, INTERIM** (`bbox_source macos_vision INTERIM`).
+    /// The layer is still NOT SHIPPED and no UI is wired.
     func testG2NonDegeneracyOnThePinnedClips() throws {
         // The registered bars, asserted where the gate reads them.
         XCTAssertEqual(RegisteredBar.g2DefinedSamples, 300, "G2(f)'s registered floor")
@@ -1354,53 +1552,73 @@ final class MuscleLengthModeTests: XCTestCase {
                            t.directionalFraction, t.definedFraction)
                   + " per_capsule=[\(perCapsule.joined(separator: ","))]")
 
-            // The MEASURED outcome, pinned to the receipt: exactly zero, not
-            // "small". An empty population is the finding.
-            XCTAssertEqual(t.admittedCapsules.count, 0,
-                           "G2 pin on \(clip): the admitted capsule set is empty")
-            XCTAssertEqual(t.definedSamples, 0, "G2(f) pin on \(clip)")
-            XCTAssertEqual(t.totalSamples, 0, "G2 pin on \(clip): no capsule sample exists")
-            XCTAssertEqual(t.directionalFraction, 0.0, accuracy: 0, "G2(b) pin on \(clip)")
-            XCTAssertEqual(t.definedFraction, 0.0, accuracy: 0, "G2(d) pin on \(clip)")
-            XCTAssertTrue(t.perCapsuleDirectionalFraction.isEmpty,
-                          "G2(c) pin on \(clip): there is no capsule to score")
-            XCTAssertEqual(t.minimumCapsuleDirectionalFraction, 0.0, accuracy: 0,
-                           "G2(c) pin on \(clip): the minimum over an empty set is the "
-                           + "collection's own 0, not a measurement")
+            // The MEASURED outcome, pinned to the receipt. TRANSITIONED
+            // 2026-08-14 from the all-zero 5-marker pins.
+            let pin = try XCTUnwrap(Self.g2Pins[clip])
+            XCTAssertEqual(t.admittedCapsules.count, pin.admitted, "G2 pin on \(clip)")
+            XCTAssertEqual(t.definedSamples, pin.defined, "G2(f) pin on \(clip)")
+            XCTAssertEqual(t.totalSamples, pin.total, "G2 pin on \(clip)")
+            XCTAssertEqual(t.directionalFraction, pin.directional, accuracy: 1e-9,
+                           "G2(b) pin on \(clip)")
+            XCTAssertEqual(t.definedFraction, pin.definedFraction, accuracy: 1e-9,
+                           "G2(d) pin on \(clip)")
+            XCTAssertEqual(t.perCapsuleDirectionalFraction.count, pin.admitted,
+                           "G2(c) pin on \(clip): one entry per admitted capsule")
+            XCTAssertEqual(t.minimumCapsuleDirectionalFraction, pin.minimumCapsule,
+                           accuracy: 1e-9, "G2(c) pin on \(clip)")
+            XCTAssertEqual(perCapsule.first(where: { $0.hasPrefix(pin.weakestCapsule + "=") }),
+                           String(format: "%@=%.4f", pin.weakestCapsule, pin.minimumCapsule),
+                           "G2(c) pin on \(clip): the weakest capsule moved")
 
-            // G2(a)/(e): VACUOUS BY EMPTY DENOMINATOR. Recorded as such here so
-            // the sibling method's green cannot be read as a stability result.
-            XCTAssertEqual(t.flickerDenominator, 0,
-                           "G2(a) on \(clip) is vacuous: the flicker denominator is empty")
-            XCTAssertEqual(t.flickerCentres, 0, "G2(a) numerator on \(clip)")
-            XCTAssertEqual(t.greyDenominator, 0,
-                           "G2(e) on \(clip) is vacuous: the grey denominator is empty")
-            XCTAssertEqual(t.greyTransitions, 0, "G2(e) numerator on \(clip)")
-            print("MODE-VERDICT gate=G2(a)+G2(e) clip=\(clip) outcome=VACUOUS_EMPTY_DENOMINATOR "
-                  + "flicker=\(t.flickerCentres)/\(t.flickerDenominator) "
-                  + "grey=\(t.greyTransitions)/\(t.greyDenominator) "
-                  + "note=an empty ratio returns 0 and clears the bar without measuring anything; "
-                  + "this is NOT a satisfied stability bar")
+            // NON-VACUITY, asserted BEFORE any bar is read. A bar met on an
+            // empty population is a VACUOUS pin, never a live bar; that rule is
+            // what the 5-marker round's zeros existed to enforce, and it is what
+            // licenses reading the PASSES below as real.
+            XCTAssertGreaterThan(t.admittedCapsules.count, 0,
+                                 "G2 on \(clip): no capsule is admitted, so nothing below is a "
+                                 + "measurement")
+            XCTAssertGreaterThan(t.totalSamples, 0, "G2 on \(clip): no capsule sample exists")
 
-            // The VERDICT for (b)(c)(d)(f).
-            XCTAssertLessThan(t.definedSamples, RegisteredBar.g2DefinedSamples,
-                              "G2(f) is recorded as FAILED on \(clip)")
-            XCTAssertLessThan(t.directionalFraction, RegisteredBar.g2DirectionalFraction,
-                              "G2(b) is recorded as FAILED on \(clip)")
-            XCTAssertLessThan(t.minimumCapsuleDirectionalFraction,
-                              RegisteredBar.g2CapsuleDirectionalFraction,
-                              "G2(c) is recorded as FAILED on \(clip)")
-            XCTAssertLessThan(t.definedFraction, RegisteredBar.g2DefinedFraction,
-                              "G2(d) is recorded as FAILED on \(clip)")
-            recordFailedGate("G2(b)+G2(c)+G2(d)+G2(f)", clip: clip,
-                             measured: "admitted=0 defined=0 total=0 directional=0.000000 "
-                                       + "defined_fraction=0.000000 per_capsule=[]",
-                             bar: "defined >= \(RegisteredBar.g2DefinedSamples), "
-                                  + "directional >= \(RegisteredBar.g2DirectionalFraction), "
-                                  + "per capsule >= \(RegisteredBar.g2CapsuleDirectionalFraction), "
-                                  + "defined fraction >= \(RegisteredBar.g2DefinedFraction)",
-                             why: "the fail-closed clip verdict admits no capsule on either "
-                                  + "pinned clip, so there is no population to score")
+            // The VERDICT, clause by clause. THREE PASS on a populated set.
+            XCTAssertGreaterThanOrEqual(t.definedSamples, RegisteredBar.g2DefinedSamples,
+                                        "G2(f) is recorded as PASSED on \(clip)")
+            XCTAssertGreaterThanOrEqual(t.directionalFraction, RegisteredBar.g2DirectionalFraction,
+                                        "G2(b) is recorded as PASSED on \(clip)")
+            XCTAssertGreaterThanOrEqual(t.definedFraction, RegisteredBar.g2DefinedFraction,
+                                        "G2(d) is recorded as PASSED on \(clip)")
+            print("MODE-VERDICT gate=G2(b)+G2(d)+G2(f) clip=\(clip) outcome=PASS_NON_VACUOUS "
+                  + "admitted=\(t.admittedCapsules.count) defined=\(t.definedSamples) "
+                  + String(format: "directional=%.6f defined_fraction=%.6f",
+                           t.directionalFraction, t.definedFraction)
+                  + " bbox_source=macos_vision INTERIM "
+                  + "note=first non-empty capsule population in this battery's history; "
+                  + "macOS Vision provenance is NOT iOS Vision provenance")
+
+            // G2(c) is the one clause that does not clear, and it clears on ONE
+            // clip only — which is a FAIL for the round, because the registered
+            // wire condition is BOTH clips.
+            if pin.minimumCapsule >= RegisteredBar.g2CapsuleDirectionalFraction {
+                print("MODE-VERDICT gate=G2(c) clip=\(clip) outcome=PASS_NON_VACUOUS "
+                      + String(format: "minimum=%.6f capsule=%@", t.minimumCapsuleDirectionalFraction,
+                               pin.weakestCapsule)
+                      + " bar=>= \(RegisteredBar.g2CapsuleDirectionalFraction) "
+                      + "note=PASSES on this clip only; the round's wire condition is BOTH clips")
+                XCTAssertGreaterThanOrEqual(t.minimumCapsuleDirectionalFraction,
+                                            RegisteredBar.g2CapsuleDirectionalFraction,
+                                            "G2(c) is recorded as PASSED on \(clip)")
+            } else {
+                XCTAssertLessThan(t.minimumCapsuleDirectionalFraction,
+                                  RegisteredBar.g2CapsuleDirectionalFraction,
+                                  "G2(c) is recorded as FAILED on \(clip)")
+                recordFailedGate("G2(c)", clip: clip,
+                                 measured: String(format: "minimum=%.6f on %@ over %d admitted "
+                                                  + "capsules (NON-VACUOUS)",
+                                                  t.minimumCapsuleDirectionalFraction,
+                                                  pin.weakestCapsule, t.admittedCapsules.count),
+                                 bar: "every capsule >= \(RegisteredBar.g2CapsuleDirectionalFraction)",
+                                 why: "the two gastrocnemius capsules are admitted but almost never "
+                                      + "directional on this clip; bbox_source=macos_vision INTERIM")
+            }
         }
     }
 
@@ -1430,6 +1648,22 @@ final class MuscleLengthModeTests: XCTestCase {
     /// VERDICT: G7(a) FAILED against its registered bar (under-power). The layer
     /// is NOT SHIPPED. Reopening needs richer fixtures — a production-grade
     /// 20-marker solved-pose clip — plus a fresh adjudication.
+    ///
+    /// ─── TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+    /// amendment) ─── The fourteenth-round text above is kept as history; the
+    /// numbers it recites (0 joint frames, ceiling 0, the BoBjif receipt) are
+    /// the FIVE-marker fixtures' and no longer describe the pins below. On the
+    /// 20-marker video-driven fixtures the population is real for the first
+    /// time: agreement `1.000000` on BOTH clips, `rule3_excluded 0`,
+    /// signature changes `152` / `218` — but joint-clearing frames land at
+    /// **316** (ceiling 1998, 18 admitted x 111 pairs) on `video_012` and
+    /// **398** (ceiling 3552, 32 x 111) on `video_015`, both UNDER the held
+    /// 500-frame power floor. VERDICT: still FAILED (under-power), now for a
+    /// measured reason, not a vacuous one; the perfect agreement on 714 real
+    /// frames is evidence the two witnesses do not disagree, not yet evidence
+    /// at registered power. Receipt: `/tmp/biomotion-tests.4Eb2JD/subset/
+    /// xcodebuild.log`, `grep 'MODE-METRIC g7a'`. Bars untouched.
+    /// PROVENANCE: macOS Vision, INTERIM. The layer is still NOT SHIPPED.
     func testG7TwoWitnessAgreementOnTheProductionPath() throws {
         // The registered bars, asserted where the gate reads them.
         XCTAssertEqual(RegisteredBar.g7WitnessJointFrames, 500, "G7(a)'s registered power floor")
@@ -1445,32 +1679,48 @@ final class MuscleLengthModeTests: XCTestCase {
                   + "signature_changes=\(t.signatureChanges) "
                   + "ceiling=\(ceiling)")
 
-            // The MEASURED outcome, pinned to the receipt.
-            XCTAssertEqual(t.warmedCount, 114, "G7 pin on \(clip): the warmed-frame count moved")
-            XCTAssertEqual(t.admittedMuscles.count, 0, "G7 pin on \(clip): no muscle is admitted")
-            XCTAssertEqual(t.witnessJointFrames, 0, "G7(a) pin on \(clip)")
-            XCTAssertEqual(t.witnessAgreements, 0, "G7(a) pin on \(clip)")
-            XCTAssertEqual(t.witnessAgreement, 0.0, accuracy: 0, "G7(a) pin on \(clip)")
+            // The MEASURED outcome, pinned to the receipt. TRANSITIONED
+            // 2026-08-14 (fifteenth round) from the all-zero 5-marker
+            // population. `warmedCount` moves 114 -> 112 because the fixture is
+            // 120 samples rather than 122 and `warmedFrameCount = n - (taps-1)`.
+            let pin = try XCTUnwrap(Self.g7Pins[clip])
+            XCTAssertEqual(t.warmedCount, 112, "G7 pin on \(clip): the warmed-frame count moved")
+            XCTAssertEqual(t.admittedMuscles.count, pin.admittedMuscles, "G7 pin on \(clip)")
+            XCTAssertEqual(t.witnessJointFrames, pin.jointFrames, "G7(a) pin on \(clip)")
+            XCTAssertEqual(t.witnessAgreements, pin.agreements, "G7(a) pin on \(clip)")
+            XCTAssertEqual(t.witnessAgreement, 1.0, accuracy: 1e-12, "G7(a) pin on \(clip)")
             XCTAssertEqual(t.rule3Excluded, 0, "G7(a) pin on \(clip)")
-            XCTAssertEqual(t.signatureChanges, 0, "G7(a) pin on \(clip)")
-            XCTAssertEqual(ceiling, 0, "G7(a) pin on \(clip): the ceiling is 0 admitted x 113")
+            XCTAssertEqual(t.signatureChanges, pin.signatureChanges, "G7(a) pin on \(clip)")
+            XCTAssertEqual(ceiling, pin.ceiling, "G7(a) pin on \(clip)")
 
-            // DECISION COHERENCE, half one: the admitted set is empty on BOTH
-            // pinned clips, which is the reason the gate has no population.
-            XCTAssertEqual(t.admittedCapsules.count, 0,
-                           "coherence: a capsule is admitted on \(clip) while the recorded verdict "
-                           + "says the mask admits nothing")
+            // DECISION COHERENCE, half one: the admitted set is NON-EMPTY on
+            // both clips now, and that is what makes the agreement figure a
+            // measurement rather than an empty ratio.
+            XCTAssertEqual(t.admittedCapsules.count, pin.admittedCapsules,
+                           "coherence: the admitted capsule count must match G2's own pin")
+            XCTAssertGreaterThan(t.witnessJointFrames, 0,
+                                 "G7(a) on \(clip): an empty joint-clearing set would make the "
+                                 + "agreement a 0/0 that says nothing")
 
-            // The VERDICT.
+            // The VERDICT. Agreement itself is PERFECT — 1.000000 on both clips
+            // — and the gate still FAILS, because the registered 500-frame floor
+            // is an AUTOMATIC under-power fail and 316/398 sit under it. A
+            // clause met on a population too small to power it is not a pass.
+            XCTAssertGreaterThanOrEqual(t.witnessAgreement, RegisteredBar.g7WitnessAgreement,
+                "G7(a) agreement clause on \(clip)")
             XCTAssertLessThan(t.witnessJointFrames, RegisteredBar.g7WitnessJointFrames,
-                "G7(a) is recorded as FAILED on \(clip): under-power, 0 jointly-clearing frames")
+                "G7(a) is recorded as FAILED on \(clip): under-power")
             recordFailedGate("G7(a)", clip: clip,
-                             measured: "joint_clearing=0 agree=0 agreement=0.000000 ceiling=0 "
-                                       + "over \(t.warmedCount) warmed frames",
+                             measured: "joint_clearing=\(t.witnessJointFrames) "
+                                       + "agree=\(t.witnessAgreements) agreement=1.000000 "
+                                       + "ceiling=\(ceiling) over \(t.warmedCount) warmed frames",
                              bar: ">= \(RegisteredBar.g7WitnessJointFrames) jointly-clearing "
                                   + "muscle-frames at >= \(RegisteredBar.g7WitnessAgreement) "
                                   + "agreement",
-                             why: "no admitted muscle, so witness A and witness B never both clear")
+                             why: "the two witnesses agree on EVERY jointly-clearing frame, but "
+                                  + "only \(t.witnessJointFrames) of a \(ceiling) ceiling clear "
+                                  + "both deadbands, so the registered power floor is missed; "
+                                  + "bbox_source=macos_vision INTERIM")
         }
 
         // DECISION COHERENCE, half two: NOT SHIPPED, checked against the tree.
@@ -1503,6 +1753,23 @@ final class MuscleLengthModeTests: XCTestCase {
     /// VERDICT: G7(b) FAILED against its registered bar. The layer is NOT
     /// SHIPPED. Reopening needs richer fixtures — a production-grade 20-marker
     /// solved-pose clip — plus a fresh adjudication.
+    ///
+    /// ─── TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+    /// amendment) ─── The vacuity narrative above is HISTORY, kept per the
+    /// append-beside rule; it described the 5-marker fixtures. On the 20-marker
+    /// video-driven fixtures the early return is NOT taken (`admitted 18` on
+    /// `video_012`, `32` on `video_015`), the probe genuinely runs, and BOTH
+    /// clauses clear their unchanged bars on a non-empty population:
+    /// `min_length_range 1.639545072e-02 m` / `2.249332070e-02 m` (bar
+    /// `> 1e-6`), `reimpose_max_delta 0.000e+00` (bar `<= 1e-9`) — the same
+    /// digits as the vacuous round, opposite meaning: this time the block
+    /// executed and wrote them. The body below asserts both clauses live and
+    /// prints `outcome=PASS_NON_VACUOUS` behind an explicit
+    /// `admittedMuscles.count > 0` population assertion.
+    /// VERDICT: G7(b) PASSES non-vacuously on both clips. Receipt:
+    /// `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`,
+    /// `grep 'MODE-METRIC g7b'`. Bars untouched.
+    /// PROVENANCE: macOS Vision, INTERIM. The layer is still NOT SHIPPED.
     func testG7StalePoseSentinel() throws {
         // The registered bars, asserted where the gate reads them.
         XCTAssertEqual(RegisteredBar.g7MinimumLengthRangeMetres, 1.0e-6, "G7(b)'s registered range")
@@ -1514,31 +1781,40 @@ final class MuscleLengthModeTests: XCTestCase {
                   + String(format: "min_length_range=%.9e reimpose_max_delta=%.3e",
                            t.minimumLengthRange, t.reimposedPoseMaxDelta))
 
-            // The MEASURED outcome, pinned to the receipt.
-            XCTAssertEqual(t.admittedMuscles.count, 0, "G7(b) pin on \(clip)")
-            XCTAssertEqual(t.minimumLengthRange, 0.0, accuracy: 0,
-                           "G7(b) pin on \(clip): no admitted trace exists to have a range")
-            XCTAssertEqual(t.reimposedPoseMaxDelta, 0.0, accuracy: 0,
-                           "G7(b) pin on \(clip): the re-impose probe never ran")
+            // The MEASURED outcome, pinned to the receipt. TRANSITIONED
+            // 2026-08-14 (fifteenth round).
+            let pin = try XCTUnwrap(Self.g7Pins[clip])
+            XCTAssertEqual(t.admittedMuscles.count, pin.admittedMuscles, "G7(b) pin on \(clip)")
+            XCTAssertEqual(t.minimumLengthRange, pin.minimumLengthRange, accuracy: 1e-12,
+                           "G7(b) pin on \(clip)")
+            XCTAssertEqual(t.reimposedPoseMaxDelta, 0.0, accuracy: 0, "G7(b) pin on \(clip)")
 
-            // The VERDICT.
-            XCTAssertLessThan(t.admittedMuscles.count, 1,
-                "G7(b) is recorded as FAILED on \(clip): the sentinel cannot run without an "
-                + "admitted muscle")
-            XCTAssertLessThanOrEqual(t.minimumLengthRange, RegisteredBar.g7MinimumLengthRangeMetres,
-                "G7(b) is recorded as FAILED on \(clip): the registered clause needs a range "
-                + "STRICTLY GREATER than 1e-6 m and there is no trace at all")
-            print("MODE-VERDICT gate=G7(b)-reimpose clip=\(clip) outcome=VACUOUS_UNREACHABLE "
-                  + "reimpose_max_delta=\(t.reimposedPoseMaxDelta) "
-                  + "note=buildTraversal returns before the re-impose probe when the admitted set "
-                  + "is empty, so this 0 is an initial value and NOT a satisfied bar")
-            recordFailedGate("G7(b)", clip: clip,
-                             measured: "admitted_muscles=0 min_length_range=0.000000000e+00 "
-                                       + "reimpose_max_delta=0.000e+00 (vacuous)",
-                             bar: "range > \(RegisteredBar.g7MinimumLengthRangeMetres) m, "
-                                  + "re-impose <= \(RegisteredBar.g7ReimposedPoseDeltaMetres) m",
-                             why: "no admitted muscle, so the stale-pose sentinel has no trace "
-                                  + "to inspect")
+            // NON-VACUITY — and this is exactly the clause that WAS vacuous.
+            // `buildTraversal` returns BEFORE the re-impose probe when the
+            // admitted set is empty, so on the 5-marker fixtures the 0.000e+00
+            // was an initial value. With \(pin.admittedMuscles) admitted muscles
+            // the early return is not taken and the probe genuinely runs, so
+            // this 0 is now a MEASUREMENT: re-imposing a stored mid-clip pose
+            // reproduces every L_MT bit for bit.
+            XCTAssertGreaterThan(t.admittedMuscles.count, 0,
+                                 "G7(b) on \(clip): without an admitted muscle the sentinel's "
+                                 + "0.000e+00 would be an initial value, not a measurement")
+
+            // The VERDICT: BOTH clauses are met, on a real population.
+            XCTAssertGreaterThan(t.minimumLengthRange, RegisteredBar.g7MinimumLengthRangeMetres,
+                "G7(b) range clause on \(clip): every admitted trace must move more than 1e-6 m")
+            XCTAssertLessThanOrEqual(t.reimposedPoseMaxDelta,
+                                     RegisteredBar.g7ReimposedPoseDeltaMetres,
+                "G7(b) re-impose clause on \(clip)")
+            print("MODE-VERDICT gate=G7(b) clip=\(clip) outcome=PASS_NON_VACUOUS "
+                  + "admitted_muscles=\(t.admittedMuscles.count) "
+                  + String(format: "min_length_range=%.9e reimpose_max_delta=%.3e",
+                           t.minimumLengthRange, t.reimposedPoseMaxDelta)
+                  + " bar=range > \(RegisteredBar.g7MinimumLengthRangeMetres) m and re-impose <= "
+                  + "\(RegisteredBar.g7ReimposedPoseDeltaMetres) m "
+                  + "bbox_source=macos_vision INTERIM "
+                  + "note=the probe RAN this time; on the 5-marker fixtures the same 0.000e+00 was "
+                  + "an initial value because buildTraversal returned before it")
         }
     }
 
@@ -1562,6 +1838,24 @@ final class MuscleLengthModeTests: XCTestCase {
     /// VERDICT: G8(a) FAILED against its registered population requirement. The
     /// layer is NOT SHIPPED. Reopening needs richer fixtures — a
     /// production-grade 20-marker solved-pose clip — plus a fresh adjudication.
+    ///
+    /// ─── TRANSITIONED 2026-08-14 (fifteenth round, person-box sidecar
+    /// amendment) ─── The vacuity narrative above is HISTORY, kept per the
+    /// append-beside rule; it described the 5-marker fixtures. On the 20-marker
+    /// video-driven fixtures the screen finally screens something — and BINDS:
+    /// `video_012` scores 18 muscles, worst `0.297053` (`gasmed_r`) clears the
+    /// 30 % primary, but **7 of 18** exceed the 20 % secondary against an
+    /// allowance of **1** (`>= 90 %` of 18 must sit under 20 %, so at most
+    /// `floor(0.10 x 18) = 1` may exceed), and the clause FAILS;
+    /// `video_015` scores 32, worst `0.152928`
+    /// (`glmax3_l`), 0 over 20 %, and PASSES. One clip passing is not the round
+    /// passing: the registered condition is BOTH. The body pins both outcomes
+    /// bidirectionally behind an explicit `trendExcursions.count > 0`
+    /// population assertion. VERDICT: G8(a) FAILED on `video_012` (secondary
+    /// clause), measured, non-vacuous. Receipt:
+    /// `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`,
+    /// `grep 'MODE-METRIC g8a'`. Bars untouched.
+    /// PROVENANCE: macOS Vision, INTERIM. The layer is still NOT SHIPPED.
     func testG8SecularDriftScreen() throws {
         // The registered bars, asserted where the gate reads them.
         XCTAssertEqual(RegisteredBar.g8PrimaryExcursion, 0.30, "G8(a)'s registered primary bar")
@@ -1580,29 +1874,52 @@ final class MuscleLengthModeTests: XCTestCase {
                       .map { String(format: "%@=%.4f", $0.key, $0.value) }
                       .joined(separator: ",") + "]")
 
-            // The MEASURED outcome, pinned to the receipt.
-            XCTAssertTrue(t.trendExcursions.isEmpty,
-                          "G8(a) pin on \(clip): the screen has no population")
-            XCTAssertEqual(t.trendExcursions.count, 0, "G8(a) pin on \(clip)")
-            XCTAssertEqual(sorted.first?.value ?? 0, 0.0, accuracy: 0,
-                           "G8(a) pin on \(clip): `worst` is the empty fallback, not an excursion")
-            XCTAssertEqual(over, 0, "G8(a) pin on \(clip)")
+            // The MEASURED outcome, pinned to the receipt. TRANSITIONED
+            // 2026-08-14 (fifteenth round) from the empty 5-marker population.
+            let pin = try XCTUnwrap(Self.g8Pins[clip])
+            XCTAssertEqual(t.trendExcursions.count, pin.muscles, "G8(a) pin on \(clip)")
+            XCTAssertEqual(sorted.first?.value ?? 0, pin.worst, accuracy: 1e-12,
+                           "G8(a) pin on \(clip)")
+            XCTAssertEqual(sorted.first?.key, pin.worstMuscle,
+                           "G8(a) pin on \(clip): the worst muscle moved")
+            XCTAssertEqual(over, pin.over20, "G8(a) pin on \(clip)")
 
-            // The VERDICT.
-            XCTAssertLessThan(t.trendExcursions.count, 1,
-                "G8(a) is recorded as FAILED on \(clip): the registered clause needs at least one "
-                + "scored muscle and there are none")
-            print("MODE-VERDICT gate=G8(a)-excursions clip=\(clip) outcome=VACUOUS_EMPTY_POPULATION "
-                  + "worst=0.000000 over20=0 "
-                  + "note=the 30 %/20 % clauses cannot be read as a clean drift screen; there is "
-                  + "no admitted trace to have a trend")
-            recordFailedGate("G8(a)", clip: clip,
-                             measured: "muscles=0 worst=0.000000 over20=0 detail=[]",
-                             bar: "at least one scored muscle, all <= "
-                                  + "\(RegisteredBar.g8PrimaryExcursion), at most "
-                                  + "\(RegisteredBar.g8SecondaryFraction) of them over "
-                                  + "\(RegisteredBar.g8SecondaryExcursion)",
-                             why: "no admitted muscle, so no L_MT trace exists to screen for drift")
+            // NON-VACUITY: the 30 %/20 % clauses are only readable against a
+            // real trace population.
+            XCTAssertGreaterThan(t.trendExcursions.count, 0,
+                                 "G8(a) on \(clip): an empty screen's `worst` is the collection's "
+                                 + "own 0, not an excursion")
+
+            // The VERDICT, clause by clause. The PRIMARY clause holds on both
+            // clips; the SECONDARY allowance is blown on video_012 alone.
+            XCTAssertLessThanOrEqual(pin.worst, RegisteredBar.g8PrimaryExcursion,
+                "G8(a) primary clause on \(clip)")
+            let secondaryAllowance = Int((RegisteredBar.g8SecondaryFraction
+                                          * Double(pin.muscles)).rounded(.down))
+            if over <= secondaryAllowance {
+                print("MODE-VERDICT gate=G8(a) clip=\(clip) outcome=PASS_NON_VACUOUS "
+                      + "muscles=\(pin.muscles) "
+                      + String(format: "worst=%.6f on %@", pin.worst, pin.worstMuscle)
+                      + " over20=\(over) allowance=\(secondaryAllowance) "
+                      + "bbox_source=macos_vision INTERIM")
+            } else {
+                XCTAssertGreaterThan(over, secondaryAllowance,
+                                     "G8(a) is recorded as FAILED on \(clip)")
+                recordFailedGate("G8(a)", clip: clip,
+                                 measured: "muscles=\(pin.muscles) "
+                                           + String(format: "worst=%.6f on %@ (<= %.2f primary, "
+                                                    + "so the PRIMARY clause holds)",
+                                                    pin.worst, pin.worstMuscle,
+                                                    RegisteredBar.g8PrimaryExcursion)
+                                           + " over20=\(over) of \(pin.muscles) "
+                                           + "allowance=\(secondaryAllowance)",
+                                 bar: "all <= \(RegisteredBar.g8PrimaryExcursion), at most "
+                                      + "\(RegisteredBar.g8SecondaryFraction) of them over "
+                                      + "\(RegisteredBar.g8SecondaryExcursion)",
+                                 why: "the SECONDARY allowance is blown: \(over) of \(pin.muscles) "
+                                      + "scored muscles carry more than 20 % of their own range as "
+                                      + "end-to-end trend; bbox_source=macos_vision INTERIM")
+            }
         }
     }
 

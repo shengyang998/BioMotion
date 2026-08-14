@@ -252,14 +252,31 @@ final class SAM3DPoseEstimator {
 
     // MARK: - Estimate
 
-    func estimate(uiImage: UIImage) async throws -> Output {
+    /// - Parameter personBoxNormalizedBottomLeft: an EXTERNALLY supplied person
+    ///   box in Vision's own normalized, bottom-left-origin, Y-up space. `nil`
+    ///   — the production default and the only value production passes
+    ///   (`OfflineSessionRunner.swift:1079`) — is today's behaviour byte for
+    ///   byte: the internal Vision call runs. A non-`nil` value skips Vision
+    ///   entirely and runs the SAME shared conversion, so no caller can bypass
+    ///   the flip, the bounds intersection or the degeneracy guard.
+    ///
+    ///   Registered 2026-08-14 (person-box sidecar amendment). It exists because
+    ///   `VNDetectHumanRectanglesRequest.perform` THROWS on every frame inside
+    ///   the iOS Simulator (`com.apple.Vision Code=9`, 12/12 measured), so the
+    ///   fixture generator cannot obtain a box in the only host it may run in.
+    ///   A box that arrives this way carries macOS-Vision provenance, which is
+    ///   NOT iOS-Vision provenance; the fixture header records that as
+    ///   `bbox_source macos_vision INTERIM`.
+    func estimate(uiImage: UIImage,
+                  personBoxNormalizedBottomLeft: CGRect? = nil) async throws -> Output {
         let model = try await ensureModelLoaded()
 
         guard uiImage.size.width > 0, uiImage.size.height > 0 else {
             throw EstimatorError.imageDecodeFailed
         }
 
-        let (bboxRect, usedFallback) = try Self.detectPersonBBox(uiImage: uiImage)
+        let (bboxRect, usedFallback) = try Self.resolvePersonBox(
+            uiImage: uiImage, injectedNormalizedBottomLeft: personBoxNormalizedBottomLeft)
         let geometry = Self.computeCropGeometry(bbox: bboxRect, imageSize: uiImage.size)
 
         // Default (no real calibration, no FOV estimator) camera intrinsics —
@@ -431,6 +448,61 @@ final class SAM3DPoseEstimator {
         return request
     }
 
+    /// The ONE copy of the flip + clamp + degeneracy guard.
+    ///
+    /// Vision's normalized `boundingBox` has its origin at bottom-left with Y
+    /// increasing upward, REGARDLESS of the image's own orientation (Vision
+    /// normalizes against the orientation we passed in). This converts it to the
+    /// top-left-origin / Y-down pixel space that the rest of this file (and the
+    /// Python bbox math it mirrors) uses throughout, intersects it with the
+    /// image bounds, and returns `nil` for a degenerate result.
+    ///
+    /// Extracted 2026-08-14 so `detectPersonBBox` and the external-box seam call
+    /// literally the same arithmetic. A second copy of this flip is exactly the
+    /// class of defect `PersonBoxTests` exists for: a wrong-signed flip on
+    /// `0.303,0.238,0.334,0.414` against 576x1024 reads `y1 = 243.712` instead
+    /// of `356.352`, i.e. 112.6 px away, and nothing downstream fails loudly.
+    ///
+    /// SCOPE, stated precisely: this reproduces ONLY the degenerate-rect branch.
+    /// It CANNOT reproduce the handler-throw or zero-observation branches,
+    /// because its input is an already-obtained box. A caller that assumes this
+    /// helper also encodes detection failure would drop its own not-found check
+    /// and reintroduce a silent whole-image path.
+    static func personBoxPixels(visionNormalizedBottomLeftOriginYUp nb: CGRect,
+                                imageSize: CGSize) -> CGRect? {
+        let w = imageSize.width, h = imageSize.height
+        let x1 = nb.minX * w
+        let y1 = (1 - nb.minY - nb.height) * h
+        let rect = CGRect(x: x1, y: y1, width: nb.width * w, height: nb.height * h)
+            .intersection(CGRect(origin: .zero, size: imageSize))
+        guard rect.width > 1, rect.height > 1 else { return nil }
+        return rect
+    }
+
+    /// Resolves the person box `estimate(uiImage:)` crops from.
+    ///
+    /// `injectedNormalizedBottomLeft == nil` is production: run Vision. Non-nil
+    /// takes the box VERBATIM through the same `personBoxPixels` conversion and
+    /// returns BEFORE any `VNImageRequestHandler` is constructed — which is the
+    /// structural reason the injected path cannot silently fall back to the
+    /// whole image. It takes a NORMALIZED rect, never a pixel rect, so a caller
+    /// cannot hand in an already-converted box and bypass the clamp.
+    static func resolvePersonBox(uiImage: UIImage,
+                                 injectedNormalizedBottomLeft: CGRect?) throws
+        -> (CGRect, usedFallback: Bool) {
+        if let injected = injectedNormalizedBottomLeft {
+            guard let rect = personBoxPixels(visionNormalizedBottomLeftOriginYUp: injected,
+                                             imageSize: uiImage.size) else {
+                throw EstimatorError.preprocessingFailed(
+                    "the supplied person box is degenerate after the flip and bounds "
+                    + "intersection; a caller supplying a box must handle that itself "
+                    + "rather than have the whole image substituted silently")
+            }
+            return (rect, false)
+        }
+        return try detectPersonBBox(uiImage: uiImage)
+    }
+
     private static func detectPersonBBox(uiImage: UIImage) throws -> (CGRect, usedFallback: Bool) {
         let fallback = (CGRect(origin: .zero, size: uiImage.size), true)
         guard let cgImage = uiImage.cgImage else { throw EstimatorError.imageDecodeFailed }
@@ -450,18 +522,8 @@ final class SAM3DPoseEstimator {
             return fallback
         }
 
-        // Vision's normalized boundingBox has its origin at bottom-left with Y
-        // increasing upward, REGARDLESS of the image's own orientation (Vision
-        // normalizes against the orientation we passed in). Convert to the
-        // top-left-origin / Y-down pixel space that the rest of this file (and
-        // the Python bbox math it mirrors) uses throughout.
-        let w = uiImage.size.width, h = uiImage.size.height
-        let nb = best.boundingBox
-        let x1 = nb.minX * w
-        let y1 = (1 - nb.minY - nb.height) * h
-        let rect = CGRect(x: x1, y: y1, width: nb.width * w, height: nb.height * h)
-            .intersection(CGRect(origin: .zero, size: uiImage.size))
-        guard rect.width > 1, rect.height > 1 else { return fallback }
+        guard let rect = personBoxPixels(visionNormalizedBottomLeftOriginYUp: best.boundingBox,
+                                         imageSize: uiImage.size) else { return fallback }
         return (rect, false)
     }
 

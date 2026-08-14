@@ -7,7 +7,7 @@
 #   tools/run_tests.sh fast
 #       All reviewed tests except the >1-hour E1 experiment and the
 #       SolvedPoseFixtureGeneratorTests fixture generator. The exact reviewed
-#       count lives in tools/test_gate.sh (724 as of 2026-08-14); this header
+#       count lives in tools/test_gate.sh (725 as of 2026-08-14); this header
 #       does not restate it.
 #
 #   tools/run_tests.sh slow
@@ -117,18 +117,29 @@ run_tests_trusted_user_tool() {
 # WHY IT IS A CLOSED LIST OF LITERAL NAMES, not a `TEST_RUNNER_*` glob. A glob
 # would let `TEST_RUNNER_DYLD_INSERT_LIBRARIES` reach the test host, which is
 # exactly what `env -i` and the `unset` block above exist to prevent. These
-# seven names carry a source-video path or a host-side provenance receipt; none
+# nine names carry a source-video path, a person-box sidecar path, or a
+# host-side provenance receipt; none
 # can influence compilation, linking, the toolchain, the SDK, the simulator, or
 # any assertion. Adding a name here is a reviewed change, not a convenience.
+#
+# 2026-08-14, fifteenth round: the list grew 7 -> 9 with the two
+# `_BOX_SIDECAR_*` names. The iOS Simulator has NO Vision ML inference backend
+# (VNDetectHumanRectanglesRequest.perform THREW on 12/12 sampled frames,
+# com.apple.Vision Code=9), so the fixture generator consumes person boxes
+# computed by a macOS host tool. Each new name points at ONE JSON file of
+# person boxes. `tools/tests/run_tests_gate_tests.sh` now pins this list and
+# its count POSITIVELY, so growing it without updating the self-test fails.
 RUN_TESTS_FORWARDED_ENV_NAMES='TEST_RUNNER_BIOMOTION_FIXTURE_VIDEO_012
 TEST_RUNNER_BIOMOTION_FIXTURE_VIDEO_015
+TEST_RUNNER_BIOMOTION_FIXTURE_BOX_SIDECAR_012
+TEST_RUNNER_BIOMOTION_FIXTURE_BOX_SIDECAR_015
 TEST_RUNNER_BIOMOTION_FIXTURE_MACOS_PRODUCT
 TEST_RUNNER_BIOMOTION_FIXTURE_MACOS_BUILD
 TEST_RUNNER_BIOMOTION_FIXTURE_XCODE_VERSION
 TEST_RUNNER_BIOMOTION_FIXTURE_MODEL_LOCK_SHA256
 TEST_RUNNER_BIOMOTION_FIXTURE_DEPS_LOCK_SHA256'
 
-# Same `env -i` scrub, plus only those of the seven names that are actually set.
+# Same `env -i` scrub, plus only those of the nine names that are actually set.
 run_tests_trusted_user_tool_with_forwarded_env() {
   local forwarded=()
   local name

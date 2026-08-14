@@ -10,6 +10,27 @@ Last updated: 2026-08-14.
 The app's inaccuracy was diagnosed to root cause. It was never one bug — it is a chain, and the
 biggest links were **not** where the effort had been going.
 
+- **THE 20-MARKER FIXTURES NOW EXIST, AND THE LAYER STILL DOES NOT SHIP (2026-08-14, fifteenth
+  round).** The iOS Simulator has no Vision ML inference backend, so a macOS host tool computes the
+  person box per sampled frame into ONE sidecar per clip and the generator consumes it behind a
+  fail-closed, ZERO-tolerance timestamp gate. Both clips retained **120/120** frames (branch A,
+  `excluded=[]`), the 20-marker drive reached the solver for the first time, and every clip-face gate
+  was scored on a NON-EMPTY population: **14/24** admitted capsules, **18/32** admitted muscles.
+  Of the twelve FIXTURE-FIXABLE clauses, **6 PASS non-vacuously and 6 FAIL**; the three
+  registered blockers (G4(a), G9(b), G5(d)) stand untouched, so
+  **`fixture_fixable_all_green` is FALSE**. G3(v) FLIPPED to PASS
+  (`neutral` knee null fraction **0.832149 → 0.000688**; the bar did not move, the DRIVE did) and so
+  did G2(b)/(d)/(f) and G7(b). What now fails on REAL data rather than on an empty set: G2(a) flicker
+  **4.83 %/3.06 %** vs `<= 1 %`, G2(e) grey **4.31 %/5.63 %** vs `<= 2 %`, G2(c) `0.0089` min on one
+  clip, G7(a) under-power (**316/398** joint frames vs a floor of 500, at **1.000000** agreement),
+  G8(a) secondary on `video_012`. G3(iv-b) fails because it was drive-conditional. **No UI was wired,
+  no bar moved, no `RegisteredBar` constant changed, DEVIATION A (no scaling) stands, and nothing is
+  quotable as device-grade — `bbox_source macos_vision INTERIM`.** The unscaled 20-marker IK residual
+  exists at last and is unexplained: **83.7 mm** median marker RMS on `video_012` against
+  **11.6 mm** on `video_015`.
+  See
+  [The 20-marker fixtures EXIST](#the-20-marker-fixtures-exist-a-macos-host-person-box-sidecar-unblocked-the-generator-both-clips-retained-120120-frames-and-the-fixture-fixable-clauses-re-adjudicated-6-pass--6-fail-2026-08-14-fifteenth-round).
+
 - **LENGTH MODE IS MEASURED AND DOES NOT SHIP (2026-08-14).** The per-muscle muscle-tendon
   length-change layer was built, gated against its frozen pre-registration, and **FAILED**. The
   identity itself is clean — **1.000000** sign agreement on both G1 faces (476/476 headline,
@@ -33,6 +54,10 @@ biggest links were **not** where the effort had been going.
   owner authorisation, into MEASURED-OUTCOME PINS plus a machine-checked `NOT_SHIPPED` coherence
   test — **no bar moved and no verdict changed**, so the battery is green while every gate above
   still reads FAIL. The commit gate itself (`tools/run_tests.sh all`) has still not been run.
+  ⚠️ **The CLIP-FACE numbers in this bullet are 5-marker measurements and are SUPERSEDED by the
+  fifteenth-round bullet above** (all-24-suppressed, 0 joint-clearing frames, G3(v) 0.832149). They
+  are left byte-identical as the dated receipt of what the 5-marker drive measured; the model-face
+  results (G1, G9(a), G4(a)'s attribution) are unaffected and still stand.
   See
   [Length mode: every registered population reproduced](#length-mode-every-registered-population-reproduced-and-the-mask-admits-nothing-on-the-only-two-real-clips-2026-08-14).
 
@@ -7516,6 +7541,322 @@ consecutive frames (the sim probe splits the cause: Vision `perform` THREW `Code
 `zero_observations=0`). Any future claim that the offline path "works" on the strength of a
 Simulator test must clear that bar first.
 
+## The 20-marker fixtures EXIST: a macOS-host person-box sidecar unblocked the generator, both clips retained 120/120 frames, and the fixture-fixable clauses re-adjudicated 6 PASS / 6 FAIL (2026-08-14, fifteenth round)
+
+### The answer, with the numbers
+
+**VERDICT: fixtures GENERATED, battery RE-ADJUDICATED, UI NOT WIRED, no commit.**
+`solved_pose_video_{012,015}.txt` were replaced by name with the 20-marker video-driven lineage.
+Every fixture-fixable gate was scored on a NON-EMPTY population for the first time in this
+battery's history. **`fixture_fixable_all_green` is FALSE**: of the twelve fixture-fixable clauses
+**6 PASS non-vacuously and 6 FAIL on data** — G2(b), G2(d), G2(f), G3(iv-a), G3(v) and G7(b) pass;
+G2(a), G2(c), G2(e), G3(iv-b), G7(a) and G8(a) fail — and the three registered blockers (G4(a),
+G9(b), G5(d)) stand exactly where the fourteenth round left them.
+No UI file was touched, no bar was moved, and no `RegisteredBar` constant changed.
+
+The amendment this round registered was ONE thing: **where the person box comes from.** The iOS
+Simulator has no Vision ML inference backend — `VNDetectHumanRectanglesRequest.perform` THREW on
+12/12 sampled frames (`com.apple.Vision Code=9`) — so a macOS host tool now computes the box per
+sampled frame and writes one sidecar per clip, which the generator consumes behind a fail-closed
+timestamp gate. SAM, `MHRRetarget` (still unscaled — DEVIATION A), IK and E2/E3/E4 are untouched.
+
+**The registered risk #1 did not fire.** The macOS probe had only sampled every 10th frame (12 of
+120 per clip); the other ~108 were unmeasured, and an E1 collapse on them was named before any data
+existed as "the single most likely way the round ends BLOCKED with a healthy host tool". It found a
+person on **120 of 120** frames of BOTH clips: `person_box_frames found=120,no_observation=0,
+perform_threw=0,conversion_nil=0`. Both clips therefore took **branch A**, `excluded=[]`,
+`retained=120` against an adequacy floor of `ceil(2.5 x 30.0) = 75`.
+
+**The 20-marker drive reached the solver for the first time.** `markers=20` in both fixture headers,
+against the 5-marker lineage's `MHR_ROOT LAJC RAJC LTOE RTOE`. Every clip-face gate that had read
+zero now reads a population: **14** admitted capsules / 18 admitted muscles on `video_012`, **24** /
+32 on `video_015`.
+
+### The re-adjudication, gate by gate
+
+Bars are FROZEN and still asserted through `RegisteredBar`; only measured-outcome pins moved, under
+next-step 41(a) discipline, each carrying a `MODE-VERDICT` receipt and each citing the interim
+provenance. Non-vacuity is asserted BEFORE each verdict, so no bar below is met on an empty set.
+
+| Gate | Registered bar | `video_012` | `video_015` | Verdict |
+|---|---|---|---|---|
+| **G2(a)** flicker | <= 1.0 % | **4.8255 %** (65/1347) | **3.0577 %** (71/2322) | **FAIL** — was VACUOUS 0/0 |
+| **G2(b)** directional | >= 40 % | **42.3077 %** | **52.3587 %** | **PASS** (non-vacuous) |
+| **G2(c)** per-capsule directional | >= 10 % each | **0.8929 %** min (`gaslat_r`) | **20.00 %** min (`glmed1_r`) | **FAIL** — one clip only is a fail |
+| **G2(d)** defined fraction | >= 90 % | **92.8571 %** | **95.4241 %** | **PASS** |
+| **G2(e)** grey transition | <= 2.0 % | **4.3115 %** (67/1554) | **5.6306 %** (150/2664) | **FAIL** — was VACUOUS 0/0 |
+| **G2(f)** defined samples | >= 300 | **1456** | **2565** | **PASS** |
+| **G3(iv-a)** mask fires | 0 empty warmed frames | **0**/112 | **0**/112 | **PASS** |
+| **G3(iv-b)** hip suppression | all 12 suppressed | **6**/12 | **0**/12 | **FAIL** — registration-conditional, see below |
+| **G3(v)** knee identified | null fraction <= 0.5 | **0.000688** at `neutral`, worst **0.000812** | (same static poses) | **PASS** — was FAIL at 0.832149 |
+| **G5** perf receipt | scoped numbers + a lane receipt | mode **286.027** ms/frame, identifiability **540.687**, traversal **97.436 s** | **271.841** / **533.419** / **93.890 s** | (a)-(c) PASS, **(d) FAIL** (blocker) |
+| **G7(a)** two witnesses | >= 99 % over >= 500 joint frames | **1.000000** over **316** (ceiling 1998) | **1.000000** over **398** (ceiling 3552) | **FAIL** — under-power, agreement perfect |
+| **G7(b)** stale-pose sentinel | range > 1e-6 m; re-impose <= 1e-9 m | range **1.6395e-2 m**, re-impose **0.000e+00** | **2.2493e-2 m**, **0.000e+00** | **PASS** — was VACUOUS_UNREACHABLE |
+| **G8(a)** drift screen | <= 30 % all; <= 20 % for >= 90 % | worst **0.297053** (`gasmed_r`) PASSES primary; **7 of 18** over 20 % against an allowance of 1 | worst **0.152928** (`glmax3_l`), **0 of 32** over | **FAIL on 012**, PASS on 015 |
+| **G8(b)** foot-segment receipt | exists | exists | exists | PASS (reads `GaitClipFixture`, unmoved) |
+| **G4(a)** physiology | >= 95 % per anchor | worst **0.866667** — triceps x3 at 132.5/137.5/142.5/147.5 deg | — | **FAIL** — blocker, next step 42 |
+| **G9(b)** discrimination | perturbed re-run must FAIL (a) | **0** disagreements | — | **FAIL** — blocker, next step 43 |
+| **G1 / G3(i)(ii)(iii)(vi) / G4(b)(c)(d) / G9(a)** | — | unchanged | unchanged | PASS — fixture-independent |
+| **G6(i)** count discipline | re-derived from the target | **725** (`669 + 59 - 1 - 2`) | — | PASS, transition registered |
+
+**Three gates crossed from VACUOUS to PASS, and the distinction is the whole point.** G7(b)'s
+`reimpose_max_delta = 0.000e+00` is byte-identical to the number the fourteenth round printed — and
+it meant nothing then, because `buildTraversal` returns BEFORE the re-impose probe when the admitted
+set is empty, so that 0 was an initial value. With 18 and 32 admitted muscles the early return is not
+taken, the probe genuinely runs, and the same 0 is now a measurement: re-imposing a stored mid-clip
+pose reproduces every `L_MT` to the last bit. G2(a)/(e) crossed the other way: their empty
+denominators used to clear their bars without measuring, and on real denominators of 1,347-2,664 they
+fail by 3-5x.
+
+**G3(iv-b) is a registration-conditional clause, and it is recorded as FAILED rather than
+reinterpreted.** It was written against the 5-marker drive, where `hips_joint` had range
+`0.000000000` on all three axes and the fail-closed verdict suppressed the whole hip block by
+construction. With twenty markers the hip coordinates ARE identified, so admitting them is the mask
+behaving correctly and the clause failing. That is the same class as G4(a) and G9(b): a corrected
+clause is a SUCCESSOR preregistration, RED-first, naming the old one SUPERSEDED-NOT-ERASED. Nothing
+here weakened it.
+
+**G3(v) flipped to PASS and the BAR did not move — the DRIVE did.** Reading the marker set out of the
+20-marker fixture, the straight-leg `neutral` pose's knee null fraction falls from **0.832149** to
+**0.000688**, three orders of magnitude, and all six scored cells sit at or under 0.000812. The
+crossover is still the shipped `MuscleObservabilityMask.identifiedNullFractionCeiling = 0.5`.
+⚠️ The method's NAME (`...UnderTheFiveMarkerDriveAtFixturePoses`) is now stale; the MODE instrument is
+frozen for this round, so the correction is recorded in its doc comment rather than applied silently.
+
+### Provenance: macOS Vision is not iOS Vision, and these fixtures are INTERIM
+
+`bbox_source macos_vision INTERIM` is written into both fixture headers and into every `MODE-VERDICT`
+line that transitioned. macOS Vision reported revision **2** (supported `[1, 2]`, no pin — DEVIATION B
+reproduced as-is) at confidence **0.5692-0.7578** (`video_012`) and **0.6189-0.8265** (`video_015`).
+Whether iOS Vision would report the same boxes is UNFALSIFIABLE in this round by construction. Only a
+device lane (next-step 46(a)) settles it, and when it lands it triggers a fresh preregistered
+re-adjudication. **Nothing transitioned here is quotable as device-grade.**
+
+### Content binding: measured for the first time, UNPROVEN, and deliberately not a gate
+
+Per-frame FNV-1a source-pixel hashes were recorded from BOTH hosts — the generator through the
+production instrument (`SAM3DPoseEstimator.checksumBytes(sourcePixels(image))`), the host tool
+through the identical algorithm over `CGImage` with identical `CGContext` parameters. Result:
+**`CONTENT_BINDING_UNPROVEN`, `frames_equal=0/120` on both clips.** The luminance deltas say what
+kind of disagreement it is: **dmean +0.021 to +0.031, dsd -0.008 to +0.012** on a mean of ~105, i.e.
+about **0.02-0.03 %** — a benign macOS-vs-Simulator CoreGraphics colour-pipeline difference, not a
+different frame. This is exactly the outcome the registration pre-declared as a RECEIPT and not a
+gate, with the reason stated before the number existed: a byte-equality gate would have converted
+this into a spurious BLOCK after a multi-hour host run. The accepted residual risk is that a REAL
+one-frame decoder disagreement would ride through as a receipt; it is recorded, not argued away.
+
+### The sidecar gate held, at ZERO tolerance, on the first attempt
+
+`SOLVED-POSE-FIXTURE-SIDECAR-GATE clip=video_012 status=OK count=120
+duration_bits=4621969237576550537 fps_bits=4629137466983448576` and the same for `video_015`
+(`duration_bits=4630493238121271569`). The host tool computes its sampling plan independently, with
+`FrameSource`'s constants inlined; the generator recomputes it through the real
+`FrameSource.sampleTimestamps` and compares `duration/fps/step/start` bit patterns plus all 120
+per-frame PTS bit patterns. **Not one ULP of disagreement, on either clip** — despite two
+independently compiled hosts. Part A additionally gated fourteen convention fields (request class,
+`upper_body_only == false`, `revision_pinned == false`, handler orientation `up`,
+`appliesPreferredTrackTransform`, both `.zero` tolerances, timescale 600, mode/seconds/cap, bbox
+space, source-hash algorithm) and the build binding (`sha256(person_box_sidecar.swift)` recomputed
+from the tree); part C gated per-frame decoded size, `pixel_bytes`, orientation, `observations >= 1`
+and `0 < confidence <= 1`.
+
+**The gate proved it can refuse before it was allowed to accept.** The generator runs a self-test of
+the pure comparator over fabricated sidecars first: **10 refused, 1 accepted**, each printed —
+`count_short_by_one`, `count_long_by_one`, `pts_bits_off_by_one_ulp`,
+`duplicated_out_of_order_index`, `missing_pts_bits_key`, `fps_bits_off_by_one_ulp`,
+`video_sha256_one_hex_char`, `unknown_status`, `changed_schema`, `upper_body_only_true`, plus one
+well-formed case that MUST be admitted. A comparator that refuses everything is otherwise
+indistinguishable from a working one.
+
+### The flip has exactly one copy, and it is pinned in the only lane that gates anything
+
+`SAM3DPoseEstimator.personBoxPixels(visionNormalizedBottomLeftOriginYUp:imageSize:)` is now the
+single implementation of Vision's bottom-left/Y-up to top-left/Y-down conversion plus the bounds
+intersection and the `width > 1, height > 1` guard; `detectPersonBBox` calls it and so does the seam.
+The sidecar carries Vision's RAW box and never flips anything. Pinned at `x=174.528000
+y=356.352000 w=192.384000 h=423.936000` — a wrong-signed flip reads `y = 243.712`, 112.6 px away.
+
+The seam is `resolvePersonBox(uiImage:injectedNormalizedBottomLeft:)` plus a defaulted
+`estimate(uiImage:personBoxNormalizedBottomLeft: CGRect? = nil)`. `nil` is today's behaviour byte for
+byte, so production's sole caller (`OfflineSessionRunner.swift:1079`) is untouched; a non-nil box is
+NORMALIZED, never a pixel rect, so no caller can bypass the clamp, and a degenerate box THROWS
+`.preprocessingFailed` rather than having the whole image substituted.
+
+### The control flow INVERTED, and two receipts changed population because of it
+
+At HEAD, E1 was read AFTER the model call from `estimate.usedFallbackBBox`. Under the sidecar it is
+decided BEFORE the call, because calling `estimate()` without an external box falls straight back
+into the throwing Vision path. The break is NOT hardcoded: it gates on
+`OfflineTemporalPolicy.exclusion(source: .video, usedFallbackBBox: true) != nil`, the same call
+production makes at `OfflineSessionRunner.swift:1113`, and the generator BLOCKS with a named message
+if that policy ever stops excluding.
+
+Consequence, registered in advance so two rounds' numbers never share one label: `sam_calls` counts
+NON-E1 slots only, so the marker now prints BOTH denominators — `sam_calls=120 sam_slots=120` on both
+clips this round (they coincide because nothing was excluded). The `usedFallbackBBox == false`
+assertion on every consumed frame is a regression tripwire and is **TAUTOLOGICAL inside the
+generator**; it is NOT tautological in the fast-lane seam pin, where the Simulator's throwing Vision
+would force whole-image + `true` if the injected path ever reached Vision.
+
+### Cost, and the unscaled IK residual (DEVIATION A stands)
+
+Mac-side/Simulator receipts only; device thermal is out of scope.
+
+| | `video_012` | `video_015` |
+|---|---|---|
+| macOS host tool, 120 frames | 100 % found | 100 % found |
+| SAM3DBodyPose cold load | **14,641.1 ms** (once, shared) | — |
+| SAM per frame (Debug, Simulator) | **4,768.4 ms** | **4,676.5 ms** |
+| IK per frame (Debug, Simulator) | **2,724.9 ms** | **1,475.0 ms** |
+| IK marker RMS, median / p95 / max | **83.702 / 112.439 / 148.302 mm** | **11.576 / 14.300 / 15.002 mm** |
+| stature measured, NOT applied | 1.749878 m | 1.700850 m |
+| person-box area fraction min/median/max | 0.096538 / 0.244827 / 0.357412 | 0.149096 / 0.314069 / 0.547891 |
+| max per-frame box centre displacement | 0.062624 | 0.061099 |
+
+**The unscaled 20-marker IK residual now EXISTS, and it is the evidence next-step 47 was waiting
+for.** `video_012` solves at **83.7 mm** median marker RMS against `video_015`'s **11.6 mm** — a 7.2x
+spread between two clips of the same subject through the same unscaled generic `FullBody.osim`. That
+is a large residual by any reading, and it is reported as EVIDENCE, not repaired: DEVIATION A stands
+for the whole round by registration, and adopting first-usable-frame scaling is a SUCCESSOR
+preregistration. The box-trajectory summary rules out the obvious confound — no whole-frame box on
+either clip (max area fraction 0.357 and 0.548), so neither clip is silently reproducing the
+whole-image fallback crop while being counted as a detection.
+
+### Guards, counts and the allowlist
+
+- **Allowlist 7 -> 9.** `RUN_TESTS_FORWARDED_ENV_NAMES` gained
+  `TEST_RUNNER_BIOMOTION_FIXTURE_BOX_SIDECAR_012` and `..._015`. It is still a closed list of literal
+  names, never a `TEST_RUNNER_*` glob. **Two POSITIVE self-tests now exist where none did**: before
+  this round `tools/tests/run_tests_gate_tests.sh` contained ZERO occurrences of
+  `RUN_TESTS_FORWARDED_ENV_NAMES` and asserted only the negative (dangerous names absent), so
+  "growing the allowlist means updating its self-test" was aspirational. It pins the exact 9-name
+  list and the count 9 now; its printed total moves **53 -> 55** and stays DERIVED from `PASS_COUNT`,
+  never a pinned literal.
+- **Count 724 -> 725**, a registered transition of the 41(a) kind, not drift. ONE new method,
+  `PersonBoxTests.testAnInjectedPersonBoxIsConsumedVerbatimWithoutVision`, in a class the fast lane
+  does NOT skip — so this time the inventory and the executed count moved together, unlike the
+  fourteenth round. Re-derived from the target: **669** `func test...(` in `BioMotionTests/*.swift`
+  plus **59** `- (void)test...` in `*.mm`, minus the one E1 method and the two class-skipped
+  generator methods = **725**. Eight live anchors moved; four DATED historical `724` clauses
+  (`tools/test_gate.sh`'s 20-marker narrative, `tools/run_tests.sh`'s measured 726-against-724
+  joined-selector defect, `CLAUDE.md:487` and `:491`) stay byte-identical, with new dated prose
+  appended beside them.
+- **The no-source-video probe widened from source-video-only to personal-footage DERIVATIVES.** It
+  matched by EXTENSION, which a `.json` sidecar walks straight past. Its `find` predicate, its
+  self-description and its FAIL text now cover `person_box_sidecar_*.json`, and `.gitignore` carries
+  the same glob. Verified bidirectionally: `NO_SOURCE_VIDEO_PASS` on the clean tree, and a planted
+  `person_box_sidecar_probe_negative.json` produced `NO_SOURCE_VIDEO_FAIL` naming the offender. Those
+  two layers are made binding by the host tool's DERIVED filename plus its symlink-resolved
+  `--repo-root` refusal, and by the generator refusing any other basename — because the path is
+  operator-chosen through an environment variable.
+- **A falsified header comment was repaired.** `regenerate_solved_pose_fixtures.sh`'s header still
+  taught the mechanism falsified on 2026-08-14 ("the paths travel as `TEST_RUNNER_`-prefixed
+  xcodebuild ARGUMENTS"). It was fixed at the call site in the same round and the header was missed;
+  left alone it is a booby trap for the next reader.
+- **No unqualified "FULL production offline path" claim survives** in live prose: the fixture header,
+  the generator's doc comment, `regenerate_solved_pose_fixtures.sh` and `tools/test_gate.sh` all name
+  the deviation. The fourteenth round's dated narrative is left byte-identical with the correction
+  appended beside it.
+
+### What did NOT happen
+
+No UI file was touched. G4(a) (next step 42), G9(b) (next step 43) and G5(d) are registration-level
+blockers no fixture can move, and their recorded verdicts are permanent history — never retro-edited.
+No `RegisteredBar` constant changed. `MuscleLengthMode.swift` is byte-unchanged. DEVIATION A stands.
+No commit was made and no irreversible step was taken. The two source videos and the two sidecars
+stay outside the repository; the fixtures record only hashes and byte counts.
+
+### Receipts
+
+```
+# host tool -- tools/pose_fixture/person_box_sidecar.swift (macOS, checked in)
+  source_sha256 1bbdab190da44ffdbbcbd3e8f1f5caf7e75ff4ea0c75f306b9bc63b4711a9831   27,200 B
+  macOS 26.4.1 / 25E253   Xcode 26.4 Build version 17E192
+  Apple Swift version 6.3 (swiftlang-6.3.0.123.5 clang-2100.0.123.102)
+  logs /tmp/biomotion-sidecar/person_box_sidecar_video_{012,015}.log
+  video_012  natural 576x1024  max_size 1024x1024  count=120 found=120 no_observation=0 perform_threw=0
+             sidecar sha256=ef0c84afb296190cb32bf6f3c9c73ab6a6200e324cfbd51307e0fd629ed927b4  68,485 B
+             confidence 0.5692-0.7578   revision_used=2  supported=[1,2]
+  video_015  natural 576x768   max_size 768x768    count=120 found=120 no_observation=0 perform_threw=0
+             sidecar sha256=60b756c42ffeddac9179b950aa83dc6d4f6b88484c7989eca2cfcfd2e03acf04  68,559 B
+             confidence 0.6189-0.8265   revision_used=2  supported=[1,2]
+  (re-run inside regenerate_solved_pose_fixtures.sh reproduced both sha256 byte-identically)
+
+# generator -- /tmp/biomotion-tests.OYNObl/subset/xcodebuild.log   wall 2,241 s   rc 0   1/1 Passed
+grep 'SOLVED-POSE-FIXTURE-SIDECAR-SELFTEST'   11 cases: 10 refused=true, well_formed refused=false
+grep 'SOLVED-POSE-FIXTURE-SIDECAR-FLIP-PIN'   x=174.528000 y=356.352000 w=192.384000 h=423.936000
+grep 'SOLVED-POSE-FIXTURE-SIDECAR-GATE'       clip=video_012 status=OK count=120
+                                              duration_bits=4621969237576550537 fps_bits=4629137466983448576
+                                              clip=video_015 status=OK count=120
+                                              duration_bits=4630493238121271569 fps_bits=4629137466983448576
+grep 'SOLVED-POSE-FIXTURE-VIDEO-MODEL'        cold_load_ms=14641.1
+grep 'SOLVED-POSE-FIXTURE-VIDEO-PLAN'
+  clip=video_012 duration_s=10.266667 fps=30.0 wanted=120 available=308  sampled=120
+    survivors=120 runs=1 retained=120 branch=A adequacy_floor=75 excluded=[]
+  clip=video_015 duration_s=37.633333 fps=30.0 wanted=120 available=1129 sampled=120
+    survivors=120 runs=1 retained=120 branch=A adequacy_floor=75 excluded=[]
+grep 'SOLVED-POSE-FIXTURE-SIDECAR-BOX'
+  clip=video_012 area_frac_min=0.096538 median=0.244827 max=0.357412 centre_disp_max=0.062624
+    census=found:120,no_observation:0,perform_threw:0,conversion_nil:0
+  clip=video_015 area_frac_min=0.149096 median=0.314069 max=0.547891 centre_disp_max=0.061099
+    census=found:120,no_observation:0,perform_threw:0,conversion_nil:0
+grep 'SOLVED-POSE-FIXTURE-SIDECAR-CONTENT'
+  clip=video_012 CONTENT_BINDING_UNPROVEN frames_equal=0/120  dmean +0.0209..+0.0261 dsd +0.0076..+0.0123
+  clip=video_015 CONTENT_BINDING_UNPROVEN frames_equal=0/120  dmean +0.0247..+0.0316 dsd -0.0080..-0.0025
+grep 'SOLVED-POSE-FIXTURE-VIDEO clip='
+  video_012 frames=120 dofs=169 markers=20 branch=A sam_ms_per_frame=4768.4 sam_calls=120 sam_slots=120
+    ik_ms_per_frame=2724.9 ik_rms_mm_median=83.7016 p95=112.4391 max=148.3021 stature_m=1.7499 scaling_applied=false
+  video_015 frames=120 dofs=169 markers=20 branch=A sam_ms_per_frame=4676.5 sam_calls=120 sam_slots=120
+    ik_ms_per_frame=1475.0 ik_rms_mm_median=11.5761 p95=14.3003 max=15.0021 stature_m=1.7009 scaling_applied=false
+
+# fixtures written (replaced by name; the 5-marker lineage's 122-frame files are superseded)
+  BioMotionTests/Fixtures/solved_pose_video_012.txt   frames 120  markers 20  bbox_source macos_vision INTERIM
+  BioMotionTests/Fixtures/solved_pose_video_015.txt   frames 120  markers 20  bbox_source macos_vision INTERIM
+  (both carry person_box_sidecar sha256/bytes/schema, person_box_host tool sha + macOS + vision_revision=2,
+   person_box_log BASENAME only, person_box_frames census, person_box_area_frac, person_box_centre_disp_max,
+   content_binding, sidecar_gate. `xcode_version` in these two files carries a TRAILING SPACE: the
+   version/receipt trim was added to the generator after they were written, and a fixture is never hand-edited.)
+
+# battery -- measurement pass (old pins RED BY DESIGN)
+/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log   xcodebuild rc 65
+  summary.json: 24 passed, 8 failed, result Failed; log roll-up "Executed 32 tests, with 78
+  failures (0 unexpected)". The 8 red methods are exactly the fixture-derived pins the fourteenth
+  round armed to go RED on replacement: testG2NonDegeneracyOnThePinnedClips,
+  testG2TemporalStabilityOnThePinnedClips, testG3KneeIsIdentifiedUnderTheFiveMarkerDriveAtFixturePoses,
+  testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips, testG7StalePoseSentinel,
+  testG7TwoWitnessAgreementOnTheProductionPath, testG8SecularDriftScreen,
+  testTheSolvedPoseFixtureMatchesTheLiveModel. (An earlier draft of this line read "30/32 passed,
+  2 failed" — corrected 2026-08-14 against summary.json; the wrong figures never described this log.)
+  every figure in the table above is grep-able here as MODE-METRIC
+
+# battery -- confirming pass, after the pin transitions
+/tmp/biomotion-tests.UhiOr1/subset/xcodebuild.log
+  wall 275 s  xcodebuild rc 0  xcresult Passed  total/passed 32/32  failed/skipped 0/0
+  expected failures 0  restarts 0  ** TEST SUCCEEDED **
+  MODE-VERDICT lines: 9 PASS_NON_VACUOUS + 10 FAILED_AGAINST_REGISTERED_BAR + 1 coherence
+  NOT_SHIPPED (per clip x clause; collapsed to CLAUSES that is 6 PASS / 6 FAIL fixture-fixable
+  plus the 3 registered blockers)
+
+# FAST LANE -- the 724 -> 725 count transition, confirmed end to end
+/tmp/biomotion-tests.6tVezG/fast/xcodebuild.log
+  "Running fast lane (expected tests: 725)"
+  wall 1,614 s  xcodebuild rc 0  xcresulttool rc 0  xcresult Passed
+  total/passed 725/725  failed/skipped 0/0  expected failures 0  restarts 0
+  ** TEST SUCCEEDED **   FAST GATE PASS
+  (this is the fast lane only; `tools/run_tests.sh all` -- the commit gate -- was NOT run,
+   and no commit was made)
+
+# tooling self-tests
+/bin/bash -p tools/tests/run_tests_gate_tests.sh           -> 55 passed, 0 failed (was 53)
+/bin/bash -p tools/tests/dependency_boundary_probe.sh      -> DEPENDENCY_BOUNDARY_PASS
+                                                              nimble=0ecf26a1 osqp=1572ae06
+/bin/bash -p tools/tests/no_source_video_probe.sh          -> NO_SOURCE_VIDEO_PASS
+                                                              (and FAIL on a planted sidecar .json)
+count re-derived from the target: 669 + 59 - 1 - 2 = 725, matches test_gate fast
+dev bundle: MODEL_LOCK_VERIFY_PASS mode=receipt / DEV_BUNDLE_MODEL_PASS before generation;
+            restored OFF + xcodegen regenerated in BOTH directions; pbxproj clean afterwards
+```
+
 ## Next steps (ordered)
 
 ### Immediate — unblocked, no licence exposure
@@ -7999,6 +8340,47 @@ Simulator test must clear that bar first.
     the 20-marker prediction is still unchecked. Receipts: `/tmp/biomotion-tests.Fc9ClU`,
     `/tmp/visionprobe/probe.swift`. Superseded by next step 46.
 
+### Newly opened by the 2026-08-14 person-box sidecar amendment (fifteenth round)
+
+49. **G3(iv-b) needs a corrected clause, preregistered, in the class of 42 and 43.** "All 12
+    hip-spanning capsules suppressed" was registered against the 5-marker drive, where `hips_joint`
+    had range `0.000000000` on all three axes and the fail-closed verdict suppressed the hip block by
+    construction. Measured on the 20-marker fixtures it reads **6/12** on `video_012` and **0/12** on
+    `video_015` — the mask correctly admits identified hips, and the clause correctly fails. Do NOT
+    edit the clause in place: preregister a replacement (RED-first, adversarial review, lineage
+    naming the old bar SUPERSEDED-NOT-ERASED), or record permanently that (iv-b) was drive-conditional.
+50. **G7(a) is under-power, not wrong, and the deficit is now quantified.** Agreement is
+    **1.000000** on both clips; the floor is missed because only **316** of a **1998** ceiling
+    (`video_012`) and **398** of **3552** (`video_015`) clear BOTH deadbands. The registered 500-frame
+    floor is reachable in principle for the first time. Whichever way this goes, it is a
+    preregistration question — a longer window, a different clip, or a recorded acceptance that the
+    deadbands cost this much power — never a lowered floor.
+51. **G2(a)/(e) fail on real denominators, and that is a NEW finding about the layer, not about the
+    fixtures.** Flicker **4.83 %** / **3.06 %** against `<= 1 %`, grey transition **4.31 %** /
+    **5.63 %** against `<= 2 %`. The 5-marker rounds could not see this at all: an empty denominator
+    returns 0 and clears the bar. The next round has to decide whether the mode layer's temporal
+    stability is a classifier problem, a deadband problem or a pose-noise problem, and measure it
+    before proposing a fix.
+52. **Rename `testG3KneeIsIdentifiedUnderTheFiveMarkerDriveAtFixturePoses`.** It reads the TWENTY-marker
+    drive now. The MODE instrument was frozen for the fifteenth round so the correction lives in its
+    doc comment; a successor round should move the name and record the rename.
+53. **Content binding is UNPROVEN and the cause is measured but not isolated.** macOS and Simulator
+    CoreGraphics produce different bytes from the same H.264 frame — `frames_equal=0/120` on both
+    clips, luminance deltas about **0.02-0.03 %** of the mean. That is consistent with a colour-pipeline
+    difference and inconsistent with a different frame, but it is not proof. A cheap follow-up: hash the
+    same `CGImage` through both hosts' `sourcePixels` with an sRGB colour space instead of deviceRGB,
+    and see whether the delta closes. It must not become a gate without that evidence.
+54. **Next-step 48's arithmetic base moved.** It reads "U = 6 METHODS is authoritative for count
+    arithmetic (724 + 6 = 730)". The fast lane is **725** as of this round, so a future UI round's
+    target is **731**. The 48 text is dated history and is left byte-identical; this is the correction.
+55. **The IK residual spread between the two clips is unexplained and is the first real evidence for
+    next-step 47.** Unscaled generic `FullBody.osim`, same subject, same pipeline:
+    `video_012` **83.7 mm** median marker RMS against `video_015` **11.6 mm**, a 7.2x spread. Adopting
+    first-usable-frame scaling (47) is now DECIDABLE, and it may only be taken by a successor
+    preregistration that moves `ModelContext`, the fixture header and the loader together. Before
+    that, find out WHY the two clips differ by 7x — a scaling decision taken on top of an
+    unexplained 7x is a decision about the wrong variable.
+
 ### Newly opened by the 2026-08-14 20-marker re-adjudication (fourteenth round)
 
 46. **Vision's ML inference stack does not run in the iOS Simulator at all, and the repo's test law
@@ -8031,6 +8413,16 @@ Simulator test must clear that bar first.
     Worth noting for whichever branch wins: instrumenting that tuple is still a defensible small
     production change on its own merits, but it is now an ergonomics improvement rather than a
     diagnostic prerequisite.
+
+    **RESOLVED 2026-08-14 (fifteenth round) as clause (b), SIDECAR VARIANT — owner-authorised.** A
+    macOS host tool (`tools/pose_fixture/person_box_sidecar.swift`) computes the person box per
+    sampled frame and writes ONE sidecar per clip; the Simulator generator consumes it behind a
+    fail-closed, ZERO-tolerance timestamp gate. It is a DEVIATION from (b)'s same-Swift-sources
+    sketch, because `FrameSource.swift` and `SAM3DPoseEstimator.swift` both `import UIKit` and
+    `project.yml` declares only `platform: iOS` targets. Both fixtures were generated, 120/120 frames
+    retained on each. **Clause (a), the device lane, remains OPEN and is the only thing that can
+    convert `bbox_source macos_vision INTERIM` into iOS provenance; when it lands it triggers a fresh
+    preregistered re-adjudication of everything transitioned on these fixtures.**
 47. **Adopt production first-usable-frame scaling into the instrument, or record permanently that
     the fixtures are unscaled.** The generator deliberately does NOT call `scaleModelWithHeight`
     (DEVIATION A), because the gate battery's `ModelContext` loads the generic `FullBody.osim` and
@@ -8038,6 +8430,11 @@ Simulator test must clear that bar first.
     in-memory geometry change. Adopting scaling means moving `ModelContext`, the fixture header and
     the loader together. **Decide** after 46, since an unscaled-IK residual receipt does not exist
     yet — no frame reached the solver.
+
+    **The receipt EXISTS as of 2026-08-14 (fifteenth round) and 47 is now DECIDABLE**, but it may
+    only be taken by a successor preregistration: `ik_residual_mm_median` reads **83.702** on
+    `video_012` and **11.576** on `video_015`, both unscaled. See next-step 55 — the 7.2x spread
+    between two clips of the same subject has to be explained before scaling is chosen as the fix.
 48. **The future UI round must enumerate its six pins against clauses (a)–(h) BEFORE writing them.**
     The results table above labels the UI gate `G6(a)–(h)` (8 sub-clauses) while the prose commits to
     "six UI pins in `MuscleOverlayClaimTests`" (29 registered − 23 landed). Both readings are in the
