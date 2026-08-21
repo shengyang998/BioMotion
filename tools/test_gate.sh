@@ -183,9 +183,18 @@ test_gate_lane_selector() {
 # in PersonBoxTests, which is NOT skipped, so this time BOTH move: the swift
 # inventory goes 668 -> 669 and the executed count 724 -> 725. Re-derived from
 # the target: 669 + 59 - 1 - 2 = 725.
+#
+# 2026-08-22, sixteenth round part C (the registered successor clauses become
+# executable gates). FOUR test methods land, all in MuscleLengthModeTests, none
+# skipped: testG4fPortReproducesTheShippedModelOnTheOracleSweeps,
+# testG4gTheModelAnchorConflictRegisterIsExactlyAsEnumerated,
+# testG9b2SignClassDiscriminationIsSensitiveToAOneSidedSignError and
+# testG3ivB2HipAdmissionIsEarnedPerFrameAndNamesEverySuppressionWitness. The
+# swift inventory goes 669 -> 673 and the executed count 725 -> 729. Re-derived
+# from the target, not incremented: 673 + 59 - 1 - 2 = 729.
 test_gate_expected_count() {
   case "${1-}" in
-    fast) printf '%s\n' 725 ;;
+    fast) printf '%s\n' 729 ;;
     slow) printf '%s\n' 1 ;;
     subset) printf '%s\n' 1 ;;
     *)

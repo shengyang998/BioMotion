@@ -96,6 +96,78 @@ documented at the assertion.
 perform_threw=0` on BOTH clips. Every newly-included frame was measured; nothing past frame 120 had
 ever been probed before.
 
+### PART C — the successor clauses became executable gates, and G4(f) exonerates the port
+
+`tools/run_tests.sh all`, artifacts `/tmp/biomotion-tests.ompNdE`: fast **729/729** (the count moved
+725 -> 729, re-derived from the target as `673 + 59 - 1 - 2`, not incremented, in all THREE files
+that pin it), slow E1 **1/1**, `ALL GATE PASS`. All four clauses passed on their first run. That is
+NOT the same as all four teaching us something, and the receipts say which is which.
+
+**G4(f) IS THE FINDING, and it was the round's only genuinely undetermined clause.**
+
+    gate=G4(f) outcome=PASS_NON_VACUOUS anchors=26 spanning=637 scored=637 strong=637
+      strong_disagree=0 worst_agreement=1.000000 worst_coverage=1.000000
+      worst_anchor=knee_flexion/recfem_r first_measurement=true
+
+The port reproduces the shipped model's WRAP-ON direction on **637 of 637 cells across all 26
+anchors**, with the WORST per-anchor agreement at **1.000000** — not merely clearing the registered
+0.99, which at these population sizes was a disclosed zero-tolerance bar anyway (27/28 = 0.9643 and
+14/15 = 0.9333 both miss it). Non-vacuity is real: every cell scored, every cell strong.
+
+**What that buys, and it is the point of the whole G4 successor pair:** G4(a)'s failure is now
+ATTRIBUTED, not argued. The port is exonerated on every anchor; the disagreement with the frozen
+textbook anchor belongs 100 % to `FullBody.osim`'s own geometry, and G4(g) pins exactly which seven
+(anchor, midpoint) cells it lives in. A gate that used to read "the physiology check fails" now reads
+"the model contradicts the textbook HERE, and the port is not the reason."
+
+**G9(b2) discriminates.** `class=SIGN scored=258 disagree=258 vacuous=false`, i.e. the sign-flip
+perturbation inverts the classifier on 100 % of scored steps, against G9(b)'s uniform positive scale
+which was provably inert. Its escape hatch prints on the verdict line, so no future round may quote a
+matching reading as evidence the mirror check is sensitive to a REALISTIC error.
+
+**G3(iv-b2) passes on both clips with `failing=[]`, and its receipt says what that is worth.** The
+line carries `known_pass_declared_before_run=[(b2-i) is a THEOREM under the shipped mask ...;
+(b2-iv) re-pins numbers already asserted ...]` and `NOT_PROGRESS_IF=[a green that rests only on
+(b2-i) and (b2-iv)]`. The per-arm vacuity flag added by adversarial review reads
+`b2ii_named_witness_arm=SCORED` on video_012 and
+`...=VACUOUS-BY-CONSTRUCTION__0_suppressions_on_this_clip` on video_015 — so the named-witness arm is
+a measurement on ONE clip only, and the receipt says so rather than letting a top-level PASS cover it.
+(b2-iii)'s companion arm prints VACUOUS-BY-CONSTRUCTION on a population of zero, with the structural
+reason: no declared capsule spans one of the 72 unreachable coordinates, because `ercspn_r`/`ercspn_l`
+resolve to ZERO model muscles and `psoas` runs pelvis-to-femur only.
+
+**G4(g) is a regression pin and its own receipt says so** — `known_pass_declared_before_run=true
+regression_pin=true discovery=NONE__a_first_green_reading_may_not_be_quoted_as_evidence`.
+
+#### What adversarial review caught BEFORE any of this ran
+
+1. **G4(g) would have printed a PASS receipt on a RED run.** The verdict token was a hardcoded
+   `outcome=PASS_NON_VACUOUS` printed AFTER all 25 assertions, and this class sets no
+   `continueAfterFailure`, so it runs at XCTest's default of `true`. A failed assertion records the
+   failure and execution continues to the print. Since G4(g)'s ENTIRE registered value is
+   forward-looking — it goes red if the model geometry, the oracle fixture or the displayed set moves
+   — it would have announced a pass at exactly the moment it mattered. The token is now DERIVED from
+   the measured state and a failure routes through `recordFailedGate`. The same class of bug was
+   fixed in G4(g)(iii)'s abstention line, which would have printed
+   `VACUOUS-BY-CONSTRUCTION population=3`.
+2. **G3(iv-b2)(b2-ii) was 0 == 0 on video_015 under a PASS token.** Fixed with the per-arm flag above.
+3. **G4(f) is less undetermined than its implementer claimed, and this must be disclosed.** Of the 17
+   cells where the WrapOn and WrapOff columns disagree in sign, TEN sit at midpoints G4(a) already
+   pins on anchors G4(a) already scores. The genuine residual risk was `BRD_r` at the oracle's 5.0 deg
+   elbow midpoint plus the 32 ankle extension-only cells. The 1.000000 reading is still a first
+   measurement over 637 cells; it is a smaller surprise than "never been measured" implies.
+4. **The lane count.** Two implementer agents reported 727 and 728; the third returned a null report
+   after its connection dropped mid-response BUT had already landed 700 insertions and one test
+   method. The true figure is **729**, and THREE files pin it, not one. This is why the count is
+   re-derived from the target every time rather than incremented.
+5. Two lower-severity items recorded and deliberately NOT changed: G4(g)(iii)'s registered disjunction
+   was collapsed to its first arm (STRICTER than registered, fails safe), and the registered
+   `>= 19,000x the deadband` phrase describes the ANALYTIC column's minimum (1.9339269e-4 m) while
+   bar (ii)'s authoritative column for `bfsh140_r` is the STORED one (1.7217900e-4 m). Both are
+   registration imprecision, both disclosed on unasserted MODE-METRIC lines.
+
+---
+
 #### G5(d) IS CLEARED, and the commit gate is green for the first time since 2026-08-14
 
 `tools/run_tests.sh all` was executed AT MEASUREMENT TIME on 2026-08-21/22, artifacts

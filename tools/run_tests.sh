@@ -7,7 +7,7 @@
 #   tools/run_tests.sh fast
 #       All reviewed tests except the >1-hour E1 experiment and the
 #       SolvedPoseFixtureGeneratorTests fixture generator. The exact reviewed
-#       count lives in tools/test_gate.sh (725 as of 2026-08-14); this header
+#       count lives in tools/test_gate.sh (729 as of 2026-08-22); this header
 #       does not restate it.
 #
 #   tools/run_tests.sh slow

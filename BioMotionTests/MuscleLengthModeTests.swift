@@ -785,6 +785,23 @@ final class MuscleLengthModeTests: XCTestCase {
     /// names the coordinate that caused it. WHAT IS NOT PRESERVED, deliberately:
     /// the constant "12 of 12", which was an artefact of a pelvis that never
     /// moved and never was a statement about hips.
+    ///
+    /// ─── NAVIGATIONAL ADDENDUM, added 2026-08-22 when this successor clause
+    /// became EXECUTABLE. Nothing above is edited: no registered sentence, no
+    /// bar, no arm, no declared expected verdict, and no `12 of 12`. This note
+    /// only says WHERE the text above now runs, and re-derives the ONE figure in
+    /// it that the 8.0 s window moved. ───
+    /// G3(iv-b2) executes in
+    /// `testG3ivB2HipAdmissionIsEarnedPerFrameAndNamesEverySuppressionWitness`,
+    /// immediately below this method. G3(iv-a)'s and G3(iv-b)'s own pins,
+    /// populations and verdicts are untouched by it: (iv-b) is still executed
+    /// here, still measured, and still recorded FAILED PERMANENTLY through
+    /// `recordFailedGate` at the bottom of this method.
+    /// (b2-iv)'s census quotes **112 warmed frames**; that figure was written at
+    /// the 4.0 s window and reads **232** on the regenerated 8.0 s fixtures. The
+    /// successor pins 232 and says so at its own execution site. Everything else
+    /// in the census — 6/12 suppressed and 14 admitted on `video_012`, 0/12 and
+    /// 24 on `video_015` — did NOT move with the window.
     func testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips() throws {
         // The MEASURED outcome, pinned to the receipt.
         let pinned: [String: (warmed: Int, emptyFrames: Int, hipCapsules: Int,
@@ -831,6 +848,701 @@ final class MuscleLengthModeTests: XCTestCase {
                                   + "clause correctly fails. A corrected clause is a SUCCESSOR "
                                   + "preregistration, in the class of next-steps 42/43; "
                                   + "bbox_source=macos_vision INTERIM")
+        }
+    }
+
+    // MARK: - G3(iv-b2): hip admission EARNED per frame, every suppression named
+
+    /// The per-clip EVIDENCE walk `G3(iv-b2)` is scored on.
+    ///
+    /// Deliberately INDEPENDENT of `buildTraversal`. It re-derives the warmed
+    /// smoothed poses from the fixture with the production SG filter and then,
+    /// at EVERY warmed frame, takes the marker Jacobian ONCE and reads the SAME
+    /// BYTES TWICE:
+    ///
+    ///  * straight down ONE COLUMN — `‖J·eⱼ‖₂ = √(Σ_r J[r,j]²)` — which is
+    ///    (b2-i)'s evidence floor. No Gram matrix, no eigenvector, no
+    ///    `nullFraction` is read to produce that number. Asking the mask for its
+    ///    own `nullFraction` here would guard NOTHING: the floor is IMPLIED by
+    ///    Rule 1, so re-reading Rule 1's output to check Rule 1 is a tautology,
+    ///    and the whole value of the clause is that the two computations share
+    ///    only the Jacobian bytes;
+    ///  * and through `MuscleObservabilityMask.nullFractions`, the mask's own
+    ///    Gram/Jacobi route, which is the only thing that can NAME the witness
+    ///    (b2-ii) demands per suppressed capsule.
+    ///
+    /// The two are COMPARED by the gate and never substituted for one another.
+    /// The marker list is the CLIP'S OWN `fixture.markerNames`, not
+    /// `JointMapping.primary` — that is the difference Rule 1's registered
+    /// defect (b) lives in, and it is real here: the clips supply `MHR_ROOT`
+    /// where `JointMapping.primary` supplies `PELVIS`.
+    struct HipAdmissionEvidence {
+        var warmedCount = 0
+        var framesMeasured = 0
+        var markerCount = 0
+        var jacobianRows = 0
+        var jacobianColumns = 0
+        /// `min_w ‖J(q_w)·eⱼ‖₂` and the warmed frame that attained it.
+        var columnNormMinimum: [Double] = []
+        var columnNormArgmin: [Int] = []
+        /// `max_w nullFractionⱼ(q_w)` and the warmed frame that attained it —
+        /// the WORST frame a suppression is attributed to.
+        var nullFractionWorst: [Double] = []
+        var nullFractionArgmax: [Int] = []
+        /// How many warmed frames each coordinate was identified at. PRINTED so
+        /// the fail-closed rule is read against the "identified on >= X % of
+        /// frames" lever the clause forbids, rather than asserted blind.
+        var framesIdentified: [Int] = []
+        /// Peak-to-peak over the warmed RAW poses — Rule 2's own quantity, kept
+        /// so an UNMEASURED witness is attributable to a number too.
+        var coordinateRange: [Double] = []
+        /// This walk's own AND-over-frames, beside the shipped rule's answer on
+        /// the same per-frame readings. The gate asserts they are ONE set.
+        var identifiedByAndOverFrames: Set<Int> = []
+        var identifiedByShippedRule: Set<Int> = []
+        var unmeasured: Set<Int> = []
+        var capsuleSpans: [String: Set<Int>] = [:]
+    }
+
+    /// Builds `HipAdmissionEvidence` for one clip.
+    static func hipAdmissionEvidence(clip: String, ctx: ModelContext) throws -> HipAdmissionEvidence {
+        let bundle = Bundle(for: MuscleLengthModeTests.self)
+        let fixture = try SolvedPoseFixture.load(clip: clip, bundle: bundle)
+        var out = HipAdmissionEvidence()
+        let dofCount = ctx.dofNames.count
+
+        // A PRECONDITION, not a bar: every index below names a coordinate
+        // through the LIVE model's order while the poses arrive in the
+        // FIXTURE's. `buildTraversal` already depends on those being the same
+        // order; if they ever stop being, this gate reads the wrong column and
+        // that is a HARNESS defect, never a model finding.
+        XCTAssertEqual(fixture.dofNames, ctx.dofNames,
+            "HARNESS DEFECT on \(clip), NOT a model finding: the fixture's coordinate order is "
+            + "not the live model's, so every column index in G3(iv-b2) would name a different "
+            + "coordinate")
+
+        let taps = MuscleLengthModeClassifier.taps
+        let halfWindow = taps / 2
+        let filters = (0..<dofCount).map { _ in WindowedDerivativeFilter(taps: taps) }
+        var smoothedQ: [[Double]] = []
+        for (i, pose) in fixture.frames.enumerated() {
+            var q = [Double]()
+            var warm = true
+            for j in 0..<dofCount {
+                if let o = filters[j].push(pose[j], timestamp: fixture.timestamps[i]) {
+                    q.append(o.pos)
+                } else { warm = false }
+            }
+            guard warm, q.count == dofCount else { continue }
+            smoothedQ.append(q)
+        }
+        out.warmedCount = smoothedQ.count
+        guard out.warmedCount > 0 else { return out }
+
+        // Rule 2's own set, over the warmed RAW poses, exactly as the mask takes it.
+        let warmedRaw = (0..<out.warmedCount).map { fixture.frames[$0 + halfWindow] }
+        out.unmeasured = MuscleObservabilityMask.unmeasuredCoordinates(
+            warmedPoses: warmedRaw, coordinateCount: dofCount)
+        out.coordinateRange = (0..<dofCount).map { (j: Int) -> Double in
+            var lo = Double.infinity
+            var hi = -Double.infinity
+            for pose in warmedRaw where j < pose.count {
+                lo = min(lo, pose[j])
+                hi = max(hi, pose[j])
+            }
+            return hi - lo
+        }
+
+        out.markerCount = fixture.markerNames.count
+        out.jacobianRows = 3 * fixture.markerNames.count
+        out.jacobianColumns = dofCount
+        out.columnNormMinimum = [Double](repeating: .infinity, count: dofCount)
+        out.columnNormArgmin = [Int](repeating: -1, count: dofCount)
+        out.nullFractionWorst = [Double](repeating: -1, count: dofCount)
+        out.nullFractionArgmax = [Int](repeating: -1, count: dofCount)
+        out.framesIdentified = [Int](repeating: 0, count: dofCount)
+
+        var perFrameNullFractions: [[Double]] = []
+        perFrameNullFractions.reserveCapacity(out.warmedCount)
+        let rows = out.jacobianRows
+        for w in 0..<out.warmedCount {
+            guard ctx.setPose(smoothedQ[w]) else {
+                XCTFail("G3(iv-b2): the pose did not set on \(clip) warmed frame \(w)")
+                continue
+            }
+            guard let boxed = ctx.bridge.markerPositionJacobian(
+                    forMarkerNames: fixture.markerNames) else {
+                XCTFail("G3(iv-b2): the marker Jacobian did not resolve on \(clip) warmed "
+                        + "frame \(w) — the CLIP's own marker list is what Rule 1 consumes")
+                continue
+            }
+            let flat = boxed.map(\.doubleValue)
+            guard flat.count == rows * dofCount else {
+                XCTFail("G3(iv-b2): the marker Jacobian on \(clip) frame \(w) is "
+                        + "\(flat.count) values, not \(rows * dofCount)")
+                continue
+            }
+
+            // (b2-i)'s INDEPENDENT CODE PATH. One column, summed down, nothing else.
+            for c in 0..<dofCount {
+                var sumSquares = 0.0
+                for r in 0..<rows {
+                    let value = flat[r * dofCount + c]
+                    sumSquares += value * value
+                }
+                let norm = sumSquares.squareRoot()
+                if norm < out.columnNormMinimum[c] {
+                    out.columnNormMinimum[c] = norm
+                    out.columnNormArgmin[c] = w
+                }
+            }
+
+            // The mask's OWN route, on the SAME bytes.
+            guard let fractions = MuscleObservabilityMask.nullFractions(
+                    jacobianRowMajor: flat, rows: rows, columns: dofCount) else {
+                XCTFail("G3(iv-b2): nullFractions did not resolve on \(clip) frame \(w)")
+                continue
+            }
+            perFrameNullFractions.append(fractions)
+            for c in 0..<dofCount where c < fractions.count {
+                if fractions[c] > out.nullFractionWorst[c] {
+                    out.nullFractionWorst[c] = fractions[c]
+                    out.nullFractionArgmax[c] = w
+                }
+                if MuscleObservabilityMask.isIdentified(nullFraction: fractions[c]) {
+                    out.framesIdentified[c] += 1
+                }
+            }
+        }
+        out.framesMeasured = perFrameNullFractions.count
+
+        // FRAME-EXHAUSTIVE, computed here and compared against the shipped rule.
+        if perFrameNullFractions.isEmpty {
+            out.identifiedByAndOverFrames = []
+        } else {
+            let exhaustive = (0..<dofCount).filter { (j: Int) -> Bool in
+                out.framesIdentified[j] == perFrameNullFractions.count
+            }
+            out.identifiedByAndOverFrames = Set(exhaustive)
+        }
+        out.identifiedByShippedRule = MuscleObservabilityMask.clipIdentifiedCoordinates(
+            perFrameNullFractions: perFrameNullFractions, coordinateCount: dofCount)
+
+        // Rule 0 + the runtime spans, at the SAME first warmed pose the
+        // traversal reads them at.
+        XCTAssertTrue(ctx.setPose(smoothedQ[0]))
+        guard let spanRows = ctx.momentArms(pose: smoothedQ[0], muscles: ctx.displayedMuscles,
+                                            coordinates: ctx.dofNames) else {
+            throw NSError(domain: "MuscleLengthModeTests", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "G3(iv-b2): runtime spans unavailable on \(clip)"])
+        }
+        var spanByMuscle: [String: Set<Int>] = [:]
+        for (m, name) in ctx.displayedMuscles.enumerated() {
+            spanByMuscle[name] = MuscleObservabilityMask.spannedCoordinates(momentArmRow: spanRows[m])
+        }
+        for resolution in ctx.resolutions where resolution.isResolved {
+            var span = Set<Int>()
+            for muscle in resolution.modelMuscles { span.formUnion(spanByMuscle[muscle] ?? []) }
+            out.capsuleSpans[resolution.capsule] = span
+        }
+        return out
+    }
+
+    /// G3(iv-b2). HIP ADMISSION IS EARNED, PER FRAME, AND EVERY SUPPRESSION
+    /// NAMES ITS WITNESS.
+    ///
+    /// The clause — its four arms, its forced evidence floor, its frame-
+    /// exhaustiveness prohibition, its named-witness requirement, its
+    /// anti-vacuity arm and its bidirectional census — is registered VERBATIM in
+    /// the successor pre-registration above
+    /// `testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips` and is NOT restated
+    /// here. This method is that text made EXECUTABLE, nothing more.
+    ///
+    /// ⚠️ THE DISCLOSURE THE REGISTRATION ATTACHED TO ITSELF IS KEPT AND IS
+    /// PRINTED ON THE VERDICT LINE. (b2-i) is a THEOREM under the shipped mask —
+    /// `clipIdentifiedCoordinates` is a fail-closed AND over every warmed frame
+    /// and `isIdentified` is `nullFraction <= 0.5`, so ADMITTED already forces
+    /// `retained >= 0.75` and hence the floor by Bessel. It is EXPECTED TO PASS
+    /// and its whole value is as an INDEPENDENT-CODE-PATH guard against an
+    /// eigen-route defect or a marker-set mismatch. (b2-iv) re-pins numbers
+    /// already asserted at the census pins in
+    /// `testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips` and is likewise
+    /// EXPECTED TO PASS. **A GREEN G3(iv-b2) THAT RESTS ONLY ON (b2-i) AND
+    /// (b2-iv) IS NOT PROGRESS.** The arms that can teach us something on this
+    /// first run are (b2-ii)'s EXACT-SET equality and (b2-iii)'s 72-coordinate
+    /// primary arm, and the verdict line carries their populations so a reader
+    /// can see whether they were scored on anything.
+    ///
+    /// G3(iv-b) itself stays FAILED PERMANENTLY and SUPERSEDED-NOT-ERASED: it is
+    /// still executed, still measured, and still pinned red through
+    /// `recordFailedGate("G3(iv-b)", …)` in the method above. Nothing here
+    /// repairs it and nothing here may be read as repairing it.
+    ///
+    /// ⚠️ ONE FIGURE IN THE REGISTERED TEXT WAS WRITTEN AT THE 4.0 s WINDOW AND
+    /// IS RE-DERIVED HERE RATHER THAN COPIED: the census reads **232** warmed
+    /// frames per clip, not the 112 the clause quotes. The suppressed and
+    /// admitted counts (6/12 and 14; 0/12 and 24) did NOT move with the window.
+    /// Receipt for all of them: `MODE-METRIC g3iv` on the 8.0 s fixtures.
+    /// PROVENANCE: `bbox_source macos_vision INTERIM` — every census pin here is
+    /// provisional ON THE FIXTURES and must be RE-PINNED, not re-interpreted,
+    /// when device-grade fixtures land.
+    func testG3ivB2HipAdmissionIsEarnedPerFrameAndNamesEverySuppressionWitness() throws {
+        let ctx = try context()
+
+        // (b2-i)'s floor, DERIVED from the two shipped constants rather than
+        // quoted. `nullFraction <= ceiling` ⇒ `1 − retained <= ceiling²` ⇒
+        // `retained >= 1 − ceiling² = 0.75`; Bessel then gives
+        // `retained <= ‖J·eⱼ‖² / sigmaVisible²`, hence the floor. NO NEW
+        // CONSTANT: change either shipped constant and this turns RED instead of
+        // silently sliding the floor with it.
+        let ceiling = MuscleObservabilityMask.identifiedNullFractionCeiling
+        let sigmaVisible = MuscleObservabilityMask.visibleSingularValueMetresPerRadian
+        let retainedFloor = 1.0 - ceiling * ceiling
+        let evidenceFloor = retainedFloor.squareRoot() * sigmaVisible
+        XCTAssertEqual(ceiling, RegisteredBar.g3IdentifiedNullFractionCeiling,
+                       "G3(iv-b2): the identified crossover moved off its registered value")
+        XCTAssertEqual(ceiling, PostureFindings.depthSuppressionFraction,
+                       "G3(iv-b2): the mask stopped reusing the posture layer's crossover")
+        XCTAssertEqual(sigmaVisible, 1.0e-2,
+                       "G3(iv-b2): sigmaVisible moved; the floor is its CONSEQUENCE, not a lever")
+        XCTAssertEqual(retainedFloor, 0.75,
+                       "G3(iv-b2): the forced retained bound is not 0.75")
+        XCTAssertEqual(evidenceFloor, 8.660254037844386e-3,
+                       "G3(iv-b2): the evidence floor moved off its registered CONSEQUENCE — it "
+                       + "may not be tuned")
+        XCTAssertLessThan(evidenceFloor,
+                          MuscleObservabilityMask.mustNotMaskColumnNormMetresPerRadian,
+                          "G3(iv-b2): the floor is not below the measured must-not-mask column "
+                          + "norm, so it is over-strict by its own sanity check")
+        print(String(format: "MODE-METRIC g3ivb2 evidence_floor=%.15e ceiling=%.6f "
+                     + "sigma_visible=%.6e retained_floor=%.6f must_not_mask=%.6f",
+                     evidenceFloor, ceiling, sigmaVisible, retainedFloor,
+                     MuscleObservabilityMask.mustNotMaskColumnNormMetresPerRadian))
+
+        // (b2-iv) THE BIDIRECTIONAL CENSUS. Re-derived at the 8.0 s window from
+        // the `MODE-METRIC g3iv` receipt and the pin table in the method above,
+        // NOT copied from the clause text (which was written at 112 warmed).
+        // A census that DRIFTS and a census that IMPROVES both turn this RED.
+        let census: [String: (warmed: Int, hipCapsules: Int, hipSuppressed: Int,
+                              admittedCapsules: Int, admittedHipCapsules: Int,
+                              emptyFrames: Int)] = [
+            "video_012": (232, 12, 6, 14, 6, 0),
+            "video_015": (232, 12, 0, 24, 12, 0),
+        ]
+
+        // (b2-iii)'s primary population: the 72 coordinates the 20-marker
+        // Jacobian leaves identically zero. G3(ii) asserts this at ONE static
+        // `neutral` pose through `JointMapping.primary`; this extends it to the
+        // CLIP'S OWN poses and the CLIP'S OWN marker list.
+        let unreachableNames = FullBodyDOFFixture.structurallyUnreachableCoordinates
+        XCTAssertEqual(unreachableNames.count, 72,
+                       "G3(iv-b2)(b2-iii): the structurally-unreachable population is not 72")
+        var unreachableIndices: [Int] = []
+        for name in unreachableNames {
+            guard let j = ctx.dofNames.firstIndex(of: name) else {
+                XCTFail("G3(iv-b2)(b2-iii): \(name) is not a live model coordinate")
+                continue
+            }
+            unreachableIndices.append(j)
+        }
+        XCTAssertEqual(unreachableIndices.count, 72,
+                       "G3(iv-b2)(b2-iii): the 72-coordinate arm lost members to name resolution")
+        let unreachableSet = Set(unreachableIndices)
+
+        let hipIndices = Set((0..<ctx.dofNames.count).filter { (j: Int) -> Bool in
+            ctx.dofNames[j].hasPrefix("hip_")
+        })
+        XCTAssertGreaterThan(hipIndices.count, 0,
+                             "G3(iv-b2): the model has no `hip_` coordinate at all")
+
+        for clip in Self.scoredClips {
+            let traversal = try Self.traversal(clip: clip, context: ctx)
+            let evidence = try Self.hipAdmissionEvidence(clip: clip, ctx: ctx)
+            let pin = try XCTUnwrap(census[clip])
+            var failing: [String] = []
+
+            // A walk that warmed NOTHING indexes nothing: every array below is
+            // empty, so this is reported and abandoned rather than read.
+            guard evidence.warmedCount > 0, evidence.framesMeasured > 0 else {
+                var vacuum = "MODE-VERDICT gate=G3(iv-b2) clip=\(clip)"
+                vacuum += " outcome=VACUOUS-BY-CONSTRUCTION population=0"
+                vacuum += " warmed=\(evidence.warmedCount)"
+                vacuum += " frames_measured=\(evidence.framesMeasured)"
+                vacuum += " reason=the_independent_walk_warmed_no_frame"
+                vacuum += " note=0_==_0_scores_nothing__NOT_a_pass"
+                print(vacuum)
+                XCTFail("G3(iv-b2) on \(clip): the independent evidence walk warmed no frame, "
+                        + "so no arm of this clause was scored on anything")
+                continue
+            }
+
+            // The union of the TWELVE hip capsules' spans. `unmeasured` is a
+            // model-wide set, so printing it whole is noise; this is the only
+            // part of the trigger set that can suppress a hip capsule at all.
+            var hipSpanUnion = Set<Int>()
+            for capsule in traversal.hipCapsules {
+                hipSpanUnion.formUnion(evidence.capsuleSpans[capsule] ?? [])
+            }
+
+            // ── COHERENCE. This walk and the shared traversal must be looking
+            // at the same frames; if they are not, nothing below means anything
+            // and the cause is a HARNESS defect, not a model finding.
+            let warmedAgrees = evidence.warmedCount == traversal.warmedCount
+            let measuredAll = evidence.framesMeasured == evidence.warmedCount
+            if !warmedAgrees || !measuredAll { failing.append("harness_walk_disagrees") }
+
+            // ── (b2-ii) FRAME-EXHAUSTIVENESS. The shipped clip verdict must BE
+            // the AND over every warmed frame. This is where an "identified on
+            // >= X % of frames" lever would first become visible.
+            let exhaustiveAgrees =
+                evidence.identifiedByShippedRule == evidence.identifiedByAndOverFrames
+            if !exhaustiveAgrees { failing.append("b2ii_frame_exhaustiveness") }
+
+            let lowerLimbNames = Set(ctx.table.coordinateNames.prefix(20))
+            let unidentifiedLowerLimbNames = traversal.clipUnidentifiedLowerLimb
+            var unidentifiedLowerLimb: Set<Int> = []
+            for name in unidentifiedLowerLimbNames {
+                if let j = ctx.dofNames.firstIndex(of: name) { unidentifiedLowerLimb.insert(j) }
+            }
+            let lowerLimbIndices = Set(lowerLimbNames.compactMap { (name: String) -> Int? in
+                ctx.dofNames.firstIndex(of: name)
+            })
+            let derivedUnidentifiedLowerLimb =
+                lowerLimbIndices.subtracting(evidence.identifiedByShippedRule)
+            let lowerLimbAgrees = derivedUnidentifiedLowerLimb == unidentifiedLowerLimb
+            if !lowerLimbAgrees { failing.append("harness_lower_limb_disagrees") }
+
+            // The witness set the clause names: `clipUnidentifiedLowerLimb ∪ unmeasured`.
+            let witnessTrigger = unidentifiedLowerLimb.union(evidence.unmeasured)
+
+            // ── (b2-i) THE EVIDENCE FLOOR, on the ADMITTED hip capsules.
+            let admittedHipCapsules = traversal.hipCapsules
+                .filter { (capsule: String) -> Bool in
+                    traversal.admittedCapsules.contains(capsule)
+                }
+                .sorted()
+            var floorCells = 0
+            var floorWorstNorm = Double.infinity
+            var floorWorstCoordinate = "none"
+            var floorWorstFrame = -1
+            var floorWorstCapsule = "none"
+            var floorBreaches: [String] = []
+            for capsule in admittedHipCapsules {
+                let spanned = evidence.capsuleSpans[capsule] ?? []
+                let spannedHips = spanned.intersection(hipIndices).sorted()
+                for j in spannedHips {
+                    floorCells += evidence.framesMeasured
+                    let norm = evidence.columnNormMinimum[j]
+                    if norm < floorWorstNorm {
+                        floorWorstNorm = norm
+                        floorWorstCoordinate = ctx.dofNames[j]
+                        floorWorstFrame = evidence.columnNormArgmin[j]
+                        floorWorstCapsule = capsule
+                    }
+                    if norm < evidenceFloor {
+                        floorBreaches.append("\(capsule)/\(ctx.dofNames[j])"
+                                             + "@w\(evidence.columnNormArgmin[j])")
+                    }
+                }
+                var line = "MODE-METRIC g3ivb2-admitted clip=\(clip) capsule=\(capsule)"
+                line += " spanned_hip_coordinates=\(spannedHips.map { ctx.dofNames[$0] })"
+                line += " spanned_total=\(spanned.count)"
+                let norms = spannedHips.map { evidence.columnNormMinimum[$0] }
+                line += String(format: " min_column_norm=%.9e", norms.min() ?? -1.0)
+                let worstFractions = spannedHips.map { evidence.nullFractionWorst[$0] }
+                line += String(format: " worst_null_fraction=%.9f", worstFractions.max() ?? -1.0)
+                print(line)
+            }
+            let floorVacuous = floorCells == 0
+            if floorVacuous {
+                var vacuum = "MODE-VERDICT gate=G3(iv-b2)(b2-i)"
+                vacuum += " outcome=VACUOUS-BY-CONSTRUCTION population=0 clip=\(clip)"
+                vacuum += " admitted_hip_capsules=\(admittedHipCapsules.count)"
+                vacuum += " reason=the_drive_admitted_no_hip_capsule_so_the_floor_scored_nothing"
+                vacuum += " note=0_==_0_scores_nothing__NOT_a_pass"
+                vacuum += "__NOT_evidence_admission_was_earned"
+                print(vacuum)
+                failing.append("b2i_vacuous")
+            } else if !floorBreaches.isEmpty {
+                failing.append("b2i_evidence_floor")
+            }
+
+            // ── (b2-ii) EXACT-SET EQUALITY plus a NAMED WITNESS per suppression.
+            let suppressedHips = Set(traversal.suppressedHipCapsules)
+            let expectedSuppressedHips = Set(traversal.hipCapsules
+                .filter { (capsule: String) -> Bool in
+                    !(evidence.capsuleSpans[capsule] ?? []).isDisjoint(with: witnessTrigger)
+                })
+            let exactSetAgrees = suppressedHips == expectedSuppressedHips
+            if !exactSetAgrees { failing.append("b2ii_exact_set") }
+            var unnamedSuppressions: [String] = []
+            for capsule in traversal.suppressedHipCapsules {
+                let spanned = evidence.capsuleSpans[capsule] ?? []
+                let triggers = spanned.intersection(witnessTrigger)
+                let ranked = triggers.sorted { (a: Int, b: Int) -> Bool in
+                    if evidence.nullFractionWorst[a] != evidence.nullFractionWorst[b] {
+                        return evidence.nullFractionWorst[a] > evidence.nullFractionWorst[b]
+                    }
+                    return ctx.dofNames[a] < ctx.dofNames[b]
+                }
+                guard let witness = ranked.first else {
+                    unnamedSuppressions.append(capsule)
+                    var orphan = "MODE-METRIC g3ivb2-witness clip=\(clip) capsule=\(capsule)"
+                    orphan += " witness=NONE"
+                    orphan += " reason=suppressed_by_a_coordinate_OUTSIDE"
+                    orphan += "_clipUnidentifiedLowerLimb_union_unmeasured"
+                    orphan += " adjudicate=[the hip block is being greyed from outside the lower"
+                    orphan += " limb — a FINDING, never repaired by widening the witness set]"
+                    print(orphan)
+                    continue
+                }
+                let worstFrame = evidence.nullFractionArgmax[witness]
+                var line = "MODE-METRIC g3ivb2-witness clip=\(clip) capsule=\(capsule)"
+                line += " witness=\(ctx.dofNames[witness])"
+                var rule = "rule1_unidentified"
+                if evidence.identifiedByShippedRule.contains(witness) { rule = "rule2_unmeasured" }
+                line += " rule=\(rule)"
+                line += " worst_warmed_frame=\(worstFrame)"
+                line += String(format: " null_fraction=%.9f", evidence.nullFractionWorst[witness])
+                line += String(format: " column_norm=%.9e", evidence.columnNormMinimum[witness])
+                line += String(format: " coordinate_range=%.9e", evidence.coordinateRange[witness])
+                line += " frames_identified=\(evidence.framesIdentified[witness])"
+                line += "/\(evidence.framesMeasured)"
+                line += " other_triggers=\(ranked.dropFirst().map { ctx.dofNames[$0] })"
+                print(line)
+            }
+            if !unnamedSuppressions.isEmpty { failing.append("b2ii_unnamed_witness") }
+
+            // The fail-closed rule, READ rather than assumed: how many warmed
+            // frames each lower-limb coordinate was identified at. A coordinate
+            // sitting at, say, 231/232 is exactly what an "identified on >= X %
+            // of frames" lever would rescue, and the clause forbids one.
+            for name in ctx.table.coordinateNames.prefix(20) {
+                guard let j = ctx.dofNames.firstIndex(of: name) else { continue }
+                var line = "MODE-METRIC g3ivb2-lowerlimb clip=\(clip) coordinate=\(name)"
+                line += " frames_identified=\(evidence.framesIdentified[j])"
+                line += "/\(evidence.framesMeasured)"
+                line += String(format: " worst_null_fraction=%.9f", evidence.nullFractionWorst[j])
+                line += String(format: " min_column_norm=%.9e", evidence.columnNormMinimum[j])
+                line += String(format: " range=%.9e", evidence.coordinateRange[j])
+                line += " unmeasured=\(evidence.unmeasured.contains(j))"
+                line += " clip_identified=\(evidence.identifiedByShippedRule.contains(j))"
+                print(line)
+            }
+
+            // ── (b2-iii) ANTI-VACUITY. PRIMARY arm: all 72 unidentified at EVERY
+            // warmed frame, on the clip's own poses and marker list.
+            var identifiedUnreachable: [String] = []
+            for j in unreachableIndices where evidence.framesIdentified[j] > 0 {
+                identifiedUnreachable.append("\(ctx.dofNames[j])"
+                                             + ":\(evidence.framesIdentified[j])"
+                                             + "/\(evidence.framesMeasured)")
+            }
+            let unreachableCells = unreachableIndices.count * evidence.framesMeasured
+            if !identifiedUnreachable.isEmpty { failing.append("b2iii_primary") }
+
+            // COMPANION arm, population declared rather than discovered.
+            let capsulesReachingUnreachable = evidence.capsuleSpans.keys
+                .filter { (capsule: String) -> Bool in
+                    !(evidence.capsuleSpans[capsule] ?? []).isDisjoint(with: unreachableSet)
+                }
+                .sorted()
+            let companionUnsuppressed = capsulesReachingUnreachable
+                .filter { (capsule: String) -> Bool in
+                    traversal.admittedCapsules.contains(capsule)
+                }
+            if capsulesReachingUnreachable.isEmpty {
+                var vacuum = "MODE-VERDICT gate=G3(iv-b2)(b2-iii)-companion"
+                vacuum += " outcome=VACUOUS-BY-CONSTRUCTION population=0 clip=\(clip)"
+                vacuum += " resolved_capsules=\(evidence.capsuleSpans.count)"
+                vacuum += " reason=no_declared_capsule_SPANS_one_of_the_72"
+                vacuum += "__ercspn_r_and_ercspn_l_resolve_to_ZERO_model_muscles_and_psoas_runs"
+                vacuum += "_pelvis_to_femur_only"
+                vacuum += " note=0_==_0_scores_nothing__NOT_a_pass"
+                vacuum += "__NOT_evidence_trunk_capsules_are_suppressed"
+                print(vacuum)
+            } else if !companionUnsuppressed.isEmpty {
+                failing.append("b2iii_companion")
+            }
+
+            // ── (iv-a) RETAINED UNCHANGED: "fires on 0" is still DISPROOF.
+            if traversal.framesWithEmptyUnidentifiedLowerLimb != pin.emptyFrames {
+                failing.append("iv_a_mask_fired_on_nothing")
+            }
+
+            // ── (b2-iv) THE CENSUS, both directions.
+            var censusDrift: [String] = []
+            if traversal.warmedCount != pin.warmed { censusDrift.append("warmed") }
+            if traversal.hipCapsules.count != pin.hipCapsules { censusDrift.append("hip_capsules") }
+            if traversal.suppressedHipCapsules.count != pin.hipSuppressed {
+                censusDrift.append("hip_suppressed")
+            }
+            if traversal.admittedCapsules.count != pin.admittedCapsules {
+                censusDrift.append("admitted")
+            }
+            if admittedHipCapsules.count != pin.admittedHipCapsules {
+                censusDrift.append("admitted_hip_capsules")
+            }
+            if !censusDrift.isEmpty { failing.append("b2iv_census") }
+
+            // ── THE RECEIPT, printed BEFORE the assertions so a red run is still
+            // a complete reading.
+            var metric = "MODE-METRIC g3ivb2 clip=\(clip) warmed=\(evidence.warmedCount)"
+            metric += " frames_measured=\(evidence.framesMeasured)"
+            metric += " traversal_warmed=\(traversal.warmedCount)"
+            metric += " markers=\(evidence.markerCount) jacobian=\(evidence.jacobianRows)"
+            metric += "x\(evidence.jacobianColumns)"
+            metric += " hip_coordinates=\(hipIndices.count)"
+            metric += " hip_capsules=\(traversal.hipCapsules.count)"
+            metric += " admitted_hip_capsules=\(admittedHipCapsules.count)"
+            metric += " suppressed_hip_capsules=\(traversal.suppressedHipCapsules.count)"
+            metric += " b2i_cells=\(floorCells)"
+            metric += String(format: " b2i_min_column_norm=%.9e", floorWorstNorm)
+            metric += " b2i_min_at=\(floorWorstCapsule)/\(floorWorstCoordinate)"
+            metric += "@w\(floorWorstFrame)"
+            metric += String(format: " b2i_margin_x=%.4f", floorWorstNorm / evidenceFloor)
+            metric += " b2i_breaches=\(floorBreaches)"
+            metric += " b2ii_suppressed=\(traversal.suppressedHipCapsules)"
+            metric += " b2ii_expected=\(expectedSuppressedHips.sorted())"
+            metric += " b2ii_witness_trigger_total=\(witnessTrigger.count)"
+            metric += " b2ii_witness_trigger_on_hip_spans="
+            metric += "\(witnessTrigger.intersection(hipSpanUnion).sorted().map { ctx.dofNames[$0] })"
+            metric += " b2ii_unidentified_lower_limb="
+            metric += "\(unidentifiedLowerLimb.sorted().map { ctx.dofNames[$0] })"
+            metric += " b2ii_unnamed=\(unnamedSuppressions)"
+            metric += " b2iii_primary_cells=\(unreachableCells)"
+            metric += " b2iii_identified_unreachable=\(identifiedUnreachable)"
+            metric += " b2iii_companion_population=\(capsulesReachingUnreachable.count)"
+            metric += " census_drift=\(censusDrift)"
+            print(metric)
+
+            let outcome = failing.isEmpty ? "PASS_NON_VACUOUS" : "FAILED_AGAINST_REGISTERED_BAR"
+            var verdict = "MODE-VERDICT gate=G3(iv-b2) clip=\(clip) outcome=\(outcome)"
+            verdict += " failing=\(failing)"
+            verdict += " arms=[(b2-i) evidence floor;(b2-ii) exact set + named witness;"
+            verdict += "(b2-iii) 72-coordinate anti-vacuity;(b2-iv) bidirectional census]"
+            verdict += " registered_bar=[every admitted hip capsule's every spanned hip"
+            verdict += " coordinate clears 8.660254037844386e-3 m/rad at EVERY warmed frame;"
+            verdict += " suppressed-hip set == hip capsules spanning"
+            verdict += " clipUnidentifiedLowerLimb union unmeasured, each with a NAMED witness;"
+            verdict += " all 72 structurally-unreachable coordinates UNIDENTIFIED at every warmed"
+            verdict += " frame; census pinned in BOTH directions]"
+            verdict += " known_pass_declared_before_run=[(b2-i) is a THEOREM under the shipped"
+            verdict += " mask — its value is the INDEPENDENT CODE PATH, not the reading;"
+            verdict += " (b2-iv) re-pins numbers already asserted at the G3(iv) census]"
+            verdict += " undetermined=[(b2-ii) exact-set equality;(b2-iii) primary arm]"
+            verdict += " undetermined_populations=[b2ii_hip_capsules=\(traversal.hipCapsules.count)"
+            verdict += ";b2ii_suppressed=\(traversal.suppressedHipCapsules.count)"
+            verdict += ";b2iii_cells=\(unreachableCells)]"
+            // PER-ARM VACUITY, added 2026-08-22 by adversarial review before this
+            // gate had ever run. On a clip that suppresses NO hip capsule, the
+            // named-witness arm and the exact-set arm are both empty-set
+            // comparisons, and the top-level token would read PASS_NON_VACUOUS
+            // over them. The arm's own vacuity has to be legible in the receipt,
+            // because (b2-ii) is one of only two arms registered as able to
+            // teach anything on a first run.
+            verdict += traversal.suppressedHipCapsules.isEmpty
+                ? " b2ii_named_witness_arm=VACUOUS-BY-CONSTRUCTION__0_suppressions_on_this_clip"
+                  + "__the_exact_set_comparison_above_is_empty_==_empty__NOT_a_pass"
+                : " b2ii_named_witness_arm=SCORED"
+                  + " population=\(traversal.suppressedHipCapsules.count)"
+            verdict += " NOT_PROGRESS_IF=[a green that rests only on (b2-i) and (b2-iv)"
+            verdict += " — those two were determinable before the run and neither is evidence"
+            verdict += " hip admission was earned]"
+            verdict += " independent_code_path=[column norm summed down ONE column of the same"
+            verdict += " markerPositionJacobian bytes; the mask's own nullFraction is NEVER read"
+            verdict += " to produce it]"
+            verdict += " supersedes=[G3(iv-b) — FAILED PERMANENTLY, SUPERSEDED-NOT-ERASED, still"
+            verdict += " executed and still pinned red in"
+            verdict += " testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips]"
+            verdict += " claims_not=[that hips are suppressed, and that 12-of-12 means anything"
+            verdict += " — it was an artefact of a pelvis that never moved]"
+            verdict += " first_measurement=true window_seconds=8.0"
+            verdict += " bbox_source=macos_vision INTERIM"
+            print(verdict)
+
+            if !failing.isEmpty {
+                recordFailedGate("G3(iv-b2)", clip: clip,
+                                 measured: "failing=\(failing); b2i_cells=\(floorCells); "
+                                           + "suppressed=\(traversal.suppressedHipCapsules); "
+                                           + "expected=\(expectedSuppressedHips.sorted()); "
+                                           + "census_drift=\(censusDrift)",
+                                 bar: "admission earned at every warmed frame, every suppression "
+                                      + "named, all 72 unreachable coordinates unidentified, "
+                                      + "census pinned both ways",
+                                 why: "ADJUDICATE, never absorb: a (b2-ii) red means the hip "
+                                      + "block is being greyed from OUTSIDE the lower limb and "
+                                      + "may NOT be repaired by widening the witness set; a "
+                                      + "(b2-i) red means the eigen route or the marker set, not "
+                                      + "the floor, which is a CONSEQUENCE of two shipped "
+                                      + "constants; bbox_source=macos_vision INTERIM")
+            }
+
+            // ── THE BARS, asserted last so every receipt above is already out.
+            XCTAssertEqual(evidence.warmedCount, traversal.warmedCount,
+                "G3(iv-b2) HARNESS: this walk and the shared traversal warmed differently on "
+                + "\(clip) — nothing measured here is comparable until that is repaired")
+            XCTAssertEqual(evidence.framesMeasured, evidence.warmedCount,
+                "G3(iv-b2) HARNESS: a warmed frame on \(clip) produced no Jacobian reading")
+            XCTAssertEqual(evidence.identifiedByShippedRule, evidence.identifiedByAndOverFrames,
+                "G3(iv-b2)(b2-ii): the shipped clip verdict is no longer the AND over EVERY "
+                + "warmed frame on \(clip) — an `identified on >= X % of frames` lever is "
+                + "exactly what this bar exists to catch, and no successor may introduce one")
+            XCTAssertEqual(derivedUnidentifiedLowerLimb, unidentifiedLowerLimb,
+                "G3(iv-b2) HARNESS: the independent walk's unidentified lower-limb block differs "
+                + "from the shared traversal's on \(clip)")
+
+            // (b2-i), on a population this gate refuses to score if it is empty.
+            XCTAssertGreaterThan(floorCells, 0,
+                "G3(iv-b2)(b2-i): VACUOUS — the drive admitted no hip capsule on \(clip), so the "
+                + "evidence floor scored NOTHING. 0 == 0 is not a pass, and admitting nothing is "
+                + "RED by the clause's own bidirectionality")
+            XCTAssertEqual(floorBreaches, [],
+                "G3(iv-b2)(b2-i): an ADMITTED hip capsule on \(clip) spans a hip coordinate whose "
+                + "marker-Jacobian column norm falls below the forced floor "
+                + "\(evidenceFloor) m/rad. Rule 1 says that cannot happen, so this is an "
+                + "eigen-route defect or a marker-set mismatch, NOT a reason to move the floor")
+
+            // (b2-ii).
+            XCTAssertEqual(suppressedHips, expectedSuppressedHips,
+                "G3(iv-b2)(b2-ii): the suppressed-hip set on \(clip) is not EXACTLY the hip "
+                + "capsules spanning clipUnidentifiedLowerLimb union unmeasured. A capsule "
+                + "suppressed by a coordinate OUTSIDE the lower-limb block is a FINDING to be "
+                + "adjudicated, never absorbed and never repaired by widening the witness set")
+            XCTAssertEqual(unnamedSuppressions, [],
+                "G3(iv-b2)(b2-ii): a suppressed hip capsule on \(clip) has no nameable witness. "
+                + "A mask that greys half a block for no nameable reason is not a derivation")
+
+            // (b2-iii) primary, on 72 x warmed cells.
+            XCTAssertGreaterThan(unreachableCells, 0,
+                "G3(iv-b2)(b2-iii): the primary arm scored no cells on \(clip)")
+            XCTAssertEqual(identifiedUnreachable, [],
+                "G3(iv-b2)(b2-iii): a structurally-unreachable coordinate reads IDENTIFIED at a "
+                + "warmed frame of \(clip) on the clip's own marker list — G3(ii) only ever "
+                + "checked one static pose through JointMapping.primary")
+            XCTAssertEqual(companionUnsuppressed, [],
+                "G3(iv-b2)(b2-iii) companion: a capsule spanning a structurally-unreachable "
+                + "coordinate was ADMITTED on \(clip)")
+
+            // (iv-a), unchanged.
+            XCTAssertEqual(traversal.framesWithEmptyUnidentifiedLowerLimb, pin.emptyFrames,
+                "G3(iv-a) on \(clip): the drive-aware mask fired on nothing at some warmed frame")
+
+            // (b2-iv), both directions.
+            XCTAssertEqual(censusDrift, [],
+                "G3(iv-b2)(b2-iv): the admission census on \(clip) moved. A census that DRIFTS "
+                + "and a census that IMPROVES both force a fresh adjudication rather than a "
+                + "silent re-baseline; these pins are provisional ON macos_vision INTERIM "
+                + "fixtures and must be RE-PINNED when device-grade fixtures land")
+            XCTAssertEqual(traversal.warmedCount, pin.warmed, "G3(iv-b2)(b2-iv) warmed on \(clip)")
+            XCTAssertEqual(traversal.hipCapsules.count, pin.hipCapsules,
+                           "G3(iv-b2)(b2-iv) hip capsules on \(clip)")
+            XCTAssertEqual(traversal.suppressedHipCapsules.count, pin.hipSuppressed,
+                           "G3(iv-b2)(b2-iv) suppressed on \(clip)")
+            XCTAssertEqual(traversal.admittedCapsules.count, pin.admittedCapsules,
+                           "G3(iv-b2)(b2-iv) admitted on \(clip)")
+            XCTAssertEqual(admittedHipCapsules.count, pin.admittedHipCapsules,
+                           "G3(iv-b2)(b2-iv) admitted hip capsules on \(clip)")
         }
     }
 
@@ -1236,6 +1948,16 @@ final class MuscleLengthModeTests: XCTestCase {
     /// non-empty population. If the elbow wrap geometry is later repaired so the
     /// reversal disappears, (i) goes RED and the whole successor is
     /// re-adjudicated rather than silently passing.
+    ///
+    /// ─── NAVIGATIONAL ADDENDUM, added 2026-08-22 when the two successor
+    /// clauses became EXECUTABLE. Nothing above is edited: no registered
+    /// sentence, no bar, no enumerated cell, no expected verdict. This note only
+    /// says WHERE the text above now runs, because the clauses it registers no
+    /// longer govern the method they sit on. ───
+    /// G4(f) executes in `testG4fPortReproducesTheShippedModelOnTheOracleSweeps`
+    /// and G4(g) in `testG4gTheModelAnchorConflictRegisterIsExactlyAsEnumerated`,
+    /// immediately below this method. G4(a)'s own verdict, pins and population
+    /// are untouched by both.
     func testG4PhysiologyDirectionsOnConstructedSweeps() throws {
         let ctx = try context()
         let results = try g4Run(ctx: ctx, invertSign: false, rotateNames: false)
@@ -1308,6 +2030,714 @@ final class MuscleLengthModeTests: XCTestCase {
                          why: "FullBody.osim reverses the triceps moment arm at ~125-130 deg and "
                               + "the port reproduces the model — the frozen anchor disagrees with "
                               + "the shipped model, which is a registration question (next-step 42)")
+    }
+
+    // MARK: - G4(f) + G4(g): the two premises G4(a) could not fail separately
+
+    /// One adjacent ORACLE sweep pair, scored for one registered G4 anchor.
+    ///
+    /// PURE ORACLE CONTENT: no port value is stored here, which is exactly what
+    /// lets G4(g) claim that no change to the port can move it. G4(f) computes
+    /// its port column separately, in `g4PortFidelity`.
+    private struct G4OracleCell {
+        let sweep: String
+        let muscle: String
+        let coordinate: String
+        let poseA: Int
+        let poseB: Int
+        /// PAIR MIDPOINT of the swept coordinate, degrees — the PINNED
+        /// convention. Under a pointwise per-pose convention the same four
+        /// anchors conflict at different angles, which is why the convention is
+        /// pinned rather than assumed.
+        let midpointDegrees: Double
+        let poseADegrees: Double
+        let poseBDegrees: Double
+        /// `-0.5*(R_on(a) + R_on(b))*dq` — the ANALYTIC WrapOn column at the
+        /// pair midpoint. The column the G4(g) definition pins.
+        let analyticDeltaLength: Double
+        /// `lengthWrapOn(b) - lengthWrapOn(a)` — the STORED-LENGTH WrapOn column.
+        let storedDeltaLength: Double
+        /// `-0.5*(r_fd(a) + r_fd(b))*dq` from `opensim_moment_arms_fd.txt`, the
+        /// THIRD informational column. `nil` = UNAVAILABLE-BY-CONSTRUCTION: the
+        /// muscle carries no PathWrap and that fixture does not declare it.
+        let finiteDifferenceDeltaLength: Double?
+        /// The WRAP-OFF analytic column. Computed only so the gate can PRINT the
+        /// register a reader would get by substituting it — the registration
+        /// forbids the substitution and this is what makes the ban checkable.
+        let wrapOffDeltaLength: Double
+        /// Pointwise `-R_on(pose)*dq` at each endpoint: the convention the
+        /// registration explicitly did NOT choose.
+        let pointwiseAtA: Double
+        let pointwiseAtB: Double
+        /// `+1` when the frozen anchor says LENGTHENING, `-1` for SHORTENING.
+        let expectedSign: Int
+        let pathWraps: Int
+        /// Analytic for muscles carrying >= 2 PathWraps, stored length for the
+        /// rest — the same multi-wrap split G1 already registers.
+        var authoritativeDeltaLength: Double {
+            pathWraps >= 2 ? analyticDeltaLength : storedDeltaLength
+        }
+        var anchor: String { "\(sweep)/\(muscle)" }
+        var registerKey: String { String(format: "%@@%.1f", anchor, midpointDegrees) }
+    }
+
+    /// The FD sidecar, loaded once. Same idiom as `sharedContext`: a failed load
+    /// fails every dependent gate with the same diagnostic instead of going
+    /// vacuous.
+    private static let sharedFiniteDifference: Result<OpenSimFiniteDifferenceFixture.Table, Error> = {
+        Result {
+            try OpenSimFiniteDifferenceFixture.load(bundle: Bundle(for: MuscleLengthModeTests.self))
+        }
+    }()
+
+    /// `true` when `deltaLength` clears the deadband AND contradicts the frozen
+    /// anchor. The default deadband is the frozen quantisation floor, which is
+    /// the value the G4(g) definition names.
+    private static func g4Conflicts(
+        _ deltaLength: Double, expectedSign: Int,
+        deadband: Double = MuscleLengthModeClassifier.lengthQuantisationFloorMetres
+    ) -> Bool {
+        guard abs(deltaLength) > deadband else { return false }
+        return (deltaLength > 0 ? 1 : -1) != expectedSign
+    }
+
+    /// Every registered anchor x every adjacent pair of the ORACLE'S OWN sweep
+    /// poses for that anchor's coordinate: 637 cells by construction
+    /// (10*28 knee + 4*28 ankle + 5*28 hip + 7*15 elbow).
+    private func g4OracleCells(ctx: ModelContext) throws -> [G4OracleCell] {
+        let table = ctx.table
+        let fd = try Self.sharedFiniteDifference.get()
+        let allPairs = sweepPairs(table)
+        XCTAssertEqual(allPairs.count, 111, "the registered single-DOF sweep population")
+        let toDegrees = 180.0 / Double.pi
+        var out: [G4OracleCell] = []
+
+        for sweep in Self.g4Sweeps {
+            let pairs = allPairs.filter { $0.coordinate == sweep.coordinate }
+            for muscle in sweep.lengthening + sweep.shortening {
+                let expected = sweep.lengthening.contains(muscle) ? 1 : -1
+                guard let m = table.muscleIndex(muscle),
+                      let k = table.muscles[m].coordinates.firstIndex(of: sweep.coordinate),
+                      let j = table.coordinateNames.firstIndex(of: sweep.coordinate) else {
+                    XCTFail("G4(f)/(g): \(muscle) does not span \(sweep.coordinate) in the oracle")
+                    continue
+                }
+                let wraps = ctx.computer.pathWrapCount(forMuscleNamed: muscle)
+                let fdMuscle = fd.muscleIndex(muscle)
+                let fdCoordinate = fdMuscle.flatMap {
+                    fd.muscles[$0].coordinates.firstIndex(of: sweep.coordinate)
+                }
+
+                for pair in pairs {
+                    guard let rowA = table.row(pose: pair.a, muscle: m),
+                          let rowB = table.row(pose: pair.b, muscle: m),
+                          k < rowA.momentArmsWrapOn.count, k < rowB.momentArmsWrapOn.count,
+                          k < rowA.momentArmsWrapOff.count, k < rowB.momentArmsWrapOff.count else {
+                        XCTFail("G4(f)/(g): the oracle has no row for \(muscle) "
+                                + "at pair \(pair.a)->\(pair.b)")
+                        continue
+                    }
+                    let qa = table.poses[pair.a].values[j]
+                    let qb = table.poses[pair.b].values[j]
+                    let dq = qb - qa
+
+                    var fdDelta: Double?
+                    if let fi = fdMuscle, let fk = fdCoordinate,
+                       let fdPoseA = fd.poseIndex(table.poses[pair.a].id),
+                       let fdPoseB = fd.poseIndex(table.poses[pair.b].id),
+                       let fdRowA = fd.row(pose: fdPoseA, muscle: fi),
+                       let fdRowB = fd.row(pose: fdPoseB, muscle: fi),
+                       fk < fdRowA.momentArms.count, fk < fdRowB.momentArms.count {
+                        fdDelta = -0.5 * (fdRowA.momentArms[fk] + fdRowB.momentArms[fk]) * dq
+                    }
+
+                    out.append(G4OracleCell(
+                        sweep: sweep.name, muscle: muscle, coordinate: sweep.coordinate,
+                        poseA: pair.a, poseB: pair.b,
+                        midpointDegrees: 0.5 * (qa + qb) * toDegrees,
+                        poseADegrees: qa * toDegrees,
+                        poseBDegrees: qb * toDegrees,
+                        analyticDeltaLength:
+                            -0.5 * (rowA.momentArmsWrapOn[k] + rowB.momentArmsWrapOn[k]) * dq,
+                        storedDeltaLength: rowB.lengthWrapOn - rowA.lengthWrapOn,
+                        finiteDifferenceDeltaLength: fdDelta,
+                        wrapOffDeltaLength:
+                            -0.5 * (rowA.momentArmsWrapOff[k] + rowB.momentArmsWrapOff[k]) * dq,
+                        pointwiseAtA: -rowA.momentArmsWrapOn[k] * dq,
+                        pointwiseAtB: -rowB.momentArmsWrapOn[k] * dq,
+                        expectedSign: expected, pathWraps: wraps))
+                }
+            }
+        }
+        return out
+    }
+
+    private struct G4PortFidelityResult {
+        let sweep: String
+        let muscle: String
+        let pathWraps: Int
+        /// Which WRAP-ON column carried the MODEL's direction for this anchor.
+        let referenceColumn: String
+        let spanning: Int
+        let scored: Int
+        let agreements: Int
+        let strongCells: Int
+        let strongDisagreements: Int
+        /// Reported, not gated: WHERE the port left the model, in degrees of the
+        /// swept coordinate at the pair midpoint.
+        let disagreeingMidpointsDegrees: [Double]
+        var agreement: Double { scored == 0 ? 0 : Double(agreements) / Double(scored) }
+        var coverage: Double { spanning == 0 ? 0 : Double(scored) / Double(spanning) }
+        var anchor: String { "\(sweep)/\(muscle)" }
+    }
+
+    /// The PORT evaluated at the ORACLE's own sweep midpoints, scored against
+    /// the MODEL's own WrapOn direction cell by cell. The port enters ONLY here.
+    private func g4PortFidelity(ctx: ModelContext) throws -> [G4PortFidelityResult] {
+        let table = ctx.table
+        let allPairs = sweepPairs(table)
+        var out: [G4PortFidelityResult] = []
+
+        for sweep in Self.g4Sweeps {
+            let anchors = sweep.lengthening + sweep.shortening
+            let present = anchors.filter { ctx.muscleIndexByName[$0] != nil }
+            XCTAssertEqual(present.count, anchors.count,
+                           "a G4 anchor is not in the parsed model: "
+                           + "\(Set(anchors).subtracting(present))")
+            guard !present.isEmpty else { continue }
+
+            let pairs = allPairs.filter { $0.coordinate == sweep.coordinate }
+            let coordinates = spanUnion(present, table: table)
+            let noise = fixtureNoise(coordinates.count)
+
+            var spanning = [Int](repeating: 0, count: present.count)
+            var scored = [Int](repeating: 0, count: present.count)
+            var agreements = [Int](repeating: 0, count: present.count)
+            var strong = [Int](repeating: 0, count: present.count)
+            var strongDisagree = [Int](repeating: 0, count: present.count)
+            var disagreements = [[Double]](repeating: [], count: present.count)
+
+            for pair in pairs {
+                // Same re-indexing law as G1: the fixture's coordinate order and
+                // the LIVE model's DOF order differ, so the pose is rebuilt by
+                // NAME before it reaches the solver.
+                let qa = table.poses[pair.a].values
+                let qb = table.poses[pair.b].values
+                let poseA = Self.orderedPose(ctx: ctx, table: table, poseIndex: pair.a)
+                let poseB = Self.orderedPose(ctx: ctx, table: table, poseIndex: pair.b)
+                let mid = zip(poseA, poseB).map { 0.5 * ($0 + $1) }
+                guard let rows = ctx.momentArms(pose: mid, muscles: present,
+                                                coordinates: coordinates) else {
+                    XCTFail("G4(f): moment arms failed at sweep pair \(pair.a)->\(pair.b)")
+                    continue
+                }
+                let dq = coordinates.map { name -> Double in
+                    guard let j = table.coordinateNames.firstIndex(of: name) else { return 0 }
+                    return qb[j] - qa[j]
+                }
+
+                for (m, name) in present.enumerated() {
+                    guard let index = table.muscleIndex(name),
+                          let k = table.muscles[index].coordinates.firstIndex(of: pair.coordinate),
+                          let j = table.coordinateNames.firstIndex(of: pair.coordinate),
+                          let rowA = table.row(pose: pair.a, muscle: index),
+                          let rowB = table.row(pose: pair.b, muscle: index),
+                          k < rowA.momentArmsWrapOn.count, k < rowB.momentArmsWrapOn.count
+                    else { continue }
+                    spanning[m] += 1
+
+                    let deadband = MuscleLengthModeClassifier.stepDeadbandMetres(
+                        momentArmRow: rows[m], jointNoiseRadians: noise,
+                        velocityNoiseGain: Self.velocityGain)
+
+                    // The MODEL's own direction on the REGISTERED column pair,
+                    // WRAP-ON. The WrapOff columns are NOT the reference here.
+                    let reference: Double
+                    if ctx.computer.pathWrapCount(forMuscleNamed: name) >= 2 {
+                        reference = -0.5 * (rowA.momentArmsWrapOn[k] + rowB.momentArmsWrapOn[k])
+                            * (qb[j] - qa[j])
+                    } else {
+                        reference = rowB.lengthWrapOn - rowA.lengthWrapOn
+                    }
+
+                    guard abs(reference) > deadband else { continue }
+                    scored[m] += 1
+                    let ours = MuscleLengthModeClassifier.lengthRate(momentArmRow: rows[m],
+                                                                     jointVelocity: dq)
+                    let agrees = (ours > 0) == (reference > 0)
+                    if agrees {
+                        agreements[m] += 1
+                    } else {
+                        disagreements[m].append(0.5 * (qa[j] + qb[j]) * 180.0 / .pi)
+                    }
+                    if abs(reference) >= 10.0 * deadband {
+                        strong[m] += 1
+                        if !agrees { strongDisagree[m] += 1 }
+                    }
+                }
+            }
+
+            for (m, name) in present.enumerated() {
+                let wraps = ctx.computer.pathWrapCount(forMuscleNamed: name)
+                out.append(G4PortFidelityResult(
+                    sweep: sweep.name, muscle: name, pathWraps: wraps,
+                    referenceColumn: wraps >= 2 ? "analytic_wrap_on" : "stored_length_wrap_on",
+                    spanning: spanning[m], scored: scored[m], agreements: agreements[m],
+                    strongCells: strong[m], strongDisagreements: strongDisagree[m],
+                    disagreeingMidpointsDegrees: disagreements[m].sorted()))
+            }
+        }
+        return out
+    }
+
+    /// G4(f) PORT FIDELITY, FULL 26-ANCHOR SET.
+    ///
+    /// The clause — its population, its grids, its WRAP-ON column pair, its
+    /// PAIR-MIDPOINT convention, its three bars and its ZERO-TOLERANCE
+    /// disclosure — is registered VERBATIM in the successor pre-registration
+    /// above `testG4PhysiologyDirectionsOnConstructedSweeps` and is NOT restated
+    /// here. This method only executes it.
+    ///
+    /// WHAT IT ASSERTS: that the PORT's direction agrees with the SHIPPED
+    /// MODEL's own direction. NOT one word about anatomy — that is G4(g). It
+    /// cannot be repaired by editing an anchor, because the anchor only supplies
+    /// the population; the comparison is port-vs-model on both sides.
+    ///
+    /// GENUINELY UNDETERMINED ON THIS RUN, and that is the point of it. Unlike
+    /// G4(g) no re-derivation of this gate exists, nothing was measured before
+    /// it was written, and its first reading is a MEASUREMENT rather than a
+    /// regression pin. The bars are asserted as registered: the 99.0 % bar is
+    /// arithmetically ZERO-TOLERANCE at these population sizes (28 pairs on the
+    /// knee/hip/ankle anchors, 15 on the elbow: 27/28 = 96.43 % and 14/15 =
+    /// 93.33 % both MISS it), NO minimum-pairs power floor is registered, and
+    /// none may be added after a miss.
+    func testG4fPortReproducesTheShippedModelOnTheOracleSweeps() throws {
+        let ctx = try context()
+        let results = try g4PortFidelity(ctx: ctx)
+
+        for r in results {
+            var line = "MODE-METRIC g4f sweep=\(r.sweep) muscle=\(r.muscle)"
+            line += " path_wraps=\(r.pathWraps) reference_column=\(r.referenceColumn)"
+            line += " spanning=\(r.spanning) scored=\(r.scored) agree=\(r.agreements)"
+            line += String(format: " agreement=%.6f", r.agreement)
+            line += String(format: " coverage=%.6f", r.coverage)
+            line += " strong=\(r.strongCells) strong_disagree=\(r.strongDisagreements)"
+            let disagreeAt = r.disagreeingMidpointsDegrees.map { String(format: "%.1f", $0) }
+            line += " disagree_at_deg=[" + disagreeAt.joined(separator: ",") + "]"
+            print(line)
+        }
+
+        // The REGISTERED CONSTRUCTION, asserted before any bar is read.
+        XCTAssertEqual(results.count, 26, "the G4(f) anchor population moved off its registration")
+        XCTAssertEqual(Set(results.map(\.anchor)).count, 26, "two G4(f) anchors collided on one key")
+        let spanningBySweep = Dictionary(grouping: results, by: \.sweep)
+            .mapValues { group in group.reduce(0) { $0 + $1.spanning } }
+        XCTAssertEqual(spanningBySweep["knee_flexion"] ?? -1, 280, "knee: 10 anchors x 28 pairs")
+        XCTAssertEqual(spanningBySweep["ankle_dorsiflexion"] ?? -1, 112, "ankle: 4 anchors x 28 pairs")
+        XCTAssertEqual(spanningBySweep["hip_flexion"] ?? -1, 140, "hip: 5 anchors x 28 pairs")
+        XCTAssertEqual(spanningBySweep["elbow_flexion"] ?? -1, 105, "elbow: 7 anchors x 15 pairs")
+        let spanningTotal = results.reduce(0) { $0 + $1.spanning }
+        XCTAssertEqual(spanningTotal, 637,
+                       "10*28 + 4*28 + 5*28 + 7*15 = 637 scored anchor-pairs")
+        // The shoulder sweep EXISTS in the oracle and carries no registered
+        // anchor, so it must contribute nothing — the frozen exclusion, executed.
+        XCTAssertEqual(sweepPairs(ctx.table).filter { $0.coordinate == "shoulder_elv_r" }.count, 12,
+                       "the oracle's shoulder sweep")
+        XCTAssertTrue(results.allSatisfy { $0.sweep != "shoulder_flexion" },
+                      "the shoulder sweep stays excluded, exactly as frozen")
+
+        // The MEASURED outcome, printed as a receipt BEFORE it is adjudicated,
+        // so a red run still leaves a complete reading.
+        let scoredTotal = results.reduce(0) { $0 + $1.scored }
+        let strongTotal = results.reduce(0) { $0 + $1.strongCells }
+        let unscored = results.filter { $0.scored == 0 }.map(\.anchor).sorted()
+        let worst = results.map(\.agreement).min() ?? 0
+        let worstAnchor = results.min(by: { $0.agreement < $1.agreement })?.anchor ?? "none"
+        let worstCoverage = results.map(\.coverage).min() ?? 0
+        let strongDisagreeTotal = results.reduce(0) { $0 + $1.strongDisagreements }
+        let failing = results.filter {
+            $0.scored == 0 || $0.agreement < 0.99 || $0.strongDisagreements > 0
+                || $0.coverage < 0.60
+        }.map(\.anchor).sorted()
+        let outcome = failing.isEmpty ? "PASS_NON_VACUOUS" : "FAILED_AGAINST_REGISTERED_BAR"
+        var verdict = "MODE-VERDICT gate=G4(f) outcome=\(outcome) anchors=\(results.count)"
+        verdict += " spanning=\(spanningTotal) scored=\(scoredTotal) strong=\(strongTotal)"
+        verdict += " strong_disagree=\(strongDisagreeTotal) unscored_anchors=\(unscored)"
+        verdict += String(format: " worst_agreement=%.6f", worst)
+        verdict += String(format: " worst_coverage=%.6f", worstCoverage)
+        verdict += " worst_anchor=\(worstAnchor) failing=\(failing)"
+        verdict += " registered_bar=[>= 0.99 port-vs-model agreement per anchor; 0 disagreements"
+        verdict += " at >= 10x the step deadband; coverage >= 0.60; every anchor scores > 0 pairs]"
+        verdict += " zero_tolerance=[28-pair anchors: 27/28 = 0.9643 MISSES 0.99; 15-pair elbow:"
+        verdict += " 14/15 = 0.9333 MISSES 0.99; no minimum-pairs power floor is registered]"
+        verdict += " claims=[port reproduces the shipped model]"
+        verdict += " claims_not=[anatomy — that is G4(g)]"
+        verdict += " first_measurement=true provenance=opensim_moment_arms.txt"
+        print(verdict)
+        if !failing.isEmpty {
+            recordFailedGate("G4(f)",
+                             measured: String(format: "worst=%.6f on %@; failing anchors=",
+                                              worst, worstAnchor)
+                                       + "\(failing); strong_disagree=\(strongDisagreeTotal)",
+                             bar: ">= 0.99 per anchor, 0 strong disagreements, coverage >= 0.60",
+                             why: "the PORT left the SHIPPED MODEL on the oracle's own sweep "
+                                  + "poses — this is a port defect, not a registration question, "
+                                  + "and it cannot be repaired by editing an anchor")
+        }
+
+        // The registered bars, asserted per anchor so a failure NAMES one.
+        for r in results {
+            XCTAssertGreaterThan(r.scored, 0,
+                "G4(f) NON-VACUITY: \(r.anchor) scored no pairs — RED, not skipped")
+            XCTAssertGreaterThanOrEqual(r.agreement, 0.99,
+                "G4(f): port-vs-model direction agreement on \(r.anchor) is below the 99.0 % bar")
+            XCTAssertEqual(r.strongDisagreements, 0,
+                "G4(f): a port-vs-model disagreement at >= 10x the step deadband on \(r.anchor)")
+            XCTAssertGreaterThanOrEqual(r.coverage, 0.60,
+                "G4(f): coverage floor on \(r.anchor)")
+        }
+    }
+
+    /// G4(g) MODEL-ANCHOR CONFLICT REGISTER.
+    ///
+    /// The clause — its pinned convention, its enumerated register, its three
+    /// bars, its column-availability rule, and its two pre-declared warnings —
+    /// is registered VERBATIM in the successor pre-registration above
+    /// `testG4PhysiologyDirectionsOnConstructedSweeps` and is NOT restated here.
+    ///
+    /// DERIVED FROM THE ORACLE ALONE: the port is not an input to this method,
+    /// so no change to the port can move it. `ctx` is opened only for the model
+    /// text (`pathWrapCount`, the multi-wrap split) and for the Rule-0 displayed
+    /// set that clause (iii) reads.
+    ///
+    /// KNOWN-PASS, DECLARED BEFORE THE RUN AND KEPT: this is a REGRESSION PIN in
+    /// this battery's measured-outcome-pin idiom, NOT an open measurement. Two
+    /// independent re-derivations reproduced the enumerated 4 anchors / 7 cells /
+    /// 22 clean before a line of it was implemented, and a third — this
+    /// implementer's, 2026-08-22, `/tmp/g4verify/register.py` against
+    /// `BioMotionTests/Fixtures/opensim_moment_arms.txt` — reproduced it again
+    /// before this method was written. Its VALUE is forward-looking: it goes RED
+    /// if `FullBody.osim`'s geometry, the oracle fixture, or the Rule-0 displayed
+    /// set moves. A first green reading may NEVER be quoted as evidence that
+    /// anything was discovered.
+    ///
+    /// CLAUSE (iii) IS PART REAL AND PART VACUOUS: its off-surface branch is
+    /// scored on a population of 4 and CAN go red; its abstention branch is
+    /// scored on a population of ZERO and prints VACUOUS-BY-CONSTRUCTION.
+    func testG4gTheModelAnchorConflictRegisterIsExactlyAsEnumerated() throws {
+        let ctx = try context()
+        let cells = try g4OracleCells(ctx: ctx)
+        let floor = MuscleLengthModeClassifier.lengthQuantisationFloorMetres
+        XCTAssertEqual(floor, 1.0e-8, "the frozen quantisation floor moved")
+
+        // The REGISTERED CONSTRUCTION.
+        XCTAssertEqual(cells.count, 637,
+                       "the G4(g) cell population moved off its registered construction")
+        XCTAssertEqual(Set(cells.map(\.anchor)).count, 26, "the 26-anchor set moved")
+        let cellsBySweep = Dictionary(grouping: cells, by: \.sweep).mapValues(\.count)
+        XCTAssertEqual(cellsBySweep["knee_flexion"] ?? -1, 280, "knee: 10 anchors x 28 pairs")
+        XCTAssertEqual(cellsBySweep["ankle_dorsiflexion"] ?? -1, 112, "ankle: 4 anchors x 28 pairs")
+        XCTAssertEqual(cellsBySweep["hip_flexion"] ?? -1, 140, "hip: 5 anchors x 28 pairs")
+        XCTAssertEqual(cellsBySweep["elbow_flexion"] ?? -1, 105, "elbow: 7 anchors x 15 pairs")
+
+        // THE REGISTER, as enumerated on 2026-08-21 BEFORE implementation.
+        let enumeratedRegister: Set<String> = [
+            "elbow_flexion/TRIlong_r@135.0", "elbow_flexion/TRIlong_r@145.0",
+            "elbow_flexion/TRImed_r@135.0", "elbow_flexion/TRImed_r@145.0",
+            "elbow_flexion/TRIlat_r@135.0", "elbow_flexion/TRIlat_r@145.0",
+            "knee_flexion/bfsh140_r@137.5",
+        ]
+        let analyticRegister = Set(cells.filter {
+            Self.g4Conflicts($0.analyticDeltaLength, expectedSign: $0.expectedSign)
+        }.map(\.registerKey))
+        let storedRegister = Set(cells.filter {
+            Self.g4Conflicts($0.storedDeltaLength, expectedSign: $0.expectedSign)
+        }.map(\.registerKey))
+        let authoritativeRegister = Set(cells.filter {
+            Self.g4Conflicts($0.authoritativeDeltaLength, expectedSign: $0.expectedSign)
+        }.map(\.registerKey))
+        let conflictAnchors = Set(cells.filter { analyticRegister.contains($0.registerKey) }
+            .map(\.anchor))
+        let conflictMuscles = Set(cells.filter { analyticRegister.contains($0.registerKey) }
+            .map(\.muscle))
+
+        // Per-anchor receipts, including the THIRD informational column.
+        let unavailableByConstruction = Set(cells.filter { $0.finiteDifferenceDeltaLength == nil }
+            .map(\.muscle))
+        for anchor in Set(cells.map(\.anchor)).sorted() {
+            let group = cells.filter { $0.anchor == anchor }
+            let fdAvailable = group.allSatisfy { $0.finiteDifferenceDeltaLength != nil }
+            let fdConflicts = group.filter { cell -> Bool in
+                guard let value = cell.finiteDifferenceDeltaLength else { return false }
+                return Self.g4Conflicts(value, expectedSign: cell.expectedSign)
+            }.count
+            let conflictAngles = group.filter { analyticRegister.contains($0.registerKey) }
+                .map { String(format: "%.1f", $0.midpointDegrees) }.sorted()
+            let nAnalytic = group.filter { analyticRegister.contains($0.registerKey) }.count
+            let nStored = group.filter { storedRegister.contains($0.registerKey) }.count
+            let nAuthoritative = group.filter { authoritativeRegister.contains($0.registerKey) }.count
+            let nWrapOff = group.filter {
+                Self.g4Conflicts($0.wrapOffDeltaLength, expectedSign: $0.expectedSign)
+            }.count
+            let minAnalyticHere: Double = group.map { abs($0.analyticDeltaLength) }.min() ?? 0
+            let minStoredHere: Double = group.map { abs($0.storedDeltaLength) }.min() ?? 0
+            var line = "MODE-METRIC g4g anchor=\(anchor) cells=\(group.count)"
+            line += " path_wraps=\(group.first?.pathWraps ?? -1)"
+            line += " expected_sign=\(group.first?.expectedSign ?? 0)"
+            line += " conflicts_analytic=\(nAnalytic)"
+            line += " conflicts_stored=\(nStored)"
+            line += " conflicts_authoritative=\(nAuthoritative)"
+            line += " conflict_midpoints_deg=[" + conflictAngles.joined(separator: ",") + "]"
+            line += fdAvailable
+                ? " fd_third_column=available conflicts_fd=\(fdConflicts)"
+                : " fd_third_column=UNAVAILABLE-BY-CONSTRUCTION conflicts_fd=n/a"
+            line += " wrap_off_conflicts=\(nWrapOff)"
+            line += String(format: " min_abs_dl_analytic=%.7e", minAnalyticHere)
+            line += String(format: " min_abs_dl_stored=%.7e", minStoredHere)
+            print(line)
+        }
+
+        // (i) THE REGISTER EQUALS THE ENUMERATED SET EXACTLY.
+        XCTAssertEqual(analyticRegister, enumeratedRegister,
+            "G4(g)(i): the measured register is not the enumerated one — a cell that APPEARS or "
+            + "DISAPPEARS is RED, because either the shipped model changed or the fixture did")
+        XCTAssertEqual(analyticRegister.count, 7, "G4(g)(i): 7 conflict cells")
+        XCTAssertEqual(conflictAnchors.count, 4, "G4(g)(i): 4 conflicting anchors")
+        XCTAssertEqual(26 - conflictAnchors.count, 22, "G4(g)(i): 22 clean anchors")
+        XCTAssertEqual(conflictMuscles.sorted(),
+                       ["TRIlat_r", "TRIlong_r", "TRImed_r", "bfsh140_r"],
+                       "G4(g)(i): the conflicting muscle set moved")
+
+        // (ii) BOTH REGISTERED COLUMNS, and the fixture-defect rule.
+        XCTAssertEqual(storedRegister, analyticRegister,
+            "G4(g)(ii): a conflict cell is visible in only ONE of the two registered columns "
+            + "{analytic WrapOn moment arm, adjacent difference of stored WrapOn length} — that "
+            + "is a FIXTURE DEFECT to investigate, never a model finding to register")
+        XCTAssertEqual(authoritativeRegister, enumeratedRegister,
+            "G4(g)(ii): the authoritative split (analytic for >= 2 PathWraps, stored length for "
+            + "the rest) does not reproduce the enumerated register")
+
+        // The THIRD column is INFORMATIONAL and structurally absent for four
+        // anchors. Asserted as a STRUCTURE, never as a pass.
+        XCTAssertEqual(unavailableByConstruction, ["bflh140_r", "sart_r", "soleus_r", "tibant_r"],
+            "G4(g): OpenSim's own central difference is unavailable for exactly the four anchors "
+            + "that carry no PathWrap and are absent from opensim_moment_arms_fd.txt")
+        XCTAssertEqual(cells.filter { $0.finiteDifferenceDeltaLength == nil }.count, 112,
+            "G4(g): 4 anchors x 28 pairs are UNAVAILABLE-BY-CONSTRUCTION")
+        for cell in cells where unavailableByConstruction.contains(cell.muscle) {
+            XCTAssertEqual(cell.pathWraps, 0,
+                "G4(g): \(cell.muscle) is missing from the FD fixture but carries a PathWrap — "
+                + "that would be a fixture defect, not a structural absence")
+        }
+        let fdRegister = Set(cells.compactMap { cell -> String? in
+            guard let v = cell.finiteDifferenceDeltaLength else { return nil }
+            return Self.g4Conflicts(v, expectedSign: cell.expectedSign) ? cell.registerKey : nil
+        })
+        var thirdColumnLine = "MODE-METRIC g4g third_column=opensim_central_difference"
+        thirdColumnLine += " unavailable_anchors=\(unavailableByConstruction.sorted())"
+        thirdColumnLine += " unavailable_cells=112 fd_register=\(fdRegister.sorted())"
+        thirdColumnLine += " note=INFORMATIONAL_ONLY_never_a_pass_and_never_a_fixture_defect_alarm"
+        print(thirdColumnLine)
+
+        // (iii) OFF-SURFACE (population 4, REAL) and ABSTENTION (population 0).
+        let displayed = Set(ctx.displayedMuscles)
+        let onSurface = conflictMuscles.intersection(displayed)
+        XCTAssertEqual(conflictMuscles.count, 4,
+            "G4(g)(iii): the off-surface branch must be scored on all 4 conflicted muscles")
+        XCTAssertTrue(onSurface.isEmpty,
+            "G4(g)(iii): a CONFLICTED muscle reached the Rule-0 displayed set — this layer does "
+            + "not ship until either the model geometry is repaired or the abstention branch is "
+            + "implemented AND measured on a non-empty population: \(onSurface.sorted())")
+        var abstention = "MODE-VERDICT gate=G4(g)(iii)-abstention"
+        // Same derivation rule as the gate verdict below: a non-zero population
+        // means the abstention branch is REACHABLE and must be measured, not
+        // labelled vacuous. Hardcoding the token here would have printed
+        // "VACUOUS-BY-CONSTRUCTION population=3".
+        abstention += onSurface.isEmpty
+            ? " outcome=VACUOUS-BY-CONSTRUCTION population=0"
+            : " outcome=REACHABLE_AND_UNMEASURED population=\(onSurface.count)"
+        abstention += " conflicted_muscles=\(conflictMuscles.sorted())"
+        abstention += " displayed_muscles=\(displayed.count)"
+        abstention += " reason=all_four_conflicted_muscles_are_off_the_product_surface_today"
+        abstention += " note=0_==_0_scores_nothing__NOT_a_pass"
+        abstention += "__NOT_evidence_abstention_is_implemented"
+        print(abstention)
+
+        // NON-VACUITY OF THE REGISTER ITSELF — measured, not hoped.
+        let clearedAnalytic = cells.filter { abs($0.analyticDeltaLength) > floor }.count
+        let clearedStored = cells.filter { abs($0.storedDeltaLength) > floor }.count
+        XCTAssertEqual(clearedAnalytic, 637, "G4(g): every cell must clear the 1.0e-8 m deadband")
+        XCTAssertEqual(clearedStored, 637, "G4(g): every cell must clear the 1.0e-8 m deadband")
+        let minAnalytic = cells.map { abs($0.analyticDeltaLength) }.min() ?? 0
+        let minStored = cells.map { abs($0.storedDeltaLength) }.min() ?? 0
+        XCTAssertGreaterThan(minAnalytic, 1.5e-4,
+            "G4(g): the register is BYTE-IDENTICAL from 0 through 1.5e-4 m only because no cell "
+            + "sits inside that band")
+        XCTAssertGreaterThan(minStored, 1.5e-4, "G4(g): same, on the stored-length column")
+        for deadband in [0.0, 1.0e-8, 1.0e-6, 1.0e-5, 1.0e-4, 1.5e-4] {
+            let ladder = Set(cells.filter {
+                Self.g4Conflicts($0.analyticDeltaLength, expectedSign: $0.expectedSign,
+                                 deadband: deadband)
+            }.map(\.registerKey))
+            XCTAssertEqual(ladder, enumeratedRegister,
+                "G4(g): the register is not byte-identical at deadband \(deadband) — the 1.0e-8 "
+                + "constant is decoration here, not the discriminator")
+        }
+
+        let clean = cells.filter {
+            !Self.g4Conflicts($0.authoritativeDeltaLength, expectedSign: $0.expectedSign)
+        }
+        XCTAssertEqual(clean.count, 630, "G4(g): 637 cells minus 7 conflict cells")
+        let smallestClean = try XCTUnwrap(
+            clean.min(by: { abs($0.analyticDeltaLength) < abs($1.analyticDeltaLength) }),
+            "G4(g): the clean population is empty")
+        XCTAssertEqual(abs(smallestClean.analyticDeltaLength), 1.9339269e-4, accuracy: 1.0e-11,
+            "G4(g): the smallest correct-signed |dL| moved off its receipt")
+        XCTAssertEqual(smallestClean.muscle, "bfsh140_r", "G4(g): the smallest clean cell moved")
+        XCTAssertEqual(smallestClean.midpointDegrees, 132.5, accuracy: 1.0e-6,
+                       "G4(g): the smallest clean cell moved off 132.5 deg")
+        XCTAssertGreaterThanOrEqual(abs(smallestClean.analyticDeltaLength), 19_000.0 * floor,
+            "G4(g): the smallest correct-signed |dL| is >= 19,000x the deadband")
+        // DISCLOSURE, printed rather than asserted: the registered 1.9339269e-4
+        // figure is the ANALYTIC column's minimum. The STORED column's own
+        // minimum is smaller and is printed so the reader can check which column
+        // the receipt came from.
+        let smallestCleanStored = try XCTUnwrap(
+            clean.min(by: { abs($0.storedDeltaLength) < abs($1.storedDeltaLength) }),
+            "G4(g): the clean population is empty")
+        var smallestLine = "MODE-METRIC g4g smallest_clean_cell"
+        smallestLine += String(format: " analytic=%.7e", abs(smallestClean.analyticDeltaLength))
+        smallestLine += " analytic_at=\(smallestClean.muscle)"
+        smallestLine += String(format: "@%.1f", smallestClean.midpointDegrees)
+        smallestLine += String(format: " stored=%.7e", abs(smallestCleanStored.storedDeltaLength))
+        smallestLine += " stored_at=\(smallestCleanStored.muscle)"
+        smallestLine += String(format: "@%.1f", smallestCleanStored.midpointDegrees)
+        smallestLine += " registered_figure=1.9339269e-4 registered_column=analytic"
+        smallestLine += " note=the_registered_figure_is_the_ANALYTIC_columns_minimum"
+        print(smallestLine)
+
+        // THE CONTROL THAT CAN FAIL: inverting all 26 registered directions.
+        let inverted = cells.filter {
+            Self.g4Conflicts($0.authoritativeDeltaLength, expectedSign: -$0.expectedSign)
+        }
+        XCTAssertEqual(inverted.count, 630,
+            "G4(g): inverting every registered direction must flip 630 cells to conflicting")
+        XCTAssertEqual(Set(inverted.map(\.anchor)).count, 26,
+            "G4(g): inverting every registered direction must flip 26 of 26 anchors")
+
+        // THE ANKLE FAMILY'S EXTENSION-ONLY PAIRS: the part of the oracle range
+        // that is WIDER than G4(a)'s own registered -30..+20.
+        let ankleExtension = cells.filter {
+            $0.sweep == "ankle_dorsiflexion"
+                && ($0.midpointDegrees < -30.0 || $0.midpointDegrees > 20.0)
+        }
+        XCTAssertEqual(ankleExtension.count, 32,
+            "G4(g): 8 extension-only pairs x 4 ankle anchors")
+        XCTAssertTrue(Dictionary(grouping: ankleExtension, by: \.anchor)
+                        .values.allSatisfy { $0.count == 8 },
+                      "G4(g): 8 extension-only pairs per ankle anchor")
+        XCTAssertEqual(ankleExtension.filter {
+            Self.g4Conflicts($0.authoritativeDeltaLength, expectedSign: $0.expectedSign)
+        }.count, 0, "G4(g): every extension-only ankle cell is correct-signed")
+        XCTAssertGreaterThanOrEqual(ankleExtension.map { abs($0.analyticDeltaLength) }.min() ?? 0,
+                                    1.3096463e-3,
+            "G4(g): the extension-only ankle cells sit at |dL| >= 1.3096463e-3 m")
+
+        // THE CONVENTION PIN, made executable. Under a POINTWISE per-pose
+        // convention the SAME four anchors conflict at DIFFERENT angles; pinning
+        // the pair-midpoint convention is what keeps this gate red on a MODEL
+        // change instead of on a refactor.
+        var pointwiseValue: [String: Double] = [:]
+        var pointwiseExpected: [String: Int] = [:]
+        for cell in cells {
+            let keyA = String(format: "%@@%.1f", cell.anchor, cell.poseADegrees)
+            let keyB = String(format: "%@@%.1f", cell.anchor, cell.poseBDegrees)
+            pointwiseValue[keyA] = cell.pointwiseAtA
+            pointwiseValue[keyB] = cell.pointwiseAtB
+            pointwiseExpected[keyA] = cell.expectedSign
+            pointwiseExpected[keyB] = cell.expectedSign
+        }
+        let pointwiseRegister = Set(pointwiseValue.keys.filter { key -> Bool in
+            guard let value = pointwiseValue[key], let expected = pointwiseExpected[key] else {
+                return false
+            }
+            return Self.g4Conflicts(value, expectedSign: expected)
+        })
+        let enumeratedPointwise: Set<String> = [
+            "elbow_flexion/TRIlong_r@130.0", "elbow_flexion/TRIlong_r@140.0",
+            "elbow_flexion/TRIlong_r@150.0",
+            "elbow_flexion/TRImed_r@130.0", "elbow_flexion/TRImed_r@140.0",
+            "elbow_flexion/TRImed_r@150.0",
+            "elbow_flexion/TRIlat_r@130.0", "elbow_flexion/TRIlat_r@140.0",
+            "elbow_flexion/TRIlat_r@150.0",
+            "knee_flexion/bfsh140_r@135.0", "knee_flexion/bfsh140_r@140.0",
+        ]
+        XCTAssertEqual(pointwiseRegister, enumeratedPointwise,
+            "G4(g): the POINTWISE convention no longer reports 130/140/150 and 135/140 deg — the "
+            + "convention is PINNED precisely so this gate goes red on a model change, not a "
+            + "refactor")
+        XCTAssertEqual(Set(pointwiseRegister.map { $0.components(separatedBy: "@")[0] }),
+                       conflictAnchors,
+            "G4(g): the two conventions must name the SAME four anchors and differ only in angle")
+
+        // THE WRAP-OFF COLUMNS ARE NOT THE REFERENCE, and this is why.
+        let wrapOffRegister = Set(cells.filter {
+            Self.g4Conflicts($0.wrapOffDeltaLength, expectedSign: $0.expectedSign)
+        }.map(\.registerKey))
+        let wrapOffAnchors = Set(cells.filter { wrapOffRegister.contains($0.registerKey) }
+            .map(\.anchor))
+        XCTAssertEqual(wrapOffAnchors.count, 7,
+            "G4(g): substituting the WrapOff columns produces a completely different 7-anchor set")
+        XCTAssertTrue(wrapOffAnchors.isDisjoint(with: conflictAnchors),
+            "G4(g): the WrapOff conflict set must be DISJOINT from the registered one — an "
+            + "implementer reading the wrong field would produce a self-consistent but wrong gate")
+        var wrapOffLine = "MODE-METRIC g4g wrap_off_substitution"
+        wrapOffLine += " anchors=\(wrapOffAnchors.sorted()) cells=\(wrapOffRegister.count)"
+        wrapOffLine += " note=NOT_THE_REFERENCE__printed_only_so_the_ban_is_checkable"
+        print(wrapOffLine)
+
+        let cleanAnchorCount = 26 - conflictAnchors.count
+        // The outcome TOKEN is DERIVED, never hardcoded. This class sets no
+        // `continueAfterFailure`, so it runs at XCTest's default of `true` and a
+        // failed assertion above still reaches this print. A hardcoded
+        // `PASS_NON_VACUOUS` would therefore emit a PASS receipt on a RED run —
+        // and STATUS's round-16 header says in terms that the MODE-VERDICT lines
+        // are the reading. Caught by adversarial review 2026-08-22 before this
+        // gate had ever run.
+        let gRegisterHolds = analyticRegister == enumeratedRegister
+            && storedRegister == enumeratedRegister
+            && conflictAnchors.count == 4 && analyticRegister.count == 7
+            && cleanAnchorCount == 22
+            && clearedAnalytic == cells.count
+            && onSurface.isEmpty
+        let gOutcome = gRegisterHolds
+            ? "PASS_NON_VACUOUS" : "FAILED_AGAINST_REGISTERED_BAR"
+        if !gRegisterHolds {
+            recordFailedGate("G4(g)", measured: "register=\(analyticRegister.sorted()) "
+                             + "anchors_conflicting=\(conflictAnchors.count) "
+                             + "cells=\(analyticRegister.count) clean=\(cleanAnchorCount) "
+                             + "on_surface=\(onSurface.sorted())",
+                             bar: "register == the enumerated 4 anchors / 7 cells / 22 clean, "
+                                  + "both registered columns agreeing, every conflicted muscle "
+                                  + "off the Rule-0 displayed set",
+                             why: "the shipped model's geometry, the oracle fixture, or the "
+                                  + "displayed set moved — which is the ONLY thing this "
+                                  + "regression pin exists to catch")
+        }
+        var gVerdict = "MODE-VERDICT gate=G4(g) outcome=\(gOutcome)"
+        gVerdict += " register=\(analyticRegister.sorted())"
+        gVerdict += " anchors_conflicting=\(conflictAnchors.count)"
+        gVerdict += " cells_conflicting=\(analyticRegister.count)"
+        gVerdict += " anchors_clean=\(cleanAnchorCount) cells_total=\(cells.count)"
+        gVerdict += " cleared_deadband=\(clearedAnalytic)/\(cells.count)"
+        gVerdict += " inverted_control=[630 cells, 26 of 26 anchors]"
+        gVerdict += " registered_bar=[(i) register == enumerated EXACTLY; (ii) both registered"
+        gVerdict += " columns agree; (iii) every conflicted muscle OFF the Rule-0 displayed set]"
+        gVerdict += " known_pass_declared_before_run=true regression_pin=true"
+        gVerdict += " discovery=NONE__a_first_green_reading_may_not_be_quoted_as_evidence"
+        gVerdict += " clause_iii_abstention=VACUOUS-BY-CONSTRUCTION"
+        gVerdict += " port_is_an_input=false provenance=opensim_moment_arms.txt+fd_sidecar"
+        print(gVerdict)
     }
 
     /// G4(c) MAPPING CHECK. Muscles the fixture declares do NOT span the swept
@@ -1633,6 +3063,16 @@ final class MuscleLengthModeTests: XCTestCase {
     /// this fixture face, for the reason proved above, and rehoming it to a
     /// continuous-valued instrument is a separate preregistration that is
     /// deliberately NOT made here.
+    ///
+    /// ─── NAVIGATIONAL ADDENDUM, added 2026-08-22 (round 16 part C). It says
+    /// only WHERE the registered text above now runs and alters NO registered
+    /// statement, bar, number or verdict. ───
+    /// G9(b2) executes in
+    /// `testG9b2SignClassDiscriminationIsSensitiveToAOneSidedSignError`, the
+    /// method immediately below this one. G9(b) — this method — is UNCHANGED:
+    /// it still runs the multiplicative `1 + 1.114 %` control, still reads 0,
+    /// and still pins that 0 as FAILED. SUPERSEDED-NOT-ERASED means both
+    /// methods run, every run, and the red pin below stays red.
     func testG9MirrorCheckIsSensitiveToAOneSidedError() throws {
         let ctx = try context()
         let outcome = try g9Outcome(ctx: ctx, perturbationRelative: 0.01114)
@@ -1706,6 +3146,311 @@ final class MuscleLengthModeTests: XCTestCase {
                               + "x the registered size and scores a different population")
     }
 
+    /// ─── G9(b2) EXECUTION SITE, added 2026-08-22 (round 16 part C). The
+    /// registered clause text on `testG9MirrorCheckIsSensitiveToAOneSidedError`
+    /// is NOT edited; this comment adds only WHICH assertion carries which of
+    /// its registered sentences. ───
+    ///
+    /// G9(b) stays exactly where it is, red-pinned, SUPERSEDED-NOT-ERASED. The
+    /// BAR does not move — `RegisteredBar.g9RequiredDisagreements` is REUSED
+    /// VERBATIM at 1 and re-asserted to be 1 here. The PERTURBATION CLASS does.
+    ///
+    /// THE ALGEBRA, RE-DERIVED AGAINST THE SHIPPED SOURCE ON 2026-08-22 rather
+    /// than quoted (`MLM:` = `BioMotion/Muscle/MuscleLengthMode.swift`):
+    ///
+    ///     jitterMetres(R, σ)    = sqrt( Σⱼ (R[j]·σ[j])² )          MLM:266-274
+    ///     stepDeadbandMetres(R) = max( k·g·jitterMetres(R,σ), F )  MLM:277-282
+    ///     lengthRate(R, dq)     = − Σⱼ R[j]·dq[j]                  MLM:309-314
+    ///     classify(v, D)        = lengthening if v > D;
+    ///                             shortening if v < −D; else third MLM:319-324
+    ///
+    /// WHY G9(b)'s CONTROL CANNOT FAIL, in one line each: under `R → cR` with
+    /// `c = 1 + 0.01114 > 0`, `jitterMetres` is HOMOGENEOUS OF DEGREE 1 so
+    /// `s → c·s`, and `lengthRate` is LINEAR so `v → c·v`; in the `k·g·s` branch
+    /// `D → c·D` and `c·v > c·D ⟺ v > D`, EXACTLY, so the verdict is invariant;
+    /// in the `F` branch `D` is pinned while `|v|` grows, which can only move
+    /// THIRD → DIRECTIONAL and never across the sign, because `sign(c·v) =
+    /// sign(v)` for every `c > 0`.
+    ///
+    /// WHY THIS ONE CAN: under `R → −R`, `jitterMetres` sums SQUARES and
+    /// IEEE-754 negation flips only a sign bit, so `s` and hence `D_L` are
+    /// BIT-IDENTICAL; `lengthRate` is linear and odd and round-to-nearest-even
+    /// is sign-symmetric, so `v_L → −v_L` and `|v_L|` is unchanged. The
+    /// scored/excluded partition is therefore byte-identical to the unperturbed
+    /// run's — which is why bar (ii) is assertable at all — while every
+    /// DIRECTIONAL `modeL` moves to the OPPOSITE directional mode.
+    ///
+    /// WHAT RUNS HERE, one line per registered sentence:
+    ///   * the control NEGATES one leg's moment-arm row in BOTH registered
+    ///     forms — whole row, and the swept entry alone — and their claimed
+    ///     observational equivalence is MEASURED across every field of
+    ///     `G9Outcome`, not argued;
+    ///   * bar (i)  `disagreements >= RegisteredBar.g9RequiredDisagreements`;
+    ///   * bar (ii) `scored` and `excluded` equal the UNPERTURBED run's,
+    ///     asserted against THAT RUN — recomputed here — never a literal;
+    ///   * bar (iii) `disagreements == scored` and
+    ///     `disagreementsOnUnperturbedExcludedSteps == 0`, plus the complement
+    ///     `disagreementsOnUnperturbedScoredSteps == disagreements` so the
+    ///     partition CLOSES rather than being half-read against an unstated
+    ///     denominator;
+    ///   * the PRE-REGISTERED PREDICTION `disagreements = 258 = scored,
+    ///     excluded = 270`, asserted as the literals it was written as and kept
+    ///     SEPARATE from bar (ii) so a red run names which of the two broke.
+    ///
+    /// THE ESCAPE HATCHES ARE NOT DECORATION. All five are printed on the
+    /// MODE-VERDICT line on EVERY run, pass or fail, so no future round can
+    /// quote this gate's reading as something it is not:
+    ///   (h1) the 258 is ARITHMETICALLY FORCED by pins already in this file plus
+    ///        the sign algebra above — this clause's outcome is determinable
+    ///        from the repo WITHOUT running it. A MATCH is therefore NOT new
+    ///        evidence of anything and may not be cited as any. The gate's
+    ///        discriminating power lives ENTIRELY in its failure modes.
+    ///        `discovery=NONE` is printed for exactly that reason.
+    ///   (h2) it reads 0 despite a REAL defect precisely when the perturbation
+    ///        lands UPSTREAM of the left/right split, so `modeR` sees the
+    ///        flipped row too and both flip together — the left/right aliasing
+    ///        G9(a) exists to catch and cannot itself see, because an aliased
+    ///        pair agrees trivially. A 0 here means EITHER `classify` stopped
+    ///        being sign-sensitive OR the harness collapsed the two legs onto
+    ///        ONE row. It NEVER means "the layer is fine", and separating the
+    ///        two causes needs row provenance — an instrument OUTSIDE G9 that
+    ///        this clause does not claim to supply.
+    ///   (h3) the narrower aliasing — `leftMuscles` resolving to the same MODEL
+    ///        muscles, so the rows are numerically equal but still separately
+    ///        perturbed — does NOT hide here, and is NOT closed by here either:
+    ///        this gate would still read 258.
+    ///   (h4) it also reads 0, benignly, if `scored` itself reaches 0. `scored >
+    ///        0` is asserted FIRST and a zero-scored run prints
+    ///        VACUOUS-BY-CONSTRUCTION and is RED, never a pass.
+    ///   (h5) it is deliberately NOT self-fulfilling: the flip of `modeL` is
+    ///        never asserted directly. Only the OBSERVABLE `modeR` vs `modeL`
+    ///        disagreement is scored, so a classifier that stopped telling
+    ///        lengthening from shortening turns this RED instead of passing it.
+    ///
+    /// SCOPE, unchanged from the registration and not to be overread: this
+    /// bounds the SIGN class ONLY. The MAGNITUDE class — a one-sided moment-arm
+    /// error of realistic size — stays UNREACHED by any mode-agreement count on
+    /// this fixture face.
+    func testG9b2SignClassDiscriminationIsSensitiveToAOneSidedSignError() throws {
+        let ctx = try context()
+
+        // The UNPERTURBED reference, RECOMPUTED here so bar (ii) can be asserted
+        // against THAT RUN instead of against a literal.
+        let baseline = try g9Outcome(ctx: ctx, perturbationRelative: 0)
+        // The registered control, in BOTH of its registered forms.
+        let flipped = try g9Outcome(ctx: ctx, perturbationRelative: 0, signFlip: .wholeRow)
+        let sweptOnly = try g9Outcome(ctx: ctx, perturbationRelative: 0,
+                                      signFlip: .sweptEntryOnly)
+
+        // The receipts, printed BEFORE anything is adjudicated so a red run
+        // still leaves a complete reading.
+        let runs: [(String, G9Outcome)] = [("unperturbed_reference", baseline),
+                                           ("whole_row_negation", flipped),
+                                           ("swept_entry_only_negation", sweptOnly)]
+        for (form, o) in runs {
+            var line = "MODE-METRIC g9b2 form=\(form) pairs=\(o.pairs)"
+            line += " scored=\(o.scored) excluded=\(o.excluded)"
+            line += " disagree=\(o.disagreements)"
+            line += " disagree_on_g9a_scored_steps=\(o.disagreementsOnUnperturbedScoredSteps)"
+            line += " disagree_on_g9a_excluded_steps=\(o.disagreementsOnUnperturbedExcludedSteps)"
+            line += " detail=\(o.detail.prefix(6).joined(separator: ","))"
+            print(line)
+        }
+
+        // The PREMISE the 258 derivation rests on. PRINTED, not gated: its gate
+        // is G9(a) itself, in `testG9BilateralMirrorCoherence`. Adding a second
+        // copy of G9(a)'s bar here would be an unregistered bar.
+        var premise = "MODE-METRIC g9b2 premise=g9a_unperturbed"
+        premise += " disagreements=\(baseline.disagreements)"
+        premise += " scored=\(baseline.scored) excluded=\(baseline.excluded)"
+        premise += " note=the_258_prediction_is_FORCED_by_this_0_plus_the_sign_algebra__see_h1"
+        print(premise)
+
+        // (h4), asserted FIRST: a 0-disagreement reading on a 0-step population
+        // is not a measurement, and must not be counted as one.
+        guard flipped.scored > 0, sweptOnly.scored > 0 else {
+            var vac = "MODE-VERDICT gate=G9(b2) outcome=VACUOUS-BY-CONSTRUCTION"
+            vac += " population=\(flipped.scored)"
+            vac += " swept_entry_population=\(sweptOnly.scored)"
+            vac += " note=h4__0_==_0_scores_NOTHING__NOT_a_pass__NOT_evidence_the_mirror_check"
+            vac += "_is_sign_sensitive"
+            print(vac)
+            XCTFail("G9(b2) NON-VACUITY (h4): the sign-flipped run scored no steps — RED, not "
+                    + "skipped, and not a pass")
+            return
+        }
+
+        // The adjudication, computed before it is printed.
+        let barI = flipped.disagreements >= RegisteredBar.g9RequiredDisagreements
+        let barII = flipped.scored == baseline.scored && flipped.excluded == baseline.excluded
+        let barIIIa = flipped.disagreements == flipped.scored
+        let barIIIb = flipped.disagreementsOnUnperturbedExcludedSteps == 0
+        let barIIIc = flipped.disagreementsOnUnperturbedScoredSteps == flipped.disagreements
+        let flippedOnScored = flipped.disagreementsOnUnperturbedScoredSteps
+        let flippedOnExcluded = flipped.disagreementsOnUnperturbedExcludedSteps
+        let sweptOnScored = sweptOnly.disagreementsOnUnperturbedScoredSteps
+        let sweptOnExcluded = sweptOnly.disagreementsOnUnperturbedExcludedSteps
+        var formsAgree = sweptOnly.scored == flipped.scored
+        formsAgree = formsAgree && sweptOnly.excluded == flipped.excluded
+        formsAgree = formsAgree && sweptOnly.disagreements == flipped.disagreements
+        formsAgree = formsAgree && sweptOnScored == flippedOnScored
+        formsAgree = formsAgree && sweptOnExcluded == flippedOnExcluded
+        var predicted = flipped.scored == 258
+        predicted = predicted && flipped.disagreements == 258
+        predicted = predicted && flipped.excluded == 270
+
+        var failing: [String] = []
+        if !barI { failing.append("bar_i_disagreements_below_the_registered_minimum") }
+        if !barII { failing.append("bar_ii_population_left_the_unperturbed_run") }
+        if !barIIIa { failing.append("bar_iii_disagreements_!=_scored") }
+        if !barIIIb { failing.append("bar_iii_disagreement_on_a_step_G9(a)_excludes") }
+        if !barIIIc { failing.append("bar_iii_partition_does_not_close") }
+        if !formsAgree { failing.append("the_two_registered_forms_are_not_observationally_equal") }
+        if !predicted { failing.append("the_preregistered_258_258_270_prediction") }
+        let outcome = failing.isEmpty ? "PASS_NON_VACUOUS" : "FAILED_AGAINST_REGISTERED_BAR"
+
+        var verdict = "MODE-VERDICT gate=G9(b2) outcome=\(outcome) class=SIGN"
+        verdict += " pairs=\(flipped.pairs) scored=\(flipped.scored)"
+        verdict += " excluded=\(flipped.excluded) disagree=\(flipped.disagreements)"
+        verdict += " unperturbed_scored=\(baseline.scored)"
+        verdict += " unperturbed_excluded=\(baseline.excluded)"
+        verdict += " swept_entry_only=[scored=\(sweptOnly.scored)"
+        verdict += " excluded=\(sweptOnly.excluded) disagree=\(sweptOnly.disagreements)]"
+        verdict += " partition=[on_g9a_scored=\(flipped.disagreementsOnUnperturbedScoredSteps)"
+        verdict += " on_g9a_excluded=\(flipped.disagreementsOnUnperturbedExcludedSteps)"
+        verdict += " denominator=\(flipped.disagreements)"
+        verdict += " vacuous=\(flipped.disagreements == 0)]"
+        verdict += " failing=\(failing)"
+        verdict += " registered_bar=[(i) disagreements >= "
+        verdict += "\(RegisteredBar.g9RequiredDisagreements), the G9(b) constant REUSED VERBATIM;"
+        verdict += " (ii) scored and excluded EQUAL the unperturbed run's, asserted against THAT"
+        verdict += " RUN; (iii) disagreements == scored, 0 on steps G9(a) excludes, partition"
+        verdict += " closes]"
+        verdict += " prediction=[disagreements=258=scored, excluded=270]"
+        verdict += " supersedes=[G9(b), the multiplicative 1.114 % control — FAILED,"
+        verdict += " SUPERSEDED-NOT-ERASED, still pinned red in"
+        verdict += " testG9MirrorCheckIsSensitiveToAOneSidedError]"
+        verdict += " determinable_without_running=true discovery=NONE"
+        verdict += " h1=[the 258 is ARITHMETICALLY FORCED by the pins already in this file plus"
+        verdict += " the sign algebra; a MATCHING reading is NOT new evidence of anything and"
+        verdict += " may never be cited as any; this clause's discriminating power lives"
+        verdict += " ENTIRELY in its FAILURE modes]"
+        verdict += " h2=[a 0 reading NEVER means the layer is fine — it means EITHER classify"
+        verdict += " stopped being sign-sensitive OR the harness collapsed the two legs onto ONE"
+        verdict += " row, i.e. the left/right aliasing G9(a) exists to catch and cannot itself"
+        verdict += " see; separating those two causes needs row provenance, an instrument"
+        verdict += " OUTSIDE G9 that this clause does not supply]"
+        verdict += " h3=[does NOT close G9(a)'s aliasing hole either: numerically equal but"
+        verdict += " separately perturbed rows still read 258]"
+        verdict += " h4=[scored > 0 asserted FIRST; a 0-scored run prints"
+        verdict += " VACUOUS-BY-CONSTRUCTION and is RED, never a pass]"
+        verdict += " h5=[not self-fulfilling: the modeL flip is NEVER asserted directly, only"
+        verdict += " the OBSERVABLE modeR vs modeL disagreement is scored]"
+        verdict += " claims=[the mirror check is sensitive to the SIGN class]"
+        verdict += " claims_not=[the MAGNITUDE class, which stays UNREACHED on this fixture face]"
+        verdict += " first_measurement=true provenance=FullBody.osim+opensim_moment_arms.txt"
+        print(verdict)
+
+        if !failing.isEmpty {
+            recordFailedGate("G9(b2)",
+                             measured: "sign-flipped scored=\(flipped.scored) "
+                                       + "excluded=\(flipped.excluded) "
+                                       + "disagree=\(flipped.disagreements) against unperturbed "
+                                       + "scored=\(baseline.scored) "
+                                       + "excluded=\(baseline.excluded); swept-entry form "
+                                       + "scored=\(sweptOnly.scored) "
+                                       + "disagree=\(sweptOnly.disagreements); failing=\(failing)",
+                             bar: "(i) >= \(RegisteredBar.g9RequiredDisagreements) disagreement; "
+                                  + "(ii) scored and excluded equal the unperturbed run's; "
+                                  + "(iii) disagreements == scored and 0 on steps G9(a) excludes",
+                             why: "the SIGN class is the one the frozen registration assigns to "
+                                  + "G9 and the one the 173-pose cylinder-wrap receipt actually "
+                                  + "produced; a reading other than disagreements == scored means "
+                                  + "EITHER classify stopped being sign-sensitive OR the harness "
+                                  + "collapsed the two legs onto one row (h2) — it never means "
+                                  + "the layer is fine")
+        }
+
+        // ─── NON-VACUITY (h4) and the population, asserted before any bar. ───
+        XCTAssertGreaterThan(flipped.scored, 0,
+            "G9(b2) NON-VACUITY: the sign-flipped run scored no steps — RED, not skipped")
+        XCTAssertGreaterThan(sweptOnly.scored, 0,
+            "G9(b2) NON-VACUITY: the swept-entry form scored no steps — RED, not skipped")
+        XCTAssertEqual(flipped.pairs, 16, "the 16 displayed bilateral pairs moved")
+
+        // ─── BAR (i): REUSED VERBATIM from G9(b). The value is re-asserted here
+        // so a silent edit to the constant turns BOTH gates red, not one. ───
+        XCTAssertEqual(RegisteredBar.g9RequiredDisagreements, 1,
+            "G9(b2) reuses G9(b)'s bar VERBATIM: the perturbed re-run must disagree at least once")
+        XCTAssertGreaterThanOrEqual(flipped.disagreements,
+                                    RegisteredBar.g9RequiredDisagreements,
+            "G9(b2)(i): the SIGN-class control produced no disagreement. Per (h2) this NEVER "
+            + "means the layer is fine — it means EITHER classify stopped being sign-sensitive "
+            + "OR the harness collapsed the two legs onto one moment-arm row")
+
+        // ─── BAR (ii): against THAT RUN, never against a literal, so the
+        // population is comparable with G9(a)'s BY CONSTRUCTION. ───
+        XCTAssertEqual(flipped.scored, baseline.scored,
+            "G9(b2)(ii): the sign flip moved the SCORED population off the unperturbed run's — "
+            + "it cannot, because jitterMetres sums squares and IEEE-754 negation only flips a "
+            + "sign bit, so every deadband is bit-identical")
+        XCTAssertEqual(flipped.excluded, baseline.excluded,
+            "G9(b2)(ii): the sign flip moved the EXCLUDED population off the unperturbed run's")
+
+        // ─── BAR (iii): coherence, with the partition CLOSED on both sides so
+        // the 0 half is read against a stated denominator. ───
+        XCTAssertEqual(flipped.disagreements, flipped.scored,
+            "G9(b2)(iii): under a sign flip EVERY scored step must disagree, because OR-scoring "
+            + "plus G9(a)'s pinned 0 forces both legs to the SAME directional mode first")
+        XCTAssertEqual(flipped.disagreementsOnUnperturbedExcludedSteps, 0,
+            "G9(b2)(iii): a disagreement landed on a step G9(a) EXCLUDES, so the partition is "
+            + "not byte-identical to the unperturbed run's — read against a denominator of "
+            + "\(flipped.disagreements) disagreements, NOT against an empty population")
+        XCTAssertEqual(flipped.disagreementsOnUnperturbedScoredSteps, flipped.disagreements,
+            "G9(b2)(iii): the partition does not close — this is the NON-VACUOUS half of the "
+            + "same split and it must carry all \(flipped.disagreements) of them")
+
+        // ─── BOTH REGISTERED FORMS, equivalence MEASURED rather than argued. ───
+        XCTAssertEqual(sweptOnly.scored, flipped.scored,
+            "G9(b2): negating the swept entry alone is registered as observationally IDENTICAL "
+            + "to negating the whole row on this single-DOF drive; the scored populations differ")
+        XCTAssertEqual(sweptOnly.excluded, flipped.excluded,
+            "G9(b2): the two registered forms disagree on the EXCLUDED population")
+        XCTAssertEqual(sweptOnly.disagreements, flipped.disagreements,
+            "G9(b2): the two registered forms disagree on the DISAGREEMENT count — dq has "
+            + "exactly one non-zero entry, so they cannot")
+        XCTAssertEqual(sweptOnly.disagreementsOnUnperturbedScoredSteps,
+                       flipped.disagreementsOnUnperturbedScoredSteps,
+            "G9(b2): the two registered forms split their disagreements differently")
+        XCTAssertEqual(sweptOnly.disagreementsOnUnperturbedExcludedSteps,
+                       flipped.disagreementsOnUnperturbedExcludedSteps,
+            "G9(b2): the two registered forms split their disagreements differently")
+
+        // ─── THE PRE-REGISTERED PREDICTION, written before the run, asserted as
+        // the literals it was written as. SEPARATE from bar (ii) so a red run
+        // names which of the two broke. Per (h1) a MATCH here is not evidence. ───
+        XCTAssertEqual(flipped.scored, 258,
+            "G9(b2) PREDICTION: 33 steps x 16 pairs = 528 = 258 scored + 270 excluded, and the "
+            + "sign flip leaves that partition byte-identical")
+        XCTAssertEqual(flipped.disagreements, 258,
+            "G9(b2) PREDICTION: disagreements = 258 = scored")
+        XCTAssertEqual(flipped.excluded, 270,
+            "G9(b2) PREDICTION: excluded = 270")
+    }
+
+    /// The SIGN-CLASS perturbation G9(b2) registers, in the TWO observationally
+    /// equivalent forms the registration names. `.unperturbed` compiles to
+    /// `break`, so G9(a)'s and G9(b)'s existing call sites are unchanged.
+    private enum G9SignFlip {
+        /// No sign perturbation. The default; what G9(a) and G9(b) both use.
+        case unperturbed
+        /// `R_L → −R_L`. `jitterMetres` sums squares, so `D_L` is BIT-IDENTICAL.
+        case wholeRow
+        /// Negate ONLY the column of the coordinate this sweep drives. `dq` has
+        /// exactly one non-zero entry, so `lengthRate` sees the same flip.
+        case sweptEntryOnly
+    }
+
     private struct G9Outcome {
         var pairs = 0
         var scored = 0
@@ -1744,7 +3489,8 @@ final class MuscleLengthModeTests: XCTestCase {
     /// `disagreementsOnUnperturbedExcludedSteps` records how much of its
     /// disagreement count comes from steps G9(a) never scores.
     private func g9Outcome(ctx: ModelContext, perturbationRelative: Double,
-                           additiveRelative: Double = 0) throws -> G9Outcome {
+                           additiveRelative: Double = 0,
+                           signFlip: G9SignFlip = .unperturbed) throws -> G9Outcome {
         let table = ctx.table
         let rightMuscles = ctx.displayedMuscles.filter { $0.hasSuffix("_r") }.sorted()
         var outcome = G9Outcome()
@@ -1773,6 +3519,10 @@ final class MuscleLengthModeTests: XCTestCase {
         for sweep in sweeps {
             let ri = try XCTUnwrap(ctx.dofNames.firstIndex(of: sweep.right))
             let li = try XCTUnwrap(ctx.dofNames.firstIndex(of: sweep.left))
+            // G9(b2)'s swept-entry form needs the column of the ONE coordinate
+            // this sweep drives. Hoisted out of the inner loop; `nil` here is a
+            // harness defect, not a model finding, and is reported as such.
+            let sweptLeftIndex = leftCoords.firstIndex(of: sweep.left)
             let from = sweep.from * .pi / 180.0
             let to = sweep.to * .pi / 180.0
             let count = max(2, Int(((to - from) / step).rounded()) + 1)
@@ -1800,6 +3550,22 @@ final class MuscleLengthModeTests: XCTestCase {
                     if additiveRelative != 0 {
                         let norm = rowL.reduce(0) { $0 + $1 * $1 }.squareRoot()
                         rowL = rowL.map { $0 - (($0 >= 0 ? 1.0 : -1.0) * additiveRelative * norm) }
+                    }
+                    // G9(b2)'s SIGN class. `.unperturbed` is `break`, so G9(a)'s
+                    // and G9(b)'s call sites are byte-identical to what they were.
+                    switch signFlip {
+                    case .unperturbed:
+                        break
+                    case .wholeRow:
+                        rowL = rowL.map { -$0 }
+                    case .sweptEntryOnly:
+                        guard let swept = sweptLeftIndex else {
+                            XCTFail("G9(b2): \(sweep.left) is not in the left span union, so the "
+                                    + "swept-entry form has nothing to negate — a HARNESS defect, "
+                                    + "not a reading about the layer")
+                            return outcome
+                        }
+                        rowL[swept] = -rowL[swept]
                     }
                     let dR = MuscleLengthModeClassifier.stepDeadbandMetres(
                         momentArmRow: rowR, jointNoiseRadians: noise,
