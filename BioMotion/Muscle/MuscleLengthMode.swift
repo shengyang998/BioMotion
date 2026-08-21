@@ -25,6 +25,45 @@ import Foundation
 /// measured number pinned to its receipt, FAIL/NOT-SHIPPED verdict asserted
 /// beside it. Only the way the battery RECORDS its refusal changed.
 ///
+/// **Successor lineage, registered 2026-08-21 (also OUTSIDE the frozen text
+/// above, and RED-FIRST: every clause below was written before the measurement
+/// that adjudicates it).** No bar moved, no constant moved, no code path
+/// changed and no test method was added by the commit that recorded these; the
+/// clause TEXT lives above the three methods it governs in
+/// `BioMotionTests/MuscleLengthModeTests.swift`. Three superseded clauses stay
+/// SUPERSEDED-NOT-ERASED at FAILED and none of them may ever be reported as
+/// passing:
+///
+/// 1. **G4(a) → G4(f) + G4(g).** G4(a) conflated "the port reproduces the
+///    shipped model" with "the shipped model reproduces the textbook", and only
+///    the second was falsified. G4(f) scores port-vs-model fidelity over all 26
+///    anchors on the oracle's own sweep poses; G4(g) pins the MODEL-ANCHOR
+///    CONFLICT REGISTER — exactly 4 anchors / 7 cells (`TRIlong_r`, `TRImed_r`,
+///    `TRIlat_r` at elbow midpoints 135.0 and 145.0 deg; `bfsh140_r` at knee
+///    midpoint 137.5 deg), with all 22 other anchors EMPTY over the full oracle
+///    range — so the conflict is a falsifiable fact rather than an excuse. The
+///    product-surface population restriction was REFUSED as laundering, and
+///    G4(g)'s abstention branch is declared VACUOUS-BY-CONSTRUCTION today.
+/// 2. **G9(b) → G9(b2).** G9(b)'s control was inert BY ALGEBRA, not by weakness:
+///    `jitterMetres` is homogeneous of degree 1 in the moment-arm row and
+///    `lengthRate` is linear in it, so a uniform positive row scale leaves both
+///    `sign(v)` and `|v| > D` exactly invariant at ANY size. G9(b2) replaces the
+///    CLASS, not the constant, with a one-sided SIGN flip — the class this very
+///    doc comment names two paragraphs above in "WHAT D DOES NOT CONTAIN" —
+///    and pre-registers its own escape hatches, including the aliasing under
+///    which it would read 0 despite a real defect.
+/// 3. **G3(iv-b) → G3(iv-b2).** "All 12 hip-spanning capsules suppressed" was
+///    true only because a 5-marker drive left the pelvis with 0.000000000 range,
+///    so Rule 2 suppressed the block by construction. Under a hip-identifying
+///    drive that clause CAN NEVER PASS AGAIN — the only route to a pass is
+///    deleting the hip markers and returning to the vacuous 5-marker
+///    populations — so it stands FAILED PERMANENTLY. G3(iv-b2) asserts EARNED
+///    ADMISSION instead: an admitted hip capsule must clear the closed-form
+///    marker-sensitivity floor `‖J·eⱼ‖₂ ≥ √0.75·sigmaVisible` implied by Rule 1
+///    but computed through an independent path, every suppression must name its
+///    witness coordinate, and the clause is bidirectional with an explicit
+///    anti-vacuity arm.
+///
 /// # The claim
 ///
 /// For an analysed **offline** clip, for each admitted muscle and each admitted

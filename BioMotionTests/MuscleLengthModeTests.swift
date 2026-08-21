@@ -612,6 +612,158 @@ final class MuscleLengthModeTests: XCTestCase {
     ///
     /// Receipt: `/tmp/biomotion-tests.4Eb2JD/subset/xcodebuild.log`,
     /// `grep 'MODE-METRIC g3iv'`. PROVENANCE: macOS Vision, INTERIM.
+    ///
+    /// ─── SUCCESSOR PRE-REGISTRATION, written 2026-08-21, RED-FIRST, BEFORE the
+    /// measurement that adjudicates it ───
+    ///
+    /// **G3(iv-b) stands FAILED PERMANENTLY and is SUPERSEDED-NOT-ERASED BY
+    /// G3(iv-b2).** The text above is not edited and the pins are not
+    /// re-baselined. Recorded permanently, because it changes how every future
+    /// round must read this gate: **(iv-b) CAN NEVER PASS AGAIN UNDER A
+    /// HIP-IDENTIFYING DRIVE.** It was registered against a 5-marker drive in
+    /// which `hips_joint` had range 0.000000000 on all three axes, so Rule 2
+    /// (unmeasured) and Rule 1 (fail-closed) suppressed the whole hip block BY
+    /// CONSTRUCTION and the clause was satisfied on a population that could not
+    /// have done anything else. With twenty markers the hip coordinates ARE
+    /// identified, and admitting them is the mask BEHAVING CORRECTLY. The ONLY
+    /// way to make (iv-b) pass again is to delete the hip markers and return to
+    /// the vacuous 5-marker populations this round exists to escape — which is
+    /// why it is not a repairable gate, must never be reported as passing, and
+    /// stands FAILED for good. What it genuinely guarded is not "hips are
+    /// suppressed" but "THE MASK NEVER COLOURS A CAPSULE WHOSE MOTION THE DRIVE
+    /// CANNOT RESOLVE"; that invariant is what the successor carries, in a form
+    /// that survives a change of drive.
+    ///
+    /// **G3(iv-b2) HIP ADMISSION IS EARNED, PER FRAME, AND EVERY SUPPRESSION
+    /// NAMES ITS WITNESS.**
+    ///
+    /// (b2-i) EVIDENCE FLOOR — closed form, INDEPENDENT CODE PATH. For every
+    /// hip-spanning capsule ADMITTED on a clip, for every hip coordinate `j` it
+    /// spans, at EVERY warmed frame, the marker-Jacobian column norm
+    /// `‖J(q)·eⱼ‖₂` — summed straight down ONE COLUMN of the same
+    /// `markerPositionJacobian(forMarkerNames:)` bytes the mask consumed — must
+    /// satisfy
+    ///     ‖J(q)·eⱼ‖₂  ≥  √0.75 · sigmaVisible  =  8.660254037844386e-3 m/rad.
+    /// THIS INTRODUCES NO NEW CONSTANT AND IS NOT A TAUTOLOGY. It is IMPLIED by
+    /// Rule 1 and re-derived here from the shipped source rather than quoted:
+    /// `MuscleObservabilityMask.nullFractions` (MOM:286-322 — every `MOM:` here is a
+    /// line in `BioMotion/Muscle/MuscleObservabilityMask.swift`) accumulates
+    /// `retainedⱼ = Σ_{λᵢ ≥ sigmaVisible²} vᵢ[j]²` with `vᵢ = Jᵀuᵢ/σᵢ` and
+    /// returns `nullFractionⱼ = √(clamp(1 − retainedⱼ, 0, 1))`. IDENTIFIED means
+    /// `nullFractionⱼ ≤ identifiedNullFractionCeiling` (MOM:111) `=
+    /// PostureFindings.depthSuppressionFraction = 0.5`
+    /// (`PostureFindings.swift:75`), hence `retainedⱼ ≥ 0.75`. Since
+    /// `vᵢ[j] = (uᵢ · J·eⱼ)/σᵢ` and `{uᵢ}` is orthonormal, Bessel gives
+    /// `retainedⱼ ≤ ‖J·eⱼ‖² / sigmaVisible²`, so identified ⇒
+    /// `‖J·eⱼ‖ ≥ √0.75 · sigmaVisible`. `sigmaVisible` stays 1.0e-2 m/rad (MOM:115)
+    /// and the crossover stays 0.5; `√0.75 = 0.8660254037844386` is their
+    /// CONSEQUENCE, not a lever, and it may not be tuned. Sanity check that the
+    /// floor is not itself over-strict: 8.660254e-3 m/rad sits BELOW
+    /// `mustNotMaskColumnNormMetresPerRadian = 0.0343` (MOM:119), the measured
+    /// column norm of the coordinate this repo proved must NOT be masked.
+    /// IT IS A NECESSARY CONDITION, NOT A SUFFICIENT ONE, and that is exactly
+    /// what makes it a DIFFERENTIAL test of two computations rather than a
+    /// re-execution of the mask: the column norm never touches the Gram/Jacobi
+    /// route. It goes RED on an eigenvector-indexing defect, a bad `retained`
+    /// accumulation, a mis-applied [0,1] clamp, or on Rule 1's own registered
+    /// defect (b) — "it used the 20-marker set when the analysed clip supplies a
+    /// different one" — because the columns are taken from the CLIP's own
+    /// `fixture.markerNames`. That is precisely the silent over-admission the
+    /// superseded clause used to make impossible by accident.
+    /// NON-VACUOUS TODAY, checked before registering: the admitted hip-capsule
+    /// population is 6 on `video_012` and 12 on `video_015` (12 hip capsules
+    /// minus the 6/0 suppressed pinned at :755-756), so neither clip scores this
+    /// arm on an empty set. If a future drive admits none, the arm must print
+    /// VACUOUS-BY-CONSTRUCTION and must not be counted as a pass.
+    ///
+    /// (b2-ii) FAIL-CLOSED PERSISTENCE AND A NAMED WITNESS. Suppression stays
+    /// FRAME-EXHAUSTIVE: a hip coordinate counts as identified for the clip only
+    /// if it is identified at EVERY warmed frame, and no "identified on ≥ X % of
+    /// frames" lever may be introduced by this or any successor. Additionally,
+    /// every SUPPRESSED hip capsule must be ATTRIBUTABLE: the gate prints, per
+    /// suppressed capsule, the SPECIFIC coordinate that suppressed it plus the
+    /// worst warmed-frame index and that frame's `nullFraction`, and asserts that
+    /// the suppressed-hip set is EXACTLY the set of hip capsules spanning
+    /// `clipUnidentifiedLowerLimb ∪ unmeasured`.
+    /// NOT A TAUTOLOGY, and the reason is a measured asymmetry in the shipped
+    /// code rather than an argument: `MuscleObservabilityMask.isSuppressed`
+    /// (MOM:430-433) reads the FULL `identified` set over all model coordinates,
+    /// while `clipUnidentifiedLowerLimb` is restricted to the model's LEADING
+    /// 20-coordinate lower-limb block (`SolvedPoseFixture.swift:247-268`). A hip
+    /// capsule suppressed by a coordinate OUTSIDE that block therefore turns this
+    /// clause RED. REGISTERED CONSEQUENCE, before the run: that red is
+    /// ADJUDICATED, never absorbed and never repaired by widening the witness
+    /// set — it would mean the hip block is being greyed from outside the lower
+    /// limb, which is a finding.
+    /// The present asymmetry — `video_012` suppressing 6 of 12 while `video_015`
+    /// suppresses 0 of 12, on the SAME model and the SAME pipeline (:755-756) —
+    /// must resolve to a NAMED coordinate or this clause FAILS. A mask that greys
+    /// half a block for no nameable reason is not a derivation, and this is the
+    /// clause that catches it.
+    ///
+    /// (b2-iii) ANTI-VACUITY, INVERTED ACCEPTANCE PRESERVED. On the same
+    /// 20-marker drive and the SAME warmed frames, every one of the 72
+    /// coordinates the 20-marker Jacobian leaves identically zero — the same list
+    /// G3(ii) already asserts against — must be UNIDENTIFIED at EVERY warmed
+    /// frame. G3(ii) asserts this at ONE static `neutral` pose using the
+    /// `JointMapping.primary` marker list; this extends it to the CLIP'S OWN
+    /// poses and the CLIP'S OWN marker list, which is where the mask actually
+    /// runs. That population is 72 and non-empty, so this arm is a real
+    /// measurement. Its companion arm — "every capsule spanning one of those 72
+    /// must remain suppressed" — may be scored on an EMPTY population, and that
+    /// possibility is declared rather than discovered: all 72 are trunk and
+    /// rib-cage coordinates (`Abs_*` and `T*_r*_{X,Y,Z}`, re-read from the list on
+    /// 2026-08-21), NOT ONE of them is a hip, knee or ankle coordinate, and the
+    /// only declared capsules that reach the trunk at all are `ercspn_r/_l` and
+    /// `psoas_r/_l`. Whether any of those four SPANS one of the 72 is deliberately
+    /// NOT asserted here, because it has not been measured; the arm must PRINT its
+    /// population size, and if that size is zero it must print
+    /// VACUOUS-BY-CONSTRUCTION and MUST NOT be counted as a pass.
+    /// `framesWithEmptyUnidentifiedLowerLimb == 0` from G3(iv-a) is retained
+    /// UNCHANGED, and "fires on 0" remains DISPROOF.
+    ///
+    /// (b2-iv) BIDIRECTIONAL ADMISSION CENSUS. `hip_suppressed` and `admitted`
+    /// stay pinned per clip to the receipt they are read from (`video_012`: 6/12
+    /// suppressed, 14 admitted, 112 warmed; `video_015`: 0/12 suppressed, 24
+    /// admitted, 112 warmed — :755-756) in BOTH directions: a census that DRIFTS
+    /// and a census that IMPROVES both turn this RED and force a fresh
+    /// adjudication instead of a silent re-baseline. PROVENANCE, binding: these
+    /// fixtures carry `bbox_source macos_vision INTERIM`, so the census pins are
+    /// provisional ON THE FIXTURES and must be RE-PINNED — not re-interpreted —
+    /// when device-grade fixtures land.
+    ///
+    /// ⚠️ **EXPECTED VERDICTS, DECLARED BEFORE THE RUN (adversarial review,
+    /// 2026-08-21), so that no arm of this clause is quoted as evidence it cannot
+    /// supply:** (b2-i) is a THEOREM under the shipped mask, not an open
+    /// measurement of hip admissibility — `clipIdentifiedCoordinates`
+    /// (MOM:387-399) is a fail-closed AND over every warmed frame and
+    /// `isIdentified` is `nullFraction <= 0.5` (MOM:383-385), so ADMITTED already
+    /// forces retained ≥ 0.75 and hence the floor. Its only reachable failure
+    /// modes are an eigen-route implementation defect and a marker-set mismatch;
+    /// it is EXPECTED TO PASS and its value is as an independent-code-path guard
+    /// against exactly those two. (b2-iv) re-pins numbers already asserted at
+    /// :755-756 and is likewise EXPECTED TO PASS. The GENUINELY UNDETERMINED
+    /// content of this clause — the part that can teach us something on its first
+    /// run — is (b2-ii)'s exact-set equality and (b2-iii)'s 72-coordinate primary
+    /// arm. A green G3(iv-b2) that rests only on (b2-i) and (b2-iv) is not
+    /// progress.
+    ///
+    /// BIDIRECTIONALITY, stated explicitly because it is the property the
+    /// superseded clause lacked: G3(iv-b2) fails if something the drive CANNOT
+    /// resolve is ADMITTED (b2-i, the necessary condition, scored on the admitted
+    /// hip capsules), AND it fails if something the drive DOES resolve is
+    /// SUPPRESSED (b2-ii, exact-set equality against the witness set). Neither
+    /// direction can be satisfied by an empty census, because (b2-iv) pins the
+    /// admitted and suppressed counts in both directions: admitting nothing is
+    /// RED and admitting everything is RED.
+    ///
+    /// WHAT THIS SUCCESSOR ASSERTS ABOUT HIPS UNDER A DRIVE THAT IDENTIFIES THEM:
+    /// not that they are suppressed, and not merely that they may be admitted —
+    /// that each admission is EARNED at every warmed frame by measurable marker
+    /// sensitivity to that SPECIFIC coordinate, and that every non-admission
+    /// names the coordinate that caused it. WHAT IS NOT PRESERVED, deliberately:
+    /// the constant "12 of 12", which was an artefact of a pelvis that never
+    /// moved and never was a statement about hips.
     func testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips() throws {
         // The MEASURED outcome, pinned to the receipt.
         let pinned: [String: (warmed: Int, emptyFrames: Int, hipCapsules: Int,
@@ -857,6 +1009,212 @@ final class MuscleLengthModeTests: XCTestCase {
     /// richer fixtures — a production-grade 20-marker solved-pose clip — plus a
     /// fresh adjudication (and, for this gate specifically, the owner-level
     /// registration decision in STATUS next-step 42).
+    ///
+    /// ─── SUCCESSOR PRE-REGISTRATION, written 2026-08-21, RED-FIRST, BEFORE the
+    /// measurement that adjudicates it ───
+    ///
+    /// **G4(a) stands FAILED and is SUPERSEDED-NOT-ERASED BY G4(f) + G4(g).** The
+    /// text above is not edited, the verdict is not re-adjudicated, the pins are
+    /// not re-baselined, and `RegisteredBar.g4DirectionMatch` keeps the value
+    /// 0.95. The registered sweep endpoints (knee 0→140, ankle −30→20, hip
+    /// −20→120, elbow 0→150 deg — `g4Sweeps`, :954-972), the 26-anchor set and
+    /// the frozen exclusion list are NOT touched by this successor. Shortening a
+    /// sweep after seeing a failure is the laundering move the registration froze
+    /// out; it is refused here in writing, and nothing below may be read as
+    /// making it.
+    ///
+    /// WHY A SUCCESSOR EXISTS. G4(a) asserts ONE proposition on TWO independent
+    /// premises: (1) the PORT reproduces the SHIPPED MODEL's direction, and
+    /// (2) the SHIPPED MODEL reproduces the TEXTBOOK direction. The measurement
+    /// falsified (2) and left (1) UNTESTED — `g4Sweep` computes moment arms
+    /// through `ctx.momentArms` (:1343-1354) and never opens the oracle at all. A
+    /// gate whose two premises cannot fail separately cannot attribute its own
+    /// failure. G4(f) and G4(g) split them so they fail separately and mean
+    /// different things. NOTHING G4(a) GUARDED IS DROPPED: its own pins keep the
+    /// constructed-pose measurement, G4(f) adds the port-vs-model proposition it
+    /// never had, and G4(g) carries the textbook proposition for all 26 anchors —
+    /// as an EMPTY register for 22 of them and as a pinned, enumerated model
+    /// defect for the other 4.
+    ///
+    /// NOT REGISTERED, AND WHY, recorded so it is not silently re-proposed:
+    /// restricting G4's population to the anchors on the Rule-0 product surface.
+    /// All four failing anchors are ALREADY off that surface —
+    /// `MuscleOverlay.muscleDefs` declares 26 capsules (12 `bilateral(...)` calls
+    /// plus `ercspn_r`/`ercspn_l`, MuscleOverlay.swift:134-247) and not one of
+    /// them is a triceps or a `bfsh`, and Rule 0's family expansion matches on an
+    /// EXACT stem (MuscleObservabilityMask.swift:248-266), so `bflh` can never
+    /// reach `bfsh` — therefore that clause reads 1.000000 BEFORE it runs.
+    /// Narrowing a failing gate's population to the subset where it already
+    /// passes is laundering however it is disclosed, and it is refused. Also
+    /// refused: swapping the anchor for a muscle the model does honour, which
+    /// selects anchors FOR agreement and would erase the one product-relevant
+    /// thing this round measured — that the shipped model is anatomically wrong
+    /// somewhere.
+    ///
+    /// **G4(f) PORT FIDELITY, FULL 26-ANCHOR SET.** Population: ALL 26 registered
+    /// anchors, displayed or not, scored on the ORACLE'S OWN sweep poses in
+    /// `BioMotionTests/Fixtures/opensim_moment_arms.txt` — the oracle holds only
+    /// its own poses, so this gate cannot be run on G4's constructed ones. It
+    /// asserts that the PORT's computed direction agrees with the MODEL's own
+    /// direction, cell by cell. It carries NO textbook claim and cannot be
+    /// repaired by editing an anchor: it fails if and only if the port stops
+    /// reproducing the shipped model.
+    /// Registered construction, re-derived by hand from the fixture's own pose
+    /// rows on 2026-08-21 and pinned here before the run:
+    ///   * grids — knee 29 poses 0..140 deg step 5.0 (28 adjacent pairs); hip 29
+    ///     poses −20..120 step 5.0 (28); ankle 29 poses −40..+30 step 2.5 (28);
+    ///     elbow 16 poses 0..150 step 10.0 (15). 10·28 + 4·28 + 5·28 + 7·15 = 637
+    ///     scored anchor-pairs. The shoulder sweep carries no registered anchor
+    ///     and stays excluded, exactly as frozen at :950-953.
+    ///   * the oracle's BASE POSES differ from G4's `neutral` — its elbow sweep
+    ///     carries `shoulder_elv_r = 30 deg`, its knee sweep `hip_flexion_r =
+    ///     20 deg` — and that is a FEATURE, not a difference to normalise away:
+    ///     an agreement that survives a base-pose change is stronger than one
+    ///     that does not.
+    ///   * MODEL reference column, WRAP-ON, NAMED: `lengthWrapOn(b) −
+    ///     lengthWrapOn(a)` for muscles carrying < 2 PathWraps, and the
+    ///     pair-averaged analytic column `−0.5·(R_on(a) + R_on(b))·dq` for
+    ///     muscles carrying ≥ 2 — the same multi-wrap split G1 already registers,
+    ///     for the same stated reason. The WRAP-OFF columns (`roff` / `Loff`) are
+    ///     NOT the reference and may not be substituted: on those columns the
+    ///     conflict picture is a completely different 7-anchor set (see G4(g)),
+    ///     so an implementer reading the wrong field would produce a
+    ///     self-consistent but wrong gate.
+    /// Bars, registered before measurement: ≥ 99.0 % port-vs-model direction
+    /// agreement per anchor; ZERO disagreements on pairs where the reference
+    /// |dL| ≥ 10× that pair's step deadband; coverage ≥ 60 % of an anchor's
+    /// spanning pairs. NON-VACUITY, asserted not assumed: every anchor must score
+    /// > 0 pairs, and an anchor scoring none is RED, not skipped.
+    /// DISCLOSURE, added 2026-08-21 by adversarial review BEFORE any measurement:
+    /// at these population sizes the 99.0 % bar IS a ZERO-TOLERANCE bar and must
+    /// be read as one. The largest anchor population is 28 pairs (knee / hip /
+    /// ankle) and the elbow's is 15; 27/28 = 96.43 % and 14/15 = 93.33 % both
+    /// MISS 99 %, so a single disagreeing pair fails the anchor. No minimum-pairs
+    /// power floor is registered here — unlike G1, which carries one
+    /// (`strongCells >= 250`) — and NONE MAY BE ADDED AFTER A MISS: adding a
+    /// power floor in response to a near miss is the same move as widening a bar.
+    /// The companion 10×-deadband arm is near-degenerate for the same reason: on
+    /// the fixture face `sigma = 1e-6` rad puts the deadband near 5e-8 m against
+    /// measured |dL| of 1.9e-4 … 3.5e-3 m, so essentially the whole population is
+    /// a strong cell and that arm restates the first rather than adding power.
+    /// The bars are LEFT UNCHANGED; this paragraph changes only what a reader is
+    /// told they mean.
+    /// WHAT IT LETS THE PRODUCT CLAIM: that what the layer would draw is what the
+    /// shipped model says, on a population 13 anchors wider than G1's —
+    /// `TRIlong_r`, `BIClong_r`, `grac_r`, `sart_r`, `iliacus_r`, `vasint_r`,
+    /// `semiten_r` and `bfsh140_r` have never been compared to the oracle ON THE
+    /// REGISTERED ANCHOR SWEEPS BY G1, whose `g1Outcome` filters to
+    /// `ctx.displayedMuscles`.
+    /// CORRECTION, 2026-08-21, by adversarial review, SUPERSEDING the first
+    /// draft of this sentence which read "have never been compared to the oracle
+    /// by anything": that was FALSE for 7 of those 8. All except `sart_r` carry a
+    /// PathWrap (`opensim_moment_arms.txt` :208 TRIlong_r, :190 BIClong_r,
+    /// :258 grac_r, :260 iliacus_r, :286 vasint_r, :276 semiten_r, :226
+    /// bfsh140_r = 1; only :272 sart_r = 0), so they sit inside the 66
+    /// wrap-carrying muscles that `CylinderWrapValidationTests` (56 cylinder-only)
+    /// and `EllipsoidWrapValidationTests` (10 ellipsoid, multi-wrap stratum =
+    /// exactly BIClong / TRIlong) ALREADY gate against OpenSim's own central
+    /// difference. Only `sart_r` (carriesPathWrap = 0, absent from
+    /// `opensim_moment_arms_fd.txt`) is genuinely uncompared. G4(f)'s novelty is
+    /// therefore the ANCHOR-SWEEP FACE and the direction-agreement framing, NOT
+    /// first contact with the oracle, and it must not be quoted as the latter.
+    /// WHAT IT DOES NOT CLAIM: one word about anatomy. That is G4(g).
+    ///
+    /// **G4(g) MODEL-ANCHOR CONFLICT REGISTER.** Derived from the ORACLE ALONE —
+    /// the port is not an input, so no change to the port can move this gate.
+    /// Definition, with its convention PINNED because the answer depends on it: a
+    /// CONFLICT CELL is an adjacent oracle sweep pair at whose PAIR MIDPOINT
+    /// `|dL| > MuscleLengthModeClassifier.lengthQuantisationFloorMetres`
+    /// (1.0e-8 m, already frozen) and `sign(dL)` contradicts the frozen anchor,
+    /// where `dL` is taken with `R` the ARITHMETIC MEAN of the two endpoint rows
+    /// and `dq` the difference of the two stored coordinate values, on the
+    /// WRAP-ON columns. Under a POINTWISE per-pose convention the same four
+    /// anchors conflict but the reported angles become 130/140/150 and 135/140
+    /// deg; an unpinned convention would make this gate go red on a refactor
+    /// instead of on a model change, which is the exact failure this battery's
+    /// conversion doctrine exists to prevent.
+    /// THE REGISTER, enumerated on 2026-08-21 BEFORE the clause is implemented,
+    /// re-derived by hand from `opensim_moment_arms.txt` (+ the FD sidecar) and
+    /// EXACTLY:
+    ///     elbow_flexion / TRIlong_r   midpoints 135.0 and 145.0 deg
+    ///     elbow_flexion / TRImed_r    midpoints 135.0 and 145.0 deg
+    ///     elbow_flexion / TRIlat_r    midpoints 135.0 and 145.0 deg
+    ///     knee_flexion  / bfsh140_r   midpoint  137.5 deg
+    ///     all 22 other anchors: EMPTY over the FULL oracle range, INCLUDING the
+    ///     ankle family's −40..+30 deg oracle range, which is WIDER than
+    ///     G4(a)'s own registered −30..+20 (the 8 extension-only pairs per ankle
+    ///     anchor, 32 cells, are all correct-signed with |dL| ≥ 1.3096463e-3 m).
+    /// 4 conflicting anchors, 7 conflict cells, 22 clean. Every cell is present
+    /// and sign-agreeing in every column that exists for it; the analytic column
+    /// and the stored-length column differ in MAGNITUDE by 0.596-2.023 % at the
+    /// three elbow anchors and 6.334 % at the knee anchor, taken RELATIVE TO THE
+    /// STORED-LENGTH COLUMN (the same gaps read 0.592-1.983 % and 6.762 %
+    /// relative to the analytic one — the normalisation is named so the figure
+    /// is checkable rather than quotable).
+    /// COLUMN AVAILABILITY, stated because "both independent columns" is FALSE as
+    /// prose: there are THREE candidate columns and the third does not exist for
+    /// four anchors. `opensim_moment_arms_fd.txt` declares `muscles 66` against
+    /// the analytic fixture's `muscles 104`, and `bflh140_r`, `sart_r`,
+    /// `soleus_r` and `tibant_r` carry no PathWrap and are absent from it
+    /// entirely. The registered column PAIR is therefore
+    /// {analytic WrapOn moment arm, adjacent difference of stored WrapOn length},
+    /// which exists for all 26. OpenSim's own central difference is printed as a
+    /// THIRD, INFORMATIONAL column and must print UNAVAILABLE-BY-CONSTRUCTION for
+    /// those four — never a pass, and never a "fixture defect" alarm on an anchor
+    /// that structurally has only one comparable column.
+    /// Bars: (i) the measured register equals the enumerated set EXACTLY — a cell
+    /// that APPEARS or DISAPPEARS is RED, because either the shipped model
+    /// changed or the fixture did; (ii) both registered columns are computed and
+    /// printed, the analytic one authoritative for muscles carrying ≥ 2
+    /// PathWraps and the stored length for the rest, and a cell visible in only
+    /// one of THOSE TWO is a fixture defect to investigate, never a model finding
+    /// to register; (iii) every muscle in the register must be OFF the Rule-0
+    /// displayed set, OR the layer must return `MuscleLengthMode.indeterminate`
+    /// for that muscle whenever the conflicted coordinate lies inside its
+    /// conflicted interval.
+    /// ⚠️ **EXPECTED VERDICT, DECLARED BEFORE THE RUN (adversarial review,
+    /// 2026-08-21): G4(g) IS KNOWN-PASS IN ITS ENTIRETY TODAY. It is a REGRESSION
+    /// PIN in this battery's measured-outcome-pin idiom, NOT an open
+    /// measurement.** Two independent re-derivations (V1's and the reviewer's own
+    /// parser) reproduced the enumerated 4 anchors / 7 cells / 22 clean before a
+    /// line of it was implemented; every cell is present and sign-agreeing in
+    /// both registered columns; and (iii)'s off-surface branch passes because no
+    /// capsule `MuscleOverlay` declares is a triceps or a `bfsh`. Its VALUE is
+    /// forward-looking — it goes RED if `FullBody.osim`'s geometry, the oracle
+    /// fixture, or the Rule-0 displayed set moves — and a first green reading may
+    /// NEVER be quoted as evidence that anything was discovered. Recording this
+    /// before the run is the point: a clause whose outcome is knowable in advance
+    /// and is not SAID to be is the "test that would have passed against the
+    /// broken implementation" this document's process notes warn about.
+    /// ⚠️ **CLAUSE (iii) IS PART REAL AND PART VACUOUS TODAY, and the split is
+    /// declared before the run.** Its off-surface branch is scored on a
+    /// population of 4 and CAN go red (it does the moment the register or
+    /// `MuscleOverlay.muscleDefs` moves). Its abstention branch is scored on a
+    /// population of ZERO, because all four conflicted muscles are off the
+    /// product surface today, so that branch is 0 == 0 BY CONSTRUCTION: it must
+    /// print VACUOUS-BY-CONSTRUCTION and MUST NOT be counted as a pass, quoted as
+    /// evidence, or reported as "abstention is implemented".
+    /// NON-VACUITY OF THE REGISTER ITSELF, measured on 2026-08-21 rather than
+    /// hoped: all 26 anchors clear the 1.0e-8 m deadband on 100 % of their pairs
+    /// (637 of 637), so no cell is decided by an empty population; the register is
+    /// BYTE-IDENTICAL at every deadband from 0 through 1.5e-4 m, so the 1.0e-8
+    /// constant is decoration here and not the discriminator; the smallest
+    /// correct-signed |dL| anywhere is 1.9339269e-4 m (`bfsh140_r`, midpoint
+    /// 132.5 deg), ≥ 19,000× the deadband; and INVERTING all 26 registered
+    /// directions flips 26 of 26 anchors to conflicting (630 cells), so this is a
+    /// control that CAN fail.
+    /// WHY IT IS A MODEL PROPERTY AND NOT A CONFIGURATION ARTEFACT: this
+    /// oracle-derived register agrees in MEMBERSHIP and BAND with G4(a)'s own
+    /// pins (:1193-1198, measured on `neutral`-based constructed poses at a 5 deg
+    /// step) even though the oracle's elbow base carries `shoulder_elv_r = 30
+    /// deg` and its knee base `hip_flexion_r = 20 deg`. Agreement across a
+    /// base-pose change makes the reversal a property of `FullBody.osim`.
+    /// WITHDRAWAL / FALSIFICATION: if the register ever grows to include a
+    /// DISPLAYED muscle, this layer does not ship until either the model geometry
+    /// is repaired or (iii)'s abstention is implemented AND measured on a
+    /// non-empty population. If the elbow wrap geometry is later repaired so the
+    /// reversal disappears, (i) goes RED and the whole successor is
+    /// re-adjudicated rather than silently passing.
     func testG4PhysiologyDirectionsOnConstructedSweeps() throws {
         let ctx = try context()
         let results = try g4Run(ctx: ctx, invertSign: false, rotateNames: false)
@@ -1114,6 +1472,146 @@ final class MuscleLengthModeTests: XCTestCase {
     /// fixtures — a production-grade 20-marker solved-pose clip — plus a fresh
     /// adjudication (and, for this gate, the registration repair in STATUS
     /// next-step 43).
+    ///
+    /// ─── SUCCESSOR PRE-REGISTRATION, written 2026-08-21, RED-FIRST, BEFORE the
+    /// measurement that adjudicates it ───
+    ///
+    /// **G9(b) stands FAILED and is SUPERSEDED-NOT-ERASED BY G9(b2).** The text
+    /// above is not edited, the pins are not re-baselined, and
+    /// `RegisteredBar.g9RequiredDisagreements` keeps the value 1 and is REUSED
+    /// VERBATIM below. The BAR does not move; the PERTURBATION CLASS does.
+    ///
+    /// THE ALGEBRA THAT FORCES A CLASS CHANGE — the two formulas, verbatim from
+    /// the shipped source, and the invariance they imply. Re-derived against
+    /// `BioMotion/Muscle/MuscleLengthMode.swift` on 2026-08-21, not quoted (every
+    /// bare `MLM:` citation below is a line in THAT file, not in this one):
+    ///
+    ///     jitterMetres(R, σ)    = sqrt( Σⱼ (R[j]·σ[j])² )      MLM:266-274
+    ///     stepDeadbandMetres(R) = max( k·g·jitterMetres(R,σ), F )  MLM:277-282
+    ///     lengthRate(R, dq)     = − Σⱼ R[j]·dq[j]               MLM:309-314
+    ///     classify(v, D)        = lengthening if v > D;
+    ///                             shortening if v < −D; else third  MLM:319-324
+    ///
+    /// with `k = 3` (MLM:238) and
+    /// `F = lengthQuantisationFloorMetres = 1.0e-8 m` (MLM:244).
+    /// `jitterMetres` is HOMOGENEOUS OF DEGREE 1 in the moment-arm row and
+    /// `lengthRate` is LINEAR in it, and the registered control is a UNIFORM ROW
+    /// SCALE `R → (1+ε)R` with ε = +0.01114 > 0. Therefore:
+    ///   * in the `k·g·s` branch, `v → (1+ε)v` and `D → (1+ε)D`, so `v > D` and
+    ///     `v < −D` are EXACTLY invariant — same mode, at ANY multiplicative
+    ///     size;
+    ///   * in the `F` floor branch, `D` is unchanged while `|v|` grows, so the
+    ///     test can only move THIRD-STATE → DIRECTIONAL, never across the sign;
+    ///   * in the branch-crossing case (`k·g·s < F ≤ k·g·(1+ε)s`) the same
+    ///     one-way conclusion holds, since `D' = (1+ε)k·g·s ≤ (1+ε)D`.
+    /// A positive scalar multiple can therefore NEVER flip lengthening ↔
+    /// shortening, at any size, in any parameterisation. G9(b) is not weakly
+    /// detectable; its error class is UNREACHABLE. No re-sizing of the old
+    /// control repairs that, which is why the successor is a different CLASS and
+    /// not a different constant.
+    /// THE FIXTURE-FACE NUMBERS, re-derived here rather than cited: σ is frozen
+    /// at 1.0e-6 rad (MLM:249), taps = 9 (MLM:257), and
+    /// `WindowedDerivativeFilter.velocityNoiseGain(taps: 9)` — the L2 norm of the
+    /// order-3 Savitzky-Golay first-derivative coefficients built at
+    /// `NimbleEngine.swift:2755-2790`, order from `:2692` — is
+    /// 0.33813876244990926, so `k·g = 1.0144162873497278`. `dq` has EXACTLY ONE
+    /// non-zero entry, +10 deg = 0.17453292519943295 rad (:1681-1686). The
+    /// classifier is therefore a SIGN TEST on the swept moment-arm entry `a`:
+    /// directional iff `|a| > 5.812177193446956e-6·‖R‖₂`, or `|a| >
+    /// 5.7295779513082324e-8 m` in the floor branch, which binds only when
+    /// `‖R‖₂ < 9.857885884429244e-3 m`. 1.114 % of `a` is < 100 % of `a` at every
+    /// step, which is the whole story.
+    ///
+    /// **G9(b2) SIGN-CLASS DISCRIMINATION.** The control NEGATES one leg's
+    /// moment-arm row (equivalently its swept entry alone; for this single-DOF
+    /// drive the two are observationally identical, and BOTH forms are run so the
+    /// equivalence is MEASURED rather than argued). This is the error class the
+    /// FROZEN registration itself assigns to G9 — `MuscleLengthMode.swift`'s
+    /// "WHAT D DOES NOT CONTAIN" note says a sign flip in `R` is a
+    /// full-magnitude sign flip in `dL/dt` that no 3σ pose band absorbs, bounded
+    /// "by G1 …, G9 … and G7" — and it is the class the 173-pose cylinder-wrap
+    /// receipt actually produced (4 surviving SIGN FLIPS). The 1.114 %
+    /// multiplicative form was the mis-registration.
+    /// WHY IT CHANGES THE OUTPUT, verified against the source and EXACT in
+    /// floating point, not approximate:
+    ///   * `jitterMetres` sums SQUARES, and IEEE-754 negation only flips a sign
+    ///     bit, so `‖R‖` and hence `D_L` are BIT-IDENTICAL;
+    ///   * `lengthRate` is linear and odd and round-to-nearest-even is
+    ///     sign-symmetric, so `v_L → −v_L` EXACTLY;
+    ///   * hence `|v_L|` is unchanged, `isDirectional` is unchanged at EVERY
+    ///     step, and the scored/excluded partition is BYTE-IDENTICAL to the
+    ///     unperturbed run's — which repairs BY CONSTRUCTION the second caveat
+    ///     that binds the additive companion (its 528 steps are not G9(a)'s 258).
+    /// THE PREDICTED COUNT, DERIVED ARITHMETICALLY AND WRITTEN BEFORE THE RUN.
+    /// A CORRECTION FIRST, because the prior draft of this derivation had it
+    /// wrong: `scored` is `modeR.isDirectional || modeL.isDirectional` — an OR
+    /// (:1745-1749), not an AND. The count survives the correction, as follows.
+    ///   1. 33 steps × 16 pairs = 528, re-derived from the sweep table at
+    ///      :1681-1686 (knee 0→140/10 = 14 steps, hip −20→120/10 = 14, ankle
+    ///      −30→20/10 = 5), and 528 = 258 + 270 against the pins at :1584-1585.
+    ///   2. A positive multiplicative ε can only move a step THIRD → DIRECTIONAL
+    ///      (proved above), so the multiplicative run's scored SET CONTAINS the
+    ///      unperturbed one.
+    ///   3. Suppose some step is scored only in the multiplicative run. Then
+    ///      unperturbed `modeL` is the third state. If `modeR` is directional the
+    ///      UNPERTURBED run scores that step by OR and `modeR ≠ modeL`,
+    ///      contradicting G9(a)'s pinned 0 disagreements (:1391). If `modeR` is
+    ///      the third state, the MULTIPLICATIVE run scores it and `modeR ≠ modeL`
+    ///      (now directional), contradicting the pinned 0 at :1586-1587. No such step
+    ///      exists, so the UNPERTURBED scored population is EXACTLY 258.
+    ///   4. On each of those 258, G9(a) reads `modeR == modeL`; OR-scoring plus
+    ///      equality forces BOTH to be the SAME DIRECTIONAL mode.
+    ///   5. Under the sign flip `modeL` becomes the OPPOSITE directional mode and
+    ///      `modeR` is untouched, so `modeR ≠ modeL` on ALL 258.
+    /// PREDICTION, PRE-REGISTERED: disagreements = 258 = scored; excluded = 270.
+    /// Bars: (i) disagreements ≥ `RegisteredBar.g9RequiredDisagreements` (1),
+    /// unchanged and reused verbatim; (ii) `scored` and `excluded` must equal the
+    /// UNPERTURBED run's, asserted against THAT RUN rather than against a
+    /// literal, so the population is comparable with G9(a)'s by construction;
+    /// (iii) COHERENCE: `disagreements == scored`, and
+    /// `disagreementsOnUnperturbedExcludedSteps == 0`.
+    /// ⚠️ **ITS OWN ESCAPE HATCHES, named because the count is arithmetically
+    /// forced and a forced prediction is at risk of being a control that cannot
+    /// fail in the OTHER direction:**
+    ///   (h1) Reading exactly 258 confirms only that the theorem's premises still
+    ///        hold. This clause's discriminating power lives in its FAILURE
+    ///        modes — anything other than `disagreements == scored` is RED — and
+    ///        NOT in the match. A match may never be quoted as evidence that the
+    ///        mirror check is sensitive to a REALISTIC error; it is evidence
+    ///        about the SIGN class only. CONFIRMED BY ADVERSARIAL REVIEW
+    ///        2026-08-21: the 258 is arithmetically FORCED by the pins already in
+    ///        this file (:1391, :1584-1587) plus the sign algebra, i.e. this
+    ///        clause's outcome is determinable from the repo WITHOUT running it.
+    ///        That is disclosed here rather than discovered later, and no round
+    ///        may cite a 258 reading as new evidence of anything.
+    ///   (h2) IT READS 0 DESPITE A REAL DEFECT precisely when the two legs' modes
+    ///        are computed from the SAME row — i.e. when the perturbation lands
+    ///        UPSTREAM of the left/right split, so `modeR` sees the flipped row
+    ///        too and both flip together. That is the left/right aliasing G9(a)
+    ///        exists to catch, and G9(a) itself CANNOT see it, because an aliased
+    ///        pair agrees trivially. A 0 here therefore means EITHER `classify`
+    ///        has stopped being sign-sensitive OR the harness has collapsed the
+    ///        two legs into one row. It NEVER means "the layer is fine", and
+    ///        separating the two causes needs an instrument outside G9 (row
+    ///        provenance) that this clause does NOT claim to supply.
+    ///   (h3) The narrower aliasing — `leftMuscles` resolving to the same MODEL
+    ///        muscles as `rightMuscles`, so the two rows are numerically equal
+    ///        but still separately perturbed — does NOT hide here: G9(b2) would
+    ///        still read 258. So G9(b2) does not close G9(a)'s hole either, and
+    ///        it is registered without that claim.
+    ///   (h4) It also reads 0, benignly, if `scored` itself reaches 0. `scored >
+    ///        0` is therefore asserted FIRST, and a zero-scored run prints
+    ///        VACUOUS-BY-CONSTRUCTION rather than counting as anything at all.
+    ///   (h5) It is deliberately NOT self-fulfilling: the flip of `modeL` is
+    ///        never asserted directly. Only the OBSERVABLE `modeR` vs `modeL` is
+    ///        scored, so a classifier that stopped distinguishing lengthening
+    ///        from shortening turns this RED instead of passing it.
+    /// WHAT G9(b2) DOES NOT REPAIR, stated so the scope note is not overread: it
+    /// bounds the SIGN class only. The MAGNITUDE class — a one-sided moment-arm
+    /// error of realistic size — remains UNREACHED by any mode-agreement count on
+    /// this fixture face, for the reason proved above, and rehoming it to a
+    /// continuous-valued instrument is a separate preregistration that is
+    /// deliberately NOT made here.
     func testG9MirrorCheckIsSensitiveToAOneSidedError() throws {
         let ctx = try context()
         let outcome = try g9Outcome(ctx: ctx, perturbationRelative: 0.01114)
@@ -1465,6 +1963,38 @@ final class MuscleLengthModeTests: XCTestCase {
                   + String(format: "flicker_rate=%.6f", t.flickerRate)
                   + " grey_transitions=\(t.greyTransitions) grey_denominator=\(t.greyDenominator) "
                   + String(format: "grey_rate=%.6f", t.greyTransitionRate))
+
+            // ─── THE NEXT-STEP-51 DIAGNOSTIC. NOT A GATE, AND IT MUST NOT
+            // BECOME ONE IN THIS ROUND. ───
+            // STATUS next-step 51 forbids proposing a fix for the G2(a)/G2(e)
+            // failures above before MEASURING which of three causes they are.
+            // This prints that measurement and asserts NOTHING about it: any bar
+            // written now would be a bar chosen after already seeing the worst
+            // flicker rate 65/1347 = 4.8255 % against a 1 % bar and the worst
+            // grey rate 150/2664 = 5.6306 % against a 2 % bar (both re-derived
+            // by hand 2026-08-21 from the pins on :1892-1893), which is the same
+            // move as editing one. How the census is read, stated here as well
+            // as on `MuscleModeFlipEvent` so a reader of the log finds it in the
+            // source next to the numbers it explains:
+            //
+            //   * breaker `|v| / D` clustered JUST ABOVE 1.0 at the flips ⇒ the
+            //     capsules are crossing their own deadband edge, i.e. a
+            //     DEADBAND / POSE-NOISE problem, and the pose-noise control line
+            //     (`resid_z_max_median_at_flip` against `..._all`) says whether
+            //     the flip frames are noisier than the clip in general;
+            //   * breaker `|v| / D` LARGE — and large on BOTH sides of an
+            //     L↔S reversal — ⇒ the length rate genuinely reversed, i.e. a
+            //     CLASSIFIER / KINEMATICS problem, which no deadband or dwell
+            //     layer would repair;
+            //   * `rule3=…>1` ⇒ NEITHER of those: that frame was forced
+            //     `.indeterminate` by an unresolved wrap switch. Counted apart
+            //     so it cannot be silently attributed to the other two.
+            //
+            // It runs off the SAME cached traversal `t` above came from, so it
+            // enumerates exactly the `flicker_centres` + `grey_transitions`
+            // events this clip's own pins record — 65 + 67 on `video_012`,
+            // 71 + 150 on `video_015` — and not a re-run of anything.
+            print(Self.flipCensusReport(clip: clip))
 
             let pin = try XCTUnwrap(pinned[clip])
             XCTAssertEqual(t.flickerCentres, pin.flickerCentres, "G2(a) pin on \(clip)")

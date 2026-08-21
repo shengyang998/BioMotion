@@ -1,7 +1,7 @@
 # BioMotion — STATUS
 
 **Single source of truth for progress. Read this before touching anything.**
-Last updated: 2026-08-14.
+Last updated: 2026-08-21 (round 16 part A: the two-subjects factual correction and three RED-FIRST successor pre-registrations; NO bar moved, NO measurement run).
 
 ---
 
@@ -7722,6 +7722,58 @@ preregistration. The box-trajectory summary rules out the obvious confound — n
 either clip (max area fraction 0.357 and 0.548), so neither clip is silently reproducing the
 whole-image fallback crop while being counted as a detection.
 
+#### Correction 2026-08-21: the two scored clips are NOT the same subject
+
+⚠️ **SUPERSEDED-NOT-ERASED.** The paragraph directly above is dated history and is left
+byte-identical, INCLUDING its false clause. Its words "a 7.2x spread between two clips of the **same
+subject**" are **FACTUALLY FALSE**: `video_012` and `video_015` are two DIFFERENT people. Nothing
+else in that paragraph moves — the 83.7 / 11.6 mm numbers, DEVIATION A standing for the round, and
+the whole-frame-box confound being ruled out all survive unchanged.
+
+**Receipt, re-derived by hand on 2026-08-21 from the source clips themselves** (they live outside
+this repository, so only hashes and probe output are recorded here):
+
+- `shasum -a 256 video_012.mov` →
+  `794f044668670c137c31afa6f30e941cc977b232c5157af04e67e51178b4a838`, which BYTE-MATCHES
+  `video_sha256` at `BioMotionTests/Fixtures/solved_pose_video_012.txt:24`; `ls -l` size
+  **7,125,980 B** matches `video_bytes` at `:25`.
+- `shasum -a 256 video_015.mov` →
+  `ca476fff48174065c31ac6303a78933ca4a6142ccd89e1bb93b45951cbec03c5`, which BYTE-MATCHES
+  `video_sha256` at `BioMotionTests/Fixtures/solved_pose_video_015.txt:24`; size **21,269,080 B**
+  matches `video_bytes` at `:25`. So the files inspected below are provably the files these fixtures
+  were solved from.
+- `ffprobe -select_streams v:0` (`/opt/homebrew/bin/ffprobe`): `video_012` = **576x1024, 308 frames,
+  10.266667 s, 30/1 fps**; `video_015` = **576x768, 1129 frames, 37.633333 s, 30/1 fps**. Both agree
+  with `video_duration_s` / `nominal_fps` at `:26` / `:27` and with `available=308` /
+  `available=1129` in `sampling_policy` at `:28` of the respective fixture. The two clips do not
+  even share a frame SIZE.
+- ONE frame extracted from INSIDE each analysed window and LOOKED AT (windows re-derived from
+  `start` + 119 x `step` at `:28`: `video_012` [3.150, 7.117] s, sampled at t=5.150 s; `video_015`
+  [16.833, 20.800] s, sampled at t=18.833 s; PNGs written to a temp dir outside the repo):
+  **`video_012` is a fair-skinned runner in a white cap, white tee and black shorts, running on a
+  paved path beside a mown green field under full-leaf summer trees. `video_015` is a dark-skinned
+  shirtless runner in a white headband and sunglasses, navy shorts and pink shoes, running on a
+  lane-marked athletics track over dormant brown grass under bare trees.** Two people, two venues,
+  two seasons. A second frame from inside each window (t=3.200 s / t=20.600 s) shows the same two
+  distinct people, so this is not a one-frame artefact.
+- Corroborated INSIDE the tree, and readable all along: `stature_measured_m` is **1.749878 m**
+  (`solved_pose_video_012.txt:33`) against **1.700850 m** (`solved_pose_video_015.txt:33`) — a
+  **4.90 cm** difference in measured stature between two clips this file called one subject.
+
+**Consequence, spelled out because it propagates.** Next-step 55's premise is VOID. The 7.2x
+IK-residual spread — **83.701643 mm** (`solved_pose_video_012.txt:35`) against **11.576106 mm**
+(`solved_pose_video_015.txt:35`), both carrying `scaling_applied false` at `:32` of their own file,
+ratio re-divided here as 83.701643 / 11.576106 = **7.2306** — is **CONFOUNDED BY SUBJECT IDENTITY**.
+It cannot be attributed to window, to motion content or to camera until a SAME-SUBJECT control
+exists, and none exists in this tree: `BioMotionTests/Fixtures/` holds exactly two solved-pose
+fixtures and they are these two clips. Next-step 47 (adopt first-usable-frame scaling) is therefore
+blocked on a premise that no longer holds — not on 55 as written, because 55 as written asks a
+question about a subject pair that does not exist.
+
+**This entry is a factual correction and nothing else.** It proposes no fix, registers no successor
+clause, opens no gate, and moves no `RegisteredBar` constant. Whether 55 is re-registered, and how,
+is a separate preregistration that is deliberately not made here.
+
 ### Guards, counts and the allowlist
 
 - **Allowlist 7 -> 9.** `RUN_TESTS_FORWARDED_ENV_NAMES` gained
@@ -8302,6 +8354,60 @@ dev bundle: MODEL_LOCK_VERIFY_PASS mode=receipt / DEV_BUNDLE_MODEL_PASS before g
     data path, not assumed. It is therefore blocker #1 of the three that made the offline-UI wire
     condition unreachable before any 20-marker byte was read, and it was deliberately not touched.
     Closing it is a separate preregistered round.
+
+    **SUCCESSOR REGISTERED 2026-08-21 — G4(a) SUPERSEDED-NOT-ERASED BY G4(f) + G4(g); the text
+    above is dated history and is left byte-identical, and G4(a) stands FAILED.** Text only: no bar,
+    no `RegisteredBar` constant, no executable code path and no new test method moved in the commit
+    that recorded this. The clauses live above `testG4PhysiologyDirectionsOnConstructedSweeps` in
+    `BioMotionTests/MuscleLengthModeTests.swift`, RED-FIRST, written before the measurement that
+    adjudicates them.
+
+    - **G4(f) PORT FIDELITY** scores all 26 anchors — displayed or not — on the ORACLE'S OWN sweep
+      poses, against the model's own WRAP-ON columns (`lengthWrapOn(b) − lengthWrapOn(a)` under 2
+      PathWraps, pair-averaged analytic `−0.5·(R_on(a)+R_on(b))·dq` at 2 or more). It carries NO
+      textbook claim: it fails if and only if the port stops reproducing the shipped model, which is
+      the premise G4(a) left untested because `g4Sweep` never opens the oracle at all. Bars, all new
+      and all pre-registered: ≥ 99.0 % agreement per anchor, zero disagreements where the reference
+      |dL| ≥ 10× the step deadband, ≥ 60 % coverage of spanning pairs, every anchor scoring > 0.
+    - **G4(g) MODEL-ANCHOR CONFLICT REGISTER** turns "the model contradicts the anchor" from an
+      excuse into a pinned, falsifiable fact, derived from the ORACLE ALONE so no port change can
+      move it. Re-derived by hand on 2026-08-21 from `opensim_moment_arms.txt` (plus the FD
+      sidecar), at the PAIR MIDPOINT with `R` the arithmetic mean of the two endpoint rows and the
+      deadband at the already-frozen `1.0e-8 m`, the register is EXACTLY **4 anchors / 7 cells**:
+      `TRIlong_r`, `TRImed_r`, `TRIlat_r` at elbow midpoints **135.0** and **145.0 deg**, and
+      `bfsh140_r` at knee midpoint **137.5 deg**. All **22** other anchors are EMPTY over the FULL
+      oracle range, **including the ankle family's −40..+30 deg oracle range** — wider than G4(a)'s
+      own registered −30..+20, whose 8 extension-only pairs per anchor (32 cells) are all
+      correct-signed with |dL| ≥ **1.3096463e-3 m**. Grids re-derived from the fixture's own pose
+      rows: knee 29 poses/5.0 deg/28 pairs, hip 29/5.0/28, ankle 29/2.5/28, elbow 16/10.0/15 =
+      **637** scored anchor-pairs. Every one of the 637 clears the deadband, so no cell is decided on
+      an empty population; the register is identical at every deadband from 0 to 1.5e-4 m; the
+      smallest correct-signed |dL| anywhere is **1.9339269e-4 m** (`bfsh140_r`, midpoint 132.5 deg);
+      and INVERTING all 26 registered directions flips **26 of 26** anchors to conflicting (630
+      cells), so this is a control that CAN fail.
+    - **Three corrections to the draft that produced it, all made before it was written.** (a) "both
+      independent columns" is FALSE as prose: `opensim_moment_arms_fd.txt` declares `muscles 66`
+      against the analytic fixture's `muscles 104`, and `bflh140_r`, `sart_r`, `soleus_r` and
+      `tibant_r` carry no PathWrap and are absent from it, so OpenSim's own central difference is
+      registered as a THIRD, INFORMATIONAL column that must print UNAVAILABLE-BY-CONSTRUCTION for
+      those four. (b) The columns are pinned WRAP-ON by name: on `roff`/`Loff` the register is a
+      completely different 7-anchor set (`recfem_r`, `vasint_r`, `vaslat140_r`, `vasmed_r`,
+      `glmax1_r`, `glmax2_r`, `BRD_r`) and the four real conflicts vanish. (c) The evaluation
+      convention is pinned, because a pointwise per-pose reading gives the SAME four anchors at
+      130/140/150 and 135/140 deg — an unpinned convention would make the gate go red on a refactor
+      instead of on a model change.
+    - **Declared vacuity.** G4(g) clause (iii) requires every register muscle to be OFF the Rule-0
+      displayed set OR the layer to abstain inside the conflicted interval. The off-surface branch is
+      scored on a population of 4 and can go red; the ABSTENTION branch is scored on a population of
+      **ZERO** today, prints VACUOUS-BY-CONSTRUCTION, and must not be counted as a pass.
+    - **NOT registered, and why.** Restricting G4's population to the product surface was REFUSED as
+      laundering: `MuscleOverlay.muscleDefs` declares 26 capsules (12 `bilateral(...)` calls plus
+      `ercspn_r/_l`) and none is a triceps or a `bfsh`, and Rule 0's family expansion matches on an
+      exact stem so `bflh` can never reach `bfsh` — so that clause reads 1.000000 BEFORE it runs.
+      Also refused: swapping the anchor for a muscle the model does honour. The step size question
+      this item raised is answered rather than dodged — G4's own 5.0 deg construction is now recorded
+      in the successor text, and G4(f)/G4(g) use the oracle's own grids because the oracle holds only
+      its own poses.
 43. **G9(b)'s control is inert by construction and can never fail.** Multiplying one leg's
     moment-arm row by `1 + 0.01114` scales `−Rᵀdq` and `s_m` by the same positive factor, so both
     the sign and `|v| > D` are exactly invariant against a sign-only classifier. The gate stands at
@@ -8318,6 +8424,56 @@ dev bundle: MODEL_LOCK_VERIFY_PASS mode=receipt / DEV_BUNDLE_MODEL_PASS before g
     like G4, G9's sweeps come off the STATIC reference pose and never read a clip fixture, so a
     better drive cannot rescue a control that is inert by algebra. Blocker #2 of the three that made
     the offline-UI wire condition unreachable before any measurement, and deliberately not touched.
+
+    **SUCCESSOR REGISTERED 2026-08-21 — G9(b) SUPERSEDED-NOT-ERASED BY G9(b2); the text above is
+    dated history and is left byte-identical, and G9(b) stands FAILED.** Text only: no bar, no
+    `RegisteredBar` constant, no executable code path and no new test method moved.
+    `RegisteredBar.g9RequiredDisagreements` keeps the value 1 and is REUSED VERBATIM — the BAR does
+    not move, the PERTURBATION CLASS does. The clause lives above
+    `testG9MirrorCheckIsSensitiveToAOneSidedError`, RED-FIRST.
+
+    - **The algebra, re-verified against the current source before a word was written.**
+      `jitterMetres(R, σ) = sqrt(Σⱼ (R[j]·σ[j])²)` is HOMOGENEOUS OF DEGREE 1 in the moment-arm row
+      and `lengthRate(R, dq) = −Σⱼ R[j]·dq[j]` is LINEAR in it, and the registered perturbation is a
+      UNIFORM ROW SCALE. So in the `k·g·s` branch `v → (1+ε)v` and `D → (1+ε)D` and both `v > D` and
+      `v < −D` are EXACTLY invariant at ANY multiplicative size; in the `1e-8 m` floor branch `D` is
+      unchanged while `|v|` grows, which can only move third-state → directional, never across the
+      sign; and the branch-crossing case gives the same one-way conclusion. The registered class is
+      not weakly detectable, it is **UNREACHABLE**, so no re-sizing repairs it. Re-derived rather
+      than cited: `velocityNoiseGain(taps: 9)` = **0.33813876244990926**, `k·g` =
+      **1.0144162873497278**, and with σ frozen at 1e-6 rad and a single +10 deg entry in `dq` the
+      classifier is a SIGN TEST — directional iff `|a| > 5.812177193446956e-6·‖R‖₂`, or
+      `> 5.7295779513082324e-8 m` in the floor branch, which binds only below `‖R‖₂ = 9.857885884e-3 m`.
+    - **G9(b2) is a different CLASS: a one-sided SIGN FLIP of one leg's row** (equivalently of its
+      swept entry alone; both forms are run so the equivalence is measured). `jitterMetres` sums
+      SQUARES so `D_L` is BIT-IDENTICAL under an IEEE sign-bit flip; `lengthRate` is odd so
+      `v_L → −v_L` EXACTLY; therefore `isDirectional` is unchanged at every step and the
+      scored/excluded partition is BYTE-IDENTICAL to the unperturbed run's — which repairs by
+      construction the caveat that binds the additive companion (its 528 steps are not G9(a)'s 258).
+    - **The expected count, derived arithmetically BEFORE the run: 258 disagreements = `scored`,
+      with `excluded` = 270.** A correction to the draft derivation is folded in: `scored` is
+      `modeR.isDirectional || modeL.isDirectional`, an **OR**, not an AND. The count survives.
+      33 steps × 16 pairs = 528 = 258 + 270; a positive multiplicative ε can only move a step third →
+      directional, so the multiplicative scored set contains the unperturbed one; a step scored only
+      in the multiplicative run would force a disagreement in either G9(a) or G9(b), both pinned at
+      0, so none exists and the UNPERTURBED scored population is exactly 258; on each of those,
+      OR-scoring plus `modeR == modeL` forces both to the SAME directional mode; the flip sends
+      `modeL` to the opposite one while `modeR` is untouched.
+    - **Its own escape hatches are written into the clause, because an arithmetically forced
+      prediction risks being a control that cannot fail in the OTHER direction.** Reading 258
+      confirms only that the theorem's premises hold — the discriminating power is in the failure
+      modes. It reads **0 despite a real defect** precisely when the perturbation lands UPSTREAM of
+      the left/right split, so `modeR` sees the flipped row too and both flip together: that is the
+      left/right aliasing G9(a) exists to catch and cannot itself see, because an aliased pair agrees
+      trivially. Recorded honestly alongside it: the NARROWER aliasing — `leftMuscles` resolving to
+      the same model muscles as `rightMuscles`, two numerically equal but separately perturbed rows —
+      does NOT hide here (G9(b2) would still read 258), so G9(b2) is registered WITHOUT the claim
+      that it closes G9(a)'s hole. It also reads 0 benignly if `scored` reaches 0, so `scored > 0` is
+      asserted first and a zero-scored run prints VACUOUS-BY-CONSTRUCTION.
+    - **What it does NOT repair, so the scope note is not overread:** G9(b2) bounds the SIGN class
+      only. The MAGNITUDE class stays UNREACHED by any mode-agreement count on this fixture face, and
+      rehoming it to a continuous-valued instrument is a separate preregistration that is
+      deliberately NOT made here (it would touch the frozen anti-claim text).
 44. **G3(v) put the knee non-degeneracy anchor at the one pose where a knee is unobservable.**
     `neutral` is a straight leg, and with no knee marker in the drive, hip flexion and knee flexion
     displace the ankle marker along parallel directions. The measurement behaves exactly as a
@@ -8349,6 +8505,61 @@ dev bundle: MODEL_LOCK_VERIFY_PASS mode=receipt / DEV_BUNDLE_MODEL_PASS before g
     `video_015` — the mask correctly admits identified hips, and the clause correctly fails. Do NOT
     edit the clause in place: preregister a replacement (RED-first, adversarial review, lineage
     naming the old bar SUPERSEDED-NOT-ERASED), or record permanently that (iv-b) was drive-conditional.
+
+    **SUCCESSOR REGISTERED 2026-08-21 — G3(iv-b) SUPERSEDED-NOT-ERASED BY G3(iv-b2), and (iv-b) is
+    recorded permanently as FAILED PERMANENTLY.** The text above is dated history and is left
+    byte-identical. Text only: no bar, no `RegisteredBar` constant, no executable code path and no
+    new test method moved. The clause lives above
+    `testG3TheDriveAwareMaskIsNonEmptyOnThePinnedClips`, RED-FIRST.
+
+    - **The permanent record this item asked for, stated as strongly as the facts allow.** (iv-b)
+      **CAN NEVER PASS AGAIN UNDER A HIP-IDENTIFYING DRIVE.** It was satisfied only because the
+      5-marker drive left `hips_joint` with 0.000000000 range, so Rule 2 and Rule 1 suppressed the
+      block BY CONSTRUCTION on a population that could not have done anything else. The ONLY route to
+      a pass is deleting the hip markers and returning to the vacuous 5-marker populations this round
+      exists to escape. It is therefore not a repairable gate and must never be reported as passing.
+    - **G3(iv-b2) EARNED ADMISSION** carries the invariant the old clause actually guarded — "the
+      mask never colours a capsule whose motion the drive cannot resolve" — in a form that survives a
+      change of drive. (b2-i) EVIDENCE FLOOR: an admitted hip capsule must clear
+      `‖J(q)·eⱼ‖₂ ≥ √0.75 · sigmaVisible = 8.660254037844386e-3 m/rad` for every hip coordinate it
+      spans, at EVERY warmed frame. That floor introduces **no new constant**: it is IMPLIED by Rule
+      1 (`nullFractionⱼ = √(1 − Σ_{λᵢ ≥ sigmaVisible²} vᵢ[j]²)`, identified iff `≤ 0.5` =
+      `PostureFindings.depthSuppressionFraction`, hence `retainedⱼ ≥ 0.75`, and Bessel on the
+      orthonormal `{uᵢ}` gives `retainedⱼ ≤ ‖J·eⱼ‖²/sigmaVisible²`). It is a NECESSARY condition
+      computed through a DIFFERENT arithmetic path than the Gram/Jacobi route, so it goes red on an
+      eigenvector-indexing defect, a bad `retained` accumulation, a mis-applied clamp, or on Rule 1's
+      registered defect (b). Sanity: 8.660254e-3 sits below the measured must-not-mask column norm
+      **0.0343**, so the floor does not ban the coordinate this repo proved must not be masked.
+    - **(b2-ii) NAMED WITNESS, and it is not a tautology.** Every suppressed hip capsule must print
+      the specific coordinate that suppressed it, the worst warmed-frame index and that frame's
+      `nullFraction`, and the suppressed-hip set must equal EXACTLY the hip capsules spanning
+      `clipUnidentifiedLowerLimb ∪ unmeasured`. That is a real assertion because
+      `MuscleObservabilityMask.isSuppressed` reads the FULL identified set over all model
+      coordinates while `clipUnidentifiedLowerLimb` is restricted to the leading 20-coordinate
+      lower-limb block — so a hip capsule suppressed from OUTSIDE that block turns the clause RED,
+      and the registered consequence is that such a red is ADJUDICATED, never absorbed by widening
+      the witness set. The 6/12-versus-0/12 asymmetry between the two clips must resolve to a NAMED
+      coordinate or the clause FAILS.
+    - **(b2-iii) ANTI-VACUITY, with its own vacuity declared.** All 72 coordinates the 20-marker
+      Jacobian leaves identically zero must be UNIDENTIFIED at EVERY warmed frame — G3(ii) asserts
+      this at ONE static `neutral` pose with `JointMapping.primary`; this extends it to the clip's
+      own poses AND the clip's own marker list, on a non-empty population of 72. Its companion arm
+      ("every capsule spanning one of those 72 stays suppressed") may be scored on an EMPTY
+      population, and that is declared rather than discovered: all 72 are trunk/rib-cage
+      coordinates (`Abs_*`, `T*_r*_{X,Y,Z}`), not one is a hip/knee/ankle coordinate, and the only
+      declared capsules reaching the trunk at all are `ercspn_r/_l` and `psoas_r/_l`. Whether any
+      of those spans one of the 72 is NOT asserted — unmeasured — so the arm must print its
+      population size and, if it is zero, print VACUOUS-BY-CONSTRUCTION and not count as a pass.
+      `framesWithEmptyUnidentifiedLowerLimb == 0` is retained unchanged and "fires on 0" is still
+      DISPROOF.
+    - **(b2-iv) BIDIRECTIONAL CENSUS.** `video_012` 6/12 suppressed / 14 admitted / 112 warmed and
+      `video_015` 0/12 / 24 / 112 stay pinned in BOTH directions — a census that drifts and a census
+      that improves both turn this red. The clause as a whole is bidirectional by construction: it
+      fails if something unresolvable is ADMITTED (b2-i) and it fails if something resolved is
+      SUPPRESSED (b2-ii), and neither direction can be satisfied on an empty census. Non-vacuous
+      today: the admitted hip-capsule population is 6 on `video_012` and 12 on `video_015`.
+      PROVENANCE, binding: `bbox_source macos_vision INTERIM`, so these pins are provisional ON THE
+      FIXTURES and must be RE-PINNED, not re-interpreted, when device-grade fixtures land.
 50. **G7(a) is under-power, not wrong, and the deficit is now quantified.** Agreement is
     **1.000000** on both clips; the floor is missed because only **316** of a **1998** ceiling
     (`video_012`) and **398** of **3552** (`video_015`) clear BOTH deadbands. The registered 500-frame
@@ -8374,12 +8585,31 @@ dev bundle: MODEL_LOCK_VERIFY_PASS mode=receipt / DEV_BUNDLE_MODEL_PASS before g
     arithmetic (724 + 6 = 730)". The fast lane is **725** as of this round, so a future UI round's
     target is **731**. The 48 text is dated history and is left byte-identical; this is the correction.
 55. **The IK residual spread between the two clips is unexplained and is the first real evidence for
-    next-step 47.** Unscaled generic `FullBody.osim`, same subject, same pipeline:
+    next-step 47.** Unscaled generic `FullBody.osim`, ~~same subject,~~ same pipeline:
     `video_012` **83.7 mm** median marker RMS against `video_015` **11.6 mm**, a 7.2x spread. Adopting
     first-usable-frame scaling (47) is now DECIDABLE, and it may only be taken by a successor
     preregistration that moves `ModelContext`, the fixture header and the loader together. Before
     that, find out WHY the two clips differ by 7x — a scaling decision taken on top of an
     unexplained 7x is a decision about the wrong variable.
+
+    **PREMISE VOID — factual correction 2026-08-21, SUPERSEDED-NOT-ERASED.** The two struck words
+    above stay in place because they are what this item asserted; they are false. `video_012` and
+    `video_015` are two DIFFERENT people: SHA-256
+    `794f044668670c137c31afa6f30e941cc977b232c5157af04e67e51178b4a838` and
+    `ca476fff48174065c31ac6303a78933ca4a6142ccd89e1bb93b45951cbec03c5`, byte-matched to
+    `solved_pose_video_012.txt:24` and `solved_pose_video_015.txt:24`; probed **576x1024 / 308
+    frames / 10.266667 s / 30 fps** and **576x768 / 1129 frames / 37.633333 s / 30 fps**; one frame
+    from inside each analysed window extracted and viewed — a fair-skinned capped runner on a summer
+    path versus a shirtless runner in sunglasses on a lane-marked winter track; and
+    `stature_measured_m` differs by **4.90 cm** (`:33` of each fixture). Full receipt:
+    [Correction 2026-08-21](#correction-2026-08-21-the-two-scored-clips-are-not-the-same-subject).
+    So this item's question — "WHY do two clips of ONE subject differ by 7x" — has no referent. The
+    7.2x spread (**83.701643** vs **11.576106** mm at `:35` of each, both `scaling_applied false` at
+    `:32` of each) is CONFOUNDED BY SUBJECT IDENTITY and cannot be attributed to window, motion
+    content or camera until a SAME-SUBJECT control exists; `BioMotionTests/Fixtures/` contains
+    exactly these two clips, so no such control exists in this tree. This correction states the
+    facts and stops there: it proposes no fix, opens no gate, moves no bar, and does NOT re-register
+    55 — any successor question is a separate preregistration.
 
 ### Newly opened by the 2026-08-14 20-marker re-adjudication (fourteenth round)
 
@@ -8435,6 +8665,18 @@ dev bundle: MODEL_LOCK_VERIFY_PASS mode=receipt / DEV_BUNDLE_MODEL_PASS before g
     only be taken by a successor preregistration: `ik_residual_mm_median` reads **83.702** on
     `video_012` and **11.576** on `video_015`, both unscaled. See next-step 55 — the 7.2x spread
     between two clips of the same subject has to be explained before scaling is chosen as the fix.
+
+    **Correction 2026-08-21, SUPERSEDED-NOT-ERASED: the sentence directly above is dated history,
+    is left byte-identical, and its "same subject" is FALSE.** `video_012` and `video_015` are two
+    DIFFERENT people — SHA-256 `794f0446…b4a838` / `ca476fff…bec03c5` byte-matched to
+    `solved_pose_video_012.txt:24` and `solved_pose_video_015.txt:24`, in-window frames extracted
+    and viewed, `stature_measured_m` differing by **4.90 cm** at `:33` of each; full receipt at
+    [Correction 2026-08-21](#correction-2026-08-21-the-two-scored-clips-are-not-the-same-subject).
+    Next-step 55's premise is therefore VOID, and **47 is blocked on a premise that no longer holds,
+    not on 55 as written**. The **83.702** / **11.576** mm figures are untouched and both remain
+    unscaled; what they cannot do is isolate scaling, because subject identity is confounded with
+    clip and no same-subject control exists in this tree. This is a factual correction only — it
+    does not decide 47, does not propose scaling, and registers no successor clause.
 48. **The future UI round must enumerate its six pins against clauses (a)–(h) BEFORE writing them.**
     The results table above labels the UI gate `G6(a)–(h)` (8 sub-clauses) while the prose commits to
     "six UI pins in `MuscleOverlayClaimTests`" (29 registered − 23 landed). Both readings are in the

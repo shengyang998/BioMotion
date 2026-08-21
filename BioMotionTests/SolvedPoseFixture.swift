@@ -32,6 +32,23 @@ enum SolvedPoseFixture {
         var samplingPolicy: [String: String] = [:]
         /// `key=value` tokens of the `sampling_branch` header, same vintage.
         var samplingBranch: [String: String] = [:]
+        /// The `ik_residual_mm_*` headers, keyed by the FULL header name.
+        ///
+        /// ⚠️ THE FIXTURE FORMAT CARRIES NO PER-FRAME IK RESIDUAL. The
+        /// video-driven generator collects `result.markerRMSMeters` per frame
+        /// and then writes only THREE CLIP-LEVEL SUMMARIES —
+        /// `ik_residual_mm_median`, `_p95`, `_max`
+        /// (collected per frame at `SolvedPoseFixtureGeneratorTests.swift:1312`,
+        /// reduced at :1328, written at :1460-1462) — while a data
+        /// row is `frame t` then one value per DOF and nothing else (re-derived
+        /// 2026-08-21: `awk '{print NF}'` on row 0 of both committed fixtures
+        /// gives 171 = 1 + 1 + `dofs 169`). Anything that wants a per-frame
+        /// residual has to regenerate the fixtures with a new column; the
+        /// next-step-51 census therefore records a per-frame POSE-NOISE PROXY
+        /// computed in-test and prints these three alongside it, labelled as
+        /// the clip-level summaries they are. Empty for a fixture written
+        /// before the 2026-08-14 video-driven generator.
+        var ikResidualMM: [String: Double] = [:]
 
         /// Distinct sample intervals, rounded to the microsecond. The registered
         /// clips have exactly one.
@@ -100,6 +117,7 @@ enum SolvedPoseFixture {
         var frames: [[Double]] = []
         var samplingPolicy: [String: String] = [:]
         var samplingBranch: [String: String] = [:]
+        var ikResidualMM: [String: Double] = [:]
 
         for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = String(rawLine)
@@ -124,6 +142,13 @@ enum SolvedPoseFixture {
                     if parts.count == 2 { kv[parts[0]] = parts[1] }
                 }
                 if key == "sampling_policy" { samplingPolicy = kv } else { samplingBranch = kv }
+            case "ik_residual_mm_median", "ik_residual_mm_p95", "ik_residual_mm_max":
+                // Parsed 2026-08-21 for the next-step-51 census, which has to
+                // state WHAT IS AVAILABLE where a per-frame residual is not.
+                // Read through the same `strictDouble` as every other number in
+                // this file, so a malformed summary is simply absent rather
+                // than a silent zero.
+                if fields.count > 1, let value = strictDouble(fields[1]) { ikResidualMM[key] = value }
             case "generator", "commit", "model", "dofs":
                 continue
             default:
@@ -165,7 +190,8 @@ enum SolvedPoseFixture {
         return Fixture(formatId: format, clip: clipId, modelSHA256: sha, dofNames: dofNames,
                        markerNames: markerNames, sgTaps: taps, frameNumbers: frameNumbers,
                        timestamps: timestamps, frames: frames,
-                       samplingPolicy: samplingPolicy, samplingBranch: samplingBranch)
+                       samplingPolicy: samplingPolicy, samplingBranch: samplingBranch,
+                       ikResidualMM: ikResidualMM)
     }
 
     /// Stricter than `Double(_:)`, which accepts `nan`, `inf` and hex floats —
@@ -197,6 +223,18 @@ extension MuscleLengthModeTests {
         let out = ClipTraversal()
         let bundle = Bundle(for: MuscleLengthModeTests.self)
         let fixture = try SolvedPoseFixture.load(clip: clip, bundle: bundle)
+
+        // --- DIAGNOSTIC, STATUS next-step 51. NEVER A GATE. ------------------
+        // Registered as a stored reference BEFORE anything can throw, so a clip
+        // that dies in the runtime-span guard leaves an EMPTY census that the
+        // report prints as such, rather than no census at all that a reader
+        // could mistake for "no flips". NOTHING in the census writes to `out`,
+        // and no counted number is read back out of it.
+        let census = MuscleModeFlipCensus(clip: clip, ikResidualMM: fixture.ikResidualMM)
+        muscleModeFlipCensusLock.lock()
+        muscleModeFlipCensusByClip[clip] = census
+        muscleModeFlipCensusLock.unlock()
+
         let dofCount = fixture.dofNames.count
         let taps = MuscleLengthModeClassifier.taps
         let halfWindow = taps / 2
@@ -316,6 +354,33 @@ extension MuscleLengthModeTests {
         stencilIndices.sort()
         out.stencilCoordinates = stencilIndices.map { ctx.dofNames[$0] }
 
+        // --- DIAGNOSTIC: the per-frame pose-noise reading (next-step 51) ------
+        // The fixture has NO per-frame IK residual — only the three clip-level
+        // summaries (see `Fixture.ikResidualMM`) — so the per-frame quantity the
+        // census records at a flip is the SG POSITION RESIDUAL the noise
+        // estimate is itself built from, `|raw − SG| / σ̂ⱼ`, over the stencil
+        // coordinates. Same bytes as the `sigmaHat` loop above, one z-score per
+        // coordinate instead of one MAD per coordinate. σ̂ⱼ = 0 means that
+        // coordinate never moves off its SG fit at all, so its residual carries
+        // no information and it is skipped rather than dividing by zero.
+        // Computed OUTSIDE both timed blocks, so neither of G5's per-frame cost
+        // receipts is charged for it.
+        var residualZMaxByFrame = [Double](repeating: 0, count: out.warmedCount)
+        var residualZRMSByFrame = [Double](repeating: 0, count: out.warmedCount)
+        for w in 0..<out.warmedCount {
+            var worst = 0.0, sumSquares = 0.0, counted = 0
+            for j in stencilIndices where sigmaHat[j] > 0 {
+                let z = abs(fixture.frames[w + halfWindow][j] - smoothedQ[w][j]) / sigmaHat[j]
+                worst = max(worst, z)
+                sumSquares += z * z
+                counted += 1
+            }
+            residualZMaxByFrame[w] = worst
+            residualZRMSByFrame[w] = counted == 0 ? 0 : (sumSquares / Double(counted)).squareRoot()
+        }
+        census.baselineResidualZMax = residualZMaxByFrame
+        census.baselineResidualZRMS = residualZRMSByFrame
+
         // --- Pass 2: R, L, mode, witness B -----------------------------------
         // The block is the DISPLAYED set, not the admitted one: compute is paid
         // for every muscle the picture would draw, so that is the cost G5 has to
@@ -333,12 +398,32 @@ extension MuscleLengthModeTests {
         var previousSignatures: [String: UInt64] = [:]
         var previousDiffDeadband: [String: Double] = [:]
         var previousRate: [String: Double] = [:]
+
+        // --- DIAGNOSTIC side tables (next-step 51) ---------------------------
+        // FLAT and PREALLOCATED on purpose: the census costs two array stores
+        // per muscle-frame, not two dictionary hashes, so G5's `ms_per_frame_mode`
+        // receipt is not materially charged for an instrument that no gate reads.
+        // `diagSeriesFrame` exists because a frame whose moment arms fail to
+        // resolve is `continue`d out of the loop below WITHOUT appending to
+        // `modeSeries` — so a series index is NOT a warmed-frame index, and a
+        // census that assumed it were would name the wrong frame.
+        let diagStride = max(1, out.warmedCount)
+        var diagRate = [Double](repeating: 0, count: muscles.count * diagStride)
+        var diagDeadband = [Double](repeating: 0, count: muscles.count * diagStride)
+        var diagIndexByMuscle: [String: Int] = [:]
+        for (m, name) in muscles.enumerated() { diagIndexByMuscle[name] = m }
+        var diagSeriesFrame: [Int] = []
+        var diagSeriesRule3: [Bool] = []
+
         let modeStart = Date()
 
         for w in 0..<out.warmedCount {
             guard let rows = ctx.momentArms(pose: smoothedQ[w], muscles: muscles,
                                             coordinates: stencilNames) else { continue }
             let rule3 = ctx.computer.lastUnresolvedDiscontinuitySamples > 0
+            let diagSeriesIndex = diagSeriesFrame.count
+            diagSeriesFrame.append(w)
+            diagSeriesRule3.append(rule3)
             var signatures: NSArray?
             let lengths = ctx.computer.muscleLengths(forIndices: muscleIndices,
                                                      signatures: &signatures)
@@ -353,6 +438,13 @@ extension MuscleLengthModeTests {
                     velocityNoiseGain: velocityNoiseGain, sampleInterval: dt)
                 let mode = rule3 ? .indeterminate
                     : MuscleLengthModeClassifier.classify(value: rate, deadband: deadband)
+                // DIAGNOSTIC: the two numbers `classify` just compared, kept so
+                // the census can report `|v| / D` at a flip. Written for the
+                // DISPLAYED set, which is the set `modeSeries` is keyed by.
+                if diagSeriesIndex < diagStride {
+                    diagRate[m * diagStride + diagSeriesIndex] = rate
+                    diagDeadband[m * diagStride + diagSeriesIndex] = deadband
+                }
                 modeSeries[name, default: []].append(mode)
                 if rule3 && isAdmitted { out.rule3Excluded += 1 }
 
@@ -396,6 +488,11 @@ extension MuscleLengthModeTests {
 
         // --- Rule 4: capsule modes, then the G2 statistics -------------------
         var capsuleSeries: [String: [MuscleLengthMode]] = [:]
+        // DIAGNOSTIC: the SAME filter `heads` applies, kept as NAMES so the
+        // census can say which head broke unanimity. `compactMap` above drops a
+        // head with no series; `filter { modeSeries[$0] != nil }` drops exactly
+        // the same ones in exactly the same order.
+        var capsuleHeads: [String: [String]] = [:]
         for resolution in admittedResolutions {
             let heads = resolution.modelMuscles.compactMap { modeSeries[$0] }
             guard let first = heads.first else { continue }
@@ -404,6 +501,51 @@ extension MuscleLengthModeTests {
                 series.append(MuscleObservabilityMask.unanimousMode(heads.map { $0[w] }))
             }
             capsuleSeries[resolution.capsule] = series
+            capsuleHeads[resolution.capsule] = resolution.modelMuscles.filter { modeSeries[$0] != nil }
+        }
+
+        // --- DIAGNOSTIC: the flip recorder (next-step 51) ---------------------
+        // Called AFTER each existing counter increments, inside the same `if`,
+        // reading only what that counter already decided. It adds no branch to
+        // the counting logic and cannot move `flickerCentres`, `flickerDenominator`,
+        // `greyTransitions` or `greyDenominator` — the four numbers G2(a)/(e)
+        // are pinned on.
+        func recordFlip(capsule: String, series: [MuscleLengthMode], t: Int, kind: String) {
+            var heads: [MuscleModeFlipEvent.Head] = []
+            var breakers: [MuscleModeFlipEvent.Head] = []
+            for head in capsuleHeads[capsule] ?? [] {
+                guard let headSeries = modeSeries[head], t < headSeries.count,
+                      let m = diagIndexByMuscle[head], t < diagStride else { continue }
+                let entry = MuscleModeFlipEvent.Head(
+                    name: head,
+                    before: headSeries[t - 1],
+                    after: headSeries[t],
+                    ratioBefore: MuscleModeFlipCensus.ratio(value: diagRate[m * diagStride + t - 1],
+                                                            deadband: diagDeadband[m * diagStride + t - 1]),
+                    ratio: MuscleModeFlipCensus.ratio(value: diagRate[m * diagStride + t],
+                                                      deadband: diagDeadband[m * diagStride + t]))
+                heads.append(entry)
+                if entry.after != entry.before { breakers.append(entry) }
+            }
+            let frame = t < diagSeriesFrame.count ? diagSeriesFrame[t] : -1
+            let previousFrame = t - 1 < diagSeriesFrame.count ? diagSeriesFrame[t - 1] : -1
+            census.record(MuscleModeFlipEvent(
+                capsule: capsule,
+                kind: kind,
+                seriesIndex: t,
+                warmedFrame: frame,
+                before: series[t - 1],
+                after: series[t],
+                rule3Before: t - 1 < diagSeriesRule3.count ? diagSeriesRule3[t - 1] : false,
+                rule3After: t < diagSeriesRule3.count ? diagSeriesRule3[t] : false,
+                residualZMax: frame >= 0 && frame < residualZMaxByFrame.count
+                    ? residualZMaxByFrame[frame] : -1,
+                residualZRMS: frame >= 0 && frame < residualZRMSByFrame.count
+                    ? residualZRMSByFrame[frame] : -1,
+                residualZMaxBefore: previousFrame >= 0 && previousFrame < residualZMaxByFrame.count
+                    ? residualZMaxByFrame[previousFrame] : -1,
+                heads: heads,
+                breakers: breakers))
         }
 
         for (capsule, series) in capsuleSeries {
@@ -430,13 +572,18 @@ extension MuscleLengthModeTests {
                             if series[tPrime] == series[t - 1],
                                (t + 1..<tPrime).allSatisfy({ series[$0] == series[t] }) {
                                 out.flickerCentres += 1
+                                recordFlip(capsule: capsule, series: series, t: t, kind: "flicker")
                                 break
                             }
                         }
                     }
                 }
                 out.greyDenominator += 1
-                if series[t].isDefined != series[t - 1].isDefined { out.greyTransitions += 1 }
+                if series[t].isDefined != series[t - 1].isDefined {
+                    out.greyTransitions += 1
+                    recordFlip(capsule: capsule, series: series, t: t,
+                               kind: series[t].isDefined ? "grey_leave" : "grey_enter")
+                }
             }
         }
 
@@ -485,5 +632,310 @@ extension MuscleLengthModeTests {
 
     static var velocityNoiseGain: Double {
         WindowedDerivativeFilter.velocityNoiseGain(taps: MuscleLengthModeClassifier.taps)
+    }
+}
+
+// MARK: - The next-step-51 flicker / grey census (DIAGNOSTIC, NEVER A GATE)
+
+/// One flicker centre or one grey transition, carrying the four facts STATUS
+/// next-step 51 demands be MEASURED before anybody proposes a fix for the
+/// G2(a)/G2(e) failures: WHICH capsule, WHICH muscle head broke unanimity,
+/// `|v| / D` at the flip, and the per-frame pose reading at that frame.
+///
+/// HOW THIS IS READ — the whole reason the instrument exists, written down
+/// BEFORE the numbers land so the reading cannot be chosen to suit them:
+///
+/// * breaker `|v| / D` clustered JUST ABOVE 1.0 ⇒ the flips are heads crossing
+///   their own deadband edge, i.e. a **DEADBAND / POSE-NOISE** problem;
+/// * breaker `|v| / D` LARGE, and large on BOTH sides of a lengthening↔shortening
+///   reversal, ⇒ the length rate genuinely reversed and the layer is reporting
+///   what it was given, i.e. a **CLASSIFIER / KINEMATICS** problem;
+/// * `rule3=1` at the flip ⇒ NEITHER of those: that frame was forced
+///   `.indeterminate` by an unresolved wrap switch, which is a fourth cause and
+///   is counted apart so it cannot be silently attributed to the other three.
+///
+/// NO THRESHOLD IS ATTACHED TO ANY OF THIS AND NONE MAY BE. A bar written now
+/// would be a bar selected against an already-known 4.8 %/5.6 % failure, which
+/// is the same move as editing one. This type is read by a `print` and by
+/// nothing else: no gate, no assertion, no pinned number, and nothing on
+/// `ClipTraversal`.
+struct MuscleModeFlipEvent {
+
+    /// One head of the capsule at the flip, with BOTH ratios — a flip whose
+    /// breaker sits at 1.05 after and 0.98 before is a deadband crossing; one at
+    /// 8.0 after and 6.0 before with opposite signs is a real reversal.
+    struct Head {
+        let name: String
+        let before: MuscleLengthMode
+        let after: MuscleLengthMode
+        /// `|v| / D` for this head at `t − 1`, from the two numbers `classify`
+        /// itself compared at that frame.
+        let ratioBefore: Double
+        /// `|v| / D` for this head at `t`, the flip frame.
+        let ratio: Double
+    }
+
+    let capsule: String
+    /// `flicker`, `grey_enter` (defined → indeterminate) or `grey_leave`
+    /// (indeterminate → defined).
+    let kind: String
+    /// Index into the CAPSULE MODE SERIES, which is what the G2 counters walk.
+    let seriesIndex: Int
+    /// The WARMED-frame index that series index maps to. Not the same number
+    /// whenever a frame's moment arms failed to resolve and the traversal
+    /// `continue`d past it without appending a mode.
+    let warmedFrame: Int
+    let before: MuscleLengthMode
+    let after: MuscleLengthMode
+    let rule3Before: Bool
+    let rule3After: Bool
+    /// `max |raw − SG| / σ̂` over the stencil at the flip frame. **NOT the IK
+    /// residual**: the fixture carries no per-frame IK residual (see
+    /// `SolvedPoseFixture.Fixture.ikResidualMM`), so this is the SG position
+    /// residual the noise estimate is itself built from. `-1` = unavailable.
+    let residualZMax: Double
+    let residualZRMS: Double
+    /// The same reading one frame earlier, so a spike AT the flip is separable
+    /// from a generally noisy neighbourhood.
+    let residualZMaxBefore: Double
+    let heads: [Head]
+    /// Heads whose OWN mode changed across the flip. A capsule's mode is the
+    /// UNANIMOUS mode of its heads (`MuscleObservabilityMask.unanimousMode`), so
+    /// these are exactly the heads that could have broken or restored unanimity.
+    /// An EMPTY breaker list on a recorded flip would mean the capsule mode moved
+    /// while no head moved, which is impossible under `unanimousMode` — it is
+    /// counted and printed rather than assumed away.
+    let breakers: [Head]
+}
+
+/// The per-clip census. One instance per clip, created by `buildTraversal`
+/// BEFORE anything in it can throw, so an empty census always means "nothing
+/// was recorded", never "the traversal never got there".
+final class MuscleModeFlipCensus {
+
+    let clip: String
+    /// The three CLIP-LEVEL IK residual summaries the fixture actually carries.
+    let ikResidualMM: [String: Double]
+    /// The stencil pose-noise reading at EVERY warmed frame — the control the
+    /// at-flip readings are compared against. Without it, "the residual at the
+    /// flip was 3.1" is a number with no scale.
+    var baselineResidualZMax: [Double] = []
+    var baselineResidualZRMS: [Double] = []
+    private(set) var events: [MuscleModeFlipEvent] = []
+
+    init(clip: String, ikResidualMM: [String: Double]) {
+        self.clip = clip
+        self.ikResidualMM = ikResidualMM
+    }
+
+    func record(_ event: MuscleModeFlipEvent) { events.append(event) }
+
+    /// `|v| / D`, the classifier's own comparison expressed as one number.
+    /// A non-positive or non-finite deadband yields `.infinity`, which the
+    /// report counts and excludes rather than folding into a median.
+    static func ratio(value: Double, deadband: Double) -> Double {
+        guard value.isFinite, deadband.isFinite, deadband > 0 else { return .infinity }
+        return abs(value) / deadband
+    }
+
+    /// One character per mode, so a 300-line event census stays readable.
+    static func code(_ mode: MuscleLengthMode) -> String {
+        switch mode {
+        case .lengthening: return "L"
+        case .shortening: return "S"
+        case .noChangeThisViewCanResolve: return "N"
+        case .indeterminate: return "I"
+        }
+    }
+
+    /// Bucket edges chosen around 1.0 because 1.0 is where `classify` switches,
+    /// not because any measurement suggested them.
+    static let ratioBucketEdges: [Double] = [0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
+    static let ratioBucketLabels = ["lt0.5", "0.5-1", "1-1.5", "1.5-2",
+                                    "2-3", "3-5", "5-10", "ge10"]
+
+    static func histogram(_ values: [Double]) -> [Int] {
+        var counts = [Int](repeating: 0, count: ratioBucketLabels.count)
+        for value in values {
+            var bucket = ratioBucketEdges.count
+            for (i, edge) in ratioBucketEdges.enumerated() where value < edge {
+                bucket = i
+                break
+            }
+            counts[bucket] += 1
+        }
+        return counts
+    }
+
+    private static func histogramText(_ values: [Double]) -> String {
+        let counts = histogram(values)
+        var parts: [String] = []
+        for (i, label) in ratioBucketLabels.enumerated() where i < counts.count {
+            parts.append("\(label)=\(counts[i])")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// The census as ONE multi-line greppable string, in the file's established
+    /// `MODE-METRIC` house style. Aggregates are `MODE-METRIC g2diag `; the raw
+    /// per-event rows are `MODE-METRIC g2diag-event `, so `grep 'MODE-METRIC
+    /// g2diag'` gets both and `grep 'MODE-METRIC g2diag '` gets the summary only.
+    func report() -> String {
+        let head = "MODE-METRIC g2diag clip=\(clip)"
+        var lines: [String] = []
+        lines.append(head + " instrument=next_step_51_flip_census gates=NONE assertions=NONE"
+                     + " reading=[breaker_ratio_just_above_1=DEADBAND_OR_POSE_NOISE;"
+                     + "breaker_ratio_large_both_sides=CLASSIFIER_OR_KINEMATICS;"
+                     + "rule3=UNRESOLVED_WRAP_SWITCH_a_fourth_cause]"
+                     + " modes=[L=lengthening,S=shortening,N=noChangeThisViewCanResolve,"
+                     + "I=indeterminate]")
+
+        // The file's own median, so the census cannot drift from the estimator
+        // the classifier itself uses.
+        let median: ([Double]) -> Double = MuscleLengthModeClassifier.median
+        lines.append(head + " per_frame_ik_residual=UNAVAILABLE_IN_FIXTURE"
+                     + " fixture_carries=clip_level_only"
+                     + String(format: " ik_residual_mm_median=%.6f ik_residual_mm_p95=%.6f"
+                              + " ik_residual_mm_max=%.6f",
+                              ikResidualMM["ik_residual_mm_median"] ?? -1,
+                              ikResidualMM["ik_residual_mm_p95"] ?? -1,
+                              ikResidualMM["ik_residual_mm_max"] ?? -1)
+                     + " substitute=sg_position_residual_z_over_stencil"
+                     + " substitute_definition=max_and_rms_of_abs_raw_minus_sg_over_sigma_hat")
+
+        guard !events.isEmpty else {
+            lines.append(head + " events=0 VACUOUS-BY-CONSTRUCTION"
+                         + " reason=no_flicker_centre_and_no_grey_transition_reached_the_recorder"
+                         + " note=an_empty_census_scores_nothing_and_is_not_a_pass")
+            return lines.joined(separator: "\n")
+        }
+
+        let flicker = events.filter { $0.kind == "flicker" }.count
+        let greyEnter = events.filter { $0.kind == "grey_enter" }.count
+        let greyLeave = events.filter { $0.kind == "grey_leave" }.count
+        let noBreaker = events.filter { $0.breakers.isEmpty }.count
+        let multiHead = events.filter { $0.heads.count > 1 }.count
+        let wholeCapsuleFlips = events.filter { !$0.heads.isEmpty
+            && $0.breakers.count == $0.heads.count }.count
+        lines.append(head + " events=\(events.count) flicker=\(flicker)"
+                     + " grey_enter=\(greyEnter) grey_leave=\(greyLeave)"
+                     + " capsules=\(Set(events.map(\.capsule)).count)"
+                     + " multi_head_events=\(multiHead)"
+                     + " all_heads_flipped=\(wholeCapsuleFlips)"
+                     + " single_head_broke_unanimity=\(events.count - wholeCapsuleFlips - noBreaker)"
+                     + " no_breaker=\(noBreaker)"
+                     + " rule3_at_flip=\(events.filter(\.rule3After).count)"
+                     + " rule3_before_flip=\(events.filter(\.rule3Before).count)")
+
+        let breakerRatios = events.flatMap { $0.breakers.map(\.ratio) }
+        let finiteRatios = breakerRatios.filter(\.isFinite)
+        let finiteRatiosBefore = events.flatMap { $0.breakers.map(\.ratioBefore) }.filter(\.isFinite)
+        lines.append(head + " which=at_flip breakers=\(breakerRatios.count)"
+                     + " non_finite=\(breakerRatios.count - finiteRatios.count)"
+                     + String(format: " median=%.4f", median(finiteRatios))
+                     + " " + Self.histogramText(finiteRatios))
+        lines.append(head + " which=one_frame_before breakers=\(finiteRatiosBefore.count)"
+                     + String(format: " median=%.4f", median(finiteRatiosBefore))
+                     + " " + Self.histogramText(finiteRatiosBefore))
+
+        let atFlipMax = events.map(\.residualZMax).filter { $0 >= 0 }
+        let atFlipRMS = events.map(\.residualZRMS).filter { $0 >= 0 }
+        lines.append(head + " pose_noise_control frames=\(baselineResidualZMax.count)"
+                     + " flip_frames=\(atFlipMax.count)"
+                     + String(format: " resid_z_max_median_all=%.4f resid_z_max_median_at_flip=%.4f"
+                              + " resid_z_rms_median_all=%.4f resid_z_rms_median_at_flip=%.4f",
+                              median(baselineResidualZMax), median(atFlipMax),
+                              median(baselineResidualZRMS), median(atFlipRMS))
+                     + " note=at_flip_equal_to_all_means_pose_noise_does_not_mark_the_flip_frames")
+
+        for capsule in Set(events.map(\.capsule)).sorted() {
+            let own = events.filter { $0.capsule == capsule }
+            let ratios = own.flatMap { $0.breakers.map(\.ratio) }.filter(\.isFinite)
+            lines.append(head + " capsule=\(capsule) heads=\(own.first?.heads.count ?? 0)"
+                         + " events=\(own.count)"
+                         + " flicker=\(own.filter { $0.kind == "flicker" }.count)"
+                         + " grey=\(own.filter { $0.kind != "flicker" }.count)"
+                         + " breakers=\(ratios.count)"
+                         + String(format: " median_ratio=%.4f", median(ratios)))
+        }
+
+        var breaksByHead: [String: [Double]] = [:]
+        for event in events {
+            for breaker in event.breakers {
+                breaksByHead[breaker.name, default: []].append(breaker.ratio)
+            }
+        }
+        for name in breaksByHead.keys.sorted() {
+            let ratios = (breaksByHead[name] ?? []).filter(\.isFinite)
+            lines.append(head + " head=\(name) broke_unanimity=\(breaksByHead[name]?.count ?? 0)"
+                         + String(format: " median_ratio=%.4f", median(ratios)))
+        }
+
+        // The raw rows. Sorted so two runs of the same fixtures print the same
+        // bytes in the same order: `capsuleSeries` is a dictionary and its
+        // iteration order is not stable across runs.
+        let ordered = events.sorted {
+            ($0.capsule, $0.seriesIndex, $0.kind) < ($1.capsule, $1.seriesIndex, $1.kind)
+        }
+        for event in ordered {
+            let breakers = event.breakers.map {
+                String(format: "%@:%@>%@:%.3f>%.3f", $0.name,
+                       Self.code($0.before), Self.code($0.after), $0.ratioBefore, $0.ratio)
+            }.joined(separator: ";")
+            let others = event.heads.filter { entry in
+                !event.breakers.contains { $0.name == entry.name }
+            }.map {
+                String(format: "%@:%@:%.3f", $0.name, Self.code($0.after), $0.ratio)
+            }.joined(separator: ";")
+            lines.append("MODE-METRIC g2diag-event clip=\(clip) capsule=\(event.capsule)"
+                         + " kind=\(event.kind) t=\(event.seriesIndex)"
+                         + " warmed_frame=\(event.warmedFrame)"
+                         + " capsule_mode=\(Self.code(event.before))>\(Self.code(event.after))"
+                         + " rule3=\(event.rule3Before ? 1 : 0)>\(event.rule3After ? 1 : 0)"
+                         + String(format: " resid_z_max=%.4f resid_z_max_before=%.4f"
+                                  + " resid_z_rms=%.4f",
+                                  event.residualZMax, event.residualZMaxBefore, event.residualZRMS)
+                         + " heads=\(event.heads.count)"
+                         + " breakers=[\(breakers)] steady=[\(others)]")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
+/// DIAGNOSTIC side table, written by `buildTraversal` and read by exactly one
+/// `print`. It is deliberately NOT a field on `ClipTraversal`: that type is
+/// declared in `MuscleLengthModeTests.swift`, and a census reachable from the
+/// object every gate already holds is a census one refactor away from being
+/// read by a gate. File-private so nothing outside this file can even name it.
+private var muscleModeFlipCensusByClip: [String: MuscleModeFlipCensus] = [:]
+
+/// Guards `muscleModeFlipCensusByClip` on BOTH faces. `buildTraversal` writes it
+/// under `MuscleLengthModeTests.traversalLock`, but that lock is `private` to
+/// `MuscleLengthModeTests.swift` and cannot be named here, so the read at
+/// `flipCensusReport` was unguarded — inconsistent with the discipline
+/// `traversalCache` establishes next door (adversarial review, 2026-08-21).
+/// Benign in a serial XCTest process; a diagnostic that is sloppier than the
+/// thing it observes is still sloppy.
+private let muscleModeFlipCensusLock = NSLock()
+
+extension MuscleLengthModeTests {
+
+    /// The next-step-51 census for a clip as ONE multi-line greppable string.
+    ///
+    /// Populated as a side effect of `buildTraversal`, which the G2 methods have
+    /// already called (through the cached `traversal(clip:context:)`) before they
+    /// print this. If the traversal was never built — or threw before the pass
+    /// that records — this says so instead of returning an empty string that
+    /// would read as "no flips".
+    static func flipCensusReport(clip: String) -> String {
+        muscleModeFlipCensusLock.lock()
+        let stored = muscleModeFlipCensusByClip[clip]
+        muscleModeFlipCensusLock.unlock()
+        guard let census = stored else {
+            return "MODE-METRIC g2diag clip=\(clip) census=ABSENT"
+                + " reason=buildTraversal_did_not_run_for_this_clip_in_this_process"
+                + " note=absence_is_not_zero_flips"
+        }
+        return census.report()
     }
 }

@@ -1264,7 +1264,15 @@ final class SolvedPoseFixtureGeneratorTests: XCTestCase {
             // --- 7. NO SCALING. Measured-but-not-applied receipts only. ------
             let firstUsable = retained[0]
             let stature = Double(MHRRetarget.estimatedStatureMeters(jointCoords: firstUsable.jointCoords))
-            let (_, scaleMarkerNames) = MHRRetarget.segmentScaleMarkers(jointCoords: firstUsable.jointCoords)
+            // POSITIONS captured since 2026-08-21, not just names: the committed
+            // fixtures store post-solve DOF angles plus `stature_measured_m` and
+            // the nine marker NAMES, and nothing else about the subject's build —
+            // so with `scaling_applied false` the subject-vs-model geometry
+            // mismatch that next-step 55 is about was UNINSPECTABLE from a
+            // fixture. These are the exact positions `scaleModelWithHeight` would
+            // have measured had DEVIATION A not (correctly) refused to call it.
+            let (scaleMarkerPositions, scaleMarkerNames) =
+                MHRRetarget.segmentScaleMarkers(jointCoords: firstUsable.jointCoords)
 
             // --- 8. Per-frame IK on ONE bridge, sequential, warm-started. ----
             let bridge = NimbleBridge()
@@ -1324,6 +1332,92 @@ final class SolvedPoseFixtureGeneratorTests: XCTestCase {
                 : sortedResiduals[min(sortedResiduals.count - 1,
                                       max(0, Int((0.95 * Double(sortedResiduals.count)).rounded(.up)) - 1))]
             let worst = sortedResiduals.last ?? 0
+
+            // --- SEGMENT-SCALE RECEIPT (next-step 55), printed beside the IK
+            // residual summaries it has to be read against. -------------------
+            //
+            // WHY: the fixture records `scaling_applied false`,
+            // `stature_measured_m` and the nine marker NAMES, then stores only
+            // post-solve DOF angles — so a reader could not tell whether a large
+            // `ik_residual_mm_*` is a pose problem or a BUILD problem (this
+            // generic `FullBody.osim` being asked to reach a subject it is not
+            // shaped like). These are the numerators of exactly the ratios
+            // `scaleModelWithHeight:` computes internally: lower = HJC→AJC
+            // averaged L/R, upper = SJC→WJC averaged L/R, trunk = MHR_ROOT →
+            // shoulder midpoint (NimbleBridge.mm:1017-1059, with the
+            // `segLength` lambda at :1000; all re-read 2026-08-21).
+            //
+            // ⚠️ THE DENOMINATORS ARE NOT REACHABLE FROM SWIFT. The model's own
+            // reference lengths are private ivars cached at load
+            // (`_loadedLowerReferenceLength`, `_loadedUpperReferenceLength`,
+            // `_loadedPelvisTrunkReferenceLength`, `_loadedMHRTrunkReferenceLength`
+            // — NimbleBridge.mm:447-450, assigned at :848-851 from body-origin
+            // distances femur→talus, humerus→hand and the humerus-midpoint
+            // trunk), and `NimbleBridge.h` exposes no accessor for them. The
+            // bridge prints all four ITSELF at load time — `NSLog` at
+            // NimbleBridge.mm:836-841, "NimbleBridge: Loaded scale references —
+            // lower %.4f m, trunk PELVIS %.4f m / MHR_ROOT %.4f m, upper %.4f m"
+            // — in this same run, so the ratio is one division away for a reader
+            // of this log. It is deliberately NOT computed here against the
+            // 0.8061 / 0.5360 / 0.4820 figures quoted in MHRRetarget.swift:403-404:
+            // those are PROSE, and a printed ratio derived from a doc comment
+            // would be quoted back later as a measurement. `model_total_mass_kg`
+            // IS Swift-readable (NimbleBridge.h:328) and is included as the one
+            // model-side build scalar this test can derive itself.
+            func scaleMarkerXYZ(_ name: String) -> (x: Double, y: Double, z: Double)? {
+                guard let i = scaleMarkerNames.firstIndex(of: name),
+                      i * 3 + 2 < scaleMarkerPositions.count else { return nil }
+                return (Double(scaleMarkerPositions[i * 3]),
+                        Double(scaleMarkerPositions[i * 3 + 1]),
+                        Double(scaleMarkerPositions[i * 3 + 2]))
+            }
+            func scaleMarkerDistance(_ a: String, _ b: String) -> Double {
+                guard let p = scaleMarkerXYZ(a), let q = scaleMarkerXYZ(b) else { return -1 }
+                let dx = p.x - q.x, dy = p.y - q.y, dz = p.z - q.z
+                return (dx * dx + dy * dy + dz * dz).squareRoot()
+            }
+            let segmentPairs: [(label: String, a: String, b: String, consumer: String)] = [
+                ("lower_l", "LHJC", "LAJC", "scaleModelWithHeight_lower_avg_LR"),
+                ("lower_r", "RHJC", "RAJC", "scaleModelWithHeight_lower_avg_LR"),
+                ("upper_l", "LSJC", "LWJC", "scaleModelWithHeight_upper_avg_LR"),
+                ("upper_r", "RSJC", "RWJC", "scaleModelWithHeight_upper_avg_LR"),
+                ("hip_width", "LHJC", "RHJC", "layout_only_never_read_as_a_reference"),
+                ("shoulder_width", "LSJC", "RSJC", "layout_only_never_read_as_a_reference"),
+            ]
+            for pair in segmentPairs {
+                print("SOLVED-POSE-FIXTURE-VIDEO-SEGSCALE clip=\(clipId) pair=\(pair.label)"
+                      + " markers=\(pair.a)-\(pair.b)"
+                      + String(format: " target_m=%.6f", scaleMarkerDistance(pair.a, pair.b))
+                      + " model_ref_m=UNAVAILABLE_IN_SWIFT ratio=UNAVAILABLE_IN_SWIFT"
+                      + " consumer=\(pair.consumer)")
+            }
+            var trunkTarget = -1.0
+            if let root = scaleMarkerXYZ("MHR_ROOT"), let ls = scaleMarkerXYZ("LSJC"),
+               let rs = scaleMarkerXYZ("RSJC") {
+                let dx = 0.5 * (ls.x + rs.x) - root.x
+                let dy = 0.5 * (ls.y + rs.y) - root.y
+                let dz = 0.5 * (ls.z + rs.z) - root.z
+                trunkTarget = (dx * dx + dy * dy + dz * dz).squareRoot()
+            }
+            let lowerTarget = 0.5 * (scaleMarkerDistance("LHJC", "LAJC")
+                                     + scaleMarkerDistance("RHJC", "RAJC"))
+            let upperTarget = 0.5 * (scaleMarkerDistance("LSJC", "LWJC")
+                                     + scaleMarkerDistance("RSJC", "RWJC"))
+            print("SOLVED-POSE-FIXTURE-VIDEO-SEGSCALE clip=\(clipId) pair=trunk"
+                  + " markers=MHR_ROOT-shoulder_mid"
+                  + String(format: " target_m=%.6f", trunkTarget)
+                  + " model_ref_m=UNAVAILABLE_IN_SWIFT ratio=UNAVAILABLE_IN_SWIFT"
+                  + " consumer=scaleModelWithHeight_trunk_MHR_ROOT_variant")
+            print("SOLVED-POSE-FIXTURE-VIDEO-SEGSCALE clip=\(clipId) summary"
+                  + " markers_n=\(scaleMarkerNames.count)"
+                  + String(format: " lower_target_m=%.6f upper_target_m=%.6f trunk_target_m=%.6f"
+                           + " stature_m=%.6f model_total_mass_kg=%.6f",
+                           lowerTarget, upperTarget, trunkTarget, stature, bridge.totalMass)
+                  + " scaling_applied=false"
+                  + String(format: " ik_residual_mm_median=%.6f ik_residual_mm_p95=%.6f"
+                           + " ik_residual_mm_max=%.6f", median, p95, worst)
+                  + " model_refs=see_NimbleBridge_NSLog_Loaded_scale_references_in_this_same_log"
+                  + " note=ratios_not_computed_here_because_the_denominators_are_private_ivars")
 
             var text = ""
             text += "# GENERATED by tools/pose_fixture/regenerate_solved_pose_fixtures.sh --video - do not hand-edit.\n"
