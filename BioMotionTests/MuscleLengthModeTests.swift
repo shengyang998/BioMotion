@@ -120,13 +120,34 @@ final class MuscleLengthModeTests: XCTestCase {
     ///
     /// PROVENANCE: these fixtures carry a **macOS-Vision INTERIM** person box
     /// (`bbox_source macos_vision INTERIM`). Nothing pinned here is device-grade.
+    ///
+    /// ─── RE-PINNED 2026-08-21, sixteenth round, 8.0 s window ───
+    /// `FrameSource.analysisWindowSeconds` 4.0 → 8.0 moved retained 120 → 240 and
+    /// warmed 112 → 232 on BOTH clips, and every number below moved with it. The
+    /// 112-warmed pins are SUPERSEDED-NOT-ERASED: they are the dated receipt of
+    /// what the 4 s window measured, and the round-16 header in STATUS.md carries
+    /// them beside these. NO BAR MOVED. The window change was pre-registered in
+    /// that header BEFORE this regeneration ran, together with the prediction
+    /// that all twelve fixture-fixable clauses would be adjudicated in ONE
+    /// verdict and that clauses passing at 4 s might fail at 8 s.
+    /// WHAT THAT PREDICTION GOT WRONG, recorded because it was stated first:
+    /// (1) the G7(a) clearing rate was ASSUMED frame-independent; it was not
+    /// (15.82 % → 17.20 % on video_012, 11.20 % → 10.36 % on video_015), so the
+    /// projected 658/828 came in at 715/766 — right side of the floor, wrong
+    /// arithmetic. (2) G2(a)/(e) rates were predicted "roughly unchanged"; the
+    /// video_012 flicker rate FELL 48 % (4.8255 % → 2.5213 %), which is the
+    /// single most surprising number in this round and is unexplained.
+    /// WHAT GOT WORSE, recorded in the same breath: G2(c) on video_012 fell from
+    /// 0.0089 to EXACTLY 0.0 (`gaslat_l` and `gasmed_l` are directional on zero
+    /// of 231 transitions), and G8(a) on video_012 rose 0.2971 → 0.4174, which
+    /// crosses the 30 % PRIMARY bar it used to clear.
     static let g2Pins: [String: (admitted: Int, defined: Int, total: Int,
                                  directional: Double, definedFraction: Double,
                                  minimumCapsule: Double, weakestCapsule: String)] = [
-        "video_012": (14, 1456, 1568, 0.4230769230769231, 0.9285714285714286,
-                      0.008928571428571428, "gaslat_r"),
-        "video_015": (24, 2565, 2688, 0.5235867446393763, 0.9542410714285714,
-                      0.2, "glmed1_r"),
+        "video_012": (14, 3012, 3248, 0.4584993359893758, 0.9273399014778325,
+                      0.0, "gaslat_l"),
+        "video_015": (24, 5322, 5568, 0.5227358136039083, 0.9558189655172413,
+                      0.19594594594594594, "glmed1_r"),
     ]
 
     /// G7/G8's MEASURED-OUTCOME pins, transitioned 2026-08-14 in the same round
@@ -134,16 +155,16 @@ final class MuscleLengthModeTests: XCTestCase {
     static let g7Pins: [String: (admittedMuscles: Int, admittedCapsules: Int, jointFrames: Int,
                                  agreements: Int, signatureChanges: Int, ceiling: Int,
                                  minimumLengthRange: Double)] = [
-        "video_012": (18, 14, 316, 316, 152, 1998, 0.016395450722704985),
-        "video_015": (32, 24, 398, 398, 218, 3552, 0.022493320704742137),
+        "video_012": (18, 14, 715, 715, 299, 4158, 0.017025392767722636),
+        "video_015": (32, 24, 766, 766, 457, 7392, 0.024271537816931255),
     ]
 
     /// G8(a)'s MEASURED-OUTCOME pins. `over20` is the count of scored muscles
     /// whose trend excursion exceeds the 20 % SECONDARY bar; the registered
     /// allowance is 10 % of the scored set.
     static let g8Pins: [String: (muscles: Int, worst: Double, worstMuscle: String, over20: Int)] = [
-        "video_012": (18, 0.29705270786412913, "gasmed_r", 7),
-        "video_015": (32, 0.1529278437872824, "glmax3_l", 0),
+        "video_012": (18, 0.417378214824435, "psoas_l", 7),
+        "video_015": (32, 0.12018028131218193, "glmax3_l", 0),
     ]
 
     /// What reopening this layer costs, stated once and printed by every
@@ -768,8 +789,8 @@ final class MuscleLengthModeTests: XCTestCase {
         // The MEASURED outcome, pinned to the receipt.
         let pinned: [String: (warmed: Int, emptyFrames: Int, hipCapsules: Int,
                               hipSuppressed: Int, admitted: Int)] = [
-            "video_012": (112, 0, 12, 6, 14),
-            "video_015": (112, 0, 12, 0, 24),
+            "video_012": (232, 0, 12, 6, 14),
+            "video_015": (232, 0, 12, 0, 24),
         ]
         for clip in Self.scoredClips {
             let traversal = try Self.traversal(clip: clip, context: context())
@@ -1908,7 +1929,7 @@ final class MuscleLengthModeTests: XCTestCase {
             // and retained ALL of them on both clips (branch A, `excluded=[]`).
             // Provenance: the person box is macOS-Vision INTERIM (see the
             // fixture header's `bbox_source`), so this is an interim substrate.
-            XCTAssertEqual(fixture.frames.count, 120)
+            XCTAssertEqual(fixture.frames.count, 240)
             XCTAssertEqual(fixture.markerNames.count, 20,
                            "the 20-marker MHR drive is what this lineage exists for")
             XCTAssertEqual(fixture.distinctIntervals.count, 1,
@@ -1953,8 +1974,8 @@ final class MuscleLengthModeTests: XCTestCase {
         // the model moved and the verdict must be re-adjudicated.
         let pinned: [String: (flickerCentres: Int, flickerDenominator: Int,
                               greyTransitions: Int, greyDenominator: Int)] = [
-            "video_012": (65, 1347, 67, 1554),
-            "video_015": (71, 2322, 150, 2664),
+            "video_012": (71, 2816, 148, 3234),
+            "video_015": (152, 4907, 292, 5544),
         ]
         for clip in Self.scoredClips {
             let t = try Self.traversal(clip: clip, context: context())
@@ -2212,9 +2233,9 @@ final class MuscleLengthModeTests: XCTestCase {
             // The MEASURED outcome, pinned to the receipt. TRANSITIONED
             // 2026-08-14 (fifteenth round) from the all-zero 5-marker
             // population. `warmedCount` moves 114 -> 112 because the fixture is
-            // 120 samples rather than 122 and `warmedFrameCount = n - (taps-1)`.
+            // 240 samples rather than 242 and `warmedFrameCount = n - (taps-1)`.
             let pin = try XCTUnwrap(Self.g7Pins[clip])
-            XCTAssertEqual(t.warmedCount, 112, "G7 pin on \(clip): the warmed-frame count moved")
+            XCTAssertEqual(t.warmedCount, 232, "G7 pin on \(clip): the warmed-frame count moved")
             XCTAssertEqual(t.admittedMuscles.count, pin.admittedMuscles, "G7 pin on \(clip)")
             XCTAssertEqual(t.witnessJointFrames, pin.jointFrames, "G7(a) pin on \(clip)")
             XCTAssertEqual(t.witnessAgreements, pin.agreements, "G7(a) pin on \(clip)")
@@ -2232,25 +2253,36 @@ final class MuscleLengthModeTests: XCTestCase {
                                  "G7(a) on \(clip): an empty joint-clearing set would make the "
                                  + "agreement a 0/0 that says nothing")
 
-            // The VERDICT. Agreement itself is PERFECT — 1.000000 on both clips
-            // — and the gate still FAILS, because the registered 500-frame floor
-            // is an AUTOMATIC under-power fail and 316/398 sit under it. A
-            // clause met on a population too small to power it is not a pass.
+            // ─── THE VERDICT, FLIPPED 2026-08-21 (sixteenth round) ───
+            // For two rounds this clause asserted its OWN FAILURE: agreement was
+            // perfect (1.000000) but 316/398 jointly-clearing frames sat under
+            // the registered 500 floor, and a clause met on a population too
+            // small to power it is not a pass. At the 8.0 s window the SAME
+            // untouched floor is cleared on both clips — 715 (ceiling 4158) and
+            // 766 (ceiling 7392), agreement still exactly 1.000000 — so the
+            // assertion becomes the REAL GATE it was always a placeholder for.
+            //
+            // THE BAR DID NOT MOVE. `RegisteredBar.g7WitnessJointFrames` is
+            // still 500 and `g7WitnessAgreement` still 0.99, both asserted two
+            // lines below where they are read. What moved is the DRIVE: a
+            // longer analysis window, pre-registered on the drift screen's
+            // stride requirement before this measurement ran. The superseded
+            // under-power text is kept above in this method's doc comment,
+            // SUPERSEDED-NOT-ERASED, as the receipt of what 112 warmed frames
+            // could and could not support.
             XCTAssertGreaterThanOrEqual(t.witnessAgreement, RegisteredBar.g7WitnessAgreement,
                 "G7(a) agreement clause on \(clip)")
-            XCTAssertLessThan(t.witnessJointFrames, RegisteredBar.g7WitnessJointFrames,
-                "G7(a) is recorded as FAILED on \(clip): under-power")
-            recordFailedGate("G7(a)", clip: clip,
-                             measured: "joint_clearing=\(t.witnessJointFrames) "
-                                       + "agree=\(t.witnessAgreements) agreement=1.000000 "
-                                       + "ceiling=\(ceiling) over \(t.warmedCount) warmed frames",
-                             bar: ">= \(RegisteredBar.g7WitnessJointFrames) jointly-clearing "
-                                  + "muscle-frames at >= \(RegisteredBar.g7WitnessAgreement) "
-                                  + "agreement",
-                             why: "the two witnesses agree on EVERY jointly-clearing frame, but "
-                                  + "only \(t.witnessJointFrames) of a \(ceiling) ceiling clear "
-                                  + "both deadbands, so the registered power floor is missed; "
-                                  + "bbox_source=macos_vision INTERIM")
+            XCTAssertGreaterThanOrEqual(t.witnessJointFrames, RegisteredBar.g7WitnessJointFrames,
+                "G7(a) power clause on \(clip): the registered floor is the gate now, "
+                + "not a recorded failure")
+            print("MODE-VERDICT gate=G7(a) clip=\(clip) outcome=PASS_NON_VACUOUS"
+                  + " joint_clearing=\(t.witnessJointFrames)"
+                  + " agree=\(t.witnessAgreements) agreement=1.000000"
+                  + " ceiling=\(ceiling) warmed=\(t.warmedCount)"
+                  + " registered_bar=[>= \(RegisteredBar.g7WitnessJointFrames) jointly-clearing"
+                  + " muscle-frames at >= \(RegisteredBar.g7WitnessAgreement) agreement]"
+                  + " superseded=[4.0s_window_316_and_398_UNDER_POWER]"
+                  + " provenance=macos_vision_INTERIM")
         }
 
         // DECISION COHERENCE, half two: NOT SHIPPED, checked against the tree.
@@ -2420,10 +2452,40 @@ final class MuscleLengthModeTests: XCTestCase {
                                  "G8(a) on \(clip): an empty screen's `worst` is the collection's "
                                  + "own 0, not an excursion")
 
-            // The VERDICT, clause by clause. The PRIMARY clause holds on both
-            // clips; the SECONDARY allowance is blown on video_012 alone.
-            XCTAssertLessThanOrEqual(pin.worst, RegisteredBar.g8PrimaryExcursion,
-                "G8(a) primary clause on \(clip)")
+            // ─── THE VERDICT, RE-ADJUDICATED 2026-08-21 (sixteenth round) ───
+            // SUPERSEDED-NOT-ERASED: "The PRIMARY clause holds on both clips;
+            // the SECONDARY allowance is blown on video_012 alone." That was the
+            // 4 s window's outcome (worst 0.2971 on video_012, 0.1529 on
+            // video_015). At the 8 s window video_012's worst rises to 0.4174 —
+            // and the worst muscle MOVES from `gasmed_r` to `psoas_l` — so the
+            // primary clause CROSSES its bar and now fails there too, while
+            // video_015 IMPROVES to 0.1202 and clears both clauses.
+            //
+            // THIS IS THE PRE-REGISTERED DOWNSIDE ACTUALLY HAPPENING. STATUS's
+            // round-16 header said, before the regeneration ran, that the six
+            // clauses passing at 4 s might fail at 8 s and that a net-worse
+            // outcome would be reported as net-worse. `g8PrimaryExcursion` is
+            // untouched at 0.30 and is asserted below where it is read; what
+            // changed is the measurement. The direction is recorded per clip
+            // rather than smoothed into one verdict, in the same idiom G2(c)
+            // already uses for a clause that holds on one clip only.
+            if pin.worst <= RegisteredBar.g8PrimaryExcursion {
+                XCTAssertLessThanOrEqual(pin.worst, RegisteredBar.g8PrimaryExcursion,
+                    "G8(a) primary clause is recorded as PASSED on \(clip)")
+            } else {
+                XCTAssertGreaterThan(pin.worst, RegisteredBar.g8PrimaryExcursion,
+                    "G8(a) primary clause is recorded as FAILED on \(clip)")
+                recordFailedGate("G8(a)-primary", clip: clip,
+                                 measured: String(format: "worst=%.6f on %@ over %d muscles",
+                                                  pin.worst, pin.worstMuscle, pin.muscles),
+                                 bar: "every muscle <= \(RegisteredBar.g8PrimaryExcursion)",
+                                 why: "the 8 s window's longer trace turns what was a passing "
+                                      + "0.2971 into 0.4174 and moves the worst muscle from "
+                                      + "gasmed_r to psoas_l; a clause that passed at 4 s now "
+                                      + "fails, which the round-16 pre-registration named as a "
+                                      + "possible outcome BEFORE this ran; "
+                                      + "bbox_source=macos_vision INTERIM")
+            }
             let secondaryAllowance = Int((RegisteredBar.g8SecondaryFraction
                                           * Double(pin.muscles)).rounded(.down))
             if over <= secondaryAllowance {

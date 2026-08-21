@@ -1027,8 +1027,9 @@ final class OfflineDisclosureTests: XCTestCase {
                       "the lever must be the one that works: \(message)")
     }
 
-    /// At 240 fps the four-second window itself asks for 960 frames, so the
-    /// 601-frame run budget binds even when the clip is EXACTLY four seconds.
+    /// At 240 fps the analysis window itself asks for `240 x analysisWindowSeconds`
+    /// frames (1920 at the current 8 s), so the 601-frame run budget binds even
+    /// when the clip is EXACTLY one window long.
     /// The notice must name the budget rather than inventing a longer clip.
     /// A genuinely long clip uses the same budget path and remains covered.
     func testTheNativeWindowBudgetNamesItsOwnCauseAtAndBeyondTheWindowBoundary() {
@@ -1072,7 +1073,7 @@ final class OfflineDisclosureTests: XCTestCase {
         let (timestamps, truncated) = FrameSource.sampleTimestamps(
             duration: 30.0, mode: mode, nominalFrameRate: 30)
         XCTAssertFalse(truncated)
-        XCTAssertEqual(timestamps.count, 120)
+        XCTAssertEqual(timestamps.count, 240)   // 8 s window since 2026-08-21
         XCTAssertNil(FrameBudgetNotice.make(mode: mode, duration: 30.0, nominalFrameRate: 30,
                                             timestamps: timestamps, wasTruncated: truncated))
         // And a single frame is never a budget story.

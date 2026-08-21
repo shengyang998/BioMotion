@@ -47,7 +47,7 @@ import Vision
 // MARK: - Registered constants, inlined from FrameSource.swift
 
 /// `FrameSource.analysisWindowSeconds` (FrameSource.swift:75).
-let kAnalysisWindowSeconds: Double = 4.0
+let kAnalysisWindowSeconds: Double = 8.0
 /// `FrameSource.minimumAnalysisSeconds` (:109).
 let kMinimumAnalysisSeconds: Double = 2.5
 /// `FrameSource.plausibleFrameRates` (:136).

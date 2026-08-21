@@ -15,13 +15,26 @@ final class NativeWindowSamplingTests: XCTestCase {
 
     // MARK: - The budget is unchanged
 
-    /// 4 s at 30 fps is exactly the cap. This is the arithmetic the whole
-    /// change rests on: the native window costs no more Core ML calls than the
-    /// sparse mode it replaces.
-    func testFourSecondsAtThirtyIsExactlyTheFrameBudget() {
+    /// The window at 30 fps is exactly `30 x analysisWindowSeconds` frames.
+    ///
+    /// ─── AMENDED 2026-08-21, sixteenth round, SUPERSEDING "4 s at 30 fps is
+    /// exactly the cap" ─── That sentence stated the arithmetic the original
+    /// change rested on: the native window cost no more Core ML calls than the
+    /// sparse mode it replaced, because 4 s x 30 fps landed exactly on
+    /// `maxFramesPerRun`. Raising `analysisWindowSeconds` to 8.0 BREAKS that
+    /// coincidence on purpose: 240 frames is TWICE `maxFramesPerRun`. The
+    /// `.nativeWindow` branch was never budgeted by that constant — it is
+    /// budgeted by `maxNativeWindowFrames` (601) — so this is a doubling of
+    /// per-analysis Core ML calls inside an existing budget, not a breach of
+    /// one. It is recorded here rather than left as a silently-passing count.
+    func testTheWindowAtThirtyIsExactlyThirtyTimesTheWindowSeconds() {
         let (ts, truncated) = native(10.0)
-        XCTAssertEqual(ts.count, 120)
-        XCTAssertEqual(ts.count, FrameSource.maxFramesPerRun)
+        XCTAssertEqual(ts.count, Int(30.0 * FrameSource.analysisWindowSeconds))
+        XCTAssertEqual(ts.count, 240)
+        XCTAssertEqual(ts.count, 2 * FrameSource.maxFramesPerRun,
+                       "the window is deliberately no longer the sparse budget")
+        XCTAssertLessThanOrEqual(ts.count, FrameSource.maxNativeWindowFrames,
+                                 "and it is still inside the branch's own budget")
         XCTAssertFalse(truncated, "the window fitted; the clip merely has more")
 
         // Adjacent spacing is exactly one video frame, not a resampled rate.
@@ -44,8 +57,15 @@ final class NativeWindowSamplingTests: XCTestCase {
         let denseStep = dense[1] - dense[0]
         XCTAssertGreaterThanOrEqual(contactSeconds / denseStep, 5,
                                     "at 30 fps the same contact is 6 samples")
-        XCTAssertEqual(sparse.count, dense.count, accuracy: 100,
-                       "and both stay inside the same model-call budget")
+        // The two modes no longer cost the same: the 8 s native window is 240
+        // calls against the sparse mode's 20. What is still true — and is what
+        // the budget actually promises — is that both sit inside
+        // `maxNativeWindowFrames`. Recorded 2026-08-21, SUPERSEDING the former
+        // "both stay inside the same model-call budget" equality.
+        XCTAssertLessThanOrEqual(dense.count, FrameSource.maxNativeWindowFrames,
+                                 "the native window stays inside the branch budget")
+        XCTAssertLessThanOrEqual(sparse.count, FrameSource.maxFramesPerRun,
+                                 "and the sparse mode stays inside its own")
         print("SAMPLING-METRIC samples_per_contact sparse=\(contactSeconds / sparseStep) "
               + "native=\(contactSeconds / denseStep)")
     }
@@ -160,9 +180,10 @@ final class NativeWindowSamplingTests: XCTestCase {
                   + "frames_per_200ms_contact=\(contactFrames) "
                   + "resolvable_asymmetry_pct=\(100 * 0.5 / contactFrames)")
         }
-        // 30 fps is unchanged: the 4 s window is still exactly 120 frames.
+        // 30 fps: the window is exactly `30 x analysisWindowSeconds` frames,
+        // 240 since 2026-08-21.
         let (thirty, _) = native(20.0, fps: 30)
-        XCTAssertEqual(thirty.count, 120)
+        XCTAssertEqual(thirty.count, 240)
 
         // And the rate the pipeline is willing to RECOMMEND is one it can
         // actually analyse a full window at.

@@ -49,6 +49,7 @@
 		61CD4F1738AF0810A73A53FD /* MultiWrapReferenceTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 620F5686F648C8A342A1BD9C /* MultiWrapReferenceTests.mm */; };
 		6206476EBE4A5F4BAC631212 /* SimmSplineExtrapolationTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = A7ABA5DC9C6C3A8A8A4798F3 /* SimmSplineExtrapolationTests.mm */; };
 		626B57B502FF97EB79085384 /* SolvedPoseFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB1BE4A8D322DDE958CA8EE /* SolvedPoseFixture.swift */; };
+		63735DB6AA441339D9B7AD8F /* SAM3DBodyPose.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 2F3F4C0B2ED8B11978AAB078 /* SAM3DBodyPose.mlmodelc */; };
 		667892EA2E6CC9FACD3EA3C5 /* StanceDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F4015F4D866CCE543FF3AD /* StanceDetector.swift */; };
 		67CEFB68CF7663A8A68FD9D7 /* GaitContactClaimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AA2EB0530BD8326A67BCE60 /* GaitContactClaimTests.swift */; };
 		68975B28DCF3CD55E9EB1746 /* PostureFindingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C1A764BB25EFC31CC9ED09 /* PostureFindingsTests.swift */; };
@@ -189,6 +190,7 @@
 		28A3BA7029D6926197B5C2E6 /* OpenSimReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSimReferenceTests.swift; sourceTree = "<group>"; };
 		2BBAA2777A8666721D1C180A /* BodyFrameOrientationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyFrameOrientationTests.swift; sourceTree = "<group>"; };
 		2DFA2909F8CB7C6E11AEBF61 /* FrameBudgetNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameBudgetNotice.swift; sourceTree = "<group>"; };
+		2F3F4C0B2ED8B11978AAB078 /* SAM3DBodyPose.mlmodelc */ = {isa = PBXFileReference; path = SAM3DBodyPose.mlmodelc; sourceTree = "<group>"; };
 		2F600416A165493606037223 /* THIRD-PARTY-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "THIRD-PARTY-NOTICES.txt"; sourceTree = "<group>"; };
 		3369B0945E741E0FBCC7D4E1 /* CalibrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationTests.swift; sourceTree = "<group>"; };
 		370E5FB68B25E2B0E780D49F /* CameraRegistrationGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraRegistrationGeometryTests.swift; sourceTree = "<group>"; };
@@ -494,6 +496,7 @@
 				03BFC1A32EAECDBA68216767 /* NOTICE */,
 				1E9AE25735CD2EDA1455FE54 /* BioMotion */,
 				2F98D548592CA55E3235266C /* BioMotionTests */,
+				A8E49B204E787CA467BF4D11 /* DevBundledModel */,
 				C6C56A4977C0D290C86679DE /* Downloader */,
 				45D67842736B23EF8B1626A1 /* Resources */,
 				A5BA15E011D2144C8A6C2302 /* Products */,
@@ -535,6 +538,15 @@
 				640BA97ED28345730C5FFFB8 /* BioMotionTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A8E49B204E787CA467BF4D11 /* DevBundledModel */ = {
+			isa = PBXGroup;
+			children = (
+				2F3F4C0B2ED8B11978AAB078 /* SAM3DBodyPose.mlmodelc */,
+			);
+			name = DevBundledModel;
+			path = build/DevBundledModel;
 			sourceTree = "<group>";
 		};
 		C42EF0132E9E0D0BCD84DB05 /* ARKit */ = {
@@ -675,6 +687,7 @@
 				5B737BB2CF7ED98E845E6C7D /* NOTICE in Resources */,
 				CF84BF87BE967613DBC2A792 /* PrivacyInfo.xcprivacy in Resources */,
 				472603D6720300F933498494 /* Rajagopal2016.osim in Resources */,
+				63735DB6AA441339D9B7AD8F /* SAM3DBodyPose.mlmodelc in Resources */,
 				3097F9F24BACE6EDA2F0EC46 /* THIRD-PARTY-NOTICES.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

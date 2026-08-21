@@ -82,11 +82,36 @@ final class DecodedFrameMemoryTests: XCTestCase {
     /// actually been validated — 30 fps, up to 1080p, and every clip the product
     /// was built on — decodes at exactly its natural size. The cap only ever
     /// binds on configurations that were going to be terminated.
-    func testTheValidatedThirtyFpsPathIsDecodedAtFullResolution() {
+    /// ─── AMENDED 2026-08-21, sixteenth round ───
+    /// The former name and claim — "the validated 30 fps path is decoded at FULL
+    /// resolution" — was true at a 4 s window and is FALSE at 8 s for 1080p and
+    /// above. This is a MEASURED CONSEQUENCE the window change's own
+    /// pre-registration got WRONG: STATUS's round-16 header asserted "the decode
+    /// budget does NOT bind", which was computed only against the owner's 576 px
+    /// clips. The budget is defined as `maxFramesPerRun x 1920 x 1080 x 4`, so
+    /// per-frame pixels are `budget / frames`: doubling the window from 120 to
+    /// 240 frames HALVES the per-frame pixel allowance to 1,036,800.
+    ///
+    /// THE BUDGET IS NOT RAISED. It is a ~995 MB peak-memory ceiling and this
+    /// project has no Release-device memory or runtime measurement at all;
+    /// raising it would be inventing a number, which is exactly what
+    /// `maxFramesPerRun`'s own registration refuses to do. What the window
+    /// change did is push FURTHER along a trade `decodedWindowBudgetBytes`
+    /// already declares in its own doc comment: spatial resolution for temporal
+    /// resolution.
+    ///
+    /// THE PRECISE SCOPE, because "HD is downscaled" overstates it: at 30 fps
+    /// and an 8 s window, 576x1024, 576x768 AND 1280x720 are all still decoded
+    /// UNTOUCHED (589,824 / 442,368 / 921,600 px, all under 1,036,800). Only
+    /// 1080p and above scale, and 1080p still lands ABOVE 720p. The consequence
+    /// for the data plan is therefore that acquiring 1080p footage no longer
+    /// buys a 1080p DECODE at this window — it buys roughly 1356x762 — not that
+    /// higher-resolution acquisition stops helping.
+    func testTheThirtyFpsPathIsUntouchedUpTo720pAndScalesAbove() {
+        // Under the per-frame allowance: decoded exactly as they are.
         for natural in [CGSize(width: 576, height: 1024),   // owner's video_012 / 013
                         CGSize(width: 576, height: 768),    // owner's video_015
-                        CGSize(width: 1280, height: 720),
-                        CGSize(width: 1920, height: 1080)] {
+                        CGSize(width: 1280, height: 720)] {
             let cap = FrameSource.maximumDecodedSize(naturalSize: natural, duration: 10,
                                                      nominalFrameRate: 30)
             let out = FrameSource.decodedSize(naturalSize: natural,
@@ -96,6 +121,27 @@ final class DecodedFrameMemoryTests: XCTestCase {
             XCTAssertEqual(out.height, natural.height, accuracy: 0.5)
         }
 
+        // Over it: scaled, and the INVARIANTS are what is gated. The exact
+        // side is a row-alignment artefact and is printed, not pinned.
+        let frames = FrameSource.worstCaseDecodedFrameCount(duration: 10, nominalFrameRate: 30)
+        for natural in [CGSize(width: 1920, height: 1080), CGSize(width: 1080, height: 1920)] {
+            let cap = FrameSource.maximumDecodedSize(naturalSize: natural, duration: 10,
+                                                     nominalFrameRate: 30)
+            let out = FrameSource.decodedSize(naturalSize: natural,
+                                              cappedToSquareSide: cap.width)
+            let cost = frames * FrameSource.decodedFrameBytes(width: Int(out.width),
+                                                              height: Int(out.height))
+            print("DECODE-METRIC natural=\(natural) frames=\(frames) out=\(out) "
+                  + "cost=\(cost) budget=\(FrameSource.decodedWindowBudgetBytes)")
+            XCTAssertLessThanOrEqual(cost, FrameSource.decodedWindowBudgetBytes,
+                                     "\(natural): a whole run must fit the budget")
+            XCTAssertLessThanOrEqual(max(out.width, out.height), max(natural.width, natural.height),
+                                     "\(natural): the cap never upscales")
+            XCTAssertGreaterThan(max(out.width, out.height), 1280,
+                                 "\(natural): 1080p acquisition must still beat a 720p decode, "
+                                 + "or the input-quality lever is gone rather than dulled")
+        }
+
         // And the budget IS that configuration, stated as arithmetic rather
         // than as a round number someone liked: 120 frames of 1080p.
         XCTAssertEqual(FrameSource.decodedWindowBudgetBytes,
@@ -103,22 +149,17 @@ final class DecodedFrameMemoryTests: XCTestCase {
                            * FrameSource.bytesPerDecodedPixel)
 
         // The byte model is the one the decoder actually produces, padding
-        // included — measured at 1357×763 on the real generator.
+        // included — measured at 1357×763 on the real generator. Unchanged by
+        // the window: this asserts the BYTE MODEL, not any window's output.
         XCTAssertEqual(FrameSource.decodedFrameBytes(width: 1357, height: 763), 4_150_720)
         XCTAssertEqual(FrameSource.decodedFrameBytes(width: 1920, height: 1080), 1920 * 1080 * 4,
                        "a 16-pixel-aligned width needs no padding")
 
-        // The one exception, recorded rather than hidden: a PORTRAIT 1080p clip
-        // at 30 fps is 1080 px wide, whose 4320-byte rows pad to 4352 — 0.74%
-        // more than the pixel count — so it sits just over a budget defined by
-        // the landscape case and loses 8 px of long side. Measured, not
-        // predicted.
-        let portrait = CGSize(width: 1080, height: 1920)
-        let out = FrameSource.decodedSize(
-            naturalSize: portrait,
-            cappedToSquareSide: FrameSource.maximumDecodedSize(
-                naturalSize: portrait, duration: 10, nominalFrameRate: 30).width)
-        XCTAssertEqual(out, CGSize(width: 1072, height: 1907))
+        // The former portrait-1080p exception (1072x1907, an 8 px row-alignment
+        // loss against a budget defined by the landscape case) is SUPERSEDED at
+        // the 8 s window: portrait 1080p is now scaled by the pixel allowance
+        // like the landscape case, and the alignment artefact is no longer the
+        // binding term. It is covered by the invariant loop above.
     }
 
     /// A clip whose track metadata will not parse still gets a bound — smaller,

@@ -5,6 +5,223 @@ Last updated: 2026-08-21 (round 16 part A: the two-subjects factual correction a
 
 ---
 
+## Round 16 — THE GOAL, set 2026-08-21 BEFORE the measurement
+
+Set because "keep going until it succeeds" has to name what success IS, in a project where the
+tempting reading of success — `fixture_fixable_all_green == TRUE` — has been PROVED unreachable
+without moving a bar. G3(iv-b)'s premise is false by construction under the 20-marker drive, and
+G4(a) and G9(b) are each independently sufficient to foreclose it. So the goal below is written to be
+ACHIEVABLE and FALSIFIABLE, and its success criterion is never "the lane is green".
+
+### G-1 — the round's own terminus (adjudicable now, no new footage)
+
+ONE complete verdict, with receipts:
+1. `FrameSource.analysisWindowSeconds` 4.0 → 8.0 s, registered on a PRODUCT criterion (below),
+   mirrored byte-identically into the sidecar, both fixtures regenerated.
+2. All TWELVE fixture-fixable clauses re-adjudicated in that ONE verdict at the new window.
+3. The three successor clauses (G4(f)+G4(g), G9(b2), G3(iv-b2)) implemented as executable gates and
+   measured for the first time.
+4. `tools/run_tests.sh all` executed AT MEASUREMENT TIME — the only thing that clears G5(d), which
+   is explicitly non-retroactive.
+5. This file carries the verdict.
+
+**G-1 SUCCEEDS WHEN THE VERDICT EXISTS AND IS COMPLETE — NOT WHEN IT IS GREEN.** A net-worse outcome,
+reported as net-worse with its numbers, is a successful G-1. Re-pinning a number so a lane goes green
+is not; every failing gate in this battery PINS ITS FAILURE AS AN ASSERTION, so a green lane after a
+data change proves only that someone re-pinned. The receipt to read is always the MODE-VERDICT lines.
+
+### G-2 — the product terminus (what the owner actually asked for)
+
+The length-change MODE layer reaches the SCREEN: the app draws, coarsely and qualitatively, which
+muscles are lengthening and which are shortening. Its ADMISSION CONDITIONS are frozen here, before
+any of them is measured, and MAY NOT be relaxed later:
+
+  (a) G7(a) passes on its UNTOUCHED 500-frame floor.
+  (b) G2(a) flicker and G2(e) grey transition reach their untouched bars, OR are proved structurally
+      unreachable and the layer's presentation is degraded accordingly (see the falsification clause).
+  (c) All three successor clauses pass.
+  (d) At least ONE EXTERNAL witness has confirmed the direction claim once. Every witness this
+      project has ever had is internal, and two internal witnesses agreeing is not evidence the
+      answer is right. OpenCap LabValidation_withVideos (Apache-2.0; static cameras, Vicon markers,
+      OpenSim IK/ID, GRF, and 10-channel lower-limb EMG) is the registered candidate.
+  (e) Device-grade provenance. Every pin today reads `bbox_source macos_vision INTERIM`.
+
+### THE FALSIFICATION CLAUSE, pre-registered so the next round cannot defer it again
+
+The next-step-51 diagnostic's FIRST reading (2026-08-21, fast lane `/tmp/biomotion-tests.IOuW3z`,
+`grep 'MODE-METRIC g2diag'`) already refutes the pose-noise hypothesis for G2(a)/(e): flips cluster
+immediately above the deadband (median `|v|/D` **1.1608** at the flip, **0.8710** one frame before,
+86 of 178 breakers in the 1.0-1.5 bin) while flip frames are NO NOISIER than ordinary frames
+(`resid_z_max` median 2.2735 at flips vs 2.1808 over all frames; rms 1.0721 vs 1.0390), and the
+wrap-switch cause contributes zero (`rule3_at_flip=0`). Better footage therefore does NOT address
+G2(a)/(e), and the deadband formula and all three of its faces are frozen IMMUTABLE.
+
+THEREFORE: **if, after the 8.0 s window, G2(a)/(e) remain at or above 3× their bars AND the census
+still shows flips clustered at the deadband with flip frames no noisier than the rest, then G2 is
+recorded as a FOURTH PERMANENT BLOCKER** and G-2(b)'s second branch fires: the per-MUSCLE presentation
+is abandoned in favour of a coarser unit (per-capsule-group, or a longer-dwell summary), or the layer
+does not ship. That judgement is DUE IN THE NEXT ROUND and may not be deferred again. One live
+alternative the census raises and does NOT yet settle: 63 of 132 events are a SINGLE head of a
+multi-head capsule breaking `unanimousMode` (`glmax1_r` alone contributes 40 grey events at a median
+ratio of 0.8964, i.e. dwelling BELOW the band), so the aggregation rule is a candidate cause distinct
+from the frozen deadband. Characterising it is measurement; changing it is not licensed here.
+
+### THE VERDICT — measured 2026-08-21, after the pre-registration above
+
+**G7(a) PASSED ON ITS UNTOUCHED 500-FRAME FLOOR. The count went 6 PASS / 6 FAIL to 7 PASS / 5 FAIL.
+Two of the five that still fail got WORSE, and one of those crossed a bar it used to clear.**
+
+| clause | bar | 4.0 s (012 / 015) | 8.0 s (012 / 015) | verdict |
+|---|---|---|---|---|
+| G2(a) flicker | <= 1 % | 4.8255 / 3.0577 | **2.5213** / 3.0976 | FAIL |
+| G2(b) directional | >= 40 % | 42.3077 / 52.3587 | 45.8499 / 52.2736 | PASS |
+| G2(c) per-capsule | >= 10 % | 0.8929 / 20.00 | **0.0000** / 19.5946 | FAIL, WORSE |
+| G2(d) defined fraction | >= 90 % | 92.8571 / 95.4241 | 92.7340 / 95.5819 | PASS |
+| G2(e) grey | <= 2 % | 4.3115 / 5.6306 | 4.5764 / 5.2670 | FAIL |
+| G2(f) defined samples | >= 300 | 1456 / 2565 | 3012 / 5322 | PASS |
+| G3(iv-a) mask fires | 0 empty | 0/112 · 0/112 | 0/232 · 0/232 | PASS |
+| G3(iv-b) hip suppression | all 12 | 6/12 · 0/12 | 6/12 · 0/12 | FAIL, PERMANENT |
+| G3(v) knee identified | <= 0.5 | 0.000688 | 0.000688 | PASS |
+| **G7(a) two witnesses** | **>= 99 % over >= 500** | **316 / 398** | **715 / 766** @ 1.000000 | **PASS — FLIPPED** |
+| G7(b) stale-pose sentinel | range > 1e-6, re-impose <= 1e-9 | pass | 1.7025e-2 / 2.4272e-2, 0.000e+00 | PASS |
+| G8(a) drift screen | <= 30 % all, <= 20 % for >= 90 % | 0.2971 / 0.1529 | **0.4174** / 0.1202 | FAIL, WORSE |
+
+G7(a) ceilings are now 18 x 231 = 4158 and 32 x 231 = 7392; agreement is EXACTLY 1.000000 on 715 and
+766 real joint frames. `RegisteredBar.g7WitnessJointFrames` is still 500 and `g7WitnessAgreement`
+still 0.99. The gate's assertion changed DIRECTION — from `XCTAssertLessThan(..., 500, "recorded as
+FAILED: under-power")` to the real `>=` gate it was always a placeholder for — and that transition is
+documented at the assertion.
+
+**REGISTERED RISK #1 DID NOT FIRE.** `person_box_frames count=240 found=240 no_observation=0
+perform_threw=0` on BOTH clips. Every newly-included frame was measured; nothing past frame 120 had
+ever been probed before.
+
+#### G5(d) IS CLEARED, and the commit gate is green for the first time since 2026-08-14
+
+`tools/run_tests.sh all` was executed AT MEASUREMENT TIME on 2026-08-21/22, artifacts
+`/tmp/biomotion-tests.kI7DaD`:
+
+- fast: **725/725**, wall **1866 s**, `xcresult result: Passed`, `FAST GATE PASS`;
+- slow E1: **1/1**, wall **6100 s**, `SLOW GATE PASS`;
+- failures, skips, expected failures and test-host restarts all **zero** in both lanes;
+- `ALL GATE PASS: fast and slow receipts both passed.`
+
+G5(d) asked for a receipt only the `fast` lane can produce and was explicitly NON-RETROACTIVE, so it
+could not be satisfied by any earlier run. It is satisfied now. The length-mode battery's own count
+is unchanged at **725** — this round added no test method, only doc comments, print-only diagnostic
+output, and re-pinned measured outcomes.
+
+The verdict receipts this run printed, quoted verbatim from
+`grep 'MODE-VERDICT' /tmp/biomotion-tests.kI7DaD/fast/xcodebuild.log`:
+
+    gate=G7(a) clip=video_012 outcome=PASS_NON_VACUOUS joint_clearing=715 agree=715
+      agreement=1.000000 ceiling=4158 warmed=232
+      registered_bar=[>= 500 jointly-clearing muscle-frames at >= 0.99 agreement]
+      superseded=[4.0s_window_316_and_398_UNDER_POWER] provenance=macos_vision_INTERIM
+    gate=G7(a) clip=video_015 outcome=PASS_NON_VACUOUS joint_clearing=766 agree=766
+      agreement=1.000000 ceiling=7392 warmed=232
+    gate=G8(a)-primary clip=video_012 outcome=FAILED_AGAINST_REGISTERED_BAR
+      measured=[worst=0.417378 on psoas_l over 18 muscles] registered_bar=[every muscle <= 0.3]
+    gate=G2(c) clip=video_012 outcome=FAILED_AGAINST_REGISTERED_BAR
+      measured=[minimum=0.000000 on gaslat_l over 14 admitted capsules (NON-VACUOUS)]
+    gate=G2(c) clip=video_015 outcome=PASS_NON_VACUOUS minimum=0.195946 capsule=glmed1_r
+
+**A GREEN LANE IS NOT A GREEN BATTERY.** Five clauses above read FAILED and the lane is green,
+because this battery pins its failures as assertions. `ALL GATE PASS` means the recorded verdicts
+reproduce; it does not mean the layer improved. The MODE-VERDICT lines are the reading.
+
+#### What the pre-registration got WRONG, recorded because it was stated first
+
+1. **"the G7(a) clearing rate is frame-independent" — ASSUMED, and false.** 15.82 % -> 17.20 % on
+   video_012 and 11.20 % -> 10.36 % on video_015, in OPPOSITE directions. The projection of 658/828
+   came in at 715/766: right side of the floor, wrong arithmetic.
+2. **"G2(a)/(e) rates roughly unchanged" — false on one of four faces, and badly.** video_012's
+   flicker rate FELL 48 % (4.8255 % -> 2.5213 %). This is the most surprising number in the round and
+   it is UNEXPLAINED. It also means a lever exists that moves G2(a), which is why the falsification
+   clause below does not fire.
+3. **"the decode budget does NOT bind" — false for HD input, and this one is a product finding.**
+   That was computed only against the owner's 576 px clips. `decodedWindowBudgetBytes` is
+   `maxFramesPerRun x 1920 x 1080 x 4`, so per-frame pixels are `budget / frames`: doubling the
+   window HALVES the allowance to 1,036,800 px. 576x1024, 576x768 and **1280x720 are still decoded
+   UNTOUCHED**; 1920x1080 now decodes at **1356x762**, which still exceeds a 720p decode. THE BUDGET
+   WAS NOT RAISED — it is a ~995 MB peak-memory ceiling and this project has no Release-device memory
+   measurement, so raising it would be inventing a number. Consequence for the data plan: acquiring
+   1080p footage no longer buys a 1080p DECODE at this window; higher-resolution acquisition still
+   helps, but the lever is DULLED. Recorded at
+   `DecodedFrameMemoryTests.testTheThirtyFpsPathIsUntouchedUpTo720pAndScalesAbove`.
+
+#### The falsification clause: DOES NOT FIRE, and the reason matters
+
+Two of its three conditions hold. Flips still cluster immediately above the deadband (median `|v|/D`
+**1.1322** on video_012 and **1.0883** on video_015 at the flip, **0.8632** and **0.8906** one frame
+before) and flip frames are still no noisier than ordinary frames — on video_012 they are measurably
+QUIETER (`resid_z_max` median 1.6583 at flips vs 2.0653 over all frames). `rule3` contributes zero.
+
+The `>= 3x the bar` condition does NOT hold: only G2(a) on video_015 (3.10x) reaches it; G2(a) on
+video_012 is 2.52x and G2(e) is 2.29x and 2.63x. **So G2 is NOT recorded as a fourth permanent
+blocker.** It is not recorded as fine either — it fails 4 of 4 faces against its bars. The clause
+stands as written for the next round.
+
+#### The finding the diagnostic actually produced
+
+**Two thirds of every mode flip is ONE head of a multi-head capsule breaking `unanimousMode`** —
+145 of 219 events on video_012 and 290 of 444 on video_015, on both clips, with `no_breaker=0`.
+`glmax1_r` alone contributed 40 grey events at a median ratio of 0.8964 at the 4 s window, i.e.
+dwelling BELOW the band. This is neither the deadband formula (frozen IMMUTABLE) nor pose noise
+(refuted twice, now with flip frames measurably quieter). It points at the AGGREGATION RULE.
+Characterising that is measurement and is licensed; changing it is not, and no fix is proposed here.
+
+#### Also measured, and it settles a question the corrected premise raised
+
+The 7.2x IK-residual spread SURVIVES a doubled window that strictly CONTAINS the old one:
+83.701643 / 11.576106 mm becomes **81.259766 / 11.591043 mm**, a ratio of **7.01**. The spread is
+therefore NOT window-driven or motion-content-driven, which is what next-step 55 needed to know and
+could not ask while it believed the two clips showed one person. What remains is subject build
+against an UNSCALED generic model — DEVIATION A — which is next-step 47's variable.
+
+---
+
+### The window change, PRE-REGISTERED BEFORE REGENERATION
+
+**PRODUCT CRITERION.** 4.0 s was registered as "5-7 running strides at the cadences measured on the
+owner's clips (606, 593, 647 ms)". 8.0 s holds **12.4-13.5** strides at those same cadences. That is
+what the SECULAR-DRIFT SCREEN needs: at 5-7 strides a slow drift and a low-frequency cycle are not
+separable, which is the question G8(a) asks. The criterion is G8's, not G7's.
+
+**DISCLOSURE, because omitting it would be dishonest.** This value was IDENTIFIED while looking for
+G7(a)'s missing power (316/1998 and 398/3552 clearing against a 500 floor; at the measured clearing
+rates 15.82 % and 11.20 %, 240 frames projects **657.6** and **828.3**). It is JUSTIFIED on the drift
+screen. Both statements are true and both are recorded. The 500 floor is NOT touched.
+
+**PREDICTIONS, stated before the run so they can be wrong:** retained 240 / warmed 232 on both clips
+(`floor(8.0x30) = 240`, available 308 and 1129); joint-clearing frames ~658 and ~828 IF the clearing
+rate is frame-independent, which is ASSUMED, not known; G2(a)/(e) RATES roughly unchanged, because
+lengthening the window multiplies numerator and denominator together.
+
+**WHAT IS RE-ROLLED.** All twelve fixture-fixable clauses are adjudicated in ONE verdict. The six that
+pass today MAY FAIL at the new window and that will be reported as such. The window is CENTRED
+(`start = (duration - span)/2`), so the new span is a strict SUPERSET of today's on both clips
+(video_012: t = 3.15-7.12 s becomes 1.15-9.12 s; video_015: 16.83-20.80 s becomes 14.83-22.80 s) —
+containment, not a different sample of footage.
+
+**REGISTERED RISK #1.** On `video_012` the new window reaches t = 1.15 s with only ~34 frames of
+headroom at each end, and nothing past frame 120 has EVER been person-box measured on either clip. An
+E1 collapse on the newly-included frames — the subject still entering frame — is named here, before
+the run, as the single most likely way this round ends BLOCKED.
+
+**MECHANICAL CONSTRAINT.** `tools/pose_fixture/person_box_sidecar.swift` re-implements the sampling
+arithmetic inline (`kAnalysisWindowSeconds`) because it cannot import `FrameSource.swift`. The
+generator recomputes the real plan and refuses on ONE ULP of disagreement, so the two constants move
+in the SAME commit or the fail-closed timestamp gate rejects the sidecar entirely.
+
+**PRODUCT BLAST RADIUS, stated because this is not a test knob.** The same symbol sets the live app's
+offline analysis window (`FrameSource.swift` call site, `OfflineImportView`) and is interpolated into
+the user-facing `nativeWindowDisclosure` copy, which will now read 8 seconds. Core ML calls per
+offline analysis double from 120 to 240; the frame budget already contemplates up to 601. The decode
+budget does NOT bind: it starts scaling only above 421 frames at 576x1024 and 562 at 576x768.
+
+---
+
 ## TL;DR
 
 The app's inaccuracy was diagnosed to root cause. It was never one bug — it is a chain, and the

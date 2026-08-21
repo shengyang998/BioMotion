@@ -69,10 +69,32 @@ enum FrameSource {
     /// user rather than truncating silently.
     static let maxFramesPerRun = 120
 
-    /// Length of the native-rate analysis window. 4 s holds 5-7 running strides
-    /// at the cadences measured on the owner's clips (606, 593 and 647 ms), and
-    /// at 30 fps it is exactly `maxFramesPerRun` frames.
-    static let analysisWindowSeconds: Double = 4.0
+    /// Length of the native-rate analysis window.
+    ///
+    /// 8 s holds 12.4-13.5 running strides at the cadences measured on the
+    /// owner's clips (606, 593 and 647 ms). The criterion is the SECULAR-DRIFT
+    /// SCREEN: at the 5-7 strides the former 4 s held, a slow drift and a
+    /// low-frequency cycle are not separable, and separating them is exactly
+    /// what the drift screen asks. At 30 fps this is 240 frames, which is
+    /// TWICE `maxFramesPerRun` and well inside `maxNativeWindowFrames` (601) —
+    /// the `.nativeWindow` branch is budgeted by that constant, not by
+    /// `maxFramesPerRun`, which bounds the SPARSE branch.
+    ///
+    /// RAISED 4.0 -> 8.0 on 2026-08-21, pre-registered in STATUS.md's round-16
+    /// header before any regeneration ran. DISCLOSED THERE AND HERE: the value
+    /// was IDENTIFIED while looking for G7(a)'s missing two-witness power
+    /// (316/1998 and 398/3552 joint-clearing frames against an untouched 500
+    /// floor) and is JUSTIFIED on the drift screen. Both are true; neither is
+    /// hidden. No bar moved.
+    ///
+    /// THIS IS NOT A TEST KNOB. It is the live app's offline analysis window:
+    /// it sets `OfflineImportView`'s toggle copy, is interpolated into
+    /// `nativeWindowDisclosure`, and doubles Core ML calls per offline analysis
+    /// from 120 to 240. `tools/pose_fixture/person_box_sidecar.swift` mirrors
+    /// this value inline as `kAnalysisWindowSeconds` because it cannot import
+    /// this file, and the generator refuses on ONE ULP of disagreement — the
+    /// two MUST move together.
+    static let analysisWindowSeconds: Double = 8.0
 
     /// Frame budget for `.nativeWindow` ONLY.
     ///
